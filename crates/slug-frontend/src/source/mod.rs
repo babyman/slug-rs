@@ -23,6 +23,7 @@ mod lexer;
 mod parser;
 #[path = "semantics/semantic.rs"]
 mod semantic;
+mod stack;
 #[path = "lowering/state.rs"]
 mod state;
 #[path = "semantics/typecheck.rs"]
@@ -543,18 +544,20 @@ fn compile_expressions(
     implicit_globals: Option<Vec<String>>,
     module_name: Option<&str>,
 ) -> Result<CompiledSource, SourceError> {
-    let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
-    updates::check_lost_updates(&expressions)?;
-    let mut compiler = Compiler::new(path, expressions, &analysis);
-    if let Some(name) = module_name {
-        compiler = compiler.with_module_name(name);
-    }
-    if let Some(names) = implicit_globals {
-        compiler = compiler.with_implicit_globals(names);
-    }
-    let program = compiler.compile()?.program;
-    Ok(CompiledSource {
-        program,
-        snapshot: analysis.snapshot,
+    stack::grow(|| {
+        let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
+        updates::check_lost_updates(&expressions)?;
+        let mut compiler = Compiler::new(path, expressions, &analysis);
+        if let Some(name) = module_name {
+            compiler = compiler.with_module_name(name);
+        }
+        if let Some(names) = implicit_globals {
+            compiler = compiler.with_implicit_globals(names);
+        }
+        let program = compiler.compile()?.program;
+        Ok(CompiledSource {
+            program,
+            snapshot: analysis.snapshot,
+        })
     })
 }

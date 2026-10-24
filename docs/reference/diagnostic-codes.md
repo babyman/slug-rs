@@ -27,7 +27,7 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 | `invalid_argument_order` | parse | A positional or spread argument after a named argument. | `positional argument cannot appear after a named argument` |
 | `invalid_pattern` | parse, semantic | A pattern form that is not allowed where it appears. | `list spread pattern must be final` |
 | `empty_enum` | parse | An enum without cases. | `enum must declare at least one case` |
-| `nesting_limit_exceeded` | parse | Source nested deeper than the parser accepts. | `source nesting limit exceeded` |
+| `nesting_limit_exceeded` | parse | Source nested deeper than the parser accepts: more than 256 bracketed levels, or an expression more than 4,096 levels deep. | `source nesting limit exceeded` |
 | `duplicate_name` | parse, semantic | A name declared twice where names must be unique, such as fields, parameters, enum cases, types, or match bindings. | ``duplicate struct field `x` `` |
 | `duplicate_signature` | semantic | Two callables with the same name and signature in one scope. | ``duplicate callable signature for `f` `` |
 | `unknown_name` | semantic | A reference to a binding that the checker can prove does not exist. | ``unknown pinned binding `x` `` |

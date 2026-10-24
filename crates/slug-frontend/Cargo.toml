@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 slug-loader = { path = "../slug-loader" }
 slug-vm = { path = "../slug-vm", default-features = false }
+stacker = "0.1"
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

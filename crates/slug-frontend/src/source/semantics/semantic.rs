@@ -791,7 +791,7 @@ pub(super) fn resolve_annotation(
     type_parameters: &[String],
     span: &SourceSpan,
 ) -> Result<Type, SourceError> {
-    match annotation {
+    super::stack::grow(|| match annotation {
         TypeAnnotation::Name(name) => Ok(resolve_name(name, type_parameters)),
         TypeAnnotation::Apply { name, arguments } => {
             resolve_application(name, arguments, type_parameters, span)
@@ -806,7 +806,7 @@ pub(super) fn resolve_annotation(
             .map(|member| resolve_annotation(member, type_parameters, span))
             .collect::<Result<Vec<_>, _>>()
             .map(Type::union),
-    }
+    })
 }
 
 /// Resolves a source annotation for static checking, including lexical schema
@@ -830,30 +830,32 @@ fn reject_alias_applications(
     span: &SourceSpan,
     environment: &Environment,
 ) -> Result<(), SourceError> {
-    match annotation {
-        TypeAnnotation::Apply { name, arguments } => {
-            if matches!(
-                environment.type_member(name),
-                Some(super::environment::TypeMember::Alias(_))
-            ) {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::InvalidTypeArguments,
-                    format!("type alias `{name}` cannot accept type arguments"),
-                    span.clone(),
-                ));
+    super::stack::grow(|| {
+        match annotation {
+            TypeAnnotation::Apply { name, arguments } => {
+                if matches!(
+                    environment.type_member(name),
+                    Some(super::environment::TypeMember::Alias(_))
+                ) {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidTypeArguments,
+                        format!("type alias `{name}` cannot accept type arguments"),
+                        span.clone(),
+                    ));
+                }
+                for argument in arguments {
+                    reject_alias_applications(argument, span, environment)?;
+                }
             }
-            for argument in arguments {
-                reject_alias_applications(argument, span, environment)?;
+            TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
+                for element in elements {
+                    reject_alias_applications(element, span, environment)?;
+                }
             }
+            TypeAnnotation::Name(_) => {}
         }
-        TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
-            for element in elements {
-                reject_alias_applications(element, span, environment)?;
-            }
-        }
-        TypeAnnotation::Name(_) => {}
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Resolves only resource names for constraints that must carry their nominal
@@ -1017,42 +1019,44 @@ fn resolve_application(
     type_parameters: &[String],
     span: &SourceSpan,
 ) -> Result<Type, SourceError> {
-    if name == "struct" {
-        if arguments.len() != 1 {
-            return Err(wrong_type_arity(name, "1", span));
+    super::stack::grow(|| {
+        if name == "struct" {
+            if arguments.len() != 1 {
+                return Err(wrong_type_arity(name, "1", span));
+            }
+            let TypeAnnotation::Name(name) = &arguments[0] else {
+                return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
+                    "struct type argument must be a schema name",
+                    span.clone(),
+                ));
+            };
+            return Ok(Type::Struct(Some(SchemaIdentity::unresolved(name))));
         }
-        let TypeAnnotation::Name(name) = &arguments[0] else {
-            return Err(SourceError::semantic(
-                SourceErrorCode::InvalidTypeArguments,
-                "struct type argument must be a schema name",
+        let resolved = arguments
+            .iter()
+            .map(|argument| resolve_annotation(argument, type_parameters, span))
+            .collect::<Result<Vec<_>, _>>()?;
+        match (name, resolved.as_slice()) {
+            ("list", [element]) => Ok(Type::List(Some(Box::new(element.clone())))),
+            ("map", [key, value]) => Ok(Type::Map(Some((
+                Box::new(key.clone()),
+                Box::new(value.clone()),
+            )))),
+            ("fn", [_, ..]) => Ok(Type::Function(Some(resolved))),
+            ("task", [result]) => Ok(Type::Task(Some(Box::new(result.clone())))),
+            ("chan", [value]) => Ok(Type::Channel(Some(Box::new(value.clone())))),
+            ("list" | "task" | "chan", _) => Err(wrong_type_arity(name, "1", span)),
+            ("map", _) => Err(wrong_type_arity(name, "2", span)),
+            ("fn", _) => Err(wrong_type_arity(name, "at least 1", span)),
+            ("schema", _) => Err(wrong_type_arity(name, "0", span)),
+            _ => Err(SourceError::semantic(
+                SourceErrorCode::UnknownType,
+                format!("unknown type constructor `{name}`"),
                 span.clone(),
-            ));
-        };
-        return Ok(Type::Struct(Some(SchemaIdentity::unresolved(name))));
-    }
-    let resolved = arguments
-        .iter()
-        .map(|argument| resolve_annotation(argument, type_parameters, span))
-        .collect::<Result<Vec<_>, _>>()?;
-    match (name, resolved.as_slice()) {
-        ("list", [element]) => Ok(Type::List(Some(Box::new(element.clone())))),
-        ("map", [key, value]) => Ok(Type::Map(Some((
-            Box::new(key.clone()),
-            Box::new(value.clone()),
-        )))),
-        ("fn", [_, ..]) => Ok(Type::Function(Some(resolved))),
-        ("task", [result]) => Ok(Type::Task(Some(Box::new(result.clone())))),
-        ("chan", [value]) => Ok(Type::Channel(Some(Box::new(value.clone())))),
-        ("list" | "task" | "chan", _) => Err(wrong_type_arity(name, "1", span)),
-        ("map", _) => Err(wrong_type_arity(name, "2", span)),
-        ("fn", _) => Err(wrong_type_arity(name, "at least 1", span)),
-        ("schema", _) => Err(wrong_type_arity(name, "0", span)),
-        _ => Err(SourceError::semantic(
-            SourceErrorCode::UnknownType,
-            format!("unknown type constructor `{name}`"),
-            span.clone(),
-        )),
-    }
+            )),
+        }
+    })
 }
 
 fn wrong_type_arity(name: &str, expected: &str, span: &SourceSpan) -> SourceError {

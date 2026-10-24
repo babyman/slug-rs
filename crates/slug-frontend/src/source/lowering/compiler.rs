@@ -381,8 +381,10 @@ impl Compiler {
     }
 
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
-        self.expression_inner(state, expression)
-            .map_err(|error| error.claimed_by(expression))
+        super::stack::grow(|| {
+            self.expression_inner(state, expression)
+                .map_err(|error| error.claimed_by(expression))
+        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -391,58 +393,59 @@ impl Compiler {
         state: &mut State,
         expression: &Expr,
     ) -> Result<(), SourceError> {
-        match &expression.kind {
-            ExprKind::Value(value) => {
-                let constant = state.constant(value.clone());
-                state.emit(Op::Constant(constant), &expression.span);
-            }
-            ExprKind::Interpolate(parts) => {
-                let mut text = vec![String::new()];
-                for part in parts {
-                    match part {
-                        StringPart::Text(value) => text
-                            .last_mut()
-                            .expect("interpolation has text")
-                            .push_str(value),
-                        StringPart::Name(name) => {
-                            self.expression(
-                                state,
-                                &Expr {
-                                    end: expression.end,
-                                    kind: ExprKind::Name(name.clone()),
-                                    span: expression.span.clone(),
-                                },
-                            )?;
-                            text.push(String::new());
+        super::stack::grow(|| {
+            match &expression.kind {
+                ExprKind::Value(value) => {
+                    let constant = state.constant(value.clone());
+                    state.emit(Op::Constant(constant), &expression.span);
+                }
+                ExprKind::Interpolate(parts) => {
+                    let mut text = vec![String::new()];
+                    for part in parts {
+                        match part {
+                            StringPart::Text(value) => text
+                                .last_mut()
+                                .expect("interpolation has text")
+                                .push_str(value),
+                            StringPart::Name(name) => {
+                                self.expression(
+                                    state,
+                                    &Expr::new(
+                                        ExprKind::Name(name.clone()),
+                                        expression.span.clone(),
+                                        expression.end,
+                                    ),
+                                )?;
+                                text.push(String::new());
+                            }
                         }
                     }
+                    state.emit(Op::Interpolate(text), &expression.span);
                 }
-                state.emit(Op::Interpolate(text), &expression.span);
-            }
-            ExprKind::Documentation(content) => {
-                debug_assert!(
-                    content
-                        .lines()
-                        .all(|line| line.trim().is_empty() || line.trim_start().starts_with('*'))
-                );
-                state.emit(Op::Nil, &expression.span);
-            }
-            ExprKind::NotImplemented => state.emit(Op::NotImplemented, &expression.span),
-            ExprKind::Name(name) if state.before_declaration(name) => {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::UnknownName,
-                    format!("`{name}` is used before its declaration"),
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            ExprKind::Name(name) => match state.lookup(name).or_else(|| {
-                self.globals
-                    .get(name)
-                    .map(|mutable| Binding::Global { mutable: *mutable })
-            }) {
-                None if state.declared_later(name) => {
+                ExprKind::Documentation(content) => {
+                    debug_assert!(
+                        content.lines().all(
+                            |line| line.trim().is_empty() || line.trim_start().starts_with('*')
+                        )
+                    );
+                    state.emit(Op::Nil, &expression.span);
+                }
+                ExprKind::NotImplemented => state.emit(Op::NotImplemented, &expression.span),
+                ExprKind::Name(name) if state.before_declaration(name) => {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::UnknownName,
+                        format!("`{name}` is used before its declaration"),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
+                ExprKind::Name(name) => match state.lookup(name).or_else(|| {
+                    self.globals
+                        .get(name)
+                        .map(|mutable| Binding::Global { mutable: *mutable })
+                }) {
+                    None if state.declared_later(name) => {
+                        return Err(SourceError::semantic(
                         SourceErrorCode::UnknownName,
                         format!(
                             "`{name}` is declared later in this block; only a function declared with `fn` can be used before its declaration"
@@ -450,773 +453,772 @@ impl Compiler {
                         expression.span.clone(),
                     )
                     .with_extent(expression));
-                }
-                None if self.is_unknown_global(name) => {
-                    return Err(self.unknown_name(name, expression, state));
-                }
-                Some(Binding::Global { .. }) | None => {
-                    state.emit(Op::GetGlobal(name.clone()), &expression.span);
-                }
-                Some(Binding::Local { slot, .. }) => {
-                    state.emit(Op::GetLocal(slot), &expression.span);
-                }
-                Some(Binding::Capture { slot, .. }) => {
-                    state.emit(Op::GetCapture(slot), &expression.span);
-                }
-                Some(Binding::Inherited { .. }) => {
-                    unreachable!("inherited bindings are captured lazily")
-                }
-            },
-            ExprKind::Declare {
-                mutable,
-                exported,
-                pattern,
-                documentation,
-                tags,
-                value,
-                ..
-            } => {
-                if *exported {
-                    debug_assert!(state.is_root());
-                }
-                if let Some(documentation) = documentation {
-                    debug_assert!(
-                        documentation.lines().all(
+                    }
+                    None if self.is_unknown_global(name) => {
+                        return Err(self.unknown_name(name, expression, state));
+                    }
+                    Some(Binding::Global { .. }) | None => {
+                        state.emit(Op::GetGlobal(name.clone()), &expression.span);
+                    }
+                    Some(Binding::Local { slot, .. }) => {
+                        state.emit(Op::GetLocal(slot), &expression.span);
+                    }
+                    Some(Binding::Capture { slot, .. }) => {
+                        state.emit(Op::GetCapture(slot), &expression.span);
+                    }
+                    Some(Binding::Inherited { .. }) => {
+                        unreachable!("inherited bindings are captured lazily")
+                    }
+                },
+                ExprKind::Declare {
+                    mutable,
+                    exported,
+                    pattern,
+                    documentation,
+                    tags,
+                    value,
+                    ..
+                } => {
+                    if *exported {
+                        debug_assert!(state.is_root());
+                    }
+                    if let Some(documentation) = documentation {
+                        debug_assert!(documentation.lines().all(
                             |line| line.trim().is_empty() || line.trim_start().starts_with('*')
-                        )
-                    );
-                }
-                let declaration = if state.is_module_scope() {
-                    Some(self.module_declaration_index(expression))
-                } else {
-                    None
-                };
-                let callable_name = matches!(&value.kind, ExprKind::Function { .. })
-                    .then(|| match pattern {
-                        Pattern::Binding(name) => Some(name),
-                        _ => None,
-                    })
-                    .flatten();
-                let existing_callable = callable_name.and_then(|name| {
-                    if state.is_root() {
-                        self.callable_globals
-                            .contains(name)
-                            .then_some(Binding::Global { mutable: false })
+                        ));
+                    }
+                    let declaration = if state.is_module_scope() {
+                        Some(self.module_declaration_index(expression))
                     } else {
-                        state.current_callable(name)
-                    }
-                });
-                self.tags(state, tags, declaration, &expression.span)?;
-                // A local function is bound before its body is compiled, so
-                // the body can call it by name; captures are live, so the
-                // slot holds the function by the time the body runs. Module
-                // functions already resolve by name when called.
-                let own_slot = callable_name
-                    .filter(|_| existing_callable.is_none() && !state.is_root())
-                    .map(|name| {
-                        state
-                            .claim_hoisted(name)
-                            .unwrap_or_else(|| state.declare(name.clone(), *mutable, true))
+                        None
+                    };
+                    let callable_name = matches!(&value.kind, ExprKind::Function { .. })
+                        .then(|| match pattern {
+                            Pattern::Binding(name) => Some(name),
+                            _ => None,
+                        })
+                        .flatten();
+                    let existing_callable = callable_name.and_then(|name| {
+                        if state.is_root() {
+                            self.callable_globals
+                                .contains(name)
+                                .then_some(Binding::Global { mutable: false })
+                        } else {
+                            state.current_callable(name)
+                        }
                     });
-                self.expression(state, value)?;
-                if let Some(slot) = own_slot {
-                    state.emit(Op::SetLocal(slot), &expression.span);
-                } else if let Some(binding) = existing_callable {
-                    match binding {
-                        Binding::Global { .. } => state.emit(
-                            Op::GetGlobal(callable_name.expect("callable name").clone()),
+                    self.tags(state, tags, declaration, &expression.span)?;
+                    // A local function is bound before its body is compiled, so
+                    // the body can call it by name; captures are live, so the
+                    // slot holds the function by the time the body runs. Module
+                    // functions already resolve by name when called.
+                    let own_slot = callable_name
+                        .filter(|_| existing_callable.is_none() && !state.is_root())
+                        .map(|name| {
+                            state
+                                .claim_hoisted(name)
+                                .unwrap_or_else(|| state.declare(name.clone(), *mutable, true))
+                        });
+                    self.expression(state, value)?;
+                    if let Some(slot) = own_slot {
+                        state.emit(Op::SetLocal(slot), &expression.span);
+                    } else if let Some(binding) = existing_callable {
+                        match binding {
+                            Binding::Global { .. } => state.emit(
+                                Op::GetGlobal(callable_name.expect("callable name").clone()),
+                                &expression.span,
+                            ),
+                            Binding::Local { slot, .. } => {
+                                state.emit(Op::GetLocal(slot), &expression.span);
+                            }
+                            Binding::Capture { .. } => {
+                                unreachable!("current scope cannot contain a capture")
+                            }
+                            Binding::Inherited { .. } => {
+                                unreachable!("current scope cannot contain an inherited binding")
+                            }
+                        }
+                        state.emit(Op::CombineOverloads, &expression.span);
+                        match binding {
+                            Binding::Global { .. } => state.emit(
+                                Op::SetGlobal(callable_name.expect("callable name").clone()),
+                                &expression.span,
+                            ),
+                            Binding::Local { slot, .. } => {
+                                state.emit(Op::SetLocal(slot), &expression.span);
+                            }
+                            Binding::Capture { .. } => {
+                                unreachable!("current scope cannot contain a capture")
+                            }
+                            Binding::Inherited { .. } => {
+                                unreachable!("current scope cannot contain an inherited binding")
+                            }
+                        }
+                    } else {
+                        self.bind_pattern(
+                            state,
+                            pattern,
+                            *mutable,
+                            callable_name.is_some(),
                             &expression.span,
-                        ),
-                        Binding::Local { slot, .. } => {
-                            state.emit(Op::GetLocal(slot), &expression.span);
-                        }
-                        Binding::Capture { .. } => {
-                            unreachable!("current scope cannot contain a capture")
-                        }
-                        Binding::Inherited { .. } => {
-                            unreachable!("current scope cannot contain an inherited binding")
+                        )?;
+                        if state.is_root()
+                            && let Some(name) = callable_name
+                        {
+                            self.callable_globals.insert(name.clone());
+                        } else if state.is_root()
+                            && let Pattern::Binding(name) = pattern
+                        {
+                            self.callable_globals.remove(name);
                         }
                     }
-                    state.emit(Op::CombineOverloads, &expression.span);
+                    state.emit(Op::Nil, &expression.span);
+                }
+                ExprKind::Foreign { tags, .. } | ExprKind::Resource { tags, .. } => {
+                    let declaration = self.module_declaration_index(expression);
+                    self.tags(state, tags, Some(declaration), &expression.span)?;
+                    state.emit(Op::Nil, &expression.span);
+                }
+                ExprKind::Assign { name, value } => {
+                    let binding = state
+                        .lookup(name)
+                        .or_else(|| {
+                            self.globals
+                                .get(name)
+                                .map(|mutable| Binding::Global { mutable: *mutable })
+                        })
+                        .ok_or_else(|| {
+                            SourceError::semantic(
+                                SourceErrorCode::UnknownName,
+                                format!("unknown name `{name}`"),
+                                expression.span.clone(),
+                            )
+                            .with_extent(expression)
+                        })?;
+                    let mutable = match binding {
+                        Binding::Global { mutable }
+                        | Binding::Local { mutable, .. }
+                        | Binding::Capture { mutable, .. }
+                        | Binding::Inherited { mutable } => mutable,
+                    };
+                    if !mutable {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::ImmutableAssignment,
+                            format!("cannot assign to immutable binding `{name}`"),
+                            expression.span.clone(),
+                        )
+                        .with_extent(expression));
+                    }
+                    self.expression(state, value)?;
+                    // Stores consume their operand, while assignment expressions evaluate to it.
+                    state.emit(Op::Duplicate, &expression.span);
                     match binding {
-                        Binding::Global { .. } => state.emit(
-                            Op::SetGlobal(callable_name.expect("callable name").clone()),
-                            &expression.span,
-                        ),
+                        Binding::Global { .. } => {
+                            state.emit(Op::SetGlobal(name.clone()), &expression.span);
+                        }
                         Binding::Local { slot, .. } => {
                             state.emit(Op::SetLocal(slot), &expression.span);
                         }
-                        Binding::Capture { .. } => {
-                            unreachable!("current scope cannot contain a capture")
+                        Binding::Capture { slot, .. } => {
+                            state.emit(Op::SetCapture(slot), &expression.span);
                         }
                         Binding::Inherited { .. } => {
-                            unreachable!("current scope cannot contain an inherited binding")
+                            unreachable!("inherited bindings are captured lazily")
                         }
                     }
-                } else {
-                    self.bind_pattern(
-                        state,
-                        pattern,
-                        *mutable,
-                        callable_name.is_some(),
-                        &expression.span,
-                    )?;
-                    if state.is_root()
-                        && let Some(name) = callable_name
-                    {
-                        self.callable_globals.insert(name.clone());
-                    } else if state.is_root()
-                        && let Pattern::Binding(name) = pattern
-                    {
-                        self.callable_globals.remove(name);
-                    }
                 }
-                state.emit(Op::Nil, &expression.span);
-            }
-            ExprKind::Foreign { tags, .. } | ExprKind::Resource { tags, .. } => {
-                let declaration = self.module_declaration_index(expression);
-                self.tags(state, tags, Some(declaration), &expression.span)?;
-                state.emit(Op::Nil, &expression.span);
-            }
-            ExprKind::Assign { name, value } => {
-                let binding = state
-                    .lookup(name)
-                    .or_else(|| {
-                        self.globals
-                            .get(name)
-                            .map(|mutable| Binding::Global { mutable: *mutable })
-                    })
-                    .ok_or_else(|| {
-                        SourceError::semantic(
-                            SourceErrorCode::UnknownName,
-                            format!("unknown name `{name}`"),
+                ExprKind::Return { value } => {
+                    if !state.allows_return() {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::InvalidControlFlow,
+                            "return is only valid inside a function",
                             expression.span.clone(),
                         )
-                        .with_extent(expression)
-                    })?;
-                let mutable = match binding {
-                    Binding::Global { mutable }
-                    | Binding::Local { mutable, .. }
-                    | Binding::Capture { mutable, .. }
-                    | Binding::Inherited { mutable } => mutable,
-                };
-                if !mutable {
-                    return Err(SourceError::semantic(
-                        SourceErrorCode::ImmutableAssignment,
-                        format!("cannot assign to immutable binding `{name}`"),
+                        .with_extent(expression));
+                    }
+                    self.tail_expression(state, value)?;
+                    state.emit(Op::Return, &expression.span);
+                }
+                ExprKind::Throw { value } => {
+                    self.expression(state, value)?;
+                    state.emit(Op::Throw, &expression.span);
+                }
+                ExprKind::Defer {
+                    value,
+                    mode,
+                    error_name,
+                } => {
+                    let deferred = Expr::new(
+                        ExprKind::Function {
+                            type_parameters: Vec::new(),
+                            parameters: error_name
+                                .iter()
+                                .cloned()
+                                .map(|name| Parameter {
+                                    name,
+                                    discard: false,
+                                    tags: Vec::new(),
+                                    annotation: None,
+                                    default: None,
+                                    variadic: false,
+                                })
+                                .collect(),
+                            return_annotation: None,
+                            body: value.clone(),
+                        },
                         expression.span.clone(),
-                    )
-                    .with_extent(expression));
+                        expression.end,
+                    );
+                    self.expression(state, &deferred)?;
+                    state.emit(Op::Defer { mode: *mode }, &expression.span);
+                    state.emit(Op::Nil, &expression.span);
                 }
-                self.expression(state, value)?;
-                // Stores consume their operand, while assignment expressions evaluate to it.
-                state.emit(Op::Duplicate, &expression.span);
-                match binding {
-                    Binding::Global { .. } => {
-                        state.emit(Op::SetGlobal(name.clone()), &expression.span);
+                ExprKind::Recur(_) => {
+                    if !state.allows_return() {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::InvalidControlFlow,
+                            "recur is only valid inside a function",
+                            expression.span.clone(),
+                        )
+                        .with_extent(expression));
                     }
-                    Binding::Local { slot, .. } => {
-                        state.emit(Op::SetLocal(slot), &expression.span);
-                    }
-                    Binding::Capture { slot, .. } => {
-                        state.emit(Op::SetCapture(slot), &expression.span);
-                    }
-                    Binding::Inherited { .. } => {
-                        unreachable!("inherited bindings are captured lazily")
-                    }
-                }
-            }
-            ExprKind::Return { value } => {
-                if !state.allows_return() {
-                    return Err(SourceError::semantic(
-                        SourceErrorCode::InvalidControlFlow,
-                        "return is only valid inside a function",
-                        expression.span.clone(),
-                    )
-                    .with_extent(expression));
-                }
-                self.tail_expression(state, value)?;
-                state.emit(Op::Return, &expression.span);
-            }
-            ExprKind::Throw { value } => {
-                self.expression(state, value)?;
-                state.emit(Op::Throw, &expression.span);
-            }
-            ExprKind::Defer {
-                value,
-                mode,
-                error_name,
-            } => {
-                let deferred = Expr {
-                    end: expression.end,
-                    kind: ExprKind::Function {
-                        type_parameters: Vec::new(),
-                        parameters: error_name
-                            .iter()
-                            .cloned()
-                            .map(|name| Parameter {
-                                name,
-                                discard: false,
-                                tags: Vec::new(),
-                                annotation: None,
-                                default: None,
-                                variadic: false,
-                            })
-                            .collect(),
-                        return_annotation: None,
-                        body: value.clone(),
-                    },
-                    span: expression.span.clone(),
-                };
-                self.expression(state, &deferred)?;
-                state.emit(Op::Defer { mode: *mode }, &expression.span);
-                state.emit(Op::Nil, &expression.span);
-            }
-            ExprKind::Recur(_) => {
-                if !state.allows_return() {
                     return Err(SourceError::semantic(
                         SourceErrorCode::InvalidControlFlow,
-                        "recur is only valid inside a function",
+                        "recur is only valid in tail position",
                         expression.span.clone(),
                     )
                     .with_extent(expression));
                 }
-                return Err(SourceError::semantic(
-                    SourceErrorCode::InvalidControlFlow,
-                    "recur is only valid in tail position",
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            ExprKind::Spawn(body) => {
-                let function = Expr {
-                    end: expression.end,
-                    kind: ExprKind::Function {
-                        type_parameters: Vec::new(),
-                        parameters: Vec::new(),
-                        return_annotation: None,
-                        body: body.clone(),
-                    },
-                    span: expression.span.clone(),
-                };
-                self.expression(state, &function)?;
-                state.emit(Op::Spawn, &expression.span);
-            }
-            ExprKind::Select(cases) => {
-                for case in cases {
-                    match &case.kind {
-                        SelectCaseKind::Receive(value) | SelectCaseKind::Await(value) => {
-                            self.expression(state, value)?;
-                        }
-                        SelectCaseKind::Send { channel, value } => {
-                            self.expression(state, channel)?;
-                            self.expression(state, value)?;
-                        }
-                        SelectCaseKind::After(value) => self.expression(state, value)?,
-                        SelectCaseKind::Default => {}
-                    }
-                    if let Some(handler) = &case.handler {
-                        self.expression(state, handler)?;
-                    }
-                }
-                state.emit(
-                    Op::Select(
-                        cases
-                            .iter()
-                            .map(|case| match &case.kind {
-                                SelectCaseKind::Receive(_) => SelectCase::Receive {
-                                    has_handler: case.handler.is_some(),
-                                },
-                                SelectCaseKind::Send { .. } => SelectCase::Send {
-                                    has_handler: case.handler.is_some(),
-                                },
-                                SelectCaseKind::After(_) => SelectCase::After {
-                                    has_handler: case.handler.is_some(),
-                                },
-                                SelectCaseKind::Await(_) => SelectCase::Await {
-                                    has_handler: case.handler.is_some(),
-                                },
-                                SelectCaseKind::Default => SelectCase::Default {
-                                    has_handler: case.handler.is_some(),
-                                },
-                            })
-                            .collect(),
-                    ),
-                    &expression.span,
-                );
-                state.emit(Op::SelectApply, &expression.span);
-            }
-            ExprKind::Nursery { limit, body } => {
-                if let Some(limit) = limit {
-                    self.expression(state, limit)?;
-                }
-                let function = if matches!(body.kind, ExprKind::Function { .. }) {
-                    body.as_ref().clone()
-                } else {
-                    Expr {
-                        end: expression.end,
-                        kind: ExprKind::Function {
+                ExprKind::Spawn(body) => {
+                    let function = Expr::new(
+                        ExprKind::Function {
                             type_parameters: Vec::new(),
                             parameters: Vec::new(),
                             return_annotation: None,
                             body: body.clone(),
                         },
-                        span: expression.span.clone(),
-                    }
-                };
-                self.expression(state, &function)?;
-                state.emit(
-                    Op::Nursery {
-                        has_limit: limit.is_some(),
-                    },
-                    &expression.span,
-                );
-            }
-            ExprKind::Match { subject, cases } => {
-                let subject = subject.as_deref().ok_or_else(|| {
-                    SourceError::semantic(
-                        SourceErrorCode::InvalidMatch,
-                        "match requires a subject or pipeline input",
                         expression.span.clone(),
-                    )
-                    .with_extent(expression)
-                })?;
-                self.compile_match(state, subject, cases, false)?;
-            }
-            ExprKind::Binary {
-                left,
-                operator,
-                right,
-            } => {
-                if !matches!(operator, Binary::Pipeline) {
-                    self.expression(state, left)?;
+                        expression.end,
+                    );
+                    self.expression(state, &function)?;
+                    state.emit(Op::Spawn, &expression.span);
                 }
-                match operator {
-                    Binary::Pipeline => {
-                        if let ExprKind::Match {
-                            subject: None,
-                            cases,
-                        } = &right.kind
-                        {
-                            self.compile_match(state, left, cases, false)?;
-                        } else if matches!(&right.kind, ExprKind::Match { .. }) {
-                            return Err(SourceError::semantic(
-                                SourceErrorCode::InvalidMatch,
-                                "pipeline match must omit its subject",
-                                right.span.clone(),
-                            )
-                            .with_extent(right));
-                        } else {
-                            self.expression(state, left)?;
-                            self.compile_pipeline_call(state, right)?;
+                ExprKind::Select(cases) => {
+                    for case in cases {
+                        match &case.kind {
+                            SelectCaseKind::Receive(value) | SelectCaseKind::Await(value) => {
+                                self.expression(state, value)?;
+                            }
+                            SelectCaseKind::Send { channel, value } => {
+                                self.expression(state, channel)?;
+                                self.expression(state, value)?;
+                            }
+                            SelectCaseKind::After(value) => self.expression(state, value)?,
+                            SelectCaseKind::Default => {}
+                        }
+                        if let Some(handler) = &case.handler {
+                            self.expression(state, handler)?;
                         }
                     }
-                    Binary::And => {
-                        let end = state.jump_if_false(&expression.span);
-                        state.emit(Op::Pop, &expression.span);
-                        self.expression(state, right)?;
-                        state.patch(end);
+                    state.emit(
+                        Op::Select(
+                            cases
+                                .iter()
+                                .map(|case| match &case.kind {
+                                    SelectCaseKind::Receive(_) => SelectCase::Receive {
+                                        has_handler: case.handler.is_some(),
+                                    },
+                                    SelectCaseKind::Send { .. } => SelectCase::Send {
+                                        has_handler: case.handler.is_some(),
+                                    },
+                                    SelectCaseKind::After(_) => SelectCase::After {
+                                        has_handler: case.handler.is_some(),
+                                    },
+                                    SelectCaseKind::Await(_) => SelectCase::Await {
+                                        has_handler: case.handler.is_some(),
+                                    },
+                                    SelectCaseKind::Default => SelectCase::Default {
+                                        has_handler: case.handler.is_some(),
+                                    },
+                                })
+                                .collect(),
+                        ),
+                        &expression.span,
+                    );
+                    state.emit(Op::SelectApply, &expression.span);
+                }
+                ExprKind::Nursery { limit, body } => {
+                    if let Some(limit) = limit {
+                        self.expression(state, limit)?;
                     }
-                    Binary::Coalesce => {
-                        state.emit(Op::Duplicate, &expression.span);
-                        state.emit(Op::Nil, &expression.span);
-                        state.emit(Op::Equal, &expression.span);
-                        let end = state.jump_if_false_pop(&expression.span);
-                        state.emit(Op::Pop, &expression.span);
-                        self.expression(state, right)?;
-                        state.patch(end);
-                    }
-                    Binary::Or => {
-                        let right_hand_side = state.jump_if_false(&expression.span);
-                        let end = state.jump(&expression.span);
-                        state.patch(right_hand_side);
-                        state.emit(Op::Pop, &expression.span);
-                        self.expression(state, right)?;
-                        state.patch(end);
-                    }
-                    Binary::NotEqual => {
-                        self.expression(state, right)?;
-                        state.emit(Op::Equal, &expression.span);
-                        state.emit(Op::Not, &expression.span);
-                    }
-                    Binary::GreaterEqual => {
-                        self.expression(state, right)?;
-                        state.emit(self.less_op(left, right), &expression.span);
-                        state.emit(Op::Not, &expression.span);
-                    }
-                    Binary::LessEqual => {
-                        self.expression(state, right)?;
-                        state.emit(self.greater_op(left, right), &expression.span);
-                        state.emit(Op::Not, &expression.span);
-                    }
-                    Binary::Add => {
-                        self.expression(state, right)?;
-                        state.emit(
-                            if self.numeric_operands(left, right) {
-                                Op::AddNum
-                            } else {
-                                Op::Add
+                    let function = if matches!(body.kind, ExprKind::Function { .. }) {
+                        body.as_ref().clone()
+                    } else {
+                        Expr::new(
+                            ExprKind::Function {
+                                type_parameters: Vec::new(),
+                                parameters: Vec::new(),
+                                return_annotation: None,
+                                body: body.clone(),
                             },
-                            &expression.span,
-                        );
+                            expression.span.clone(),
+                            expression.end,
+                        )
+                    };
+                    self.expression(state, &function)?;
+                    state.emit(
+                        Op::Nursery {
+                            has_limit: limit.is_some(),
+                        },
+                        &expression.span,
+                    );
+                }
+                ExprKind::Match { subject, cases } => {
+                    let subject = subject.as_deref().ok_or_else(|| {
+                        SourceError::semantic(
+                            SourceErrorCode::InvalidMatch,
+                            "match requires a subject or pipeline input",
+                            expression.span.clone(),
+                        )
+                        .with_extent(expression)
+                    })?;
+                    self.compile_match(state, subject, cases, false)?;
+                }
+                ExprKind::Binary {
+                    left,
+                    operator,
+                    right,
+                } => {
+                    if !matches!(operator, Binary::Pipeline) {
+                        self.expression(state, left)?;
                     }
-                    Binary::Subtract => {
-                        self.expression(state, right)?;
-                        state.emit(
-                            if self.numeric_operands(left, right) {
-                                Op::SubtractNum
+                    match operator {
+                        Binary::Pipeline => {
+                            if let ExprKind::Match {
+                                subject: None,
+                                cases,
+                            } = &right.kind
+                            {
+                                self.compile_match(state, left, cases, false)?;
+                            } else if matches!(&right.kind, ExprKind::Match { .. }) {
+                                return Err(SourceError::semantic(
+                                    SourceErrorCode::InvalidMatch,
+                                    "pipeline match must omit its subject",
+                                    right.span.clone(),
+                                )
+                                .with_extent(right));
                             } else {
-                                Op::Subtract
-                            },
-                            &expression.span,
-                        );
-                    }
-                    Binary::Multiply => {
-                        self.expression(state, right)?;
-                        state.emit(
-                            if self.numeric_operands(left, right) {
-                                Op::MultiplyNum
-                            } else {
-                                Op::Multiply
-                            },
-                            &expression.span,
-                        );
-                    }
-                    Binary::Divide => {
-                        self.expression(state, right)?;
-                        state.emit(
-                            if self.numeric_operands(left, right) {
-                                Op::DivideNum
-                            } else {
-                                Op::Divide
-                            },
-                            &expression.span,
-                        );
-                    }
-                    Binary::Modulo => {
-                        self.expression(state, right)?;
-                        state.emit(
-                            if self.numeric_operands(left, right) {
-                                Op::ModuloNum
-                            } else {
-                                Op::Modulo
-                            },
-                            &expression.span,
-                        );
-                    }
-                    Binary::BitAnd => {
-                        self.expression(state, right)?;
-                        state.emit(Op::BitAnd, &expression.span);
-                    }
-                    Binary::BitOr => {
-                        self.expression(state, right)?;
-                        state.emit(Op::BitOr, &expression.span);
-                    }
-                    Binary::BitXor => {
-                        self.expression(state, right)?;
-                        state.emit(Op::BitXor, &expression.span);
-                    }
-                    Binary::ShiftLeft => {
-                        self.expression(state, right)?;
-                        state.emit(Op::ShiftLeft, &expression.span);
-                    }
-                    Binary::ShiftRight => {
-                        self.expression(state, right)?;
-                        state.emit(Op::ShiftRight, &expression.span);
-                    }
-                    Binary::Append => {
-                        self.expression(state, right)?;
-                        state.emit(Op::ListAppend, &expression.span);
-                    }
-                    Binary::Prepend => {
-                        self.expression(state, right)?;
-                        state.emit(Op::ListPrepend, &expression.span);
-                    }
-                    Binary::Equal => {
-                        self.expression(state, right)?;
-                        state.emit(Op::Equal, &expression.span);
-                    }
-                    Binary::Greater => {
-                        self.expression(state, right)?;
-                        state.emit(self.greater_op(left, right), &expression.span);
-                    }
-                    Binary::Less => {
-                        self.expression(state, right)?;
-                        state.emit(self.less_op(left, right), &expression.span);
+                                self.expression(state, left)?;
+                                self.compile_pipeline_call(state, right)?;
+                            }
+                        }
+                        Binary::And => {
+                            let end = state.jump_if_false(&expression.span);
+                            state.emit(Op::Pop, &expression.span);
+                            self.expression(state, right)?;
+                            state.patch(end);
+                        }
+                        Binary::Coalesce => {
+                            state.emit(Op::Duplicate, &expression.span);
+                            state.emit(Op::Nil, &expression.span);
+                            state.emit(Op::Equal, &expression.span);
+                            let end = state.jump_if_false_pop(&expression.span);
+                            state.emit(Op::Pop, &expression.span);
+                            self.expression(state, right)?;
+                            state.patch(end);
+                        }
+                        Binary::Or => {
+                            let right_hand_side = state.jump_if_false(&expression.span);
+                            let end = state.jump(&expression.span);
+                            state.patch(right_hand_side);
+                            state.emit(Op::Pop, &expression.span);
+                            self.expression(state, right)?;
+                            state.patch(end);
+                        }
+                        Binary::NotEqual => {
+                            self.expression(state, right)?;
+                            state.emit(Op::Equal, &expression.span);
+                            state.emit(Op::Not, &expression.span);
+                        }
+                        Binary::GreaterEqual => {
+                            self.expression(state, right)?;
+                            state.emit(self.less_op(left, right), &expression.span);
+                            state.emit(Op::Not, &expression.span);
+                        }
+                        Binary::LessEqual => {
+                            self.expression(state, right)?;
+                            state.emit(self.greater_op(left, right), &expression.span);
+                            state.emit(Op::Not, &expression.span);
+                        }
+                        Binary::Add => {
+                            self.expression(state, right)?;
+                            state.emit(
+                                if self.numeric_operands(left, right) {
+                                    Op::AddNum
+                                } else {
+                                    Op::Add
+                                },
+                                &expression.span,
+                            );
+                        }
+                        Binary::Subtract => {
+                            self.expression(state, right)?;
+                            state.emit(
+                                if self.numeric_operands(left, right) {
+                                    Op::SubtractNum
+                                } else {
+                                    Op::Subtract
+                                },
+                                &expression.span,
+                            );
+                        }
+                        Binary::Multiply => {
+                            self.expression(state, right)?;
+                            state.emit(
+                                if self.numeric_operands(left, right) {
+                                    Op::MultiplyNum
+                                } else {
+                                    Op::Multiply
+                                },
+                                &expression.span,
+                            );
+                        }
+                        Binary::Divide => {
+                            self.expression(state, right)?;
+                            state.emit(
+                                if self.numeric_operands(left, right) {
+                                    Op::DivideNum
+                                } else {
+                                    Op::Divide
+                                },
+                                &expression.span,
+                            );
+                        }
+                        Binary::Modulo => {
+                            self.expression(state, right)?;
+                            state.emit(
+                                if self.numeric_operands(left, right) {
+                                    Op::ModuloNum
+                                } else {
+                                    Op::Modulo
+                                },
+                                &expression.span,
+                            );
+                        }
+                        Binary::BitAnd => {
+                            self.expression(state, right)?;
+                            state.emit(Op::BitAnd, &expression.span);
+                        }
+                        Binary::BitOr => {
+                            self.expression(state, right)?;
+                            state.emit(Op::BitOr, &expression.span);
+                        }
+                        Binary::BitXor => {
+                            self.expression(state, right)?;
+                            state.emit(Op::BitXor, &expression.span);
+                        }
+                        Binary::ShiftLeft => {
+                            self.expression(state, right)?;
+                            state.emit(Op::ShiftLeft, &expression.span);
+                        }
+                        Binary::ShiftRight => {
+                            self.expression(state, right)?;
+                            state.emit(Op::ShiftRight, &expression.span);
+                        }
+                        Binary::Append => {
+                            self.expression(state, right)?;
+                            state.emit(Op::ListAppend, &expression.span);
+                        }
+                        Binary::Prepend => {
+                            self.expression(state, right)?;
+                            state.emit(Op::ListPrepend, &expression.span);
+                        }
+                        Binary::Equal => {
+                            self.expression(state, right)?;
+                            state.emit(Op::Equal, &expression.span);
+                        }
+                        Binary::Greater => {
+                            self.expression(state, right)?;
+                            state.emit(self.greater_op(left, right), &expression.span);
+                        }
+                        Binary::Less => {
+                            self.expression(state, right)?;
+                            state.emit(self.less_op(left, right), &expression.span);
+                        }
                     }
                 }
-            }
-            ExprKind::Prefix { operators, value } => {
-                self.expression(state, value)?;
-                for (operator, span) in operators.iter().rev() {
+                ExprKind::Prefix { operators, value } => {
+                    self.expression(state, value)?;
+                    for (operator, span) in operators.iter().rev() {
+                        state.emit(
+                            match operator {
+                                Prefix::Negate => Op::Negate,
+                                Prefix::Not => Op::Not,
+                                Prefix::BitNot => Op::BitNot,
+                            },
+                            span,
+                        );
+                    }
+                }
+                ExprKind::Call { callee, arguments } => {
+                    let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
+                    let positional = arguments
+                        .iter()
+                        .all(|argument| matches!(argument, CallArgument::Positional(_)));
+                    if !import {
+                        self.expression(state, callee)?;
+                    }
+                    let mut kinds = Vec::with_capacity(arguments.len());
+                    for argument in arguments {
+                        let argument = match argument {
+                            CallArgument::Positional(argument) => {
+                                kinds.push(CallArgumentKind::Positional);
+                                argument
+                            }
+                            CallArgument::Named { name, value } => {
+                                kinds.push(CallArgumentKind::Named(name.clone()));
+                                value
+                            }
+                            CallArgument::Spread(argument) => {
+                                kinds.push(CallArgumentKind::Spread);
+                                argument
+                            }
+                        };
+                        self.expression(state, argument)?;
+                    }
+                    let op = if import {
+                        Op::Import(kinds)
+                    } else if let Some(identity) = self.selected_identity(&expression.span) {
+                        Op::CallSelected { kinds, identity }
+                    } else if positional {
+                        Op::CallPositional(arguments.len())
+                    } else {
+                        Op::CallSpread(kinds)
+                    };
+                    state.emit(op, &expression.span);
+                }
+                ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
+                ExprKind::TypeAlias { .. } => {
+                    state.emit(Op::Nil, &expression.span);
+                }
+                ExprKind::Enum {
+                    name, cases, tags, ..
+                } => {
+                    let declaration = self.module_declaration_index(expression);
+                    self.tags(state, tags, Some(declaration), &expression.span)?;
+                    for case in cases {
+                        let key = state.constant(Value::string(case.clone()));
+                        state.emit(Op::Constant(key), &expression.span);
+                        let value = state.constant(Value::Enum(Rc::new(EnumValue {
+                            module: self
+                                .module_name
+                                .as_ref()
+                                .unwrap_or(&self.path)
+                                .clone()
+                                .into(),
+                            name: name.clone().into(),
+                            case: case.clone().into(),
+                        })));
+                        state.emit(Op::Constant(value), &expression.span);
+                    }
+                    state.emit(Op::Map(cases.len()), &expression.span);
+                    state.emit(Op::DefineGlobal(name.clone()), &expression.span);
+                    state.emit(Op::GetGlobal(name.clone()), &expression.span);
+                }
+                ExprKind::List(values) => {
+                    let mut spreads = Vec::with_capacity(values.len());
+                    for value in values {
+                        let value = match value {
+                            ListElement::Value(value) => {
+                                spreads.push(false);
+                                value
+                            }
+                            ListElement::Spread(value) => {
+                                spreads.push(true);
+                                value
+                            }
+                        };
+                        self.expression(state, value)?;
+                    }
+                    if spreads.iter().any(|spread| *spread) {
+                        state.emit(Op::ListSpread(spreads), &expression.span);
+                    } else {
+                        state.emit(Op::List(values.len()), &expression.span);
+                    }
+                }
+                ExprKind::Map(entries) => {
+                    let mut constant_keys = HashSet::new();
+                    for (key, value) in entries {
+                        if let ExprKind::Value(constant) = &key.kind
+                            && let Some(canonical) = ConstantMapKey::new(constant)
+                            && !constant_keys.insert(canonical)
+                        {
+                            return Err(SourceError::semantic(
+                                SourceErrorCode::RepeatedMapKey,
+                                format!("map literal repeats key `{constant}`"),
+                                key.span.clone(),
+                            )
+                            .with_extent(key));
+                        }
+                        self.expression(state, key)?;
+                        self.expression(state, value)?;
+                    }
+                    state.emit(Op::Map(entries.len()), &expression.span);
+                }
+                ExprKind::StructSchema(fields) => {
+                    let mut seen = HashSet::new();
+                    for field in fields {
+                        if !seen.insert(field.name.as_str()) {
+                            return Err(SourceError::semantic(
+                                SourceErrorCode::DuplicateName,
+                                format!("duplicate struct field '{}'", field.name),
+                                expression.span.clone(),
+                            )
+                            .with_extent(expression));
+                        }
+                        if let Some(default) = &field.default {
+                            self.expression(state, default)?;
+                        }
+                    }
                     state.emit(
-                        match operator {
-                            Prefix::Negate => Op::Negate,
-                            Prefix::Not => Op::Not,
-                            Prefix::BitNot => Op::BitNot,
+                        Op::StructSchema(
+                            fields
+                                .iter()
+                                .map(|field| SchemaField {
+                                    name: field.name.clone(),
+                                    has_default: field.default.is_some(),
+                                })
+                                .collect(),
+                        ),
+                        &expression.span,
+                    );
+                }
+                ExprKind::StructInit { schema, fields } => {
+                    self.expression(state, schema)?;
+                    for (_, value) in fields {
+                        self.expression(state, value)?;
+                    }
+                    state.emit(
+                        Op::Struct(fields.iter().map(|(name, _)| name.clone()).collect()),
+                        &expression.span,
+                    );
+                }
+                ExprKind::StructCopy { value, fields } => {
+                    self.expression(state, value)?;
+                    for (_, replacement) in fields {
+                        self.expression(state, replacement)?;
+                    }
+                    state.emit(
+                        Op::StructCopy(fields.iter().map(|(name, _)| name.clone()).collect()),
+                        &expression.span,
+                    );
+                }
+                ExprKind::Index { collection, index } => {
+                    self.expression(state, collection)?;
+                    if let ExprKind::Value(key) = &index.kind {
+                        let constant = state.constant(key.clone());
+                        state.emit(Op::GetIndexConstant(constant), &expression.span);
+                    } else {
+                        self.expression(state, index)?;
+                        state.emit(Op::GetIndex, &expression.span);
+                    }
+                }
+                ExprKind::Slice {
+                    collection,
+                    start,
+                    end,
+                    step,
+                } => {
+                    self.expression(state, collection)?;
+                    if let Some(start) = start {
+                        self.expression(state, start)?;
+                    }
+                    if let Some(end) = end {
+                        self.expression(state, end)?;
+                    }
+                    if let Some(step) = step {
+                        self.expression(state, step)?;
+                    }
+                    state.emit(
+                        Op::GetSlice {
+                            has_start: start.is_some(),
+                            has_end: end.is_some(),
+                            has_step: step.is_some(),
                         },
-                        span,
+                        &expression.span,
+                    );
+                }
+                ExprKind::Block(values) => {
+                    state.enter_scope();
+                    hoist_functions(state, values);
+                    let runtime_scope = values.iter().any(contains_scoped_defer);
+                    if runtime_scope {
+                        state.emit(Op::EnterScope, &expression.span);
+                    }
+                    for (index, value) in values.iter().enumerate() {
+                        self.expression(state, value)?;
+                        if index + 1 < values.len() {
+                            state.emit(Op::Pop, &value.span);
+                        }
+                    }
+                    if values.is_empty() {
+                        state.emit(Op::Nil, &expression.span);
+                    }
+                    if runtime_scope {
+                        state.emit(Op::LeaveScope, &expression.span);
+                    }
+                    state.leave_scope();
+                }
+                ExprKind::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.expression(state, condition)?;
+                    let otherwise = state.jump_if_false_pop(&expression.span);
+                    self.expression(state, then_branch)?;
+                    let end = state.jump(&expression.span);
+                    state.patch(otherwise);
+                    if let Some(otherwise) = else_branch {
+                        self.expression(state, otherwise)?;
+                    } else {
+                        state.emit(Op::Nil, &expression.span);
+                    }
+                    state.patch(end);
+                }
+                ExprKind::Function {
+                    parameters, body, ..
+                } => {
+                    for parameter in parameters {
+                        self.tags(state, &parameter.tags, None, &expression.span)?;
+                    }
+                    let names = plain_parameters(parameters, &expression.span)?;
+                    let (mut chunk, captures) = self.function(&names, parameters, body, state)?;
+                    if let Some(identity) = self.function_identity(&expression.span) {
+                        chunk.callable_identity = Some(identity);
+                    }
+                    chunk.parameters = parameters
+                        .iter()
+                        .map(|parameter| ParameterSignature {
+                            name: parameter.name.clone(),
+                            has_default: parameter.default.is_some(),
+                            variadic: parameter.variadic,
+                        })
+                        .collect();
+                    let index = self.chunks.len();
+                    chunk.name = format!("<fn #{index}>");
+                    self.chunks.push(chunk);
+                    state.emit(
+                        Op::MakeClosure {
+                            chunk: index,
+                            captures,
+                        },
+                        &expression.span,
                     );
                 }
             }
-            ExprKind::Call { callee, arguments } => {
-                let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
-                let positional = arguments
-                    .iter()
-                    .all(|argument| matches!(argument, CallArgument::Positional(_)));
-                if !import {
-                    self.expression(state, callee)?;
-                }
-                let mut kinds = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    let argument = match argument {
-                        CallArgument::Positional(argument) => {
-                            kinds.push(CallArgumentKind::Positional);
-                            argument
-                        }
-                        CallArgument::Named { name, value } => {
-                            kinds.push(CallArgumentKind::Named(name.clone()));
-                            value
-                        }
-                        CallArgument::Spread(argument) => {
-                            kinds.push(CallArgumentKind::Spread);
-                            argument
-                        }
-                    };
-                    self.expression(state, argument)?;
-                }
-                let op = if import {
-                    Op::Import(kinds)
-                } else if let Some(identity) = self.selected_identity(&expression.span) {
-                    Op::CallSelected { kinds, identity }
-                } else if positional {
-                    Op::CallPositional(arguments.len())
-                } else {
-                    Op::CallSpread(kinds)
-                };
-                state.emit(op, &expression.span);
-            }
-            ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
-            ExprKind::TypeAlias { .. } => {
-                state.emit(Op::Nil, &expression.span);
-            }
-            ExprKind::Enum {
-                name, cases, tags, ..
-            } => {
-                let declaration = self.module_declaration_index(expression);
-                self.tags(state, tags, Some(declaration), &expression.span)?;
-                for case in cases {
-                    let key = state.constant(Value::string(case.clone()));
-                    state.emit(Op::Constant(key), &expression.span);
-                    let value = state.constant(Value::Enum(Rc::new(EnumValue {
-                        module: self
-                            .module_name
-                            .as_ref()
-                            .unwrap_or(&self.path)
-                            .clone()
-                            .into(),
-                        name: name.clone().into(),
-                        case: case.clone().into(),
-                    })));
-                    state.emit(Op::Constant(value), &expression.span);
-                }
-                state.emit(Op::Map(cases.len()), &expression.span);
-                state.emit(Op::DefineGlobal(name.clone()), &expression.span);
-                state.emit(Op::GetGlobal(name.clone()), &expression.span);
-            }
-            ExprKind::List(values) => {
-                let mut spreads = Vec::with_capacity(values.len());
-                for value in values {
-                    let value = match value {
-                        ListElement::Value(value) => {
-                            spreads.push(false);
-                            value
-                        }
-                        ListElement::Spread(value) => {
-                            spreads.push(true);
-                            value
-                        }
-                    };
-                    self.expression(state, value)?;
-                }
-                if spreads.iter().any(|spread| *spread) {
-                    state.emit(Op::ListSpread(spreads), &expression.span);
-                } else {
-                    state.emit(Op::List(values.len()), &expression.span);
-                }
-            }
-            ExprKind::Map(entries) => {
-                let mut constant_keys = HashSet::new();
-                for (key, value) in entries {
-                    if let ExprKind::Value(constant) = &key.kind
-                        && let Some(canonical) = ConstantMapKey::new(constant)
-                        && !constant_keys.insert(canonical)
-                    {
-                        return Err(SourceError::semantic(
-                            SourceErrorCode::RepeatedMapKey,
-                            format!("map literal repeats key `{constant}`"),
-                            key.span.clone(),
-                        )
-                        .with_extent(key));
-                    }
-                    self.expression(state, key)?;
-                    self.expression(state, value)?;
-                }
-                state.emit(Op::Map(entries.len()), &expression.span);
-            }
-            ExprKind::StructSchema(fields) => {
-                let mut seen = HashSet::new();
-                for field in fields {
-                    if !seen.insert(field.name.as_str()) {
-                        return Err(SourceError::semantic(
-                            SourceErrorCode::DuplicateName,
-                            format!("duplicate struct field '{}'", field.name),
-                            expression.span.clone(),
-                        )
-                        .with_extent(expression));
-                    }
-                    if let Some(default) = &field.default {
-                        self.expression(state, default)?;
-                    }
-                }
-                state.emit(
-                    Op::StructSchema(
-                        fields
-                            .iter()
-                            .map(|field| SchemaField {
-                                name: field.name.clone(),
-                                has_default: field.default.is_some(),
-                            })
-                            .collect(),
-                    ),
-                    &expression.span,
-                );
-            }
-            ExprKind::StructInit { schema, fields } => {
-                self.expression(state, schema)?;
-                for (_, value) in fields {
-                    self.expression(state, value)?;
-                }
-                state.emit(
-                    Op::Struct(fields.iter().map(|(name, _)| name.clone()).collect()),
-                    &expression.span,
-                );
-            }
-            ExprKind::StructCopy { value, fields } => {
-                self.expression(state, value)?;
-                for (_, replacement) in fields {
-                    self.expression(state, replacement)?;
-                }
-                state.emit(
-                    Op::StructCopy(fields.iter().map(|(name, _)| name.clone()).collect()),
-                    &expression.span,
-                );
-            }
-            ExprKind::Index { collection, index } => {
-                self.expression(state, collection)?;
-                if let ExprKind::Value(key) = &index.kind {
-                    let constant = state.constant(key.clone());
-                    state.emit(Op::GetIndexConstant(constant), &expression.span);
-                } else {
-                    self.expression(state, index)?;
-                    state.emit(Op::GetIndex, &expression.span);
-                }
-            }
-            ExprKind::Slice {
-                collection,
-                start,
-                end,
-                step,
-            } => {
-                self.expression(state, collection)?;
-                if let Some(start) = start {
-                    self.expression(state, start)?;
-                }
-                if let Some(end) = end {
-                    self.expression(state, end)?;
-                }
-                if let Some(step) = step {
-                    self.expression(state, step)?;
-                }
-                state.emit(
-                    Op::GetSlice {
-                        has_start: start.is_some(),
-                        has_end: end.is_some(),
-                        has_step: step.is_some(),
-                    },
-                    &expression.span,
-                );
-            }
-            ExprKind::Block(values) => {
-                state.enter_scope();
-                hoist_functions(state, values);
-                let runtime_scope = values.iter().any(contains_scoped_defer);
-                if runtime_scope {
-                    state.emit(Op::EnterScope, &expression.span);
-                }
-                for (index, value) in values.iter().enumerate() {
-                    self.expression(state, value)?;
-                    if index + 1 < values.len() {
-                        state.emit(Op::Pop, &value.span);
-                    }
-                }
-                if values.is_empty() {
-                    state.emit(Op::Nil, &expression.span);
-                }
-                if runtime_scope {
-                    state.emit(Op::LeaveScope, &expression.span);
-                }
-                state.leave_scope();
-            }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.expression(state, condition)?;
-                let otherwise = state.jump_if_false_pop(&expression.span);
-                self.expression(state, then_branch)?;
-                let end = state.jump(&expression.span);
-                state.patch(otherwise);
-                if let Some(otherwise) = else_branch {
-                    self.expression(state, otherwise)?;
-                } else {
-                    state.emit(Op::Nil, &expression.span);
-                }
-                state.patch(end);
-            }
-            ExprKind::Function {
-                parameters, body, ..
-            } => {
-                for parameter in parameters {
-                    self.tags(state, &parameter.tags, None, &expression.span)?;
-                }
-                let names = plain_parameters(parameters, &expression.span)?;
-                let (mut chunk, captures) = self.function(&names, parameters, body, state)?;
-                if let Some(identity) = self.function_identity(&expression.span) {
-                    chunk.callable_identity = Some(identity);
-                }
-                chunk.parameters = parameters
-                    .iter()
-                    .map(|parameter| ParameterSignature {
-                        name: parameter.name.clone(),
-                        has_default: parameter.default.is_some(),
-                        variadic: parameter.variadic,
-                    })
-                    .collect();
-                let index = self.chunks.len();
-                chunk.name = format!("<fn #{index}>");
-                self.chunks.push(chunk);
-                state.emit(
-                    Op::MakeClosure {
-                        chunk: index,
-                        captures,
-                    },
-                    &expression.span,
-                );
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
     fn tags(
         &mut self,
@@ -1225,30 +1227,32 @@ impl Compiler {
         declaration: Option<usize>,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
-        for (tag_index, tag) in tags.iter().enumerate() {
-            debug_assert!(
-                !tag.name.is_empty(),
-                "the parser only constructs named tags"
-            );
-            for argument in &tag.arguments {
-                self.expression(state, argument)?;
-            }
-            if let Some(declaration) = declaration {
-                state.emit(
-                    Op::RecordModuleTag {
-                        declaration,
-                        tag: tag_index,
-                        arguments: tag.arguments.len(),
-                    },
-                    span,
+        super::stack::grow(|| {
+            for (tag_index, tag) in tags.iter().enumerate() {
+                debug_assert!(
+                    !tag.name.is_empty(),
+                    "the parser only constructs named tags"
                 );
-            } else {
                 for argument in &tag.arguments {
-                    state.emit(Op::Pop, &argument.span);
+                    self.expression(state, argument)?;
+                }
+                if let Some(declaration) = declaration {
+                    state.emit(
+                        Op::RecordModuleTag {
+                            declaration,
+                            tag: tag_index,
+                            arguments: tag.arguments.len(),
+                        },
+                        span,
+                    );
+                } else {
+                    for argument in &tag.arguments {
+                        state.emit(Op::Pop, &argument.span);
+                    }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn module_declaration_index(&self, expression: &Expr) -> usize {
@@ -1273,68 +1277,70 @@ impl Compiler {
         cases: &[MatchCase],
         tail: bool,
     ) -> Result<(), SourceError> {
-        self.expression(state, subject)?;
-        let mut ends = Vec::new();
-        for case in cases {
-            let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
-                SourceError::semantic(
-                    SourceErrorCode::Internal,
-                    "missing resolved match constraints",
-                    case.span.clone(),
-                )
-                .with_end(case.end)
-            })?;
-            let (pattern, names, operands) =
-                lower_case_patterns(&case.patterns, constraints, &case.span)?;
-            state.emit(Op::Duplicate, &case.span);
-            for operand in &operands {
-                self.emit_pattern_operand(state, operand, &case.span)?;
-            }
-            state.emit(
-                Op::TryMatch {
-                    pattern,
-                    bindings: names.len(),
-                    operands: operands.len(),
-                },
-                &case.span,
-            );
-            state.enter_scope();
-            let slots = names
-                .into_iter()
-                .map(|name| state.declare(name, false, false))
-                .collect::<Vec<_>>();
-            let next = state.jump_if_false_pop(&case.span);
-            for slot in slots.iter().rev() {
-                state.emit(Op::SetLocal(*slot), &case.span);
-            }
-            let guard_next = if let Some(guard) = &case.guard {
-                self.guard_expression(state, guard)?;
-                Some(state.jump_if_false_pop(&case.span))
-            } else {
-                None
-            };
-            state.emit(Op::Pop, &case.span);
-            if tail {
-                self.tail_expression(state, &case.value)?;
-            } else {
-                self.expression(state, &case.value)?;
-            }
-            state.leave_scope();
-            ends.push(state.jump(&case.span));
-            state.patch(next);
-            for _ in slots {
+        super::stack::grow(|| {
+            self.expression(state, subject)?;
+            let mut ends = Vec::new();
+            for case in cases {
+                let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
+                    SourceError::semantic(
+                        SourceErrorCode::Internal,
+                        "missing resolved match constraints",
+                        case.span.clone(),
+                    )
+                    .with_end(case.end)
+                })?;
+                let (pattern, names, operands) =
+                    lower_case_patterns(&case.patterns, constraints, &case.span)?;
+                state.emit(Op::Duplicate, &case.span);
+                for operand in &operands {
+                    self.emit_pattern_operand(state, operand, &case.span)?;
+                }
+                state.emit(
+                    Op::TryMatch {
+                        pattern,
+                        bindings: names.len(),
+                        operands: operands.len(),
+                    },
+                    &case.span,
+                );
+                state.enter_scope();
+                let slots = names
+                    .into_iter()
+                    .map(|name| state.declare(name, false, false))
+                    .collect::<Vec<_>>();
+                let next = state.jump_if_false_pop(&case.span);
+                for slot in slots.iter().rev() {
+                    state.emit(Op::SetLocal(*slot), &case.span);
+                }
+                let guard_next = if let Some(guard) = &case.guard {
+                    self.guard_expression(state, guard)?;
+                    Some(state.jump_if_false_pop(&case.span))
+                } else {
+                    None
+                };
                 state.emit(Op::Pop, &case.span);
+                if tail {
+                    self.tail_expression(state, &case.value)?;
+                } else {
+                    self.expression(state, &case.value)?;
+                }
+                state.leave_scope();
+                ends.push(state.jump(&case.span));
+                state.patch(next);
+                for _ in slots {
+                    state.emit(Op::Pop, &case.span);
+                }
+                if let Some(guard_next) = guard_next {
+                    state.patch(guard_next);
+                }
             }
-            if let Some(guard_next) = guard_next {
-                state.patch(guard_next);
+            state.emit(Op::Pop, &subject.span);
+            state.emit(Op::Nil, &subject.span);
+            for end in ends {
+                state.patch(end);
             }
-        }
-        state.emit(Op::Pop, &subject.span);
-        state.emit(Op::Nil, &subject.span);
-        for end in ends {
-            state.patch(end);
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn guard_expression(
@@ -1342,10 +1348,12 @@ impl Compiler {
         state: &mut State,
         expression: &Expr,
     ) -> Result<(), SourceError> {
-        let previous = std::mem::replace(&mut self.guard_comparisons, true);
-        let result = self.expression(state, expression);
-        self.guard_comparisons = previous;
-        result
+        super::stack::grow(|| {
+            let previous = std::mem::replace(&mut self.guard_comparisons, true);
+            let result = self.expression(state, expression);
+            self.guard_comparisons = previous;
+            result
+        })
     }
 
     fn greater_op(&self, left: &Expr, right: &Expr) -> Op {
@@ -1373,44 +1381,46 @@ impl Compiler {
         state: &mut State,
         expression: &Expr,
     ) -> Result<(), SourceError> {
-        if let ExprKind::Call { callee, arguments } = &expression.kind {
-            self.expression(state, callee)?;
-            let mut kinds = Vec::with_capacity(arguments.len());
-            for argument in arguments {
-                let argument = match argument {
-                    CallArgument::Positional(argument) => {
-                        kinds.push(CallArgumentKind::Positional);
-                        argument
-                    }
-                    CallArgument::Named { name, value } => {
-                        kinds.push(CallArgumentKind::Named(name.clone()));
-                        value
-                    }
-                    CallArgument::Spread(argument) => {
-                        kinds.push(CallArgumentKind::Spread);
-                        argument
-                    }
+        super::stack::grow(|| {
+            if let ExprKind::Call { callee, arguments } = &expression.kind {
+                self.expression(state, callee)?;
+                let mut kinds = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let argument = match argument {
+                        CallArgument::Positional(argument) => {
+                            kinds.push(CallArgumentKind::Positional);
+                            argument
+                        }
+                        CallArgument::Named { name, value } => {
+                            kinds.push(CallArgumentKind::Named(name.clone()));
+                            value
+                        }
+                        CallArgument::Spread(argument) => {
+                            kinds.push(CallArgumentKind::Spread);
+                            argument
+                        }
+                    };
+                    self.expression(state, argument)?;
+                }
+                let op = if let Some(identity) = self.selected_identity(&expression.span) {
+                    Op::PipelineCallSelected { kinds, identity }
+                } else {
+                    Op::PipelineCall(kinds)
                 };
-                self.expression(state, argument)?;
-            }
-            let op = if let Some(identity) = self.selected_identity(&expression.span) {
-                Op::PipelineCallSelected { kinds, identity }
+                state.emit(op, &expression.span);
             } else {
-                Op::PipelineCall(kinds)
-            };
-            state.emit(op, &expression.span);
-        } else {
-            self.expression(state, expression)?;
-            let op = self.selected_identity(&expression.span).map_or_else(
-                || Op::PipelineCall(Vec::new()),
-                |identity| Op::PipelineCallSelected {
-                    kinds: Vec::new(),
-                    identity,
-                },
-            );
-            state.emit(op, &expression.span);
-        }
-        Ok(())
+                self.expression(state, expression)?;
+                let op = self.selected_identity(&expression.span).map_or_else(
+                    || Op::PipelineCall(Vec::new()),
+                    |identity| Op::PipelineCallSelected {
+                        kinds: Vec::new(),
+                        identity,
+                    },
+                );
+                state.emit(op, &expression.span);
+            }
+            Ok(())
+        })
     }
 
     fn numeric_operands(&self, left: &Expr, right: &Expr) -> bool {
@@ -1488,167 +1498,171 @@ impl Compiler {
         callable: bool,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
-        if matches!(pattern, Pattern::MapAll) {
-            if !state.is_root() {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::TopLevelOnly,
-                    "{*} declarations are only valid at top level",
-                    span.clone(),
-                ));
+        super::stack::grow(|| {
+            if matches!(pattern, Pattern::MapAll) {
+                if !state.is_root() {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::TopLevelOnly,
+                        "{*} declarations are only valid at top level",
+                        span.clone(),
+                    ));
+                }
+                state.emit(Op::DefineMapGlobals, span);
+                return Ok(());
             }
-            state.emit(Op::DefineMapGlobals, span);
-            return Ok(());
-        }
-        let names = pattern_bindings(pattern, span)?;
-        let mut operands = Vec::new();
-        let pattern = lower_pattern(pattern, &mut operands);
-        for operand in &operands {
-            self.emit_pattern_operand(state, operand, span)?;
-        }
-        state.emit(
-            Op::TryMatch {
-                pattern,
-                bindings: names.len(),
-                operands: operands.len(),
-            },
-            span,
-        );
-        let failed = state.jump_if_false_pop(span);
-        let bindings = names
-            .into_iter()
-            .map(|name| {
-                let binding = if state.is_root() {
-                    Binding::Global { mutable }
-                } else {
-                    Binding::Local {
-                        slot: state.declare(name.clone(), mutable, callable),
-                        mutable,
-                    }
-                };
-                (name, binding)
-            })
-            .collect::<Vec<_>>();
-        for (name, binding) in bindings.iter().rev() {
-            match binding {
-                Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
-                Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
-                Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
-                Binding::Inherited { .. } => unreachable!("new bindings cannot be inherited"),
+            let names = pattern_bindings(pattern, span)?;
+            let mut operands = Vec::new();
+            let pattern = lower_pattern(pattern, &mut operands);
+            for operand in &operands {
+                self.emit_pattern_operand(state, operand, span)?;
             }
-        }
-        let end = state.jump(span);
-        state.patch(failed);
-        for _ in &bindings {
-            state.emit(Op::Pop, span);
-        }
-        state.emit(Op::MatchFailure, span);
-        state.patch(end);
-        Ok(())
+            state.emit(
+                Op::TryMatch {
+                    pattern,
+                    bindings: names.len(),
+                    operands: operands.len(),
+                },
+                span,
+            );
+            let failed = state.jump_if_false_pop(span);
+            let bindings = names
+                .into_iter()
+                .map(|name| {
+                    let binding = if state.is_root() {
+                        Binding::Global { mutable }
+                    } else {
+                        Binding::Local {
+                            slot: state.declare(name.clone(), mutable, callable),
+                            mutable,
+                        }
+                    };
+                    (name, binding)
+                })
+                .collect::<Vec<_>>();
+            for (name, binding) in bindings.iter().rev() {
+                match binding {
+                    Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
+                    Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
+                    Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
+                    Binding::Inherited { .. } => unreachable!("new bindings cannot be inherited"),
+                }
+            }
+            let end = state.jump(span);
+            state.patch(failed);
+            for _ in &bindings {
+                state.emit(Op::Pop, span);
+            }
+            state.emit(Op::MatchFailure, span);
+            state.patch(end);
+            Ok(())
+        })
     }
     #[allow(clippy::too_many_lines)]
     fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
-        match &expression.kind {
-            ExprKind::Recur(arguments) => {
-                if !state.allows_return() {
-                    return Err(SourceError::semantic(
-                        SourceErrorCode::InvalidControlFlow,
-                        "recur is only valid inside a function",
-                        expression.span.clone(),
-                    )
-                    .with_extent(expression));
-                }
-                let positional = arguments
-                    .iter()
-                    .all(|argument| matches!(argument, CallArgument::Positional(_)));
-                let mut kinds = (!positional).then(|| Vec::with_capacity(arguments.len()));
-                for argument in arguments {
-                    let argument = match argument {
-                        CallArgument::Positional(argument) => {
-                            if let Some(kinds) = &mut kinds {
-                                kinds.push(CallArgumentKind::Positional);
-                            }
-                            argument
-                        }
-                        CallArgument::Named { name, value } => {
-                            kinds
-                                .as_mut()
-                                .expect("non-positional recur needs argument metadata")
-                                .push(CallArgumentKind::Named(name.clone()));
-                            value
-                        }
-                        CallArgument::Spread(argument) => {
-                            kinds
-                                .as_mut()
-                                .expect("non-positional recur needs argument metadata")
-                                .push(CallArgumentKind::Spread);
-                            argument
-                        }
-                    };
-                    self.expression(state, argument)?;
-                }
-                state.emit(
-                    if positional {
-                        Op::RecurPositional(arguments.len())
-                    } else {
-                        Op::Recur(kinds.expect("non-positional recur collected metadata"))
-                    },
-                    &expression.span,
-                );
-            }
-            ExprKind::Block(values) => {
-                state.enter_scope();
-                hoist_functions(state, values);
-                let runtime_scope = values.iter().any(contains_scoped_defer);
-                if runtime_scope {
-                    state.emit(Op::EnterScope, &expression.span);
-                }
-                for (index, value) in values.iter().enumerate() {
-                    if index + 1 == values.len() {
-                        self.tail_expression(state, value)?;
-                    } else {
-                        self.expression(state, value)?;
-                        state.emit(Op::Pop, &value.span);
+        super::stack::grow(|| {
+            match &expression.kind {
+                ExprKind::Recur(arguments) => {
+                    if !state.allows_return() {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::InvalidControlFlow,
+                            "recur is only valid inside a function",
+                            expression.span.clone(),
+                        )
+                        .with_extent(expression));
                     }
+                    let positional = arguments
+                        .iter()
+                        .all(|argument| matches!(argument, CallArgument::Positional(_)));
+                    let mut kinds = (!positional).then(|| Vec::with_capacity(arguments.len()));
+                    for argument in arguments {
+                        let argument = match argument {
+                            CallArgument::Positional(argument) => {
+                                if let Some(kinds) = &mut kinds {
+                                    kinds.push(CallArgumentKind::Positional);
+                                }
+                                argument
+                            }
+                            CallArgument::Named { name, value } => {
+                                kinds
+                                    .as_mut()
+                                    .expect("non-positional recur needs argument metadata")
+                                    .push(CallArgumentKind::Named(name.clone()));
+                                value
+                            }
+                            CallArgument::Spread(argument) => {
+                                kinds
+                                    .as_mut()
+                                    .expect("non-positional recur needs argument metadata")
+                                    .push(CallArgumentKind::Spread);
+                                argument
+                            }
+                        };
+                        self.expression(state, argument)?;
+                    }
+                    state.emit(
+                        if positional {
+                            Op::RecurPositional(arguments.len())
+                        } else {
+                            Op::Recur(kinds.expect("non-positional recur collected metadata"))
+                        },
+                        &expression.span,
+                    );
                 }
-                if values.is_empty() {
-                    state.emit(Op::Nil, &expression.span);
+                ExprKind::Block(values) => {
+                    state.enter_scope();
+                    hoist_functions(state, values);
+                    let runtime_scope = values.iter().any(contains_scoped_defer);
+                    if runtime_scope {
+                        state.emit(Op::EnterScope, &expression.span);
+                    }
+                    for (index, value) in values.iter().enumerate() {
+                        if index + 1 == values.len() {
+                            self.tail_expression(state, value)?;
+                        } else {
+                            self.expression(state, value)?;
+                            state.emit(Op::Pop, &value.span);
+                        }
+                    }
+                    if values.is_empty() {
+                        state.emit(Op::Nil, &expression.span);
+                    }
+                    if runtime_scope {
+                        state.emit(Op::LeaveScope, &expression.span);
+                    }
+                    state.leave_scope();
                 }
-                if runtime_scope {
-                    state.emit(Op::LeaveScope, &expression.span);
+                ExprKind::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.expression(state, condition)?;
+                    let otherwise = state.jump_if_false_pop(&expression.span);
+                    self.tail_expression(state, then_branch)?;
+                    let end = state.jump(&expression.span);
+                    state.patch(otherwise);
+                    if let Some(otherwise) = else_branch {
+                        self.tail_expression(state, otherwise)?;
+                    } else {
+                        state.emit(Op::Nil, &expression.span);
+                    }
+                    state.patch(end);
                 }
-                state.leave_scope();
+                ExprKind::Match { subject, cases } => {
+                    let subject = subject.as_deref().ok_or_else(|| {
+                        SourceError::semantic(
+                            SourceErrorCode::InvalidMatch,
+                            "match requires a subject or pipeline input",
+                            expression.span.clone(),
+                        )
+                        .with_extent(expression)
+                    })?;
+                    self.compile_match(state, subject, cases, true)?;
+                }
+                _ => self.expression(state, expression)?,
             }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.expression(state, condition)?;
-                let otherwise = state.jump_if_false_pop(&expression.span);
-                self.tail_expression(state, then_branch)?;
-                let end = state.jump(&expression.span);
-                state.patch(otherwise);
-                if let Some(otherwise) = else_branch {
-                    self.tail_expression(state, otherwise)?;
-                } else {
-                    state.emit(Op::Nil, &expression.span);
-                }
-                state.patch(end);
-            }
-            ExprKind::Match { subject, cases } => {
-                let subject = subject.as_deref().ok_or_else(|| {
-                    SourceError::semantic(
-                        SourceErrorCode::InvalidMatch,
-                        "match requires a subject or pipeline input",
-                        expression.span.clone(),
-                    )
-                    .with_extent(expression)
-                })?;
-                self.compile_match(state, subject, cases, true)?;
-            }
-            _ => self.expression(state, expression)?,
-        }
-        Ok(())
+            Ok(())
+        })
     }
     fn function(
         &mut self,
@@ -1657,39 +1671,43 @@ impl Compiler {
         body: &Expr,
         parent: &mut State,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
-        let mut state = State::function(parameters, parent.visible());
-        state.inherit_later(parent);
-        for (slot, parameter) in parameter_metadata.iter().enumerate() {
-            if let Some(default) = &parameter.default {
-                let end = state.jump_if_provided(slot, &default.span);
-                self.expression(&mut state, default)?;
-                state.emit(Op::SetLocal(slot), &default.span);
-                state.patch(end);
+        super::stack::grow(|| {
+            let mut state = State::function(parameters, parent.visible());
+            state.inherit_later(parent);
+            for (slot, parameter) in parameter_metadata.iter().enumerate() {
+                if let Some(default) = &parameter.default {
+                    let end = state.jump_if_provided(slot, &default.span);
+                    self.expression(&mut state, default)?;
+                    state.emit(Op::SetLocal(slot), &default.span);
+                    state.patch(end);
+                }
             }
-        }
-        self.tail_function_body(&mut state, body)?;
-        state.emit(Op::Return, &body.span);
-        let captures = parent.resolve_child_captures(state.captures());
-        Ok((state.finish("<fn>", parameters.len()), captures))
+            self.tail_function_body(&mut state, body)?;
+            state.emit(Op::Return, &body.span);
+            let captures = parent.resolve_child_captures(state.captures());
+            Ok((state.finish("<fn>", parameters.len()), captures))
+        })
     }
 
     fn tail_function_body(&mut self, state: &mut State, body: &Expr) -> Result<(), SourceError> {
-        let ExprKind::Block(values) = &body.kind else {
-            return self.tail_expression(state, body);
-        };
-        hoist_functions(state, values);
-        for (index, value) in values.iter().enumerate() {
-            if index + 1 == values.len() {
-                self.tail_expression(state, value)?;
-            } else {
-                self.expression(state, value)?;
-                state.emit(Op::Pop, &value.span);
+        super::stack::grow(|| {
+            let ExprKind::Block(values) = &body.kind else {
+                return self.tail_expression(state, body);
+            };
+            hoist_functions(state, values);
+            for (index, value) in values.iter().enumerate() {
+                if index + 1 == values.len() {
+                    self.tail_expression(state, value)?;
+                } else {
+                    self.expression(state, value)?;
+                    state.emit(Op::Pop, &value.span);
+                }
             }
-        }
-        if values.is_empty() {
-            state.emit(Op::Nil, &body.span);
-        }
-        Ok(())
+            if values.is_empty() {
+                state.emit(Op::Nil, &body.span);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1745,7 +1763,7 @@ enum PatternOperand {
 }
 
 fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> MatchPattern {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
         Pattern::Wildcard => MatchPattern::Wildcard,
         Pattern::Binding(_) => MatchPattern::Binding,
@@ -1786,34 +1804,34 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
         },
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
         Pattern::EnumCase { path, case } => {
-            let mut value = Expr {
-                end: SourcePosition { line: 1, column: 1 },
-                kind: ExprKind::Name(path.split('.').next().expect("enum path has a name").into()),
-                span: SourceSpan::new("<internal>", 1, 1),
-            };
+            let mut value = Expr::new(
+                ExprKind::Name(path.split('.').next().expect("enum path has a name").into()),
+                SourceSpan::new("<internal>", 1, 1),
+                SourcePosition { line: 1, column: 1 },
+            );
             for member in path
                 .split('.')
                 .skip(1)
                 .chain(std::iter::once(case.as_str()))
             {
-                value = Expr {
-                    end: SourcePosition { line: 1, column: 1 },
-                    kind: ExprKind::Index {
+                value = Expr::new(
+                    ExprKind::Index {
                         collection: Box::new(value),
-                        index: Box::new(Expr {
-                            end: SourcePosition { line: 1, column: 1 },
-                            kind: ExprKind::Value(Value::string(member)),
-                            span: SourceSpan::new("<internal>", 1, 1),
-                        }),
+                        index: Box::new(Expr::new(
+                            ExprKind::Value(Value::string(member)),
+                            SourceSpan::new("<internal>", 1, 1),
+                            SourcePosition { line: 1, column: 1 },
+                        )),
                     },
-                    span: SourceSpan::new("<internal>", 1, 1),
-                };
+                    SourceSpan::new("<internal>", 1, 1),
+                    SourcePosition { line: 1, column: 1 },
+                );
             }
             let index = operands.len();
             operands.push(PatternOperand::Computed(value));
             MatchPattern::Enum(index)
         }
-    }
+    })
 }
 
 fn lower_case_patterns(
@@ -1953,7 +1971,7 @@ fn lower_match_type(
 
 fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>, SourceError> {
     fn collect(pattern: &Pattern, names: &mut Vec<String>) {
-        match pattern {
+        super::stack::grow(|| match pattern {
             Pattern::Binding(name) => names.push(name.clone()),
             Pattern::At { name, pattern } => {
                 names.push(name.clone());
@@ -1980,7 +1998,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
             | Pattern::Wildcard
             | Pattern::Pinned(_)
             | Pattern::EnumCase { .. } => {}
-        }
+        });
     }
 
     let mut names = Vec::new();
@@ -2103,126 +2121,130 @@ impl<'a> ConstantMapKey<'a> {
 /// and functions run in their own frames; every other expression is searched.
 #[allow(clippy::too_many_lines, reason = "one arm per expression kind")]
 fn contains_scoped_defer(expression: &Expr) -> bool {
-    let arguments = |arguments: &[CallArgument]| {
-        arguments.iter().any(|argument| match argument {
-            CallArgument::Positional(value)
-            | CallArgument::Named { value, .. }
-            | CallArgument::Spread(value) => contains_scoped_defer(value),
-        })
-    };
-    match &expression.kind {
-        ExprKind::Defer { .. } => true,
-        // A nested block decides for itself; a function runs in its own frame.
-        ExprKind::Block(_)
-        | ExprKind::Function { .. }
-        | ExprKind::Value(_)
-        | ExprKind::Interpolate(_)
-        | ExprKind::Documentation(_)
-        | ExprKind::NotImplemented
-        | ExprKind::Name(_)
-        | ExprKind::Foreign { .. }
-        | ExprKind::Resource { .. }
-        | ExprKind::Enum { .. }
-        | ExprKind::TypeAlias { .. } => false,
-        ExprKind::Declare {
-            pattern,
-            tags,
-            value,
-            ..
-        } => {
-            pattern_contains_scoped_defer(pattern)
-                || tags
-                    .iter()
-                    .any(|tag| tag.arguments.iter().any(contains_scoped_defer))
-                || contains_scoped_defer(value)
-        }
-        ExprKind::Assign { value, .. }
-        | ExprKind::Return { value }
-        | ExprKind::Throw { value }
-        | ExprKind::Spawn(value)
-        | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
-        ExprKind::Recur(values) => arguments(values),
-        ExprKind::Nursery { limit, body } => {
-            limit.as_deref().is_some_and(contains_scoped_defer) || contains_scoped_defer(body)
-        }
-        ExprKind::Select(cases) => cases.iter().any(|case| {
-            let operand = match &case.kind {
-                SelectCaseKind::Receive(value)
-                | SelectCaseKind::After(value)
-                | SelectCaseKind::Await(value) => contains_scoped_defer(value),
-                SelectCaseKind::Send { channel, value } => {
-                    contains_scoped_defer(channel) || contains_scoped_defer(value)
-                }
-                SelectCaseKind::Default => false,
-            };
-            operand || case.handler.as_ref().is_some_and(contains_scoped_defer)
-        }),
-        ExprKind::Match { subject, cases } => {
-            subject.as_deref().is_some_and(contains_scoped_defer)
-                || cases.iter().any(|case| {
-                    case.patterns
+    super::stack::grow(|| {
+        let arguments = |arguments: &[CallArgument]| {
+            arguments.iter().any(|argument| match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Named { value, .. }
+                | CallArgument::Spread(value) => contains_scoped_defer(value),
+            })
+        };
+        match &expression.kind {
+            ExprKind::Defer { .. } => true,
+            // A nested block decides for itself; a function runs in its own frame.
+            ExprKind::Block(_)
+            | ExprKind::Function { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_)
+            | ExprKind::Foreign { .. }
+            | ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. } => false,
+            ExprKind::Declare {
+                pattern,
+                tags,
+                value,
+                ..
+            } => {
+                pattern_contains_scoped_defer(pattern)
+                    || tags
                         .iter()
-                        .any(|pattern| pattern_contains_scoped_defer(&pattern.pattern))
-                        || case.guard.as_ref().is_some_and(contains_scoped_defer)
-                        || contains_scoped_defer(&case.value)
-                })
+                        .any(|tag| tag.arguments.iter().any(contains_scoped_defer))
+                    || contains_scoped_defer(value)
+            }
+            ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Spawn(value)
+            | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
+            ExprKind::Recur(values) => arguments(values),
+            ExprKind::Nursery { limit, body } => {
+                limit.as_deref().is_some_and(contains_scoped_defer) || contains_scoped_defer(body)
+            }
+            ExprKind::Select(cases) => cases.iter().any(|case| {
+                let operand = match &case.kind {
+                    SelectCaseKind::Receive(value)
+                    | SelectCaseKind::After(value)
+                    | SelectCaseKind::Await(value) => contains_scoped_defer(value),
+                    SelectCaseKind::Send { channel, value } => {
+                        contains_scoped_defer(channel) || contains_scoped_defer(value)
+                    }
+                    SelectCaseKind::Default => false,
+                };
+                operand || case.handler.as_ref().is_some_and(contains_scoped_defer)
+            }),
+            ExprKind::Match { subject, cases } => {
+                subject.as_deref().is_some_and(contains_scoped_defer)
+                    || cases.iter().any(|case| {
+                        case.patterns
+                            .iter()
+                            .any(|pattern| pattern_contains_scoped_defer(&pattern.pattern))
+                            || case.guard.as_ref().is_some_and(contains_scoped_defer)
+                            || contains_scoped_defer(&case.value)
+                    })
+            }
+            ExprKind::Binary { left, right, .. } => {
+                contains_scoped_defer(left) || contains_scoped_defer(right)
+            }
+            ExprKind::Call {
+                callee,
+                arguments: values,
+            } => contains_scoped_defer(callee) || arguments(values),
+            ExprKind::TypeApply { callee, .. } => contains_scoped_defer(callee),
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                contains_scoped_defer(condition)
+                    || contains_scoped_defer(then_branch)
+                    || else_branch.as_deref().is_some_and(contains_scoped_defer)
+            }
+            ExprKind::List(values) => values.iter().any(|value| match value {
+                ListElement::Value(value) | ListElement::Spread(value) => {
+                    contains_scoped_defer(value)
+                }
+            }),
+            ExprKind::Map(entries) => entries
+                .iter()
+                .any(|(key, value)| contains_scoped_defer(key) || contains_scoped_defer(value)),
+            ExprKind::StructSchema(fields) => fields
+                .iter()
+                .filter_map(|field| field.default.as_ref())
+                .any(contains_scoped_defer),
+            ExprKind::StructInit { schema, fields } => {
+                contains_scoped_defer(schema)
+                    || fields.iter().any(|(_, value)| contains_scoped_defer(value))
+            }
+            ExprKind::StructCopy { value, fields } => {
+                contains_scoped_defer(value)
+                    || fields
+                        .iter()
+                        .any(|(_, replacement)| contains_scoped_defer(replacement))
+            }
+            ExprKind::Index { collection, index } => {
+                contains_scoped_defer(collection) || contains_scoped_defer(index)
+            }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                contains_scoped_defer(collection)
+                    || [start, end, step]
+                        .into_iter()
+                        .any(|bound| bound.as_deref().is_some_and(contains_scoped_defer))
+            }
         }
-        ExprKind::Binary { left, right, .. } => {
-            contains_scoped_defer(left) || contains_scoped_defer(right)
-        }
-        ExprKind::Call {
-            callee,
-            arguments: values,
-        } => contains_scoped_defer(callee) || arguments(values),
-        ExprKind::TypeApply { callee, .. } => contains_scoped_defer(callee),
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            contains_scoped_defer(condition)
-                || contains_scoped_defer(then_branch)
-                || else_branch.as_deref().is_some_and(contains_scoped_defer)
-        }
-        ExprKind::List(values) => values.iter().any(|value| match value {
-            ListElement::Value(value) | ListElement::Spread(value) => contains_scoped_defer(value),
-        }),
-        ExprKind::Map(entries) => entries
-            .iter()
-            .any(|(key, value)| contains_scoped_defer(key) || contains_scoped_defer(value)),
-        ExprKind::StructSchema(fields) => fields
-            .iter()
-            .filter_map(|field| field.default.as_ref())
-            .any(contains_scoped_defer),
-        ExprKind::StructInit { schema, fields } => {
-            contains_scoped_defer(schema)
-                || fields.iter().any(|(_, value)| contains_scoped_defer(value))
-        }
-        ExprKind::StructCopy { value, fields } => {
-            contains_scoped_defer(value)
-                || fields
-                    .iter()
-                    .any(|(_, replacement)| contains_scoped_defer(replacement))
-        }
-        ExprKind::Index { collection, index } => {
-            contains_scoped_defer(collection) || contains_scoped_defer(index)
-        }
-        ExprKind::Slice {
-            collection,
-            start,
-            end,
-            step,
-        } => {
-            contains_scoped_defer(collection)
-                || [start, end, step]
-                    .into_iter()
-                    .any(|bound| bound.as_deref().is_some_and(contains_scoped_defer))
-        }
-    }
+    })
 }
 
 fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Literal(_)
         | Pattern::Wildcard
         | Pattern::Binding(_)
@@ -2235,5 +2257,5 @@ fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
             matches!(key, MapPatternKey::Computed(key) if contains_scoped_defer(key))
                 || pattern_contains_scoped_defer(pattern)
         }),
-    }
+    })
 }

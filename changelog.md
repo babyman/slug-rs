@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Deeply nested source no longer crashes the compiler. A sum of about 1,050
+  terms, a long `??` or `else if` chain, deeply nested `spawn`s, or a deep
+  `list<list<...>>` annotation overflowed the stack, and a debug build
+  overflowed a 2 MiB thread at 21 nested calls. Compiler passes now grow
+  their stack as they recurse, on any thread. Expressions may be 4,096
+  levels deep, and type annotations and brace-less `spawn` now count toward
+  the 256-level nesting limit; deeper source is a `nesting_limit_exceeded`
+  error.
+
 - Decoding a hostile `.cslug` artifact no longer aborts or runs for a long
   time. A chunk's arity and local count are bounded like other table counts,
   so a 193-byte artifact with an enormous local count no longer crashes

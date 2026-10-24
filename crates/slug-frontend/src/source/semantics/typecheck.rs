@@ -335,26 +335,28 @@ impl ParameterConstraints {
         environment: &Environment,
         shadowed: &HashSet<String>,
     ) -> Result<(), SourceError> {
-        let mut result = Ok(());
-        expression.for_each_child(|child| {
-            if result.is_err() {
-                return;
-            }
-            result = match &child.kind {
-                ExprKind::Function {
-                    parameters, body, ..
-                } => {
-                    let mut shadowed = shadowed.clone();
-                    shadowed.extend(parameters.iter().map(|parameter| parameter.name.clone()));
-                    self.narrow_from_nested_function(body, environment, &shadowed)
-                        .and_then(|()| {
-                            self.narrow_from_nested_functions(body, environment, &shadowed)
-                        })
+        super::stack::grow(|| {
+            let mut result = Ok(());
+            expression.for_each_child(|child| {
+                if result.is_err() {
+                    return;
                 }
-                _ => self.narrow_from_nested_functions(child, environment, shadowed),
-            };
-        });
-        result
+                result = match &child.kind {
+                    ExprKind::Function {
+                        parameters, body, ..
+                    } => {
+                        let mut shadowed = shadowed.clone();
+                        shadowed.extend(parameters.iter().map(|parameter| parameter.name.clone()));
+                        self.narrow_from_nested_function(body, environment, &shadowed)
+                            .and_then(|()| {
+                                self.narrow_from_nested_functions(body, environment, &shadowed)
+                            })
+                    }
+                    _ => self.narrow_from_nested_functions(child, environment, shadowed),
+                };
+            });
+            result
+        })
     }
 
     fn narrow_from_nested_function(
@@ -409,258 +411,265 @@ impl ParameterConstraints {
 
     #[allow(clippy::too_many_lines)]
     fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
-        match &expression.kind {
-            ExprKind::Binary {
-                left,
-                operator: Binary::Add,
-                right,
-            } => {
-                self.collect_plus_operands(left, right, &expression.span);
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Binary {
-                left,
-                operator: Binary::Subtract,
-                right,
-            } => {
-                self.collect_subtract_operands(left, right, &expression.span);
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Binary {
-                left,
-                operator: Binary::Multiply,
-                right,
-            } => {
-                self.collect_multiply_operands(left, right, &expression.span);
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Binary {
-                left,
-                operator: Binary::Divide | Binary::Modulo,
-                right,
-            } => {
-                self.require(left, Type::Num)?;
-                self.require(right, Type::Num)?;
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Binary {
-                left,
-                operator: Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual,
-                right,
-            } => {
-                // Ordering accepts two numbers or two strings, so only a
-                // literal on the other side decides which one a parameter is.
-                if let Some(family) = literal_family(right) {
-                    self.require(left, family)?;
+        super::stack::grow(|| {
+            match &expression.kind {
+                ExprKind::Binary {
+                    left,
+                    operator: Binary::Add,
+                    right,
+                } => {
+                    self.collect_plus_operands(left, right, &expression.span);
+                    self.collect(left)?;
+                    self.collect(right)
                 }
-                if let Some(family) = literal_family(left) {
-                    self.require(right, family)?;
+                ExprKind::Binary {
+                    left,
+                    operator: Binary::Subtract,
+                    right,
+                } => {
+                    self.collect_subtract_operands(left, right, &expression.span);
+                    self.collect(left)?;
+                    self.collect(right)
                 }
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Prefix { operators, value } => {
-                if operators
-                    .iter()
-                    .any(|(operator, _)| matches!(operator, Prefix::Negate))
-                {
-                    self.require(value, Type::Num)?;
+                ExprKind::Binary {
+                    left,
+                    operator: Binary::Multiply,
+                    right,
+                } => {
+                    self.collect_multiply_operands(left, right, &expression.span);
+                    self.collect(left)?;
+                    self.collect(right)
                 }
-                self.collect(value)
-            }
-            ExprKind::Binary {
-                left,
-                operator: operator @ (Binary::And | Binary::Or | Binary::Coalesce),
-                right,
-            } => {
-                self.collect(left)?;
-                let mut skipped = self.untaken();
-                let mut evaluated = self.path(|constraints| constraints.collect(right))?;
-                assume_short_circuit(*operator, left, &mut skipped, &mut evaluated);
-                self.join(vec![skipped, evaluated]);
-                Ok(())
-            }
-            ExprKind::Binary { left, right, .. } => {
-                self.collect(left)?;
-                self.collect(right)
-            }
-            ExprKind::Declare {
-                pattern,
-                tags,
-                value,
-                ..
-            } => {
-                self.collect_pattern(pattern)?;
-                self.collect_tags(tags)?;
-                self.collect(value)
-            }
-            ExprKind::Return { value } => {
-                self.returns = true;
-                self.collect(value)?;
-                if self.reachable {
-                    self.exits.push(self.requirements.clone());
+                ExprKind::Binary {
+                    left,
+                    operator: Binary::Divide | Binary::Modulo,
+                    right,
+                } => {
+                    self.require(left, Type::Num)?;
+                    self.require(right, Type::Num)?;
+                    self.collect(left)?;
+                    self.collect(right)
                 }
-                self.reachable = false;
-                Ok(())
-            }
-            ExprKind::Throw { value } => {
-                self.collect(value)?;
-                self.reachable = false;
-                Ok(())
-            }
-            ExprKind::Assign { value, .. }
-            | ExprKind::Defer { value, .. }
-            | ExprKind::Spawn(value)
-            | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
-            ExprKind::Recur(arguments) => self.collect_arguments(arguments),
-            ExprKind::Nursery { limit, body } => {
-                if let Some(limit) = limit {
-                    self.collect(limit)?;
-                }
-                self.collect(body)
-            }
-            ExprKind::Select(cases) => {
-                for case in cases {
-                    match &case.kind {
-                        SelectCaseKind::Receive(value)
-                        | SelectCaseKind::After(value)
-                        | SelectCaseKind::Await(value) => self.collect(value)?,
-                        SelectCaseKind::Send { channel, value } => {
-                            self.collect(channel)?;
-                            self.collect(value)?;
-                        }
-                        SelectCaseKind::Default => {}
+                ExprKind::Binary {
+                    left,
+                    operator:
+                        Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual,
+                    right,
+                } => {
+                    // Ordering accepts two numbers or two strings, so only a
+                    // literal on the other side decides which one a parameter is.
+                    if let Some(family) = literal_family(right) {
+                        self.require(left, family)?;
                     }
-                }
-                let mut paths = Vec::new();
-                for case in cases {
-                    paths.push(self.path(|constraints| {
-                        case.handler
-                            .as_ref()
-                            .map_or(Ok(()), |handler| constraints.collect(handler))
-                    })?);
-                }
-                self.join(paths);
-                Ok(())
-            }
-            ExprKind::Match { subject, cases } => {
-                if let Some(subject) = subject {
-                    self.collect(subject)?;
-                }
-                let mut paths = Vec::new();
-                for case in cases {
-                    let mut path = self.path(|constraints| {
-                        for pattern in &case.patterns {
-                            constraints.collect_pattern(&pattern.pattern)?;
-                        }
-                        if let Some(guard) = &case.guard {
-                            constraints.collect(guard)?;
-                        }
-                        constraints.collect(&case.value)
-                    })?;
-                    assume_match_case(&mut path, case);
-                    paths.push(path);
-                }
-                self.join(paths);
-                Ok(())
-            }
-            ExprKind::Call { callee, arguments } => {
-                self.collect(callee)?;
-                self.collect_arguments(arguments)
-            }
-            ExprKind::Block(values) => {
-                for value in values {
-                    self.collect(value)?;
-                }
-                Ok(())
-            }
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.collect_nil_guard_partition(condition, then_branch, else_branch.as_deref());
-                self.collect(condition)?;
-                let mut then = self.path(|constraints| constraints.collect(then_branch))?;
-                let mut otherwise = self.path(|constraints| {
-                    else_branch
-                        .as_deref()
-                        .map_or(Ok(()), |else_branch| constraints.collect(else_branch))
-                })?;
-                cover_nil_path(condition, &mut then, &mut otherwise);
-                assume(&mut then, condition, true);
-                assume(&mut otherwise, condition, false);
-                self.join(vec![then, otherwise]);
-                Ok(())
-            }
-            ExprKind::List(values) => {
-                for value in values {
-                    self.collect(match value {
-                        ListElement::Value(value) | ListElement::Spread(value) => value,
-                    })?;
-                }
-                Ok(())
-            }
-            ExprKind::Map(entries) => {
-                for (key, value) in entries {
-                    self.collect(key)?;
-                    self.collect(value)?;
-                }
-                Ok(())
-            }
-            ExprKind::StructSchema(fields) => {
-                for field in fields {
-                    if let Some(default) = &field.default {
-                        self.collect(default)?;
+                    if let Some(family) = literal_family(left) {
+                        self.require(right, family)?;
                     }
+                    self.collect(left)?;
+                    self.collect(right)
                 }
-                Ok(())
-            }
-            ExprKind::StructInit { schema, fields } => {
-                self.collect(schema)?;
-                for (_, value) in fields {
+                ExprKind::Prefix { operators, value } => {
+                    if operators
+                        .iter()
+                        .any(|(operator, _)| matches!(operator, Prefix::Negate))
+                    {
+                        self.require(value, Type::Num)?;
+                    }
+                    self.collect(value)
+                }
+                ExprKind::Binary {
+                    left,
+                    operator: operator @ (Binary::And | Binary::Or | Binary::Coalesce),
+                    right,
+                } => {
+                    self.collect(left)?;
+                    let mut skipped = self.untaken();
+                    let mut evaluated = self.path(|constraints| constraints.collect(right))?;
+                    assume_short_circuit(*operator, left, &mut skipped, &mut evaluated);
+                    self.join(vec![skipped, evaluated]);
+                    Ok(())
+                }
+                ExprKind::Binary { left, right, .. } => {
+                    self.collect(left)?;
+                    self.collect(right)
+                }
+                ExprKind::Declare {
+                    pattern,
+                    tags,
+                    value,
+                    ..
+                } => {
+                    self.collect_pattern(pattern)?;
+                    self.collect_tags(tags)?;
+                    self.collect(value)
+                }
+                ExprKind::Return { value } => {
+                    self.returns = true;
                     self.collect(value)?;
+                    if self.reachable {
+                        self.exits.push(self.requirements.clone());
+                    }
+                    self.reachable = false;
+                    Ok(())
                 }
-                Ok(())
-            }
-            ExprKind::StructCopy { value, fields } => {
-                self.collect(value)?;
-                for (_, replacement) in fields {
-                    self.collect(replacement)?;
+                ExprKind::Throw { value } => {
+                    self.collect(value)?;
+                    self.reachable = false;
+                    Ok(())
                 }
-                Ok(())
-            }
-            ExprKind::Index { collection, index } => {
-                self.collect(collection)?;
-                self.collect(index)
-            }
-            ExprKind::Slice {
-                collection,
-                start,
-                end,
-                step,
-            } => {
-                self.collect(collection)?;
-                for bound in [start, end, step].into_iter().flatten() {
-                    self.collect(bound)?;
+                ExprKind::Assign { value, .. }
+                | ExprKind::Defer { value, .. }
+                | ExprKind::Spawn(value)
+                | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
+                ExprKind::Recur(arguments) => self.collect_arguments(arguments),
+                ExprKind::Nursery { limit, body } => {
+                    if let Some(limit) = limit {
+                        self.collect(limit)?;
+                    }
+                    self.collect(body)
                 }
-                Ok(())
+                ExprKind::Select(cases) => {
+                    for case in cases {
+                        match &case.kind {
+                            SelectCaseKind::Receive(value)
+                            | SelectCaseKind::After(value)
+                            | SelectCaseKind::Await(value) => self.collect(value)?,
+                            SelectCaseKind::Send { channel, value } => {
+                                self.collect(channel)?;
+                                self.collect(value)?;
+                            }
+                            SelectCaseKind::Default => {}
+                        }
+                    }
+                    let mut paths = Vec::new();
+                    for case in cases {
+                        paths.push(self.path(|constraints| {
+                            case.handler
+                                .as_ref()
+                                .map_or(Ok(()), |handler| constraints.collect(handler))
+                        })?);
+                    }
+                    self.join(paths);
+                    Ok(())
+                }
+                ExprKind::Match { subject, cases } => {
+                    if let Some(subject) = subject {
+                        self.collect(subject)?;
+                    }
+                    let mut paths = Vec::new();
+                    for case in cases {
+                        let mut path = self.path(|constraints| {
+                            for pattern in &case.patterns {
+                                constraints.collect_pattern(&pattern.pattern)?;
+                            }
+                            if let Some(guard) = &case.guard {
+                                constraints.collect(guard)?;
+                            }
+                            constraints.collect(&case.value)
+                        })?;
+                        assume_match_case(&mut path, case);
+                        paths.push(path);
+                    }
+                    self.join(paths);
+                    Ok(())
+                }
+                ExprKind::Call { callee, arguments } => {
+                    self.collect(callee)?;
+                    self.collect_arguments(arguments)
+                }
+                ExprKind::Block(values) => {
+                    for value in values {
+                        self.collect(value)?;
+                    }
+                    Ok(())
+                }
+                ExprKind::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.collect_nil_guard_partition(
+                        condition,
+                        then_branch,
+                        else_branch.as_deref(),
+                    );
+                    self.collect(condition)?;
+                    let mut then = self.path(|constraints| constraints.collect(then_branch))?;
+                    let mut otherwise = self.path(|constraints| {
+                        else_branch
+                            .as_deref()
+                            .map_or(Ok(()), |else_branch| constraints.collect(else_branch))
+                    })?;
+                    cover_nil_path(condition, &mut then, &mut otherwise);
+                    assume(&mut then, condition, true);
+                    assume(&mut otherwise, condition, false);
+                    self.join(vec![then, otherwise]);
+                    Ok(())
+                }
+                ExprKind::List(values) => {
+                    for value in values {
+                        self.collect(match value {
+                            ListElement::Value(value) | ListElement::Spread(value) => value,
+                        })?;
+                    }
+                    Ok(())
+                }
+                ExprKind::Map(entries) => {
+                    for (key, value) in entries {
+                        self.collect(key)?;
+                        self.collect(value)?;
+                    }
+                    Ok(())
+                }
+                ExprKind::StructSchema(fields) => {
+                    for field in fields {
+                        if let Some(default) = &field.default {
+                            self.collect(default)?;
+                        }
+                    }
+                    Ok(())
+                }
+                ExprKind::StructInit { schema, fields } => {
+                    self.collect(schema)?;
+                    for (_, value) in fields {
+                        self.collect(value)?;
+                    }
+                    Ok(())
+                }
+                ExprKind::StructCopy { value, fields } => {
+                    self.collect(value)?;
+                    for (_, replacement) in fields {
+                        self.collect(replacement)?;
+                    }
+                    Ok(())
+                }
+                ExprKind::Index { collection, index } => {
+                    self.collect(collection)?;
+                    self.collect(index)
+                }
+                ExprKind::Slice {
+                    collection,
+                    start,
+                    end,
+                    step,
+                } => {
+                    self.collect(collection)?;
+                    for bound in [start, end, step].into_iter().flatten() {
+                        self.collect(bound)?;
+                    }
+                    Ok(())
+                }
+                ExprKind::Function { .. }
+                | ExprKind::Foreign { .. }
+                | ExprKind::Resource { .. }
+                | ExprKind::Enum { .. }
+                | ExprKind::TypeAlias { .. }
+                | ExprKind::Value(_)
+                | ExprKind::Interpolate(_)
+                | ExprKind::Documentation(_)
+                | ExprKind::NotImplemented
+                | ExprKind::Name(_) => Ok(()),
             }
-            ExprKind::Function { .. }
-            | ExprKind::Foreign { .. }
-            | ExprKind::Resource { .. }
-            | ExprKind::Enum { .. }
-            | ExprKind::TypeAlias { .. }
-            | ExprKind::Value(_)
-            | ExprKind::Interpolate(_)
-            | ExprKind::Documentation(_)
-            | ExprKind::NotImplemented
-            | ExprKind::Name(_) => Ok(()),
-        }
+        })
     }
 
     fn collect_nil_guard_partition(
@@ -742,23 +751,27 @@ impl ParameterConstraints {
     }
 
     fn collect_tags(&mut self, tags: &[Tag]) -> Result<(), SourceError> {
-        for tag in tags {
-            for argument in &tag.arguments {
-                self.collect(argument)?;
+        super::stack::grow(|| {
+            for tag in tags {
+                for argument in &tag.arguments {
+                    self.collect(argument)?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn collect_arguments(&mut self, arguments: &[CallArgument]) -> Result<(), SourceError> {
-        for argument in arguments {
-            self.collect(match argument {
-                CallArgument::Positional(value)
-                | CallArgument::Named { value, .. }
-                | CallArgument::Spread(value) => value,
-            })?;
-        }
-        Ok(())
+        super::stack::grow(|| {
+            for argument in arguments {
+                self.collect(match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Named { value, .. }
+                    | CallArgument::Spread(value) => value,
+                })?;
+            }
+            Ok(())
+        })
     }
 
     /// Adds facts from calls whose callee metadata is already available in the
@@ -771,7 +784,7 @@ impl ParameterConstraints {
         expression: &Expr,
         environment: &Environment,
     ) -> Result<(), SourceError> {
-        match &expression.kind {
+        super::stack::grow(|| match &expression.kind {
             ExprKind::Call { callee, arguments } => {
                 if let Some(binding) = expression_binding(callee, environment)
                     && let [signature] = binding.callables.as_slice()
@@ -1030,7 +1043,7 @@ impl ParameterConstraints {
             | ExprKind::Documentation(_)
             | ExprKind::NotImplemented
             | ExprKind::Name(_) => Ok(()),
-        }
+        })
     }
 
     /// Returns only a fact collected independently from known-call
@@ -1048,21 +1061,23 @@ impl ParameterConstraints {
         arguments: &[CallArgument],
         environment: &Environment,
     ) -> Result<(), SourceError> {
-        for argument in arguments {
-            self.collect_known_calls(
-                match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Named { value, .. }
-                    | CallArgument::Spread(value) => value,
-                },
-                environment,
-            )?;
-        }
-        Ok(())
+        super::stack::grow(|| {
+            for argument in arguments {
+                self.collect_known_calls(
+                    match argument {
+                        CallArgument::Positional(value)
+                        | CallArgument::Named { value, .. }
+                        | CallArgument::Spread(value) => value,
+                    },
+                    environment,
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn collect_nil_partitions(&mut self, expression: &Expr) {
-        match &expression.kind {
+        super::stack::grow(|| match &expression.kind {
             ExprKind::If {
                 condition,
                 then_branch,
@@ -1143,11 +1158,11 @@ impl ParameterConstraints {
             | ExprKind::Documentation(_)
             | ExprKind::NotImplemented
             | ExprKind::Name(_) => {}
-        }
+        });
     }
 
     fn collect_pattern(&mut self, pattern: &Pattern) -> Result<(), SourceError> {
-        match pattern {
+        super::stack::grow(|| match pattern {
             Pattern::At { pattern, .. } => self.collect_pattern(pattern),
             Pattern::List { items, .. } => {
                 for item in items {
@@ -1170,7 +1185,7 @@ impl ParameterConstraints {
             | Pattern::Pinned(_)
             | Pattern::MapAll
             | Pattern::EnumCase { .. } => Ok(()),
-        }
+        })
     }
 }
 
@@ -1278,30 +1293,32 @@ fn assume_match_case(path: &mut ConstraintPath, case: &MatchCase) {
 /// The parameters `condition` evaluating to `holds` shows to equal a
 /// literal, with the literal's type.
 fn literal_equalities<'a>(condition: &'a Expr, holds: bool, facts: &mut Vec<(&'a str, Type)>) {
-    let ExprKind::Binary {
-        left,
-        operator,
-        right,
-    } = &condition.kind
-    else {
-        return;
-    };
-    match (operator, holds) {
-        (Binary::And, true) | (Binary::Or, false) => {
-            literal_equalities(left, holds, facts);
-            literal_equalities(right, holds, facts);
-        }
-        (Binary::Equal, true) | (Binary::NotEqual, false) => match (&left.kind, &right.kind) {
-            (ExprKind::Name(name), _) => {
-                facts.extend(literal_family(right).map(|family| (name.as_str(), family)));
+    super::stack::grow(|| {
+        let ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } = &condition.kind
+        else {
+            return;
+        };
+        match (operator, holds) {
+            (Binary::And, true) | (Binary::Or, false) => {
+                literal_equalities(left, holds, facts);
+                literal_equalities(right, holds, facts);
             }
-            (_, ExprKind::Name(name)) => {
-                facts.extend(literal_family(left).map(|family| (name.as_str(), family)));
-            }
+            (Binary::Equal, true) | (Binary::NotEqual, false) => match (&left.kind, &right.kind) {
+                (ExprKind::Name(name), _) => {
+                    facts.extend(literal_family(right).map(|family| (name.as_str(), family)));
+                }
+                (_, ExprKind::Name(name)) => {
+                    facts.extend(literal_family(left).map(|family| (name.as_str(), family)));
+                }
+                _ => {}
+            },
             _ => {}
-        },
-        _ => {}
-    }
+        }
+    });
 }
 
 /// The requirements every path has: a parameter keeps one only when each
@@ -1389,41 +1406,46 @@ fn results_are_operation(
     operands: &PlusOperands,
     parameters: &[Parameter],
 ) -> bool {
-    let recurse = |expression| results_are_operation(expression, operators, operands, parameters);
-    match &expression.kind {
-        ExprKind::Binary {
-            left,
-            operator: actual,
-            right,
-        } if operators
-            .iter()
-            .any(|operator| std::mem::discriminant(actual) == std::mem::discriminant(operator)) =>
-        {
-            matches!(
-                (&left.kind, &right.kind),
-                (ExprKind::Name(left), ExprKind::Name(right))
-                    if *left == operands.left && *right == operands.right
-            )
-        }
-        ExprKind::Recur(_) => true,
-        ExprKind::Block(values) => values.last().is_some_and(recurse),
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch: Some(else_branch),
-        } => {
-            let covered_nil_branch = matches!(operators.first(), Some(Binary::Add))
-                .then(|| operand_nil_branch(condition, then_branch, else_branch, operands))
-                .flatten()
-                .filter(|branch| alternative_branch_result(branch, parameters).is_some());
-            match covered_nil_branch {
-                Some(branch) if std::ptr::eq(branch, then_branch.as_ref()) => recurse(else_branch),
-                Some(_) => recurse(then_branch),
-                None => recurse(then_branch) && recurse(else_branch),
+    super::stack::grow(|| {
+        let recurse =
+            |expression| results_are_operation(expression, operators, operands, parameters);
+        match &expression.kind {
+            ExprKind::Binary {
+                left,
+                operator: actual,
+                right,
+            } if operators.iter().any(|operator| {
+                std::mem::discriminant(actual) == std::mem::discriminant(operator)
+            }) =>
+            {
+                matches!(
+                    (&left.kind, &right.kind),
+                    (ExprKind::Name(left), ExprKind::Name(right))
+                        if *left == operands.left && *right == operands.right
+                )
             }
+            ExprKind::Recur(_) => true,
+            ExprKind::Block(values) => values.last().is_some_and(recurse),
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch: Some(else_branch),
+            } => {
+                let covered_nil_branch = matches!(operators.first(), Some(Binary::Add))
+                    .then(|| operand_nil_branch(condition, then_branch, else_branch, operands))
+                    .flatten()
+                    .filter(|branch| alternative_branch_result(branch, parameters).is_some());
+                match covered_nil_branch {
+                    Some(branch) if std::ptr::eq(branch, then_branch.as_ref()) => {
+                        recurse(else_branch)
+                    }
+                    Some(_) => recurse(then_branch),
+                    None => recurse(then_branch) && recurse(else_branch),
+                }
+            }
+            _ => false,
         }
-        _ => false,
-    }
+    })
 }
 
 /// The branch taken when an operand is nil, for a condition comparing that
@@ -1528,7 +1550,7 @@ fn alternative_branch_result(
     expression: &Expr,
     parameters: &[Parameter],
 ) -> Option<AlternativeType> {
-    match &expression.kind {
+    super::stack::grow(|| match &expression.kind {
         ExprKind::Value(value) => Some(AlternativeType::concrete(value_type(value))),
         ExprKind::Name(name) => parameters
             .iter()
@@ -1538,7 +1560,7 @@ fn alternative_branch_result(
             alternative_branch_result(&values[0], parameters)
         }
         _ => None,
-    }
+    })
 }
 
 fn compose_inferred_alternatives(
@@ -1859,26 +1881,28 @@ impl CheckedExpression {
 
 #[allow(clippy::too_many_lines)]
 fn collect_imports(expression: &Expr, scan: &mut ImportScan) {
-    if let ExprKind::Call { callee, arguments } = &expression.kind
-        && matches!(&callee.kind, ExprKind::Name(name) if name == "import")
-    {
-        let mut dynamic = false;
-        for argument in arguments {
-            if let CallArgument::Positional(Expr {
-                kind: ExprKind::Value(Value::Str(name)),
-                ..
-            }) = argument
-            {
-                scan.names.push(name.to_string());
-            } else {
-                dynamic = true;
+    super::stack::grow(|| {
+        if let ExprKind::Call { callee, arguments } = &expression.kind
+            && matches!(&callee.kind, ExprKind::Name(name) if name == "import")
+        {
+            let mut dynamic = false;
+            for argument in arguments {
+                if let CallArgument::Positional(Expr {
+                    kind: ExprKind::Value(Value::Str(name)),
+                    ..
+                }) = argument
+                {
+                    scan.names.push(name.to_string());
+                } else {
+                    dynamic = true;
+                }
+            }
+            if dynamic {
+                scan.dynamic.push(expression.span.clone());
             }
         }
-        if dynamic {
-            scan.dynamic.push(expression.span.clone());
-        }
-    }
-    expression.for_each_child(|child| collect_imports(child, scan));
+        expression.for_each_child(|child| collect_imports(child, scan));
+    });
 }
 
 fn analyze_expressions(
@@ -2096,43 +2120,45 @@ fn resolve_type_alias(
     visiting: &mut Vec<String>,
     resolved: &mut HashSet<String>,
 ) -> Result<(), SourceError> {
-    if resolved.contains(name) {
-        return Ok(());
-    }
-    let (annotation, span) = aliases
-        .get(name)
-        .expect("alias name came from the alias declaration table");
-    if let Some(start) = visiting.iter().position(|entry| entry == name) {
-        let mut chain = visiting[start..].to_vec();
-        chain.push(name.into());
-        return Err(SourceError::semantic(
-            SourceErrorCode::RecursiveTypeAlias,
-            format!("recursive type alias: {}", chain.join(" -> ")),
-            span.clone(),
-        ));
-    }
-    visiting.push(name.into());
-    let mut dependencies = Vec::new();
-    alias_dependencies(annotation, aliases, &mut dependencies)?;
-    for dependency in dependencies {
-        resolve_type_alias(&dependency, aliases, environment, visiting, resolved)?;
-    }
-    // Schema bindings are value declarations, so `struct<S>` must keep its
-    // unresolved schema reference until the alias is used after `S` exists.
-    // Resource and enum identities, by contrast, belong to the type namespace
-    // and are available while aliases are collected.
-    let value_type = resolve_resource_references(
-        resolve_annotation(annotation, &[], span)?,
-        span,
-        environment,
-    )?;
-    environment.declare_type(
-        name.into(),
-        super::environment::TypeMember::Alias(value_type),
-    );
-    visiting.pop();
-    resolved.insert(name.into());
-    Ok(())
+    super::stack::grow(|| {
+        if resolved.contains(name) {
+            return Ok(());
+        }
+        let (annotation, span) = aliases
+            .get(name)
+            .expect("alias name came from the alias declaration table");
+        if let Some(start) = visiting.iter().position(|entry| entry == name) {
+            let mut chain = visiting[start..].to_vec();
+            chain.push(name.into());
+            return Err(SourceError::semantic(
+                SourceErrorCode::RecursiveTypeAlias,
+                format!("recursive type alias: {}", chain.join(" -> ")),
+                span.clone(),
+            ));
+        }
+        visiting.push(name.into());
+        let mut dependencies = Vec::new();
+        alias_dependencies(annotation, aliases, &mut dependencies)?;
+        for dependency in dependencies {
+            resolve_type_alias(&dependency, aliases, environment, visiting, resolved)?;
+        }
+        // Schema bindings are value declarations, so `struct<S>` must keep its
+        // unresolved schema reference until the alias is used after `S` exists.
+        // Resource and enum identities, by contrast, belong to the type namespace
+        // and are available while aliases are collected.
+        let value_type = resolve_resource_references(
+            resolve_annotation(annotation, &[], span)?,
+            span,
+            environment,
+        )?;
+        environment.declare_type(
+            name.into(),
+            super::environment::TypeMember::Alias(value_type),
+        );
+        visiting.pop();
+        resolved.insert(name.into());
+        Ok(())
+    })
 }
 
 fn alias_dependencies(
@@ -2140,31 +2166,33 @@ fn alias_dependencies(
     aliases: &HashMap<String, (&TypeAnnotation, SourceSpan)>,
     dependencies: &mut Vec<String>,
 ) -> Result<(), SourceError> {
-    match annotation {
-        TypeAnnotation::Name(name) => {
-            if aliases.contains_key(name) {
-                dependencies.push(name.clone());
+    super::stack::grow(|| {
+        match annotation {
+            TypeAnnotation::Name(name) => {
+                if aliases.contains_key(name) {
+                    dependencies.push(name.clone());
+                }
+            }
+            TypeAnnotation::Apply { name, arguments } => {
+                if aliases.contains_key(name) {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidTypeArguments,
+                        format!("type alias `{name}` cannot accept type arguments"),
+                        aliases[name].1.clone(),
+                    ));
+                }
+                for argument in arguments {
+                    alias_dependencies(argument, aliases, dependencies)?;
+                }
+            }
+            TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
+                for element in elements {
+                    alias_dependencies(element, aliases, dependencies)?;
+                }
             }
         }
-        TypeAnnotation::Apply { name, arguments } => {
-            if aliases.contains_key(name) {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::InvalidTypeArguments,
-                    format!("type alias `{name}` cannot accept type arguments"),
-                    aliases[name].1.clone(),
-                ));
-            }
-            for argument in arguments {
-                alias_dependencies(argument, aliases, dependencies)?;
-            }
-        }
-        TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
-            for element in elements {
-                alias_dependencies(element, aliases, dependencies)?;
-            }
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn function_type(
@@ -2256,60 +2284,62 @@ fn check_function_body(
     environment: &Environment,
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
-    let mut scoped = environment.clone();
-    scoped.forget_mutable_facts();
-    scoped.enter_scope();
-    for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
-        let parameter_type = &signature_parameter.value_type;
-        if !parameter.discard {
-            // An unannotated parameter whose body supplies no type accepts
-            // `any|nil`, but inside the body that is the checker's uncertainty,
-            // not a declared type: it stays dynamic, so a result derived from
-            // it, such as an accumulator returned by a recursive helper, does
-            // not fail a caller's annotation.
-            let inferred_nothing =
-                parameter.annotation.is_none() && *parameter_type == Type::universal();
-            let element_type = if inferred_nothing {
-                Type::Unknown
-            } else {
-                parameter_type.clone()
-            };
-            let binding_type = if parameter.variadic {
-                Type::List(Some(Box::new(element_type)))
-            } else {
-                element_type
-            };
-            scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
-        }
-        if let Some(default) = &parameter.default {
-            let actual = check_expression(default, &mut scoped, type_parameters)?;
-            require(parameter_type, &actual, &default.span)?;
-        }
-    }
-    let expected = return_annotation
-        .map(|annotation| {
-            resolve_static_annotation(annotation, type_parameters, &body.span, environment)
-        })
-        .transpose()?;
-    scoped.enter_function(expected.clone());
-    let completed = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
-    if let Some(expected) = &expected {
-        let result = result_expression(body);
-        let completed = as_expected_tuple(expected, result, completed.clone(), &scoped);
-        require(expected, &completed, &result.span).map_err(|error| {
-            let error = error.with_extent(result);
-            if *expected == Type::Nil {
-                end_with_nil(error, result)
-            } else {
-                error
+    super::stack::grow(|| {
+        let mut scoped = environment.clone();
+        scoped.forget_mutable_facts();
+        scoped.enter_scope();
+        for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
+            let parameter_type = &signature_parameter.value_type;
+            if !parameter.discard {
+                // An unannotated parameter whose body supplies no type accepts
+                // `any|nil`, but inside the body that is the checker's uncertainty,
+                // not a declared type: it stays dynamic, so a result derived from
+                // it, such as an accumulator returned by a recursive helper, does
+                // not fail a caller's annotation.
+                let inferred_nothing =
+                    parameter.annotation.is_none() && *parameter_type == Type::universal();
+                let element_type = if inferred_nothing {
+                    Type::Unknown
+                } else {
+                    parameter_type.clone()
+                };
+                let binding_type = if parameter.variadic {
+                    Type::List(Some(Box::new(element_type)))
+                } else {
+                    element_type
+                };
+                scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
             }
-        })?;
-    }
-    // The function produces its body's value or any `return`'s, which were
-    // each checked against `expected` where they occur.
-    Ok(Type::union(
-        std::iter::once(completed).chain(scoped.returned_types()),
-    ))
+            if let Some(default) = &parameter.default {
+                let actual = check_expression(default, &mut scoped, type_parameters)?;
+                require(parameter_type, &actual, &default.span)?;
+            }
+        }
+        let expected = return_annotation
+            .map(|annotation| {
+                resolve_static_annotation(annotation, type_parameters, &body.span, environment)
+            })
+            .transpose()?;
+        scoped.enter_function(expected.clone());
+        let completed = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
+        if let Some(expected) = &expected {
+            let result = result_expression(body);
+            let completed = as_expected_tuple(expected, result, completed.clone(), &scoped);
+            require(expected, &completed, &result.span).map_err(|error| {
+                let error = error.with_extent(result);
+                if *expected == Type::Nil {
+                    end_with_nil(error, result)
+                } else {
+                    error
+                }
+            })?;
+        }
+        // The function produces its body's value or any `return`'s, which were
+        // each checked against `expected` where they occur.
+        Ok(Type::union(
+            std::iter::once(completed).chain(scoped.returned_types()),
+        ))
+    })
 }
 
 /// Offers to end a body declared to produce `nil` with `nil`. It is a fix
@@ -2336,7 +2366,7 @@ fn end_with_nil(error: SourceError, result: &Expr) -> SourceError {
 
 /// Whether an expression's value can only be an assignment's value or `nil`.
 fn produces_only_assigned_values(expression: &Expr) -> bool {
-    match &expression.kind {
+    super::stack::grow(|| match &expression.kind {
         ExprKind::Assign { .. } | ExprKind::Value(Value::Nil) => true,
         ExprKind::Block(values) => values.last().is_none_or(produces_only_assigned_values),
         ExprKind::If {
@@ -2353,7 +2383,7 @@ fn produces_only_assigned_values(expression: &Expr) -> bool {
             .iter()
             .all(|case| produces_only_assigned_values(&case.value)),
         _ => false,
-    }
+    })
 }
 
 /// The expression whose value a body produces: the last expression of each
@@ -2458,7 +2488,7 @@ fn record_exports(
 }
 
 fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Binding(name) | Pattern::At { name, .. } => names.push(name),
         Pattern::List { items, .. } => {
             for item in items {
@@ -2475,7 +2505,7 @@ fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) 
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => {}
-    }
+    });
 }
 
 fn check_expression(
@@ -2483,10 +2513,12 @@ fn check_expression(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
-    let value_type = check_expression_inner(expression, environment, type_parameters)
-        .map_err(|error| error.claimed_by(expression))?;
-    environment.record_expression_type(expression.span.clone(), value_type.clone());
-    Ok(value_type)
+    super::stack::grow(|| {
+        let value_type = check_expression_inner(expression, environment, type_parameters)
+            .map_err(|error| error.claimed_by(expression))?;
+        environment.record_expression_type(expression.span.clone(), value_type.clone());
+        Ok(value_type)
+    })
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2495,586 +2527,525 @@ fn check_expression_inner(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
-    match &expression.kind {
-        ExprKind::Declare {
-            pattern,
-            annotation,
-            value,
-            mutable,
-            ..
-        } => {
-            let callable = if let Pattern::Binding(name) = pattern {
-                callable_signature(value, &expression.span, environment)?
-                    .map(|signature| (name.clone(), signature))
-            } else {
-                None
-            };
-            if let Some((name, signature)) = &callable {
-                environment.declare_callable(name.clone(), signature.clone(), &expression.span)?;
-            }
-            let actual = check_expression(value, environment, type_parameters)?;
-            if let Some((name, signature)) = &callable
-                && let Type::Function(Some(types)) = &actual
-                && let Some(result) = types.first()
-            {
-                environment.update_callable_result(name, &signature.identity(), result.clone());
-            }
-            let declared = annotation
-                .as_ref()
-                .map(|annotation| {
-                    resolve_static_annotation(
-                        annotation,
-                        type_parameters,
+    super::stack::grow(|| {
+        match &expression.kind {
+            ExprKind::Declare {
+                pattern,
+                annotation,
+                value,
+                mutable,
+                ..
+            } => {
+                let callable = if let Pattern::Binding(name) = pattern {
+                    callable_signature(value, &expression.span, environment)?
+                        .map(|signature| (name.clone(), signature))
+                } else {
+                    None
+                };
+                if let Some((name, signature)) = &callable {
+                    environment.declare_callable(
+                        name.clone(),
+                        signature.clone(),
                         &expression.span,
-                        environment,
-                    )
-                })
-                .transpose()?;
-            if let Some(expected) = &declared {
-                let actual = as_expected_tuple(expected, value, actual.clone(), environment);
-                require(expected, &actual, &expression.span)
-                    .map_err(|error| explain_nil_start(error, value, environment))?;
-            }
-            if callable.is_none() {
-                let mut binding = value_binding(value, &actual, environment, type_parameters)?;
-                if matches!(value.kind, ExprKind::StructSchema(_))
-                    && let Pattern::Binding(name) = pattern
-                    && let Some(identity) = &mut binding.schema_identity
+                    )?;
+                }
+                let actual = check_expression(value, environment, type_parameters)?;
+                if let Some((name, signature)) = &callable
+                    && let Type::Function(Some(types)) = &actual
+                    && let Some(result) = types.first()
                 {
-                    identity.name.clone_from(name);
+                    environment.update_callable_result(name, &signature.identity(), result.clone());
                 }
-                if let Some(declared) = declared {
-                    binding.value_type = declared;
-                }
-                bind_semantic_pattern(pattern, &binding, environment);
-                if *mutable {
-                    let mut names = Vec::new();
-                    pattern_binding_names(pattern, &mut names);
-                    for name in names {
-                        environment.declare_mutable(name, &expression.span);
-                    }
-                }
-            }
-            Ok(actual)
-        }
-        ExprKind::Foreign {
-            name, signature, ..
-        } => {
-            let callable = function_type(
-                &signature.type_parameters,
-                &signature.parameters,
-                signature.return_annotation.as_ref(),
-                &expression.span,
-                environment,
-                None,
-            )?;
-            environment.record_foreign(
-                expression.span.clone(),
-                callable.identity(),
-                super::environment::foreign_resource_signature(&callable),
-            );
-            let value_type = function_value_type(&callable);
-            environment.declare_callable(name.clone(), callable, &expression.span)?;
-            for parameter in &signature.parameters {
-                if let Some(default) = &parameter.default {
-                    let actual =
-                        check_expression(default, environment, &signature.type_parameters)?;
-                    if let Some(annotation) = &parameter.annotation {
-                        let expected = resolve_static_annotation(
-                            annotation,
-                            &signature.type_parameters,
-                            &default.span,
-                            environment,
-                        )?;
-                        require(&expected, &actual, &default.span)?;
-                    }
-                }
-            }
-            Ok(value_type)
-        }
-        ExprKind::Function {
-            type_parameters: function_type_parameters,
-            parameters,
-            return_annotation,
-            body,
-        } => {
-            let constraints = parameter_constraints(parameters, body, environment)?;
-            let inferred_alternatives =
-                inferred_overload_alternatives(parameters, body, &constraints)?;
-            let inferred_parameters = solved_parameter_types(&constraints);
-            let mut signature = function_type(
-                function_type_parameters,
-                parameters,
-                return_annotation.as_ref(),
-                &expression.span,
-                environment,
-                Some(&inferred_parameters),
-            )?;
-            signature.inferred_alternatives = inferred_alternatives;
-            environment.record_function(expression.span.clone(), signature.identity());
-            let actual = check_function_body(
-                parameters,
-                &signature,
-                return_annotation.as_ref(),
-                body,
-                environment,
-                function_type_parameters,
-            )?;
-            signature.result = return_annotation
-                .as_ref()
-                .map(|annotation| {
-                    resolve_static_annotation(
-                        annotation,
-                        function_type_parameters,
-                        &body.span,
-                        environment,
-                    )
-                })
-                .transpose()?
-                .unwrap_or(actual);
-            Ok(function_value_type(&signature))
-        }
-        ExprKind::Call { callee, arguments } => check_call(
-            callee,
-            arguments,
-            expression,
-            environment,
-            type_parameters,
-            None,
-        ),
-        ExprKind::TypeApply { callee, .. } => {
-            check_expression(callee, environment, type_parameters)
-        }
-        ExprKind::StructSchema(fields) => {
-            for field in fields {
-                if let Some(default) = &field.default {
-                    let actual = check_expression(default, environment, type_parameters)?;
-                    if let Some(annotation) = &field.annotation {
-                        let expected = resolve_static_annotation(
+                let declared = annotation
+                    .as_ref()
+                    .map(|annotation| {
+                        resolve_static_annotation(
                             annotation,
                             type_parameters,
-                            &default.span,
+                            &expression.span,
                             environment,
-                        )?;
-                        require(&expected, &actual, &default.span)?;
-                    }
+                        )
+                    })
+                    .transpose()?;
+                if let Some(expected) = &declared {
+                    let actual = as_expected_tuple(expected, value, actual.clone(), environment);
+                    require(expected, &actual, &expression.span)
+                        .map_err(|error| explain_nil_start(error, value, environment))?;
                 }
-            }
-            Ok(Type::Schema)
-        }
-        ExprKind::Value(value) => Ok(value_type(value)),
-        ExprKind::List(values) => {
-            let mut elements = Vec::new();
-            let mut lost_precision = false;
-            // Whether every element's position is known: no spread of a list
-            // whose length is not.
-            let mut positional = true;
-            for value in values {
-                match value {
-                    ListElement::Value(value) => {
-                        elements.push(check_expression(value, environment, type_parameters)?);
+                if callable.is_none() {
+                    let mut binding = value_binding(value, &actual, environment, type_parameters)?;
+                    if matches!(value.kind, ExprKind::StructSchema(_))
+                        && let Pattern::Binding(name) = pattern
+                        && let Some(identity) = &mut binding.schema_identity
+                    {
+                        identity.name.clone_from(name);
                     }
-                    ListElement::Spread(value) => {
-                        match check_expression(value, environment, type_parameters)? {
-                            Type::Tuple(spread) => elements.extend(spread),
-                            Type::List(Some(element)) => {
-                                positional = false;
-                                elements.push(*element);
-                            }
-                            _ => lost_precision = true,
+                    if let Some(declared) = declared {
+                        binding.value_type = declared;
+                    }
+                    bind_semantic_pattern(pattern, &binding, environment);
+                    if *mutable {
+                        let mut names = Vec::new();
+                        pattern_binding_names(pattern, &mut names);
+                        for name in names {
+                            environment.declare_mutable(name, &expression.span);
                         }
                     }
                 }
+                Ok(actual)
             }
-            // A literal whose elements differ in type is a tuple, so each
-            // keeps its own: `[parts, headers][1]` is the map. One whose
-            // elements share a type is a list of it.
-            let mut distinct = elements.clone();
-            distinct.sort_by_key(ToString::to_string);
-            distinct.dedup();
-            if positional && !lost_precision && distinct.len() > 1 {
-                return Ok(Type::Tuple(elements));
+            ExprKind::Foreign {
+                name, signature, ..
+            } => {
+                let callable = function_type(
+                    &signature.type_parameters,
+                    &signature.parameters,
+                    signature.return_annotation.as_ref(),
+                    &expression.span,
+                    environment,
+                    None,
+                )?;
+                environment.record_foreign(
+                    expression.span.clone(),
+                    callable.identity(),
+                    super::environment::foreign_resource_signature(&callable),
+                );
+                let value_type = function_value_type(&callable);
+                environment.declare_callable(name.clone(), callable, &expression.span)?;
+                for parameter in &signature.parameters {
+                    if let Some(default) = &parameter.default {
+                        let actual =
+                            check_expression(default, environment, &signature.type_parameters)?;
+                        if let Some(annotation) = &parameter.annotation {
+                            let expected = resolve_static_annotation(
+                                annotation,
+                                &signature.type_parameters,
+                                &default.span,
+                                environment,
+                            )?;
+                            require(&expected, &actual, &default.span)?;
+                        }
+                    }
+                }
+                Ok(value_type)
             }
-            Ok(Type::List(
-                (!elements.is_empty() && !lost_precision).then(|| Box::new(Type::union(elements))),
-            ))
-        }
-        ExprKind::Map(entries) => {
-            let mut keys = Vec::new();
-            let mut values = Vec::new();
-            for (key, value) in entries {
-                keys.push(check_expression(key, environment, type_parameters)?);
-                values.push(check_expression(value, environment, type_parameters)?);
+            ExprKind::Function {
+                type_parameters: function_type_parameters,
+                parameters,
+                return_annotation,
+                body,
+            } => {
+                let constraints = parameter_constraints(parameters, body, environment)?;
+                let inferred_alternatives =
+                    inferred_overload_alternatives(parameters, body, &constraints)?;
+                let inferred_parameters = solved_parameter_types(&constraints);
+                let mut signature = function_type(
+                    function_type_parameters,
+                    parameters,
+                    return_annotation.as_ref(),
+                    &expression.span,
+                    environment,
+                    Some(&inferred_parameters),
+                )?;
+                signature.inferred_alternatives = inferred_alternatives;
+                environment.record_function(expression.span.clone(), signature.identity());
+                let actual = check_function_body(
+                    parameters,
+                    &signature,
+                    return_annotation.as_ref(),
+                    body,
+                    environment,
+                    function_type_parameters,
+                )?;
+                signature.result = return_annotation
+                    .as_ref()
+                    .map(|annotation| {
+                        resolve_static_annotation(
+                            annotation,
+                            function_type_parameters,
+                            &body.span,
+                            environment,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(actual);
+                Ok(function_value_type(&signature))
             }
-            Ok(Type::Map((!entries.is_empty()).then(|| {
-                (Box::new(Type::union(keys)), Box::new(Type::union(values)))
-            })))
-        }
-        ExprKind::Block(values) => {
-            infer_nil_starts(values, environment, type_parameters, true);
-            let mut scoped = environment.clone();
-            scoped.enter_scope();
-            predeclare_functions(values, &mut scoped);
-            let mut result = Type::Nil;
-            for value in values {
-                result = check_expression(value, &mut scoped, type_parameters)?;
+            ExprKind::Call { callee, arguments } => check_call(
+                callee,
+                arguments,
+                expression,
+                environment,
+                type_parameters,
+                None,
+            ),
+            ExprKind::TypeApply { callee, .. } => {
+                check_expression(callee, environment, type_parameters)
             }
-            environment.merge_compatible_types(&scoped, &scoped);
-            Ok(result)
-        }
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            check_expression(condition, environment, type_parameters)?;
-            let (then_facts, else_facts) = condition_facts(condition, environment);
-            let mut then_environment = environment.clone();
-            apply_flow_facts(&mut then_environment, then_facts);
-            let left = check_expression(then_branch, &mut then_environment, type_parameters)?;
-            let mut else_environment = environment.clone();
-            apply_flow_facts(&mut else_environment, else_facts);
-            let right = else_branch
-                .as_ref()
-                .map(|branch| check_expression(branch, &mut else_environment, type_parameters))
-                .transpose()?
-                .unwrap_or(Type::Nil);
-            environment.merge_compatible_types(&then_environment, &else_environment);
-            Ok(Type::union([left, right]))
-        }
-        ExprKind::Binary {
-            left,
-            operator,
-            right,
-        } => {
-            let left_type = check_expression(left, environment, type_parameters)?;
-            if matches!(operator, Binary::Pipeline) {
-                return match &right.kind {
-                    ExprKind::Call { callee, arguments } => check_call(
-                        callee,
-                        arguments,
-                        right,
-                        environment,
-                        type_parameters,
-                        Some(left_type),
-                    ),
-                    ExprKind::Name(_) | ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
-                        check_call(
-                            right,
-                            &[],
+            ExprKind::StructSchema(fields) => {
+                for field in fields {
+                    if let Some(default) = &field.default {
+                        let actual = check_expression(default, environment, type_parameters)?;
+                        if let Some(annotation) = &field.annotation {
+                            let expected = resolve_static_annotation(
+                                annotation,
+                                type_parameters,
+                                &default.span,
+                                environment,
+                            )?;
+                            require(&expected, &actual, &default.span)?;
+                        }
+                    }
+                }
+                Ok(Type::Schema)
+            }
+            ExprKind::Value(value) => Ok(value_type(value)),
+            ExprKind::List(values) => {
+                let mut elements = Vec::new();
+                let mut lost_precision = false;
+                // Whether every element's position is known: no spread of a list
+                // whose length is not.
+                let mut positional = true;
+                for value in values {
+                    match value {
+                        ListElement::Value(value) => {
+                            elements.push(check_expression(value, environment, type_parameters)?);
+                        }
+                        ListElement::Spread(value) => {
+                            match check_expression(value, environment, type_parameters)? {
+                                Type::Tuple(spread) => elements.extend(spread),
+                                Type::List(Some(element)) => {
+                                    positional = false;
+                                    elements.push(*element);
+                                }
+                                _ => lost_precision = true,
+                            }
+                        }
+                    }
+                }
+                // A literal whose elements differ in type is a tuple, so each
+                // keeps its own: `[parts, headers][1]` is the map. One whose
+                // elements share a type is a list of it.
+                let mut distinct = elements.clone();
+                distinct.sort_by_key(ToString::to_string);
+                distinct.dedup();
+                if positional && !lost_precision && distinct.len() > 1 {
+                    return Ok(Type::Tuple(elements));
+                }
+                Ok(Type::List(
+                    (!elements.is_empty() && !lost_precision)
+                        .then(|| Box::new(Type::union(elements))),
+                ))
+            }
+            ExprKind::Map(entries) => {
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+                for (key, value) in entries {
+                    keys.push(check_expression(key, environment, type_parameters)?);
+                    values.push(check_expression(value, environment, type_parameters)?);
+                }
+                Ok(Type::Map((!entries.is_empty()).then(|| {
+                    (Box::new(Type::union(keys)), Box::new(Type::union(values)))
+                })))
+            }
+            ExprKind::Block(values) => {
+                infer_nil_starts(values, environment, type_parameters, true);
+                let mut scoped = environment.clone();
+                scoped.enter_scope();
+                predeclare_functions(values, &mut scoped);
+                let mut result = Type::Nil;
+                for value in values {
+                    result = check_expression(value, &mut scoped, type_parameters)?;
+                }
+                environment.merge_compatible_types(&scoped, &scoped);
+                Ok(result)
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                check_expression(condition, environment, type_parameters)?;
+                let (then_facts, else_facts) = condition_facts(condition, environment);
+                let mut then_environment = environment.clone();
+                apply_flow_facts(&mut then_environment, then_facts);
+                let left = check_expression(then_branch, &mut then_environment, type_parameters)?;
+                let mut else_environment = environment.clone();
+                apply_flow_facts(&mut else_environment, else_facts);
+                let right = else_branch
+                    .as_ref()
+                    .map(|branch| check_expression(branch, &mut else_environment, type_parameters))
+                    .transpose()?
+                    .unwrap_or(Type::Nil);
+                environment.merge_compatible_types(&then_environment, &else_environment);
+                Ok(Type::union([left, right]))
+            }
+            ExprKind::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let left_type = check_expression(left, environment, type_parameters)?;
+                if matches!(operator, Binary::Pipeline) {
+                    return match &right.kind {
+                        ExprKind::Call { callee, arguments } => check_call(
+                            callee,
+                            arguments,
                             right,
                             environment,
                             type_parameters,
                             Some(left_type),
-                        )
-                    }
-                    _ => check_expression(right, environment, type_parameters),
-                };
-            }
-            if matches!(operator, Binary::And | Binary::Or) {
-                let mut right_environment = environment.clone();
-                let (then_facts, else_facts) = condition_facts(left, environment);
-                apply_flow_facts(
-                    &mut right_environment,
-                    if matches!(operator, Binary::And) {
-                        then_facts
-                    } else {
-                        else_facts
-                    },
-                );
-                let right = check_expression(right, &mut right_environment, type_parameters)?;
-                return Ok(Type::union([left_type, right]));
-            }
-            let right = check_expression(right, environment, type_parameters)?;
-            binary_result(*operator, &left_type, &right, &expression.span)
-        }
-        ExprKind::Prefix { operators, value } => {
-            let mut result = check_expression(value, environment, type_parameters)?;
-            for (operator, span) in operators.iter().rev() {
-                result = prefix_result(*operator, &result, span)?;
-            }
-            Ok(result)
-        }
-        ExprKind::Name(name) => Ok(environment
-            .lookup(name)
-            .map_or(Type::Unknown, |binding| binding.value_type.clone())),
-        ExprKind::Assign { name, value } => {
-            let actual = check_expression(value, environment, type_parameters)?;
-            if environment.in_trial() {
-                environment.log_assignment(name, &value.span, &actual);
-            }
-            if let Some(binding) = environment
-                .lookup(name)
-                .filter(|binding| !(environment.in_trial() && binding.nil_start.is_some()))
-            {
-                let expected = binding.declared.as_ref().unwrap_or(&binding.value_type);
-                require(expected, &actual, &value.span).map_err(|error| {
-                    let error = error.with_extent(value);
-                    if binding
-                        .nil_start
-                        .as_ref()
-                        .is_some_and(|start| !start.assignments.is_empty())
-                    {
-                        explain_nil_start_assignment(error, name, binding, &actual)
-                    } else {
-                        explain_nil_start(error, value, environment)
-                    }
-                })?;
-            }
-            if let Some(binding) = environment.lookup_mut(name) {
-                binding.callables.clear();
-                if !matches!(actual, Type::Unknown) {
-                    binding.value_type = actual.clone();
+                        ),
+                        ExprKind::Name(_) | ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
+                            check_call(
+                                right,
+                                &[],
+                                right,
+                                environment,
+                                type_parameters,
+                                Some(left_type),
+                            )
+                        }
+                        _ => check_expression(right, environment, type_parameters),
+                    };
                 }
-            }
-            Ok(actual)
-        }
-        ExprKind::Return { value } => {
-            let actual = check_expression(value, environment, type_parameters)?;
-            if let Some(expected) = environment.expected_return() {
-                let actual = as_expected_tuple(&expected, value, actual.clone(), environment);
-                require(&expected, &actual, &value.span).map_err(|error| {
-                    explain_nil_start(error.with_extent(value), value, environment)
-                })?;
-            }
-            environment.record_return(actual.clone());
-            Ok(actual)
-        }
-        ExprKind::Throw { value } => {
-            check_expression(value, environment, type_parameters)?;
-            Ok(Type::Never)
-        }
-        ExprKind::Defer { value, mode, .. } => {
-            let handled = check_expression(value, environment, type_parameters)?;
-            // An error handler that completes normally recovers, and its
-            // value becomes the enclosing function's result.
-            if matches!(mode, DeferMode::Error) {
-                if let Some(expected) = environment.expected_return() {
-                    require(&expected, &handled, &value.span)
-                        .map_err(|error| error.with_extent(value))?;
-                }
-                environment.record_return(handled);
-            }
-            Ok(Type::Nil)
-        }
-        ExprKind::Spawn(value) => {
-            let result = check_expression(value, environment, type_parameters)?;
-            Ok(Type::Task(Some(Box::new(result.widen_unknown()))))
-        }
-        ExprKind::Nursery { limit, body } => {
-            if let Some(limit) = limit {
-                check_expression(limit, environment, type_parameters)?;
-            }
-            check_expression(body, environment, type_parameters)
-        }
-        ExprKind::Recur(arguments) => {
-            for argument in arguments {
-                check_argument(argument, environment, type_parameters)?;
-            }
-            Ok(Type::Never)
-        }
-        ExprKind::Select(cases) => {
-            let mut results = Vec::new();
-            for case in cases {
-                match &case.kind {
-                    SelectCaseKind::Receive(value)
-                    | SelectCaseKind::After(value)
-                    | SelectCaseKind::Await(value) => {
-                        check_expression(value, environment, type_parameters)?;
-                    }
-                    SelectCaseKind::Send { channel, value } => {
-                        check_expression(channel, environment, type_parameters)?;
-                        check_expression(value, environment, type_parameters)?;
-                    }
-                    SelectCaseKind::Default => {}
-                }
-                results.push(
-                    case.handler
-                        .as_ref()
-                        .map(|handler| {
-                            let handler = check_expression(handler, environment, type_parameters)?;
-                            Ok(callable_result_type(&handler))
-                        })
-                        .transpose()?
-                        .unwrap_or(Type::Unknown),
-                );
-            }
-            Ok(Type::union(results))
-        }
-        ExprKind::Match { subject, cases } => {
-            let subject_type = subject
-                .as_ref()
-                .map(|subject| check_expression(subject, environment, type_parameters))
-                .transpose()?
-                .unwrap_or_else(Type::universal);
-            let mut enum_remaining = enum_cases(&subject_type, environment);
-            let coverage_enabled =
-                enum_remaining.is_some() || is_closed_coverage_type(&subject_type);
-            let mut remaining = coverage_enabled.then_some(subject_type.clone());
-            if enum_remaining.is_some() {
-                remaining = None;
-            }
-            let mut results = Vec::new();
-            let mut surviving_subject_types = Vec::new();
-            // The type a value can still have on reaching each case, after
-            // every earlier unguarded case that matches it whole.
-            let mut unmatched = Some(subject_type.clone());
-            for case in cases {
-                let reaching_type = unmatched.clone().unwrap_or_else(|| subject_type.clone());
-                let mut scoped = environment.clone();
-                scoped.enter_scope();
-                let mut constraints = Vec::new();
-                let mut irrefutable_constraints = Vec::new();
-                for pattern in &case.patterns {
-                    let constraint =
-                        check_case_pattern(pattern, &mut scoped, type_parameters, &case.span)?;
-                    constraints.push(constraint.clone());
-                    if is_irrefutable_pattern(&pattern.pattern) {
-                        irrefutable_constraints.push(constraint.clone());
-                    }
-                    bind_case_pattern(
-                        &pattern.pattern,
-                        constraint.as_ref().unwrap_or(&reaching_type),
-                        &mut scoped,
-                    );
-                }
-                if case.guard.is_none() {
-                    unmatched = case.patterns.iter().zip(&constraints).fold(
-                        unmatched,
-                        |unmatched, (pattern, constraint)| {
-                            let unmatched = unmatched?;
-                            match (&pattern.pattern, constraint) {
-                                (pattern, None) if is_irrefutable_pattern(pattern) => None,
-                                (pattern, Some(constraint)) if is_irrefutable_pattern(pattern) => {
-                                    type_subtract(&unmatched, constraint)
-                                }
-                                (Pattern::Literal(value), _) if value.kind() == ValueKind::Nil => {
-                                    type_subtract(&unmatched, &Type::Nil)
-                                }
-                                _ => Some(unmatched),
-                            }
+                if matches!(operator, Binary::And | Binary::Or) {
+                    let mut right_environment = environment.clone();
+                    let (then_facts, else_facts) = condition_facts(left, environment);
+                    apply_flow_facts(
+                        &mut right_environment,
+                        if matches!(operator, Binary::And) {
+                            then_facts
+                        } else {
+                            else_facts
                         },
                     );
+                    let right = check_expression(right, &mut right_environment, type_parameters)?;
+                    return Ok(Type::union([left_type, right]));
                 }
-                let mut case_subject_type = None;
-                if let Some(Expr {
-                    kind: ExprKind::Name(name),
-                    ..
-                }) = subject.as_deref()
+                let right = check_expression(right, environment, type_parameters)?;
+                binary_result(*operator, &left_type, &right, &expression.span)
+            }
+            ExprKind::Prefix { operators, value } => {
+                let mut result = check_expression(value, environment, type_parameters)?;
+                for (operator, span) in operators.iter().rev() {
+                    result = prefix_result(*operator, &result, span)?;
+                }
+                Ok(result)
+            }
+            ExprKind::Name(name) => Ok(environment
+                .lookup(name)
+                .map_or(Type::Unknown, |binding| binding.value_type.clone())),
+            ExprKind::Assign { name, value } => {
+                let actual = check_expression(value, environment, type_parameters)?;
+                if environment.in_trial() {
+                    environment.log_assignment(name, &value.span, &actual);
+                }
+                if let Some(binding) = environment
+                    .lookup(name)
+                    .filter(|binding| !(environment.in_trial() && binding.nil_start.is_some()))
                 {
-                    let narrowed = case
-                        .patterns
-                        .iter()
-                        .zip(&constraints)
-                        .filter_map(|(pattern, constraint)| {
-                            constraint.clone().or_else(|| match &pattern.pattern {
-                                Pattern::Literal(value) => Some(value_type(value)),
-                                Pattern::Wildcard
-                                | Pattern::Binding(_)
-                                | Pattern::At { .. }
-                                | Pattern::List { .. }
-                                | Pattern::Map { .. }
-                                | Pattern::Pinned(_)
-                                | Pattern::MapAll
-                                | Pattern::EnumCase { .. } => None,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    if !narrowed.is_empty() {
-                        let narrowed = Type::union(narrowed);
-                        apply_flow_facts(
-                            &mut scoped,
-                            vec![FlowFact::Binding(name.clone(), narrowed.clone())],
-                        );
-                        case_subject_type = Some(narrowed);
-                    } else if reaching_type != subject_type
-                        && case
-                            .patterns
-                            .iter()
-                            .any(|pattern| is_irrefutable_pattern(&pattern.pattern))
-                    {
-                        apply_flow_facts(
-                            &mut scoped,
-                            vec![FlowFact::Binding(name.clone(), reaching_type.clone())],
-                        );
-                        case_subject_type = Some(reaching_type.clone());
+                    let expected = binding.declared.as_ref().unwrap_or(&binding.value_type);
+                    require(expected, &actual, &value.span).map_err(|error| {
+                        let error = error.with_extent(value);
+                        if binding
+                            .nil_start
+                            .as_ref()
+                            .is_some_and(|start| !start.assignments.is_empty())
+                        {
+                            explain_nil_start_assignment(error, name, binding, &actual)
+                        } else {
+                            explain_nil_start(error, value, environment)
+                        }
+                    })?;
+                }
+                if let Some(binding) = environment.lookup_mut(name) {
+                    binding.callables.clear();
+                    if !matches!(actual, Type::Unknown) {
+                        binding.value_type = actual.clone();
                     }
                 }
-                environment.record_match_constraints(case.span.clone(), constraints.clone());
-                if let Some(remaining_cases) = &mut enum_remaining {
-                    if remaining_cases.is_empty() {
-                        return Err(SourceError::semantic(
-                            SourceErrorCode::UnreachableMatchCase,
-                            "match case is unreachable",
-                            case.span.clone(),
-                        )
-                        .unreachable_case(case));
+                Ok(actual)
+            }
+            ExprKind::Return { value } => {
+                let actual = check_expression(value, environment, type_parameters)?;
+                if let Some(expected) = environment.expected_return() {
+                    let actual = as_expected_tuple(&expected, value, actual.clone(), environment);
+                    require(&expected, &actual, &value.span).map_err(|error| {
+                        explain_nil_start(error.with_extent(value), value, environment)
+                    })?;
+                }
+                environment.record_return(actual.clone());
+                Ok(actual)
+            }
+            ExprKind::Throw { value } => {
+                check_expression(value, environment, type_parameters)?;
+                Ok(Type::Never)
+            }
+            ExprKind::Defer { value, mode, .. } => {
+                let handled = check_expression(value, environment, type_parameters)?;
+                // An error handler that completes normally recovers, and its
+                // value becomes the enclosing function's result.
+                if matches!(mode, DeferMode::Error) {
+                    if let Some(expected) = environment.expected_return() {
+                        require(&expected, &handled, &value.span)
+                            .map_err(|error| error.with_extent(value))?;
                     }
-                    let mut covered = Vec::new();
-                    for (pattern, constraint) in case.patterns.iter().zip(&constraints) {
-                        match &pattern.pattern {
-                            Pattern::EnumCase {
-                                path,
-                                case: case_name,
-                            } => covered.push(enum_case(path, case_name, environment, &case.span)?),
-                            pattern if is_irrefutable_pattern(pattern) => {
-                                covered.extend(enum_cases_for_constraint(
-                                    constraint.as_ref(),
-                                    &subject_type,
-                                    environment,
-                                ));
-                            }
-                            _ => {}
+                    environment.record_return(handled);
+                }
+                Ok(Type::Nil)
+            }
+            ExprKind::Spawn(value) => {
+                let result = check_expression(value, environment, type_parameters)?;
+                Ok(Type::Task(Some(Box::new(result.widen_unknown()))))
+            }
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    check_expression(limit, environment, type_parameters)?;
+                }
+                check_expression(body, environment, type_parameters)
+            }
+            ExprKind::Recur(arguments) => {
+                for argument in arguments {
+                    check_argument(argument, environment, type_parameters)?;
+                }
+                Ok(Type::Never)
+            }
+            ExprKind::Select(cases) => {
+                let mut results = Vec::new();
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value)
+                        | SelectCaseKind::After(value)
+                        | SelectCaseKind::Await(value) => {
+                            check_expression(value, environment, type_parameters)?;
                         }
+                        SelectCaseKind::Send { channel, value } => {
+                            check_expression(channel, environment, type_parameters)?;
+                            check_expression(value, environment, type_parameters)?;
+                        }
+                        SelectCaseKind::Default => {}
                     }
-                    covered.sort_by(|left, right| left.1.cmp(&right.1));
-                    covered.dedup();
-                    let matching = covered
-                        .iter()
-                        .filter(|candidate| remaining_cases.contains(candidate))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if matching.is_empty() {
-                        return Err(SourceError::semantic(
-                            SourceErrorCode::UnreachableMatchCase,
-                            "match case cannot match remaining enum cases",
-                            case.span.clone(),
-                        )
-                        .unreachable_case(case));
+                    results.push(
+                        case.handler
+                            .as_ref()
+                            .map(|handler| {
+                                let handler =
+                                    check_expression(handler, environment, type_parameters)?;
+                                Ok(callable_result_type(&handler))
+                            })
+                            .transpose()?
+                            .unwrap_or(Type::Unknown),
+                    );
+                }
+                Ok(Type::union(results))
+            }
+            ExprKind::Match { subject, cases } => {
+                let subject_type = subject
+                    .as_ref()
+                    .map(|subject| check_expression(subject, environment, type_parameters))
+                    .transpose()?
+                    .unwrap_or_else(Type::universal);
+                let mut enum_remaining = enum_cases(&subject_type, environment);
+                let coverage_enabled =
+                    enum_remaining.is_some() || is_closed_coverage_type(&subject_type);
+                let mut remaining = coverage_enabled.then_some(subject_type.clone());
+                if enum_remaining.is_some() {
+                    remaining = None;
+                }
+                let mut results = Vec::new();
+                let mut surviving_subject_types = Vec::new();
+                // The type a value can still have on reaching each case, after
+                // every earlier unguarded case that matches it whole.
+                let mut unmatched = Some(subject_type.clone());
+                for case in cases {
+                    let reaching_type = unmatched.clone().unwrap_or_else(|| subject_type.clone());
+                    let mut scoped = environment.clone();
+                    scoped.enter_scope();
+                    let mut constraints = Vec::new();
+                    let mut irrefutable_constraints = Vec::new();
+                    for pattern in &case.patterns {
+                        let constraint =
+                            check_case_pattern(pattern, &mut scoped, type_parameters, &case.span)?;
+                        constraints.push(constraint.clone());
+                        if is_irrefutable_pattern(&pattern.pattern) {
+                            irrefutable_constraints.push(constraint.clone());
+                        }
+                        bind_case_pattern(
+                            &pattern.pattern,
+                            constraint.as_ref().unwrap_or(&reaching_type),
+                            &mut scoped,
+                        );
                     }
                     if case.guard.is_none() {
-                        remaining_cases.retain(|candidate| !matching.contains(candidate));
+                        unmatched = case.patterns.iter().zip(&constraints).fold(
+                            unmatched,
+                            |unmatched, (pattern, constraint)| {
+                                let unmatched = unmatched?;
+                                match (&pattern.pattern, constraint) {
+                                    (pattern, None) if is_irrefutable_pattern(pattern) => None,
+                                    (pattern, Some(constraint))
+                                        if is_irrefutable_pattern(pattern) =>
+                                    {
+                                        type_subtract(&unmatched, constraint)
+                                    }
+                                    (Pattern::Literal(value), _)
+                                        if value.kind() == ValueKind::Nil =>
+                                    {
+                                        type_subtract(&unmatched, &Type::Nil)
+                                    }
+                                    _ => Some(unmatched),
+                                }
+                            },
+                        );
                     }
-                }
-                if enum_remaining.is_none() && coverage_enabled && remaining.is_none() {
-                    return Err(SourceError::semantic(
-                        SourceErrorCode::UnreachableMatchCase,
-                        "match case is unreachable",
-                        case.span.clone(),
-                    )
-                    .unreachable_case(case));
-                }
-                if let Some(current) = &remaining {
-                    if constraints.iter().all(Option::is_some)
-                        && constraints.iter().all(|constraint| {
-                            type_intersection(current, constraint.as_ref().expect("checked above"))
-                                .is_none()
-                        })
+                    let mut case_subject_type = None;
+                    if let Some(Expr {
+                        kind: ExprKind::Name(name),
+                        ..
+                    }) = subject.as_deref()
                     {
-                        return Err(SourceError::semantic(
-                            SourceErrorCode::UnreachableMatchCase,
-                            format!("match case cannot match remaining type {current}"),
-                            case.span.clone(),
-                        )
-                        .unreachable_case(case));
+                        let narrowed = case
+                            .patterns
+                            .iter()
+                            .zip(&constraints)
+                            .filter_map(|(pattern, constraint)| {
+                                constraint.clone().or_else(|| match &pattern.pattern {
+                                    Pattern::Literal(value) => Some(value_type(value)),
+                                    Pattern::Wildcard
+                                    | Pattern::Binding(_)
+                                    | Pattern::At { .. }
+                                    | Pattern::List { .. }
+                                    | Pattern::Map { .. }
+                                    | Pattern::Pinned(_)
+                                    | Pattern::MapAll
+                                    | Pattern::EnumCase { .. } => None,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if !narrowed.is_empty() {
+                            let narrowed = Type::union(narrowed);
+                            apply_flow_facts(
+                                &mut scoped,
+                                vec![FlowFact::Binding(name.clone(), narrowed.clone())],
+                            );
+                            case_subject_type = Some(narrowed);
+                        } else if reaching_type != subject_type
+                            && case
+                                .patterns
+                                .iter()
+                                .any(|pattern| is_irrefutable_pattern(&pattern.pattern))
+                        {
+                            apply_flow_facts(
+                                &mut scoped,
+                                vec![FlowFact::Binding(name.clone(), reaching_type.clone())],
+                            );
+                            case_subject_type = Some(reaching_type.clone());
+                        }
                     }
-                    if case.guard.is_none() && !irrefutable_constraints.is_empty() {
-                        let coverage = if irrefutable_constraints.iter().any(Option::is_none) {
-                            current.clone()
-                        } else {
-                            Type::union(irrefutable_constraints.into_iter().flatten())
-                        };
-                        if type_intersection(current, &coverage).is_none() {
+                    environment.record_match_constraints(case.span.clone(), constraints.clone());
+                    if let Some(remaining_cases) = &mut enum_remaining {
+                        if remaining_cases.is_empty() {
                             return Err(SourceError::semantic(
                                 SourceErrorCode::UnreachableMatchCase,
                                 "match case is unreachable",
@@ -3082,217 +3053,298 @@ fn check_expression_inner(
                             )
                             .unreachable_case(case));
                         }
-                        remaining = type_subtract(current, &coverage);
+                        let mut covered = Vec::new();
+                        for (pattern, constraint) in case.patterns.iter().zip(&constraints) {
+                            match &pattern.pattern {
+                                Pattern::EnumCase {
+                                    path,
+                                    case: case_name,
+                                } => covered.push(enum_case(
+                                    path,
+                                    case_name,
+                                    environment,
+                                    &case.span,
+                                )?),
+                                pattern if is_irrefutable_pattern(pattern) => {
+                                    covered.extend(enum_cases_for_constraint(
+                                        constraint.as_ref(),
+                                        &subject_type,
+                                        environment,
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                        covered.sort_by(|left, right| left.1.cmp(&right.1));
+                        covered.dedup();
+                        let matching = covered
+                            .iter()
+                            .filter(|candidate| remaining_cases.contains(candidate))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if matching.is_empty() {
+                            return Err(SourceError::semantic(
+                                SourceErrorCode::UnreachableMatchCase,
+                                "match case cannot match remaining enum cases",
+                                case.span.clone(),
+                            )
+                            .unreachable_case(case));
+                        }
+                        if case.guard.is_none() {
+                            remaining_cases.retain(|candidate| !matching.contains(candidate));
+                        }
                     }
-                }
-                if let Some(guard) = &case.guard {
-                    check_expression(guard, &mut scoped, type_parameters)?;
-                    {
-                        let (facts, _) = condition_facts(guard, &scoped);
-                        apply_flow_facts(&mut scoped, facts);
+                    if enum_remaining.is_none() && coverage_enabled && remaining.is_none() {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::UnreachableMatchCase,
+                            "match case is unreachable",
+                            case.span.clone(),
+                        )
+                        .unreachable_case(case));
                     }
+                    if let Some(current) = &remaining {
+                        if constraints.iter().all(Option::is_some)
+                            && constraints.iter().all(|constraint| {
+                                type_intersection(
+                                    current,
+                                    constraint.as_ref().expect("checked above"),
+                                )
+                                .is_none()
+                            })
+                        {
+                            return Err(SourceError::semantic(
+                                SourceErrorCode::UnreachableMatchCase,
+                                format!("match case cannot match remaining type {current}"),
+                                case.span.clone(),
+                            )
+                            .unreachable_case(case));
+                        }
+                        if case.guard.is_none() && !irrefutable_constraints.is_empty() {
+                            let coverage = if irrefutable_constraints.iter().any(Option::is_none) {
+                                current.clone()
+                            } else {
+                                Type::union(irrefutable_constraints.into_iter().flatten())
+                            };
+                            if type_intersection(current, &coverage).is_none() {
+                                return Err(SourceError::semantic(
+                                    SourceErrorCode::UnreachableMatchCase,
+                                    "match case is unreachable",
+                                    case.span.clone(),
+                                )
+                                .unreachable_case(case));
+                            }
+                            remaining = type_subtract(current, &coverage);
+                        }
+                    }
+                    if let Some(guard) = &case.guard {
+                        check_expression(guard, &mut scoped, type_parameters)?;
+                        {
+                            let (facts, _) = condition_facts(guard, &scoped);
+                            apply_flow_facts(&mut scoped, facts);
+                        }
+                    }
+                    let checked =
+                        check_expression_with_flow(&case.value, &mut scoped, type_parameters)?;
+                    // A case that falls through leaves the subject with the type
+                    // it narrowed it to, or, narrowing nothing, the type that
+                    // reached it.
+                    if checked.continuation == Continuation::FallsThrough && case.guard.is_none() {
+                        surviving_subject_types.push(case_subject_type.unwrap_or(reaching_type));
+                    }
+                    results.push(checked.value_type);
                 }
-                let checked =
-                    check_expression_with_flow(&case.value, &mut scoped, type_parameters)?;
-                // A case that falls through leaves the subject with the type
-                // it narrowed it to, or, narrowing nothing, the type that
-                // reached it.
-                if checked.continuation == Continuation::FallsThrough && case.guard.is_none() {
-                    surviving_subject_types.push(case_subject_type.unwrap_or(reaching_type));
-                }
-                results.push(checked.value_type);
-            }
-            if coverage_enabled && let Some(remaining) = remaining {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::NonExhaustiveMatch,
-                    format!("non-exhaustive match; missing {remaining}"),
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            if let Some(remaining) = enum_remaining
-                && !remaining.is_empty()
-            {
-                let missing = remaining
-                    .iter()
-                    .map(|(identity, case)| format!("{}.{}", identity.name, case))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(SourceError::semantic(
-                    SourceErrorCode::NonExhaustiveMatch,
-                    format!("non-exhaustive match; missing {missing}"),
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            if let Some(Expr {
-                kind: ExprKind::Name(name),
-                ..
-            }) = subject.as_deref()
-                && !surviving_subject_types.is_empty()
-            {
-                apply_flow_facts(
-                    environment,
-                    vec![FlowFact::Binding(
-                        name.clone(),
-                        Type::union(surviving_subject_types),
-                    )],
-                );
-            }
-            Ok(
-                if results
-                    .iter()
-                    .all(|value_type| matches!(value_type, Type::Never))
-                {
-                    Type::Never
-                } else {
-                    Type::union(results)
-                },
-            )
-        }
-        ExprKind::StructInit { schema, fields } => {
-            let schema_type = check_expression(schema, environment, type_parameters)?;
-            require_operation_operand(&Type::Schema, &schema_type, &expression.span)?;
-            let schema_binding = expression_binding(schema, environment)
-                .filter(|binding| binding.value_type == Type::Schema);
-            let mut provided = std::collections::HashSet::new();
-            for (name, value) in fields {
-                if !provided.insert(name) {
+                if coverage_enabled && let Some(remaining) = remaining {
                     return Err(SourceError::semantic(
-                        SourceErrorCode::DuplicateName,
-                        format!("duplicate struct field `{name}`"),
-                        value.span.clone(),
+                        SourceErrorCode::NonExhaustiveMatch,
+                        format!("non-exhaustive match; missing {remaining}"),
+                        expression.span.clone(),
                     )
-                    .with_extent(value));
+                    .with_extent(expression));
                 }
-                let actual = check_expression(value, environment, type_parameters)?;
-                if let Some(schema) = &schema_binding {
-                    let expected = schema.members.get(name).ok_or_else(|| {
-                        SourceError::semantic(
-                            SourceErrorCode::UnknownMember,
-                            format!("struct schema has no field `{name}`"),
+                if let Some(remaining) = enum_remaining
+                    && !remaining.is_empty()
+                {
+                    let missing = remaining
+                        .iter()
+                        .map(|(identity, case)| format!("{}.{}", identity.name, case))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::NonExhaustiveMatch,
+                        format!("non-exhaustive match; missing {missing}"),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
+                if let Some(Expr {
+                    kind: ExprKind::Name(name),
+                    ..
+                }) = subject.as_deref()
+                    && !surviving_subject_types.is_empty()
+                {
+                    apply_flow_facts(
+                        environment,
+                        vec![FlowFact::Binding(
+                            name.clone(),
+                            Type::union(surviving_subject_types),
+                        )],
+                    );
+                }
+                Ok(
+                    if results
+                        .iter()
+                        .all(|value_type| matches!(value_type, Type::Never))
+                    {
+                        Type::Never
+                    } else {
+                        Type::union(results)
+                    },
+                )
+            }
+            ExprKind::StructInit { schema, fields } => {
+                let schema_type = check_expression(schema, environment, type_parameters)?;
+                require_operation_operand(&Type::Schema, &schema_type, &expression.span)?;
+                let schema_binding = expression_binding(schema, environment)
+                    .filter(|binding| binding.value_type == Type::Schema);
+                let mut provided = std::collections::HashSet::new();
+                for (name, value) in fields {
+                    if !provided.insert(name) {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::DuplicateName,
+                            format!("duplicate struct field `{name}`"),
                             value.span.clone(),
                         )
-                        .with_extent(value)
-                    })?;
-                    require(&expected.value_type, &actual, &value.span)
-                        .map_err(|error| explain_nil_start(error, value, environment))?;
+                        .with_extent(value));
+                    }
+                    let actual = check_expression(value, environment, type_parameters)?;
+                    if let Some(schema) = &schema_binding {
+                        let expected = schema.members.get(name).ok_or_else(|| {
+                            SourceError::semantic(
+                                SourceErrorCode::UnknownMember,
+                                format!("struct schema has no field `{name}`"),
+                                value.span.clone(),
+                            )
+                            .with_extent(value)
+                        })?;
+                        require(&expected.value_type, &actual, &value.span)
+                            .map_err(|error| explain_nil_start(error, value, environment))?;
+                    }
                 }
-            }
-            if let Some(schema) = &schema_binding
-                && let Some(name) = schema
-                    .required_fields
-                    .iter()
-                    .find(|name| !provided.contains(*name))
-            {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::MissingField,
-                    format!("missing required struct field `{name}`"),
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            // A schema reached through a module, as in `shapes.Point {...}`,
-            // has its identity on the member's binding.
-            Ok(schema_binding
-                .and_then(|binding| binding.schema_identity)
-                .or_else(|| known_schema_identity(schema, environment))
-                .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
-        }
-        ExprKind::StructCopy { value, fields } => {
-            let result = check_expression(value, environment, type_parameters)?;
-            let schema = known_struct_schema(&result, environment);
-            let mut replaced = std::collections::HashSet::new();
-            let mut map_replacements = Vec::new();
-            for (name, replacement) in fields {
-                if !replaced.insert(name) {
+                if let Some(schema) = &schema_binding
+                    && let Some(name) = schema
+                        .required_fields
+                        .iter()
+                        .find(|name| !provided.contains(*name))
+                {
                     return Err(SourceError::semantic(
-                        SourceErrorCode::DuplicateName,
-                        format!("duplicate struct field `{name}`"),
-                        replacement.span.clone(),
+                        SourceErrorCode::MissingField,
+                        format!("missing required struct field `{name}`"),
+                        expression.span.clone(),
                     )
-                    .with_extent(replacement));
+                    .with_extent(expression));
                 }
-                let actual = check_expression(replacement, environment, type_parameters)?;
-                map_replacements.push(actual.clone());
-                if let Some(schema) = &schema {
-                    let expected = schema.members.get(name).ok_or_else(|| {
-                        SourceError::semantic(
-                            SourceErrorCode::UnknownMember,
-                            format!("struct has no field `{name}`"),
+                // A schema reached through a module, as in `shapes.Point {...}`,
+                // has its identity on the member's binding.
+                Ok(schema_binding
+                    .and_then(|binding| binding.schema_identity)
+                    .or_else(|| known_schema_identity(schema, environment))
+                    .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
+            }
+            ExprKind::StructCopy { value, fields } => {
+                let result = check_expression(value, environment, type_parameters)?;
+                let schema = known_struct_schema(&result, environment);
+                let mut replaced = std::collections::HashSet::new();
+                let mut map_replacements = Vec::new();
+                for (name, replacement) in fields {
+                    if !replaced.insert(name) {
+                        return Err(SourceError::semantic(
+                            SourceErrorCode::DuplicateName,
+                            format!("duplicate struct field `{name}`"),
                             replacement.span.clone(),
                         )
-                        .with_extent(replacement)
-                    })?;
-                    require(&expected.value_type, &actual, &replacement.span)
-                        .map_err(|error| explain_nil_start(error, replacement, environment))?;
+                        .with_extent(replacement));
+                    }
+                    let actual = check_expression(replacement, environment, type_parameters)?;
+                    map_replacements.push(actual.clone());
+                    if let Some(schema) = &schema {
+                        let expected = schema.members.get(name).ok_or_else(|| {
+                            SourceError::semantic(
+                                SourceErrorCode::UnknownMember,
+                                format!("struct has no field `{name}`"),
+                                replacement.span.clone(),
+                            )
+                            .with_extent(replacement)
+                        })?;
+                        require(&expected.value_type, &actual, &replacement.span)
+                            .map_err(|error| explain_nil_start(error, replacement, environment))?;
+                    }
+                }
+                if let Type::Map(Some((key, value))) = &result {
+                    Ok(Type::Map(Some((
+                        Box::new(Type::union([key.as_ref().clone(), Type::Str])),
+                        Box::new(Type::union(
+                            std::iter::once(value.as_ref().clone()).chain(map_replacements),
+                        )),
+                    ))))
+                } else {
+                    Ok(result)
                 }
             }
-            if let Type::Map(Some((key, value))) = &result {
-                Ok(Type::Map(Some((
-                    Box::new(Type::union([key.as_ref().clone(), Type::Str])),
-                    Box::new(Type::union(
-                        std::iter::once(value.as_ref().clone()).chain(map_replacements),
-                    )),
-                ))))
-            } else {
-                Ok(result)
+            ExprKind::Index { collection, index } => {
+                let collection_expression = collection;
+                let collection = check_expression(collection, environment, type_parameters)?;
+                let index_type = check_expression(index, environment, type_parameters)?;
+                if let Type::Tuple(elements) = &collection
+                    && let Some(element) = constant_index(index, elements.len())
+                {
+                    return Ok(elements[element].clone());
+                }
+                let result = index_result(&collection, &index_type, &expression.span)?;
+                if let Some(schema) = known_struct_schema(&collection, environment)
+                    && let ExprKind::Value(Value::Str(name)) = &index.kind
+                    && !schema.members.contains_key(name.as_ref())
+                {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::UnknownMember,
+                        format!("struct has no field `{name}`"),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
+                if let (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) =
+                    (&collection_expression.kind, &index.kind)
+                    && let Some(narrowed) = environment
+                        .lookup(name)
+                        .and_then(|binding| binding.member_facts.get(key.as_ref()))
+                {
+                    return Ok(narrowed.clone());
+                }
+                Ok(expression_binding(expression, environment)
+                    .map(|binding| binding.value_type)
+                    .or_else(|| known_struct_field_type(&collection, &expression.kind, environment))
+                    .unwrap_or(result))
             }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                let collection = check_expression(collection, environment, type_parameters)?;
+                for bound in [start, end, step].into_iter().flatten() {
+                    let bound = check_expression(bound, environment, type_parameters)?;
+                    require_operation_operand(&Type::Num, &bound, &expression.span)?;
+                }
+                slice_result(&collection, &expression.span)
+            }
+            ExprKind::Interpolate(_) => Ok(Type::Str),
+            ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Documentation(_) => Ok(Type::Nil),
+            ExprKind::NotImplemented => Ok(Type::Unknown),
         }
-        ExprKind::Index { collection, index } => {
-            let collection_expression = collection;
-            let collection = check_expression(collection, environment, type_parameters)?;
-            let index_type = check_expression(index, environment, type_parameters)?;
-            if let Type::Tuple(elements) = &collection
-                && let Some(element) = constant_index(index, elements.len())
-            {
-                return Ok(elements[element].clone());
-            }
-            let result = index_result(&collection, &index_type, &expression.span)?;
-            if let Some(schema) = known_struct_schema(&collection, environment)
-                && let ExprKind::Value(Value::Str(name)) = &index.kind
-                && !schema.members.contains_key(name.as_ref())
-            {
-                return Err(SourceError::semantic(
-                    SourceErrorCode::UnknownMember,
-                    format!("struct has no field `{name}`"),
-                    expression.span.clone(),
-                )
-                .with_extent(expression));
-            }
-            if let (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) =
-                (&collection_expression.kind, &index.kind)
-                && let Some(narrowed) = environment
-                    .lookup(name)
-                    .and_then(|binding| binding.member_facts.get(key.as_ref()))
-            {
-                return Ok(narrowed.clone());
-            }
-            Ok(expression_binding(expression, environment)
-                .map(|binding| binding.value_type)
-                .or_else(|| known_struct_field_type(&collection, &expression.kind, environment))
-                .unwrap_or(result))
-        }
-        ExprKind::Slice {
-            collection,
-            start,
-            end,
-            step,
-        } => {
-            let collection = check_expression(collection, environment, type_parameters)?;
-            for bound in [start, end, step].into_iter().flatten() {
-                let bound = check_expression(bound, environment, type_parameters)?;
-                require_operation_operand(&Type::Num, &bound, &expression.span)?;
-            }
-            slice_result(&collection, &expression.span)
-        }
-        ExprKind::Interpolate(_) => Ok(Type::Str),
-        ExprKind::Resource { .. }
-        | ExprKind::Enum { .. }
-        | ExprKind::TypeAlias { .. }
-        | ExprKind::Documentation(_) => Ok(Type::Nil),
-        ExprKind::NotImplemented => Ok(Type::Unknown),
-    }
+    })
 }
 
 /// Check an expression while retaining its source-level continuation outcome.
@@ -3333,94 +3385,96 @@ fn infer_nil_starts(
     type_parameters: &[String],
     scoped: bool,
 ) {
-    if environment.in_trial() {
-        return;
-    }
-    let sites = values
-        .iter()
-        .filter_map(|value| match &value.kind {
-            ExprKind::Declare {
-                mutable: true,
-                pattern: Pattern::Binding(name),
-                annotation: None,
-                value: initial,
-                ..
-            } if matches!(initial.kind, ExprKind::Value(Value::Nil)) => {
-                Some((value.span.clone(), name.clone()))
-            }
-            _ => None,
-        })
-        .collect::<Vec<NilStartSite>>();
-    if sites.is_empty() {
-        return;
-    }
-    // Each round seeds every `var` with the first assignment's type the last
-    // one found, so an accumulator such as `count = count + 1` is typed once
-    // `count` is. The first round is final when every first assignment's
-    // type is known, since none then came from a dynamic `var`; a later one
-    // when it finds exactly the types it was seeded with. A trial checks no
-    // assignment to these vars, so a later assignment of another type is
-    // reported by the real check rather than ending the trial.
-    let mut seed = HashMap::new();
-    for round in 0..MAX_NIL_START_ROUNDS {
-        let mut trial = environment.trial(seed.clone());
-        if scoped {
-            trial.enter_scope();
-            predeclare_functions(values, &mut trial);
-        }
-        // An error in the first round, in which these vars are dynamic, is
-        // not theirs, so the assignments checked before it still count.
-        let mut failed = false;
-        for value in values {
-            match check_expression_with_flow(value, &mut trial, type_parameters) {
-                Ok(checked) if checked.continuation == Continuation::Terminates => break,
-                Ok(_) => {}
-                Err(_) if round == 0 => {
-                    failed = true;
-                    break;
-                }
-                Err(_) => return,
-            }
-        }
-        let mut assignments = trial.trial_assignments();
-        let mut next = HashMap::new();
-        let mut settled = true;
-        for site in &sites {
-            let mut found = assignments.remove(site).unwrap_or_default();
-            found.truncate(1);
-            let known = found
-                .iter()
-                .filter(|(_, value_type)| value_type.clone().widen_unknown() == *value_type)
-                .cloned()
-                .collect::<Vec<_>>();
-            let seeded = seed.get(site).map(|types: &Rc<Vec<(SourceSpan, Type)>>| {
-                Type::union(types.iter().map(|(_, value_type)| value_type.clone()))
-            });
-            let complete = !found.is_empty() && known.len() == found.len();
-            let union = Type::union(known.iter().map(|(_, value_type)| value_type.clone()));
-            settled &= known.is_empty()
-                || if round == 0 {
-                    complete
-                } else {
-                    seeded.as_ref() == Some(&union)
-                };
-            if !known.is_empty() {
-                next.insert(site.clone(), (complete, known));
-            }
-        }
-        if settled || failed {
-            for (site, (complete, known)) in next {
-                if complete {
-                    environment.infer_nil_start(site, known);
-                }
-            }
+    super::stack::grow(|| {
+        if environment.in_trial() {
             return;
         }
-        seed = next
-            .into_iter()
-            .map(|(site, (_, known))| (site, Rc::new(known)))
-            .collect();
-    }
+        let sites = values
+            .iter()
+            .filter_map(|value| match &value.kind {
+                ExprKind::Declare {
+                    mutable: true,
+                    pattern: Pattern::Binding(name),
+                    annotation: None,
+                    value: initial,
+                    ..
+                } if matches!(initial.kind, ExprKind::Value(Value::Nil)) => {
+                    Some((value.span.clone(), name.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<NilStartSite>>();
+        if sites.is_empty() {
+            return;
+        }
+        // Each round seeds every `var` with the first assignment's type the last
+        // one found, so an accumulator such as `count = count + 1` is typed once
+        // `count` is. The first round is final when every first assignment's
+        // type is known, since none then came from a dynamic `var`; a later one
+        // when it finds exactly the types it was seeded with. A trial checks no
+        // assignment to these vars, so a later assignment of another type is
+        // reported by the real check rather than ending the trial.
+        let mut seed = HashMap::new();
+        for round in 0..MAX_NIL_START_ROUNDS {
+            let mut trial = environment.trial(seed.clone());
+            if scoped {
+                trial.enter_scope();
+                predeclare_functions(values, &mut trial);
+            }
+            // An error in the first round, in which these vars are dynamic, is
+            // not theirs, so the assignments checked before it still count.
+            let mut failed = false;
+            for value in values {
+                match check_expression_with_flow(value, &mut trial, type_parameters) {
+                    Ok(checked) if checked.continuation == Continuation::Terminates => break,
+                    Ok(_) => {}
+                    Err(_) if round == 0 => {
+                        failed = true;
+                        break;
+                    }
+                    Err(_) => return,
+                }
+            }
+            let mut assignments = trial.trial_assignments();
+            let mut next = HashMap::new();
+            let mut settled = true;
+            for site in &sites {
+                let mut found = assignments.remove(site).unwrap_or_default();
+                found.truncate(1);
+                let known = found
+                    .iter()
+                    .filter(|(_, value_type)| value_type.clone().widen_unknown() == *value_type)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let seeded = seed.get(site).map(|types: &Rc<Vec<(SourceSpan, Type)>>| {
+                    Type::union(types.iter().map(|(_, value_type)| value_type.clone()))
+                });
+                let complete = !found.is_empty() && known.len() == found.len();
+                let union = Type::union(known.iter().map(|(_, value_type)| value_type.clone()));
+                settled &= known.is_empty()
+                    || if round == 0 {
+                        complete
+                    } else {
+                        seeded.as_ref() == Some(&union)
+                    };
+                if !known.is_empty() {
+                    next.insert(site.clone(), (complete, known));
+                }
+            }
+            if settled || failed {
+                for (site, (complete, known)) in next {
+                    if complete {
+                        environment.infer_nil_start(site, known);
+                    }
+                }
+                return;
+            }
+            seed = next
+                .into_iter()
+                .map(|(site, (_, known))| (site, Rc::new(known)))
+                .collect();
+        }
+    });
 }
 
 /// Trial rounds before a `nil`-started `var` whose assignments keep changing
@@ -3432,78 +3486,82 @@ fn check_expression_with_flow(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<CheckedExpression, SourceError> {
-    if let ExprKind::Block(values) = &expression.kind {
-        infer_nil_starts(values, environment, type_parameters, true);
-        let mut scoped = environment.clone();
-        scoped.enter_scope();
-        predeclare_functions(values, &mut scoped);
-        let mut result = Type::Nil;
-        for value in values {
-            let checked = check_expression_with_flow(value, &mut scoped, type_parameters)?;
-            result = checked.value_type;
-            if checked.continuation == Continuation::Terminates {
-                environment.merge_compatible_types(&scoped, &scoped);
-                return Ok(CheckedExpression::terminates(result));
+    super::stack::grow(|| {
+        if let ExprKind::Block(values) = &expression.kind {
+            infer_nil_starts(values, environment, type_parameters, true);
+            let mut scoped = environment.clone();
+            scoped.enter_scope();
+            predeclare_functions(values, &mut scoped);
+            let mut result = Type::Nil;
+            for value in values {
+                let checked = check_expression_with_flow(value, &mut scoped, type_parameters)?;
+                result = checked.value_type;
+                if checked.continuation == Continuation::Terminates {
+                    environment.merge_compatible_types(&scoped, &scoped);
+                    return Ok(CheckedExpression::terminates(result));
+                }
             }
+            environment.merge_compatible_types(&scoped, &scoped);
+            return Ok(CheckedExpression::falls_through(result));
         }
-        environment.merge_compatible_types(&scoped, &scoped);
-        return Ok(CheckedExpression::falls_through(result));
-    }
-    if let ExprKind::If {
-        condition,
-        then_branch,
-        else_branch,
-    } = &expression.kind
-    {
-        check_expression(condition, environment, type_parameters)?;
-        let (then_facts, else_facts) = condition_facts(condition, environment);
-        let mut then_environment = environment.clone();
-        apply_flow_facts(&mut then_environment, then_facts);
-        let left = check_expression_with_flow(then_branch, &mut then_environment, type_parameters)?;
-        let mut else_environment = environment.clone();
-        apply_flow_facts(&mut else_environment, else_facts);
-        let right = else_branch
-            .as_ref()
-            .map(|branch| {
-                check_expression_with_flow(branch, &mut else_environment, type_parameters)
-            })
-            .transpose()?
-            .unwrap_or_else(|| CheckedExpression::falls_through(Type::Nil));
+        if let ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = &expression.kind
+        {
+            check_expression(condition, environment, type_parameters)?;
+            let (then_facts, else_facts) = condition_facts(condition, environment);
+            let mut then_environment = environment.clone();
+            apply_flow_facts(&mut then_environment, then_facts);
+            let left =
+                check_expression_with_flow(then_branch, &mut then_environment, type_parameters)?;
+            let mut else_environment = environment.clone();
+            apply_flow_facts(&mut else_environment, else_facts);
+            let right = else_branch
+                .as_ref()
+                .map(|branch| {
+                    check_expression_with_flow(branch, &mut else_environment, type_parameters)
+                })
+                .transpose()?
+                .unwrap_or_else(|| CheckedExpression::falls_through(Type::Nil));
 
-        return match (left.continuation, right.continuation) {
-            (Continuation::FallsThrough, Continuation::Terminates) => {
-                environment.merge_reachable_types(Some(&then_environment), None);
-                Ok(CheckedExpression::falls_through(left.value_type))
-            }
-            (Continuation::Terminates, Continuation::FallsThrough) => {
-                environment.merge_reachable_types(None, Some(&else_environment));
-                Ok(CheckedExpression::falls_through(right.value_type))
-            }
-            (Continuation::FallsThrough, Continuation::FallsThrough) => {
-                environment.merge_reachable_types(Some(&then_environment), Some(&else_environment));
-                Ok(CheckedExpression::falls_through(Type::union([
-                    left.value_type,
-                    right.value_type,
-                ])))
-            }
-            (Continuation::Terminates, Continuation::Terminates) => {
-                debug_assert!(!environment.merge_reachable_types(None, None));
-                Ok(CheckedExpression::terminates(Type::union([
-                    left.value_type,
-                    right.value_type,
-                ])))
-            }
-        };
-    }
-    let value_type = check_expression(expression, environment, type_parameters)?;
-    Ok(match &expression.kind {
-        ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {
-            CheckedExpression::terminates(value_type)
+            return match (left.continuation, right.continuation) {
+                (Continuation::FallsThrough, Continuation::Terminates) => {
+                    environment.merge_reachable_types(Some(&then_environment), None);
+                    Ok(CheckedExpression::falls_through(left.value_type))
+                }
+                (Continuation::Terminates, Continuation::FallsThrough) => {
+                    environment.merge_reachable_types(None, Some(&else_environment));
+                    Ok(CheckedExpression::falls_through(right.value_type))
+                }
+                (Continuation::FallsThrough, Continuation::FallsThrough) => {
+                    environment
+                        .merge_reachable_types(Some(&then_environment), Some(&else_environment));
+                    Ok(CheckedExpression::falls_through(Type::union([
+                        left.value_type,
+                        right.value_type,
+                    ])))
+                }
+                (Continuation::Terminates, Continuation::Terminates) => {
+                    debug_assert!(!environment.merge_reachable_types(None, None));
+                    Ok(CheckedExpression::terminates(Type::union([
+                        left.value_type,
+                        right.value_type,
+                    ])))
+                }
+            };
         }
-        ExprKind::Match { .. } if matches!(value_type, Type::Never) => {
-            CheckedExpression::terminates(value_type)
-        }
-        _ => CheckedExpression::falls_through(value_type),
+        let value_type = check_expression(expression, environment, type_parameters)?;
+        Ok(match &expression.kind {
+            ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {
+                CheckedExpression::terminates(value_type)
+            }
+            ExprKind::Match { .. } if matches!(value_type, Type::Never) => {
+                CheckedExpression::terminates(value_type)
+            }
+            _ => CheckedExpression::falls_through(value_type),
+        })
     })
 }
 
@@ -3599,7 +3657,7 @@ fn bit_not_result(value: &Type, span: &SourceSpan) -> Result<Type, SourceError> 
 /// The operand family of a number or string literal, including a negated
 /// number.
 fn literal_family(expression: &Expr) -> Option<Type> {
-    match &expression.kind {
+    super::stack::grow(|| match &expression.kind {
         ExprKind::Value(Value::Int(_) | Value::Float(_)) => Some(Type::Num),
         ExprKind::Value(Value::Str(_)) | ExprKind::Interpolate(_) => Some(Type::Str),
         ExprKind::Prefix { operators, value }
@@ -3610,7 +3668,7 @@ fn literal_family(expression: &Expr) -> Option<Type> {
             literal_family(value).filter(|family| *family == Type::Num)
         }
         _ => None,
-    }
+    })
 }
 
 /// Ordering compares two numbers or two strings.
@@ -3964,7 +4022,7 @@ fn enum_cases_for_constraint(
 }
 
 fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Wildcard | Pattern::Binding(_) => true,
         Pattern::At { pattern, .. } => is_irrefutable_pattern(pattern),
         Pattern::List { .. }
@@ -3973,7 +4031,7 @@ fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => false,
-    }
+    })
 }
 
 /// Narrowed types known on one control-flow path: a binding's own, or that of
@@ -3993,96 +4051,98 @@ enum FlowFact {
 /// Both sides of a holding `&&` hold, and neither side of a failing `||`
 /// does; `!` swaps them.
 fn condition_facts(expression: &Expr, environment: &Environment) -> (FlowFacts, FlowFacts) {
-    match &expression.kind {
-        ExprKind::Binary {
-            left,
-            operator: operator @ (Binary::And | Binary::Or),
-            right,
-        } => {
-            let and = matches!(operator, Binary::And);
-            let (left_then, left_else) = condition_facts(left, environment);
-            let left_known = if and { left_then } else { left_else };
-            // The right side is evaluated only on that path, so it sees the
-            // left side's facts.
-            let mut narrowed = environment.clone();
-            apply_flow_facts(&mut narrowed, left_known.clone());
-            let (right_then, right_else) = condition_facts(right, &narrowed);
-            let right_known = if and { right_then } else { right_else };
-            let known = left_known.into_iter().chain(right_known).collect();
-            return if and {
-                (known, Vec::new())
-            } else {
-                (Vec::new(), known)
-            };
-        }
-        ExprKind::Prefix { operators, value }
-            if operators
-                .iter()
-                .all(|(operator, _)| matches!(operator, super::ast::Prefix::Not)) =>
-        {
-            let (then_facts, else_facts) = condition_facts(value, environment);
-            return if operators.len() % 2 == 0 {
-                (then_facts, else_facts)
-            } else {
-                (else_facts, then_facts)
-            };
-        }
-        _ => {}
-    }
-    let ExprKind::Binary {
-        left,
-        operator,
-        right,
-    } = &expression.kind
-    else {
-        return (Vec::new(), Vec::new());
-    };
-    if !matches!(operator, Binary::Equal | Binary::NotEqual) {
-        return (Vec::new(), Vec::new());
-    }
-    let tested = match (&left.kind, &right.kind) {
-        (_, ExprKind::Value(Value::Nil)) => left,
-        (ExprKind::Value(Value::Nil), _) => right,
-        _ => return (Vec::new(), Vec::new()),
-    };
-    let fact = |value_type: Type| match &tested.kind {
-        ExprKind::Name(name) => Some(FlowFact::Binding(name.clone(), value_type)),
-        ExprKind::Index { collection, index } => match (&collection.kind, &index.kind) {
-            (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) => {
-                Some(FlowFact::Member(name.clone(), key.to_string(), value_type))
+    super::stack::grow(|| {
+        match &expression.kind {
+            ExprKind::Binary {
+                left,
+                operator: operator @ (Binary::And | Binary::Or),
+                right,
+            } => {
+                let and = matches!(operator, Binary::And);
+                let (left_then, left_else) = condition_facts(left, environment);
+                let left_known = if and { left_then } else { left_else };
+                // The right side is evaluated only on that path, so it sees the
+                // left side's facts.
+                let mut narrowed = environment.clone();
+                apply_flow_facts(&mut narrowed, left_known.clone());
+                let (right_then, right_else) = condition_facts(right, &narrowed);
+                let right_known = if and { right_then } else { right_else };
+                let known = left_known.into_iter().chain(right_known).collect();
+                return if and {
+                    (known, Vec::new())
+                } else {
+                    (Vec::new(), known)
+                };
             }
-            _ => None,
-        },
-        _ => None,
-    };
-    let current = match &tested.kind {
-        ExprKind::Name(name) => environment
-            .lookup(name)
-            .map(|binding| binding.value_type.clone()),
-        // Only an immutable binding's member keeps its value, so only its
-        // members are narrowed; the condition's check recorded the type.
-        ExprKind::Index { collection, .. } => match &collection.kind {
-            ExprKind::Name(name)
-                if environment
-                    .lookup(name)
-                    .is_some_and(|binding| binding.declared.is_none()) =>
+            ExprKind::Prefix { operators, value }
+                if operators
+                    .iter()
+                    .all(|(operator, _)| matches!(operator, super::ast::Prefix::Not)) =>
             {
-                environment.recorded_expression_type(&tested.span)
+                let (then_facts, else_facts) = condition_facts(value, environment);
+                return if operators.len() % 2 == 0 {
+                    (then_facts, else_facts)
+                } else {
+                    (else_facts, then_facts)
+                };
             }
+            _ => {}
+        }
+        let ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } = &expression.kind
+        else {
+            return (Vec::new(), Vec::new());
+        };
+        if !matches!(operator, Binary::Equal | Binary::NotEqual) {
+            return (Vec::new(), Vec::new());
+        }
+        let tested = match (&left.kind, &right.kind) {
+            (_, ExprKind::Value(Value::Nil)) => left,
+            (ExprKind::Value(Value::Nil), _) => right,
+            _ => return (Vec::new(), Vec::new()),
+        };
+        let fact = |value_type: Type| match &tested.kind {
+            ExprKind::Name(name) => Some(FlowFact::Binding(name.clone(), value_type)),
+            ExprKind::Index { collection, index } => match (&collection.kind, &index.kind) {
+                (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) => {
+                    Some(FlowFact::Member(name.clone(), key.to_string(), value_type))
+                }
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    };
-    let Some(current) = current else {
-        return (Vec::new(), Vec::new());
-    };
-    let non_nil = fact(current.without_nil()).into_iter().collect();
-    let nil = fact(Type::Nil).into_iter().collect();
-    if matches!(operator, Binary::NotEqual) {
-        (non_nil, nil)
-    } else {
-        (nil, non_nil)
-    }
+        };
+        let current = match &tested.kind {
+            ExprKind::Name(name) => environment
+                .lookup(name)
+                .map(|binding| binding.value_type.clone()),
+            // Only an immutable binding's member keeps its value, so only its
+            // members are narrowed; the condition's check recorded the type.
+            ExprKind::Index { collection, .. } => match &collection.kind {
+                ExprKind::Name(name)
+                    if environment
+                        .lookup(name)
+                        .is_some_and(|binding| binding.declared.is_none()) =>
+                {
+                    environment.recorded_expression_type(&tested.span)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(current) = current else {
+            return (Vec::new(), Vec::new());
+        };
+        let non_nil = fact(current.without_nil()).into_iter().collect();
+        let nil = fact(Type::Nil).into_iter().collect();
+        if matches!(operator, Binary::NotEqual) {
+            (non_nil, nil)
+        } else {
+            (nil, non_nil)
+        }
+    })
 }
 
 fn apply_flow_facts(environment: &mut Environment, facts: FlowFacts) {
@@ -4103,7 +4163,7 @@ fn apply_flow_facts(environment: &mut Environment, facts: FlowFacts) {
 }
 
 fn expression_binding(expression: &Expr, environment: &Environment) -> Option<SemanticBinding> {
-    match &expression.kind {
+    super::stack::grow(|| match &expression.kind {
         ExprKind::Name(name) => environment.lookup(name).cloned(),
         ExprKind::TypeApply { callee, .. } => expression_binding(callee, environment),
         ExprKind::Index { collection, index } => {
@@ -4117,7 +4177,7 @@ fn expression_binding(expression: &Expr, environment: &Environment) -> Option<Se
             imported_modules(arguments, environment)
         }
         _ => None,
-    }
+    })
 }
 
 /// The binding an unannotated declaration gives its value. It keeps the
@@ -4130,30 +4190,32 @@ fn value_binding(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<SemanticBinding, SourceError> {
-    if let ExprKind::StructSchema(fields) = &expression.kind {
-        return schema_binding(fields, environment, type_parameters, &expression.span);
-    }
-    if let Some(binding) = expression_binding(expression, environment) {
-        return Ok(binding);
-    }
-    if let ExprKind::Map(entries) = &expression.kind {
-        let mut binding = SemanticBinding::value(value_type.clone());
-        for (key, value) in entries {
-            if let ExprKind::Value(Value::Str(name)) = &key.kind {
-                binding.members.insert(
-                    name.to_string(),
-                    static_map_member_binding(value, environment, type_parameters)?,
-                );
-            }
+    super::stack::grow(|| {
+        if let ExprKind::StructSchema(fields) = &expression.kind {
+            return schema_binding(fields, environment, type_parameters, &expression.span);
         }
-        return Ok(binding);
-    }
-    if let Some(schema) = known_struct_schema(value_type, environment) {
-        let mut binding = SemanticBinding::value(value_type.clone());
-        binding.members = schema.members;
-        return Ok(binding);
-    }
-    Ok(SemanticBinding::value(value_type.clone()))
+        if let Some(binding) = expression_binding(expression, environment) {
+            return Ok(binding);
+        }
+        if let ExprKind::Map(entries) = &expression.kind {
+            let mut binding = SemanticBinding::value(value_type.clone());
+            for (key, value) in entries {
+                if let ExprKind::Value(Value::Str(name)) = &key.kind {
+                    binding.members.insert(
+                        name.to_string(),
+                        static_map_member_binding(value, environment, type_parameters)?,
+                    );
+                }
+            }
+            return Ok(binding);
+        }
+        if let Some(schema) = known_struct_schema(value_type, environment) {
+            let mut binding = SemanticBinding::value(value_type.clone());
+            binding.members = schema.members;
+            return Ok(binding);
+        }
+        Ok(SemanticBinding::value(value_type.clone()))
+    })
 }
 
 fn static_map_member_binding(
@@ -4161,16 +4223,18 @@ fn static_map_member_binding(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<SemanticBinding, SourceError> {
-    if let Some(binding) = expression_binding(expression, environment) {
-        return Ok(binding);
-    }
-    match &expression.kind {
-        ExprKind::Value(value) => Ok(SemanticBinding::value(value_type(value))),
-        ExprKind::Map(_) => {
-            value_binding(expression, &Type::Map(None), environment, type_parameters)
+    super::stack::grow(|| {
+        if let Some(binding) = expression_binding(expression, environment) {
+            return Ok(binding);
         }
-        _ => Ok(SemanticBinding::value(Type::Unknown)),
-    }
+        match &expression.kind {
+            ExprKind::Value(value) => Ok(SemanticBinding::value(value_type(value))),
+            ExprKind::Map(_) => {
+                value_binding(expression, &Type::Map(None), environment, type_parameters)
+            }
+            _ => Ok(SemanticBinding::value(Type::Unknown)),
+        }
+    })
 }
 
 fn schema_binding(
@@ -4289,7 +4353,7 @@ fn bind_semantic_pattern(
     binding: &SemanticBinding,
     environment: &mut Environment,
 ) {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Binding(name) => environment.declare(name.clone(), binding.clone()),
         Pattern::At { name, pattern } => {
             environment.declare(name.clone(), binding.clone());
@@ -4332,7 +4396,7 @@ fn bind_semantic_pattern(
         | Pattern::Wildcard
         | Pattern::Pinned(_)
         | Pattern::EnumCase { .. } => {}
-    }
+    });
 }
 
 fn check_pattern(
@@ -4340,7 +4404,7 @@ fn check_pattern(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<(), SourceError> {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::At { pattern, .. } => check_pattern(pattern, environment, type_parameters),
         Pattern::List { items, .. } => {
             for item in items {
@@ -4363,7 +4427,7 @@ fn check_pattern(
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => Ok(()),
-    }
+    })
 }
 
 fn check_case_pattern(
@@ -4372,97 +4436,103 @@ fn check_case_pattern(
     type_parameters: &[String],
     span: &SourceSpan,
 ) -> Result<Option<Type>, SourceError> {
-    let constraint = if let Some(constraint) = &pattern.constraint {
-        let constraint = resolve_static_annotation(constraint, type_parameters, span, environment)?;
-        if !constraint.is_reifiable_match_constraint() {
-            return Err(SourceError::semantic(
-                SourceErrorCode::InvalidMatch,
-                "match type constraint is not runtime-checkable",
-                span.clone(),
-            ));
-        }
-        Some(constraint)
-    } else {
-        None
-    };
-    check_pattern(&pattern.pattern, environment, type_parameters)?;
-    Ok(constraint)
+    super::stack::grow(|| {
+        let constraint = if let Some(constraint) = &pattern.constraint {
+            let constraint =
+                resolve_static_annotation(constraint, type_parameters, span, environment)?;
+            if !constraint.is_reifiable_match_constraint() {
+                return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidMatch,
+                    "match type constraint is not runtime-checkable",
+                    span.clone(),
+                ));
+            }
+            Some(constraint)
+        } else {
+            None
+        };
+        check_pattern(&pattern.pattern, environment, type_parameters)?;
+        Ok(constraint)
+    })
 }
 
 fn bind_case_pattern(pattern: &Pattern, value_type: &Type, environment: &mut Environment) {
-    match pattern {
-        Pattern::Binding(name) => {
-            environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
-        }
-        Pattern::At { name, pattern } => {
-            environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
-            bind_case_pattern(pattern, value_type, environment);
-        }
-        Pattern::List { items, rest } => {
-            // Without a rest, a tuple's items bind its elements in order.
-            if let Type::Tuple(elements) = value_type
-                && rest.is_none()
-                && elements.len() == items.len()
-            {
-                for (item, element) in items.iter().zip(elements) {
+    super::stack::grow(|| {
+        match pattern {
+            Pattern::Binding(name) => {
+                environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
+            }
+            Pattern::At { name, pattern } => {
+                environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
+                bind_case_pattern(pattern, value_type, environment);
+            }
+            Pattern::List { items, rest } => {
+                // Without a rest, a tuple's items bind its elements in order.
+                if let Type::Tuple(elements) = value_type
+                    && rest.is_none()
+                    && elements.len() == items.len()
+                {
+                    for (item, element) in items.iter().zip(elements) {
+                        bind_case_pattern(item, element, environment);
+                    }
+                    return;
+                }
+                let widened = value_type.as_list();
+                let element = match &widened {
+                    Type::List(Some(element)) => element.as_ref(),
+                    Type::Bytes => &Type::Num,
+                    _ => &Type::Unknown,
+                };
+                for item in items {
                     bind_case_pattern(item, element, environment);
                 }
-                return;
+                if let Some(super::ast::RestPattern::Binding(name)) = rest {
+                    let rest_type = if matches!(value_type, Type::Bytes) {
+                        Type::Bytes
+                    } else {
+                        Type::List(Some(Box::new(element.clone())))
+                    };
+                    environment.declare(name.clone(), SemanticBinding::value(rest_type));
+                }
             }
-            let widened = value_type.as_list();
-            let element = match &widened {
-                Type::List(Some(element)) => element.as_ref(),
-                Type::Bytes => &Type::Num,
-                _ => &Type::Unknown,
-            };
-            for item in items {
-                bind_case_pattern(item, element, environment);
-            }
-            if let Some(super::ast::RestPattern::Binding(name)) = rest {
-                let rest_type = if matches!(value_type, Type::Bytes) {
-                    Type::Bytes
-                } else {
-                    Type::List(Some(Box::new(element.clone())))
+            Pattern::Map { entries, rest, .. } => {
+                let (key, map_value) = match value_type {
+                    Type::Map(Some((key, value))) => (key.as_ref(), value.as_ref()),
+                    _ => (&Type::Unknown, &Type::Unknown),
                 };
-                environment.declare(name.clone(), SemanticBinding::value(rest_type));
+                let schema = known_struct_schema(value_type, environment);
+                for (map_key, pattern) in entries {
+                    let value =
+                        if let (Some(schema), MapPatternKey::String(name)) = (&schema, map_key) {
+                            schema
+                                .members
+                                .get(name)
+                                .map_or(map_value, |member| &member.value_type)
+                        } else {
+                            map_value
+                        };
+                    bind_case_pattern(pattern, value, environment);
+                }
+                if let Some(super::ast::RestPattern::Binding(name)) = rest {
+                    environment.declare(
+                        name.clone(),
+                        SemanticBinding::value(Type::Map(Some((
+                            Box::new(key.clone()),
+                            Box::new(map_value.clone()),
+                        )))),
+                    );
+                }
             }
+            Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Pinned(_)
+            | Pattern::MapAll
+            | Pattern::EnumCase { .. } => {}
         }
-        Pattern::Map { entries, rest, .. } => {
-            let (key, map_value) = match value_type {
-                Type::Map(Some((key, value))) => (key.as_ref(), value.as_ref()),
-                _ => (&Type::Unknown, &Type::Unknown),
-            };
-            let schema = known_struct_schema(value_type, environment);
-            for (map_key, pattern) in entries {
-                let value = if let (Some(schema), MapPatternKey::String(name)) = (&schema, map_key)
-                {
-                    schema
-                        .members
-                        .get(name)
-                        .map_or(map_value, |member| &member.value_type)
-                } else {
-                    map_value
-                };
-                bind_case_pattern(pattern, value, environment);
-            }
-            if let Some(super::ast::RestPattern::Binding(name)) = rest {
-                environment.declare(
-                    name.clone(),
-                    SemanticBinding::value(Type::Map(Some((
-                        Box::new(key.clone()),
-                        Box::new(map_value.clone()),
-                    )))),
-                );
-            }
-        }
-        Pattern::Literal(_)
-        | Pattern::Wildcard
-        | Pattern::Pinned(_)
-        | Pattern::MapAll
-        | Pattern::EnumCase { .. } => {}
-    }
+    });
 }
 
+#[allow(clippy::too_many_lines)]
 fn check_call(
     callee: &Expr,
     arguments: &[CallArgument],
@@ -4471,109 +4541,116 @@ fn check_call(
     type_parameters: &[String],
     piped: Option<Type>,
 ) -> Result<Type, SourceError> {
-    check_expression(callee, environment, type_parameters)?;
-    let mut actuals = piped.into_iter().collect::<Vec<_>>();
-    actuals.extend(
-        arguments
-            .iter()
-            .map(|argument| check_argument(argument, environment, type_parameters))
-            .collect::<Result<Vec<_>, _>>()?,
-    );
-    let mut shapes = vec![ArgumentShape::Positional; actuals.len() - arguments.len()];
-    shapes.extend(arguments.iter().map(|argument| match argument {
-        CallArgument::Positional(_) => ArgumentShape::Positional,
-        CallArgument::Named { name, .. } => ArgumentShape::Named(name),
-        CallArgument::Spread(_) => ArgumentShape::Spread,
-    }));
-    let (name, binding, explicit) = match &callee.kind {
-        ExprKind::Name(name) => (name.clone(), environment.lookup(name).cloned(), None),
-        ExprKind::TypeApply { callee, arguments } => {
-            let Some(binding) = expression_binding(callee, environment) else {
-                return Ok(Type::Unknown);
-            };
-            (callable_name(callee), Some(binding), Some(arguments))
+    super::stack::grow(|| {
+        check_expression(callee, environment, type_parameters)?;
+        let mut actuals = piped.into_iter().collect::<Vec<_>>();
+        actuals.extend(
+            arguments
+                .iter()
+                .map(|argument| check_argument(argument, environment, type_parameters))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        let mut shapes = vec![ArgumentShape::Positional; actuals.len() - arguments.len()];
+        shapes.extend(arguments.iter().map(|argument| match argument {
+            CallArgument::Positional(_) => ArgumentShape::Positional,
+            CallArgument::Named { name, .. } => ArgumentShape::Named(name),
+            CallArgument::Spread(_) => ArgumentShape::Spread,
+        }));
+        let (name, binding, explicit) = match &callee.kind {
+            ExprKind::Name(name) => (name.clone(), environment.lookup(name).cloned(), None),
+            ExprKind::TypeApply { callee, arguments } => {
+                let Some(binding) = expression_binding(callee, environment) else {
+                    return Ok(Type::Unknown);
+                };
+                (callable_name(callee), Some(binding), Some(arguments))
+            }
+            _ => (
+                callable_name(callee),
+                expression_binding(callee, environment),
+                None,
+            ),
+        };
+        let Some(binding) = binding else {
+            return Ok(Type::Unknown);
+        };
+        if binding.callables.is_empty() {
+            return check_function_value_call(
+                &binding.value_type,
+                &shapes,
+                &actuals,
+                &expression.span,
+            );
         }
-        _ => (
-            callable_name(callee),
-            expression_binding(callee, environment),
-            None,
-        ),
-    };
-    let Some(binding) = binding else {
-        return Ok(Type::Unknown);
-    };
-    if binding.callables.is_empty() {
-        return check_function_value_call(&binding.value_type, &shapes, &actuals, &expression.span);
-    }
-    let callables = binding.callables.clone();
-    if callables.len() > 1
-        && shapes
-            .iter()
-            .any(|shape| matches!(shape, ArgumentShape::Spread))
-    {
-        return Err(SourceError::semantic(
-            SourceErrorCode::NoMatchingOverload,
-            format!("cannot resolve overload `{name}` with spread arguments"),
-            expression.span.clone(),
-        )
-        .with_extent(expression));
-    }
-    let mut applicable = Vec::new();
-    for signature in &callables {
-        if let Some(candidate) = instantiate_candidate(
-            signature,
-            &shapes,
-            &actuals,
-            explicit,
-            type_parameters,
-            &expression.span,
-            environment,
-            callables.len() == 1,
-        )? {
-            applicable.push(candidate);
-        }
-    }
-    if applicable.is_empty() {
-        if callables.len() == 1
+        let callables = binding.callables.clone();
+        if callables.len() > 1
             && shapes
                 .iter()
                 .any(|shape| matches!(shape, ArgumentShape::Spread))
         {
-            // The runtime binder remains responsible for a dynamic spread's
-            // arity. It cannot prove parameter or generic relationships, so
-            // do not report a successfully instantiated callable here.
-            return Ok(Type::Unknown);
+            return Err(SourceError::semantic(
+                SourceErrorCode::NoMatchingOverload,
+                format!("cannot resolve overload `{name}` with spread arguments"),
+                expression.span.clone(),
+            )
+            .with_extent(expression));
         }
-        return Err(SourceError::semantic(
-            SourceErrorCode::NoMatchingOverload,
-            format!("no matching overload for `{name}`"),
-            expression.span.clone(),
-        )
-        .with_extent(expression));
-    }
-    let most_specific = applicable
-        .iter()
-        .enumerate()
-        .filter(|(index, candidate)| {
-            !applicable.iter().enumerate().any(|(other_index, other)| {
-                index != &other_index && more_specific(other, candidate)
+        let mut applicable = Vec::new();
+        for signature in &callables {
+            if let Some(candidate) = instantiate_candidate(
+                signature,
+                &shapes,
+                &actuals,
+                explicit,
+                type_parameters,
+                &expression.span,
+                environment,
+                callables.len() == 1,
+            )? {
+                applicable.push(candidate);
+            }
+        }
+        if applicable.is_empty() {
+            if callables.len() == 1
+                && shapes
+                    .iter()
+                    .any(|shape| matches!(shape, ArgumentShape::Spread))
+            {
+                // The runtime binder remains responsible for a dynamic spread's
+                // arity. It cannot prove parameter or generic relationships, so
+                // do not report a successfully instantiated callable here.
+                return Ok(Type::Unknown);
+            }
+            return Err(SourceError::semantic(
+                SourceErrorCode::NoMatchingOverload,
+                format!("no matching overload for `{name}`"),
+                expression.span.clone(),
+            )
+            .with_extent(expression));
+        }
+        let most_specific = applicable
+            .iter()
+            .enumerate()
+            .filter(|(index, candidate)| {
+                !applicable.iter().enumerate().any(|(other_index, other)| {
+                    index != &other_index && more_specific(other, candidate)
+                })
             })
-        })
-        .map(|(_, candidate)| candidate)
-        .collect::<Vec<_>>();
-    if most_specific.len() != 1 {
-        return Err(SourceError::semantic(
-            SourceErrorCode::AmbiguousOverload,
-            format!("ambiguous overload for `{name}`"),
-            expression.span.clone(),
-        )
-        .with_extent(expression));
-    }
-    if callables.len() > 1 {
-        environment
-            .record_selected_call(expression.span.clone(), most_specific[0].identity.clone());
-    }
-    Ok(most_specific[0].result.clone())
+            .map(|(_, candidate)| candidate)
+            .collect::<Vec<_>>();
+        if most_specific.len() != 1 {
+            return Err(SourceError::semantic(
+                SourceErrorCode::AmbiguousOverload,
+                format!("ambiguous overload for `{name}`"),
+                expression.span.clone(),
+            )
+            .with_extent(expression));
+        }
+        if callables.len() > 1 {
+            environment
+                .record_selected_call(expression.span.clone(), most_specific[0].identity.clone());
+        }
+        Ok(most_specific[0].result.clone())
+    })
 }
 
 fn check_function_value_call(
@@ -4622,12 +4699,14 @@ fn check_argument(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
-    let value = match argument {
-        CallArgument::Positional(value)
-        | CallArgument::Named { value, .. }
-        | CallArgument::Spread(value) => value,
-    };
-    check_expression(value, environment, type_parameters)
+    super::stack::grow(|| {
+        let value = match argument {
+            CallArgument::Positional(value)
+            | CallArgument::Named { value, .. }
+            | CallArgument::Spread(value) => value,
+        };
+        check_expression(value, environment, type_parameters)
+    })
 }
 
 struct InstantiatedCandidate {
@@ -5224,8 +5303,10 @@ fn nil_start_origin(name: &str, binding: &SemanticBinding) -> Option<String> {
 }
 
 fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<(), SourceError> {
-    validate_expression_inner(expression, type_parameters)
-        .map_err(|error| error.claimed_by(expression))
+    super::stack::grow(|| {
+        validate_expression_inner(expression, type_parameters)
+            .map_err(|error| error.claimed_by(expression))
+    })
 }
 
 #[allow(clippy::too_many_lines)]
@@ -5233,7 +5314,7 @@ fn validate_expression_inner(
     expression: &Expr,
     type_parameters: &[String],
 ) -> Result<(), SourceError> {
-    match &expression.kind {
+    super::stack::grow(|| match &expression.kind {
         ExprKind::Declare {
             annotation,
             value,
@@ -5418,7 +5499,7 @@ fn validate_expression_inner(
         | ExprKind::Documentation(_)
         | ExprKind::NotImplemented
         | ExprKind::Name(_) => Ok(()),
-    }
+    })
 }
 
 fn validate_parameter(
@@ -5426,38 +5507,44 @@ fn validate_parameter(
     type_parameters: &[String],
     span: &SourceSpan,
 ) -> Result<(), SourceError> {
-    if let Some(annotation) = &parameter.annotation {
-        resolve_annotation(annotation, type_parameters, span)?;
-    }
-    validate_tags(&parameter.tags, type_parameters)?;
-    if let Some(default) = &parameter.default {
-        validate_expression(default, type_parameters)?;
-    }
-    Ok(())
+    super::stack::grow(|| {
+        if let Some(annotation) = &parameter.annotation {
+            resolve_annotation(annotation, type_parameters, span)?;
+        }
+        validate_tags(&parameter.tags, type_parameters)?;
+        if let Some(default) = &parameter.default {
+            validate_expression(default, type_parameters)?;
+        }
+        Ok(())
+    })
 }
 
 fn validate_tags(tags: &[Tag], type_parameters: &[String]) -> Result<(), SourceError> {
-    for tag in tags {
-        for argument in &tag.arguments {
-            validate_expression(argument, type_parameters)?;
+    super::stack::grow(|| {
+        for tag in tags {
+            for argument in &tag.arguments {
+                validate_expression(argument, type_parameters)?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn validate_arguments(
     arguments: &[CallArgument],
     type_parameters: &[String],
 ) -> Result<(), SourceError> {
-    for argument in arguments {
-        let value = match argument {
-            CallArgument::Positional(value)
-            | CallArgument::Named { value, .. }
-            | CallArgument::Spread(value) => value,
-        };
-        validate_expression(value, type_parameters)?;
-    }
-    Ok(())
+    super::stack::grow(|| {
+        for argument in arguments {
+            let value = match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Named { value, .. }
+                | CallArgument::Spread(value) => value,
+            };
+            validate_expression(value, type_parameters)?;
+        }
+        Ok(())
+    })
 }
 
 fn validate_case_pattern(
@@ -5465,21 +5552,23 @@ fn validate_case_pattern(
     type_parameters: &[String],
     span: &SourceSpan,
 ) -> Result<(), SourceError> {
-    if let Some(constraint) = &pattern.constraint {
-        let constraint = resolve_annotation(constraint, type_parameters, span)?;
-        if !constraint.is_reifiable_match_constraint() {
-            return Err(SourceError::semantic(
-                SourceErrorCode::InvalidMatch,
-                "match type constraint is not runtime-checkable",
-                span.clone(),
-            ));
+    super::stack::grow(|| {
+        if let Some(constraint) = &pattern.constraint {
+            let constraint = resolve_annotation(constraint, type_parameters, span)?;
+            if !constraint.is_reifiable_match_constraint() {
+                return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidMatch,
+                    "match type constraint is not runtime-checkable",
+                    span.clone(),
+                ));
+            }
         }
-    }
-    validate_pattern(&pattern.pattern, type_parameters)
+        validate_pattern(&pattern.pattern, type_parameters)
+    })
 }
 
 fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(), SourceError> {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::At { pattern, .. } => validate_pattern(pattern, type_parameters),
         Pattern::List { items, .. } => {
             for item in items {
@@ -5502,7 +5591,7 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => Ok(()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -5518,11 +5607,7 @@ mod tests {
     }
 
     fn name(name: &str) -> Expr {
-        Expr {
-            end: test_end(),
-            kind: ExprKind::Name(name.into()),
-            span: span(),
-        }
+        Expr::new(ExprKind::Name(name.into()), span(), test_end())
     }
 
     fn parameter(name: &str) -> Parameter {
@@ -5608,15 +5693,15 @@ mod tests {
     }
 
     fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
-        Expr {
-            end: test_end(),
-            kind: ExprKind::Binary {
+        Expr::new(
+            ExprKind::Binary {
                 left: Box::new(left),
                 operator,
                 right: Box::new(right),
             },
-            span: span(),
-        }
+            span(),
+            test_end(),
+        )
     }
 
     fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
@@ -5638,22 +5723,26 @@ mod tests {
 
     #[test]
     fn parameter_constraints_follow_control_flow_paths() {
-        let negate = || Expr {
-            end: test_end(),
-            kind: ExprKind::Prefix {
-                operators: vec![(Prefix::Negate, span())],
-                value: Box::new(name("value")),
-            },
-            span: span(),
+        let negate = || {
+            Expr::new(
+                ExprKind::Prefix {
+                    operators: vec![(Prefix::Negate, span())],
+                    value: Box::new(name("value")),
+                },
+                span(),
+                test_end(),
+            )
         };
-        let body = |else_branch: Option<Expr>| Expr {
-            end: test_end(),
-            kind: ExprKind::If {
-                condition: Box::new(binary(name("value"), Binary::Less, name("limit"))),
-                then_branch: Box::new(negate()),
-                else_branch: else_branch.map(Box::new),
-            },
-            span: span(),
+        let body = |else_branch: Option<Expr>| {
+            Expr::new(
+                ExprKind::If {
+                    condition: Box::new(binary(name("value"), Binary::Less, name("limit"))),
+                    then_branch: Box::new(negate()),
+                    else_branch: else_branch.map(Box::new),
+                },
+                span(),
+                test_end(),
+            )
         };
         let parameters = [parameter("value"), parameter("limit")];
 
@@ -5703,14 +5792,14 @@ mod tests {
 
     #[test]
     fn inferred_plus_alternatives_intersect_numeric_body_facts() {
-        let body = Expr {
-            end: test_end(),
-            kind: ExprKind::Block(vec![
+        let body = Expr::new(
+            ExprKind::Block(vec![
                 binary(name("left"), Binary::Add, name("right")),
                 binary(name("left"), Binary::Divide, name("right")),
             ]),
-            span: span(),
-        };
+            span(),
+            test_end(),
+        );
         let constraints = parameter_constraints(
             &[parameter("left"), parameter("right")],
             &body,
@@ -5766,28 +5855,28 @@ mod tests {
     #[test]
     fn parameter_constraints_include_defaults_and_recur_arguments() {
         let mut value = parameter("value");
-        value.default = Some(Expr {
-            end: test_end(),
-            kind: ExprKind::Binary {
+        value.default = Some(Expr::new(
+            ExprKind::Binary {
                 left: Box::new(name("value")),
                 operator: Binary::Divide,
                 right: Box::new(name("other")),
             },
-            span: span(),
-        });
-        let body = Expr {
-            end: test_end(),
-            kind: ExprKind::Recur(vec![CallArgument::Positional(Expr {
-                end: test_end(),
-                kind: ExprKind::Binary {
+            span(),
+            test_end(),
+        ));
+        let body = Expr::new(
+            ExprKind::Recur(vec![CallArgument::Positional(Expr::new(
+                ExprKind::Binary {
                     left: Box::new(name("other")),
                     operator: Binary::Modulo,
                     right: Box::new(name("value")),
                 },
-                span: span(),
-            })]),
-            span: span(),
-        };
+                span(),
+                test_end(),
+            ))]),
+            span(),
+            test_end(),
+        );
         let constraints =
             parameter_constraints(&[value, parameter("other")], &body, &Environment::new())
                 .expect("defaults and recur expressions collect");
@@ -5804,39 +5893,39 @@ mod tests {
         rest.variadic = true;
         let mut discard = parameter("_");
         discard.discard = true;
-        let body = Expr {
-            end: test_end(),
-            kind: ExprKind::Block(vec![
-                Expr {
-                    end: test_end(),
-                    kind: ExprKind::Binary {
+        let body = Expr::new(
+            ExprKind::Block(vec![
+                Expr::new(
+                    ExprKind::Binary {
                         left: Box::new(name("explicit")),
                         operator: Binary::Divide,
                         right: Box::new(name("rest")),
                     },
-                    span: span(),
-                },
-                Expr {
-                    end: test_end(),
-                    kind: ExprKind::Function {
+                    span(),
+                    test_end(),
+                ),
+                Expr::new(
+                    ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: vec![parameter("outer")],
                         return_annotation: None,
-                        body: Box::new(Expr {
-                            end: test_end(),
-                            kind: ExprKind::Binary {
+                        body: Box::new(Expr::new(
+                            ExprKind::Binary {
                                 left: Box::new(name("outer")),
                                 operator: Binary::Divide,
                                 right: Box::new(name("outer")),
                             },
-                            span: span(),
-                        }),
+                            span(),
+                            test_end(),
+                        )),
                     },
-                    span: span(),
-                },
+                    span(),
+                    test_end(),
+                ),
             ]),
-            span: span(),
-        };
+            span(),
+            test_end(),
+        );
         let constraints = parameter_constraints(
             &[parameter("outer"), explicit, rest, discard],
             &body,

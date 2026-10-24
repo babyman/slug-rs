@@ -169,46 +169,52 @@ impl<'a> Analysis<'a> {
     }
 
     fn walk_scoped(&mut self, bindings: &[&'a str], expressions: &[&'a Expr]) {
-        self.scopes.push(HashMap::new());
-        for name in bindings {
-            self.declare(name, Symbol::Other);
-        }
-        for expression in expressions {
-            self.walk(expression);
-        }
-        self.scopes.pop();
+        super::stack::grow(|| {
+            self.scopes.push(HashMap::new());
+            for name in bindings {
+                self.declare(name, Symbol::Other);
+            }
+            for expression in expressions {
+                self.walk(expression);
+            }
+            self.scopes.pop();
+        });
     }
 
     fn walk_function(&mut self, function: usize, parameters: &'a [Parameter], body: &'a Expr) {
-        self.enclosing.push(function);
-        self.active.push(Vec::new());
-        self.scopes.push(HashMap::new());
-        for parameter in parameters {
-            self.declare(&parameter.name, Symbol::Other);
-        }
-        for parameter in parameters {
-            if let Some(default) = &parameter.default {
-                self.walk(default);
+        super::stack::grow(|| {
+            self.enclosing.push(function);
+            self.active.push(Vec::new());
+            self.scopes.push(HashMap::new());
+            for parameter in parameters {
+                self.declare(&parameter.name, Symbol::Other);
             }
-        }
-        self.walk(body);
-        self.scopes.pop();
-        self.active.pop();
-        self.enclosing.pop();
+            for parameter in parameters {
+                if let Some(default) = &parameter.default {
+                    self.walk(default);
+                }
+            }
+            self.walk(body);
+            self.scopes.pop();
+            self.active.pop();
+            self.enclosing.pop();
+        });
     }
 
     fn walk_arguments(&mut self, arguments: &'a [CallArgument]) {
-        for argument in arguments {
-            match argument {
-                CallArgument::Positional(value)
-                | CallArgument::Named { value, .. }
-                | CallArgument::Spread(value) => self.walk(value),
+        super::stack::grow(|| {
+            for argument in arguments {
+                match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Named { value, .. }
+                    | CallArgument::Spread(value) => self.walk(value),
+                }
             }
-        }
+        });
     }
 
     fn walk_pattern(&mut self, pattern: &'a Pattern) {
-        match pattern {
+        super::stack::grow(|| match pattern {
             Pattern::At { pattern, .. } => self.walk_pattern(pattern),
             Pattern::List { items, .. } => {
                 for item in items {
@@ -229,12 +235,12 @@ impl<'a> Analysis<'a> {
             | Pattern::Pinned(_)
             | Pattern::MapAll
             | Pattern::EnumCase { .. } => {}
-        }
+        });
     }
 
     #[allow(clippy::too_many_lines)]
     fn walk(&mut self, expression: &'a Expr) {
-        match &expression.kind {
+        super::stack::grow(|| match &expression.kind {
             ExprKind::Name(name) => self.read(name, &expression.span),
             ExprKind::Interpolate(parts) => {
                 for part in parts {
@@ -434,7 +440,7 @@ impl<'a> Analysis<'a> {
             | ExprKind::Resource { .. }
             | ExprKind::Enum { .. }
             | ExprKind::TypeAlias { .. } => {}
-        }
+        });
     }
 
     /// Whether calling `function` can assign the instance of `var` that the
@@ -490,7 +496,7 @@ impl<'a> Analysis<'a> {
 }
 
 fn pattern_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a str>) {
-    match pattern {
+    super::stack::grow(|| match pattern {
         Pattern::Binding(name) => names.push(name),
         Pattern::At { name, pattern } => {
             names.push(name);
@@ -517,5 +523,5 @@ fn pattern_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a str>) {
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => {}
-    }
+    });
 }

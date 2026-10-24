@@ -2,15 +2,73 @@ use slug_vm::{DeferMode, SourceSpan, Value};
 
 use super::SourcePosition;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) struct Expr {
     pub(super) kind: ExprKind,
     pub(super) span: SourceSpan,
     /// Exclusive end of the expression's source.
     pub(super) end: SourcePosition,
+    /// Levels from this expression down to its deepest leaf, counting
+    /// pattern levels and every nested expression. The parser bounds it, so
+    /// recursion over a tree, including dropping and cloning it, is bounded.
+    pub(super) depth: u32,
+}
+
+// Cloning recurses through the whole tree, so it grows the stack like the
+// compiler's passes do.
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        super::stack::grow(|| Self {
+            kind: self.kind.clone(),
+            span: self.span.clone(),
+            end: self.end,
+            depth: self.depth,
+        })
+    }
 }
 
 impl Expr {
+    pub(super) fn new(kind: ExprKind, span: SourceSpan, end: SourcePosition) -> Self {
+        let mut expression = Self {
+            kind,
+            span,
+            end,
+            depth: 1,
+        };
+        let mut deepest = 0;
+        expression.for_each_child(|child| deepest = deepest.max(child.depth));
+        let mut tags = |tags: &[Tag]| {
+            for tag in tags {
+                for argument in &tag.arguments {
+                    deepest = deepest.max(argument.depth);
+                }
+            }
+        };
+        match &expression.kind {
+            ExprKind::Declare { pattern, .. } => deepest = deepest.max(pattern.depth()),
+            ExprKind::Match { cases, .. } => {
+                for case in cases {
+                    for pattern in &case.patterns {
+                        deepest = deepest.max(pattern.pattern.depth());
+                    }
+                }
+            }
+            ExprKind::Function { parameters, .. } => {
+                for parameter in parameters {
+                    tags(&parameter.tags);
+                }
+            }
+            ExprKind::Foreign { signature, .. } => {
+                for parameter in &signature.parameters {
+                    tags(&parameter.tags);
+                }
+            }
+            _ => {}
+        }
+        expression.depth = deepest.saturating_add(1);
+        expression
+    }
+
     /// The leftmost source position covered by this expression, including
     /// nested expressions that begin before its own focus span, such as the
     /// left operand of a binary operator.
@@ -439,6 +497,34 @@ pub(super) enum Pattern {
         path: String,
         case: String,
     },
+}
+impl Pattern {
+    /// Levels from this pattern down to its deepest leaf, including the
+    /// depth of any computed map key.
+    pub(super) fn depth(&self) -> u32 {
+        let nested = match self {
+            Pattern::At { pattern, .. } => pattern.depth(),
+            Pattern::List { items, .. } => items.iter().map(Pattern::depth).max().unwrap_or(0),
+            Pattern::Map { entries, .. } => entries
+                .iter()
+                .map(|(key, pattern)| {
+                    let key = match key {
+                        MapPatternKey::Computed(key) => key.depth,
+                        MapPatternKey::String(_) => 0,
+                    };
+                    key.max(pattern.depth())
+                })
+                .max()
+                .unwrap_or(0),
+            Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Binding(_)
+            | Pattern::Pinned(_)
+            | Pattern::MapAll
+            | Pattern::EnumCase { .. } => 0,
+        };
+        nested.saturating_add(1)
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Binary {
