@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs a coding agent, Codex or Claude Code, headless on Slug tasks and records
 one JSON line per run. The `python` arm implements a project in Python
-instead, as a control, for projects that ship checks.json and python/task.md.
+instead, as a control, for projects that ship python/task.md and checks.json
+(or python/cases.json).
 
     python3 eval/agent/harness/run.py plan --arms baseline,json --repeats 3
     python3 eval/agent/harness/run.py run --arms baseline,json --repeats 3 --yes
@@ -253,6 +254,11 @@ def prepare_workspace(run, run_temp):
     if language(run) == "python":
         workspace.mkdir()
         shutil.copyfile(PROJECTS / run["task"] / "python" / "task.md", workspace / "spec.md")
+        provided = PROJECTS / run["task"] / "python" / "workspace"
+        if provided.is_dir():
+            for source in provided.iterdir():
+                if source.is_file():
+                    shutil.copyfile(source, workspace / source.name)
         return workspace
     docs = workspace / "slug-docs"
     docs.mkdir(parents=True)

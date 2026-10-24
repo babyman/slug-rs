@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 import arcade_grader
+import python_game_grader
 import http_grader
 
 CASE_TIMEOUT_SECONDS = 20
@@ -193,7 +194,8 @@ def grade(slug, slug_home, project_dir, module_path, module):
 # A project with checks.json and python/task.md can also be implemented in
 # Python, as a control: the same checks, as data, graded against a module
 # that defines `run(source)` and `TinyError`-style errors with `kind`, `line`,
-# and `column` attributes.
+# and `column` attributes. A game project instead ships python/cases.json,
+# graded by python_game_grader.
 PYTHON_DRIVER = """\
 import json, sys
 sys.path.insert(0, ".")
@@ -219,16 +221,29 @@ else:
 
 
 def supports_python(project_dir):
-    return (Path(project_dir) / "checks.json").exists() and (Path(project_dir) / "python" / "task.md").exists()
+    project_dir = Path(project_dir)
+    checks = (project_dir / "checks.json").exists() or (project_dir / "python" / "cases.json").exists()
+    return checks and (project_dir / "python" / "task.md").exists()
+
+
+def python_suite(project_dir):
+    path = Path(project_dir) / "python" / "cases.json"
+    return json.loads(path.read_text()) if path.exists() else None
 
 
 def load_checks(project_dir):
+    suite = python_suite(project_dir)
+    if suite is not None:
+        return suite["cases"]
     return json.loads((Path(project_dir) / "checks.json").read_text())["checks"]
 
 
 def grade_python(python, project_dir, module_path, module, error="TinyError"):
     """Runs every check against a Python module and returns per-check
     outcomes with the same ids as the Slug cases."""
+    suite = python_suite(project_dir)
+    if suite is not None:
+        return python_game_grader.grade(python, project_dir, module_path, suite)
     outcomes = []
     for check in load_checks(project_dir):
         with tempfile.TemporaryDirectory(prefix="slug-eval-python-") as directory:
