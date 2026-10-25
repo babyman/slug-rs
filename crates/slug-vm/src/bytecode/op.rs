@@ -163,6 +163,19 @@ pub enum Op {
         bindings: usize,
         operands: usize,
     },
+    /// Matches the value under its `operands` without consuming it. A match
+    /// pushes the pattern's bindings; a failure pushes nothing and jumps to
+    /// `target`.
+    MatchCase {
+        pattern: MatchPattern,
+        operands: usize,
+        target: usize,
+    },
+    MatchCasePooled {
+        pattern: MatchPatternId,
+        operands: usize,
+        target: usize,
+    },
     MatchFailure,
     Throw,
     EnterScope,

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Each `match` case runs one instruction to test its pattern instead of
+  four, and no longer copies the matched value first. Programs that match
+  heavily gain most: the Tiny interpreter and the `expression-evaluator`
+  benchmark run 0.93x as long, `binary-trees` and `higher-order` 0.95x.
+
 - A `val` declared inside a function binds its value directly instead of
   running the general pattern matcher, which took four instructions for a
   plain name. Space Invaders runs 0.95x as long, the Tiny interpreter 0.95x,

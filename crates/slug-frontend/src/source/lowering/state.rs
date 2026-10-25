@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{BinaryOperator, Capture, Chunk, Constant, Op, SourceSpan, Value};
+use slug_vm::{BinaryOperator, Capture, Chunk, Constant, MatchPattern, Op, SourceSpan, Value};
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
 /// `Local` is a slot of the enclosing function and a `Capture` is a slot of
@@ -187,6 +187,25 @@ impl State {
         );
         index
     }
+    /// Emits a match of the value under `operands` that leaves the value on
+    /// the stack, pushes its bindings on success, and jumps on failure.
+    pub(super) fn match_case(
+        &mut self,
+        pattern: MatchPattern,
+        operands: usize,
+        span: &SourceSpan,
+    ) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(
+            Op::MatchCase {
+                pattern,
+                operands,
+                target: usize::MAX,
+            },
+            span,
+        );
+        index
+    }
     pub(super) fn jump(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::Jump(usize::MAX), span);
@@ -199,7 +218,8 @@ impl State {
             Op::Jump(value)
             | Op::JumpIfFalse(value)
             | Op::JumpIfFalsePop(value)
-            | Op::JumpIfProvided { target: value, .. } => {
+            | Op::JumpIfProvided { target: value, .. }
+            | Op::MatchCase { target: value, .. } => {
                 *value = target;
             }
             _ => unreachable!("only jump instructions are patched"),

@@ -308,6 +308,9 @@ impl Program {
             } if operands.checked_add(1).is_none() || bindings.checked_add(1).is_none() => {
                 Some("match stack count is too large".into())
             }
+            Op::MatchCase { operands, .. } if operands.checked_add(1).is_none() => {
+                Some("match stack count is too large".into())
+            }
             _ => None,
         }
     }
@@ -578,6 +581,15 @@ impl Program {
                 bindings: *bindings,
                 operands: *operands,
             }),
+            Op::MatchCase {
+                pattern,
+                operands,
+                target,
+            } => Some(Op::MatchCasePooled {
+                pattern: self.push_match_pattern(mem::replace(pattern, MatchPattern::Wildcard)),
+                operands: *operands,
+                target: *target,
+            }),
             Op::Interpolate(parts) => Some(Op::InterpolatePooled(
                 self.push_interpolation(mem::take(parts)),
             )),
@@ -821,6 +833,16 @@ impl Program {
                 operand(*bindings),
                 operand(*operands),
             ),
+            Op::MatchCasePooled {
+                pattern,
+                operands,
+                target,
+            } => (
+                PackedOpcode::MatchCase,
+                pattern.0,
+                operand(*target),
+                operand(*operands),
+            ),
             Op::MatchFailure => (PackedOpcode::MatchFailure, 0, 0, 0),
             Op::Throw => (PackedOpcode::Throw, 0, 0, 0),
             Op::EnterScope => (PackedOpcode::EnterScope, 0, 0, 0),
@@ -953,6 +975,11 @@ impl Program {
             PackedOpcode::TryMatch => Op::TryMatchPooled {
                 pattern: MatchPatternId(instruction.a),
                 bindings: n(instruction.b),
+                operands: n(instruction.c),
+            },
+            PackedOpcode::MatchCase => Op::MatchCasePooled {
+                pattern: MatchPatternId(instruction.a),
+                target: n(instruction.b),
                 operands: n(instruction.c),
             },
             PackedOpcode::MatchFailure => Op::MatchFailure,
@@ -1230,6 +1257,8 @@ impl Program {
             | Op::JumpIfFalse(target)
             | Op::JumpIfFalsePop(target)
             | Op::JumpIfProvided { target, .. }
+            | Op::MatchCase { target, .. }
+            | Op::MatchCasePooled { target, .. }
                 if *target >= chunk.code.len() =>
             {
                 Err(format!(
@@ -1244,6 +1273,8 @@ impl Program {
             | Op::JumpIfFalse(target)
             | Op::JumpIfFalsePop(target)
             | Op::JumpIfProvided { target, .. }
+            | Op::MatchCase { target, .. }
+            | Op::MatchCasePooled { target, .. }
                 if *target <= instruction_index =>
             {
                 Err(format!(
@@ -1394,6 +1425,33 @@ impl Program {
                 }
                 Ok(())
             }
+            Op::MatchCase {
+                pattern, operands, ..
+            } => {
+                if operands.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
+                Self::validate_pattern(pattern, *operands)?;
+                Self::pattern_bindings(pattern)
+                    .and_then(|bindings| bindings.checked_add(1))
+                    .map(|_| ())
+                    .ok_or_else(|| "match pattern binding count is invalid".into())
+            }
+            Op::MatchCasePooled {
+                pattern, operands, ..
+            } => {
+                if operands.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
+                let pattern = self.match_pattern(*pattern).ok_or_else(|| {
+                    format!("{} references missing match pattern metadata", location())
+                })?;
+                Self::validate_pattern(pattern, *operands)?;
+                Self::pattern_bindings(pattern)
+                    .and_then(|bindings| bindings.checked_add(1))
+                    .map(|_| ())
+                    .ok_or_else(|| "match pattern binding count is invalid".into())
+            }
             Op::GetGlobal(_)
             | Op::DefineGlobal(_)
             | Op::SetGlobal(_)
@@ -1530,25 +1588,27 @@ impl Program {
                 })?,
                 _ => state.scope_depth,
             };
-            let successors: Vec<usize> = match &instruction.op {
+            let next = (index + 1 < chunk.code.len()).then_some((index + 1, height));
+            let successors: Vec<(usize, usize)> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
                 // `recur` restarts at instruction 0 with the entry state,
                 // which that instruction already has.
                 Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => continue,
-                Op::Jump(target) => vec![*target],
+                Op::Jump(target) => vec![(*target, height)],
                 Op::JumpIfFalse(target)
                 | Op::JumpIfFalsePop(target)
-                | Op::JumpIfProvided { target, .. } => [
-                    Some(*target),
-                    (index + 1 < chunk.code.len()).then_some(index + 1),
-                ]
-                .into_iter()
-                .flatten()
-                .collect(),
-                _ => (index + 1 < chunk.code.len())
-                    .then_some(index + 1)
+                | Op::JumpIfProvided { target, .. } => [Some((*target, height)), next]
                     .into_iter()
+                    .flatten()
                     .collect(),
+                // A failed match jumps with only the matched value left.
+                Op::MatchCase { target, .. } | Op::MatchCasePooled { target, .. } => {
+                    [Some((*target, remaining + 1)), next]
+                        .into_iter()
+                        .flatten()
+                        .collect()
+                }
+                _ => next.into_iter().collect(),
             };
             if successors.is_empty()
                 && !matches!(
@@ -1561,7 +1621,7 @@ impl Program {
                     chunk.name
                 ));
             }
-            for successor in successors {
+            for (successor, height) in successors {
                 match &mut states[successor] {
                     Some(existing) => {
                         if existing.scope_depth != scope_depth {
@@ -1777,6 +1837,25 @@ impl Program {
             | Op::TryMatchPooled {
                 bindings, operands, ..
             } => (operands + 1, bindings + 1),
+            // The value under the operands stays; the effect is the success
+            // path's, and `validate_stack` gives the failure jump its own.
+            Op::MatchCase {
+                pattern, operands, ..
+            } => (
+                operands + 1,
+                Self::pattern_bindings(pattern).expect("validated match pattern") + 1,
+            ),
+            Op::MatchCasePooled {
+                pattern, operands, ..
+            } => (
+                operands + 1,
+                Self::pattern_bindings(
+                    self.match_pattern(*pattern)
+                        .expect("validated match pattern metadata"),
+                )
+                .expect("validated match pattern")
+                    + 1,
+            ),
             Op::Recur(kinds) => (kinds.len(), 0),
             Op::RecurPooled(id) => (
                 self.call_arguments(*id)

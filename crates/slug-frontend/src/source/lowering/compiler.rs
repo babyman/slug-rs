@@ -1318,24 +1318,15 @@ impl Compiler {
                 })?;
                 let (pattern, names, operands) =
                     lower_case_patterns(&case.patterns, constraints, &case.span)?;
-                state.emit(Op::Duplicate, &case.span);
                 for operand in &operands {
                     self.emit_pattern_operand(state, operand, &case.span)?;
                 }
-                state.emit(
-                    Op::TryMatch {
-                        pattern,
-                        bindings: names.len(),
-                        operands: operands.len(),
-                    },
-                    &case.span,
-                );
+                let next = state.match_case(pattern, operands.len(), &case.span);
                 state.enter_scope();
                 let slots = names
                     .into_iter()
                     .map(|name| state.declare(name, false, false))
                     .collect::<Vec<_>>();
-                let next = state.jump_if_false_pop(&case.span);
                 for slot in slots.iter().rev() {
                     state.emit(Op::SetLocal(*slot), &case.span);
                 }
@@ -1354,9 +1345,6 @@ impl Compiler {
                 state.leave_scope();
                 ends.push(state.jump(&case.span));
                 state.patch(next);
-                for _ in slots {
-                    state.emit(Op::Pop, &case.span);
-                }
                 if let Some(guard_next) = guard_next {
                     state.patch(guard_next);
                 }

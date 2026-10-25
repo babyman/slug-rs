@@ -6114,6 +6114,33 @@ mod tests {
     }
 
     #[test]
+    fn match_cases_test_their_subject_in_place() {
+        use slug_vm::PackedOpcode::{Duplicate, JumpIfFalsePop, MatchCase, TryMatch};
+        let program = super::super::compile(
+            "test.slug",
+            "val f = fn(x) match {\n    1 => 10\n    [a, b] => a + b\n    _ => 0\n}\nf([1, 2])",
+        )
+        .expect("source compiles");
+        let opcodes = program
+            .chunk(0)
+            .expect("function chunk")
+            .code
+            .iter()
+            .map(|instruction| instruction.opcode)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            opcodes
+                .iter()
+                .filter(|opcode| **opcode == MatchCase)
+                .count(),
+            3
+        );
+        for opcode in [Duplicate, TryMatch, JumpIfFalsePop] {
+            assert!(!opcodes.contains(&opcode), "{opcodes:?}");
+        }
+    }
+
+    #[test]
     fn constant_index_keys_lower_to_one_instruction() {
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("indexing compiles");

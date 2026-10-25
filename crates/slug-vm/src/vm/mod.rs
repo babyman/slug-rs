@@ -2316,6 +2316,15 @@ impl Vm {
                 instruction.b as usize,
                 instruction.c as usize,
             )?,
+            PackedOpcode::MatchCase => {
+                if !self.match_case(
+                    program,
+                    MatchPatternId::new(instruction.a),
+                    instruction.c as usize,
+                )? {
+                    self.jump(instruction.b as usize)?;
+                }
+            }
             PackedOpcode::MatchFailure => {
                 return Err(self.error_at(
                     RuntimeErrorKind::Match,
@@ -2978,6 +2987,42 @@ impl Vm {
         }
         frame.scope_depth -= 1;
         Ok(true)
+    }
+
+    /// Matches the value under `operands` in place, leaving it on the stack.
+    /// A match pushes the pattern's bindings above it; a failure pushes
+    /// nothing.
+    fn match_case(
+        &mut self,
+        program: &Program,
+        pattern: MatchPatternId,
+        operands: usize,
+    ) -> VmResult<bool> {
+        let pattern = program
+            .match_pattern(pattern)
+            .expect("validated match pattern metadata");
+        let operands = self.pop_values(operands)?;
+        let value = self.pop()?;
+        let start = self.stack.len();
+        let mut list_views_created = 0;
+        let matched = matches_pattern(
+            pattern,
+            &value,
+            &operands,
+            &mut self.stack,
+            &mut list_views_created,
+        );
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
+        let matched = matched.map_err(|(kind, message)| self.error_at(kind, message))?;
+        if !matched {
+            self.stack.truncate(start);
+        }
+        // Bindings are few, so shifting them up past the value is cheap.
+        self.stack.insert(start, value);
+        Ok(matched)
     }
 
     fn try_match(

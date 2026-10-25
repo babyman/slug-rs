@@ -96,6 +96,7 @@ pub enum PackedOpcode {
     GetIndexConstant,
     JumpIfFalsePop,
     LocalConstantBinary,
+    MatchCase,
 }
 
 impl PackedOpcode {
@@ -181,6 +182,7 @@ impl PackedOpcode {
             PackedOpcode::GetIndexConstant,
             PackedOpcode::JumpIfFalsePop,
             PackedOpcode::LocalConstantBinary,
+            PackedOpcode::MatchCase,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

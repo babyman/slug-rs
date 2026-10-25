@@ -1075,6 +1075,22 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             },
             "match stack count is too large",
         ),
+        (
+            Op::MatchCase {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: 0,
+                target: 2,
+            },
+            "jumps to missing instruction 2",
+        ),
+        (
+            Op::MatchCase {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: usize::MAX,
+                target: 1,
+            },
+            "match stack count is too large",
+        ),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);
@@ -1085,6 +1101,74 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
         assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
         assert!(error.message.contains(expected), "{}", error.message);
     }
+}
+
+/// Matches `subject` against `[a, b]`: a match returns `b`, the top binding,
+/// and a failure returns what the failure edge leaves, the subject alone.
+fn match_case_program(subject: Value) -> Program {
+    let mut main = Chunk::new("main", 0);
+    let subject = main.constant(subject);
+    main.emit(Op::Constant(subject))
+        .emit(Op::MatchCase {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![
+                    slug_vm::MatchPattern::Binding,
+                    slug_vm::MatchPattern::Binding,
+                ],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 3,
+        })
+        .emit(Op::Return)
+        .emit(Op::Return);
+    program_with_main(main)
+}
+
+#[test]
+fn match_case_pushes_bindings_on_success_and_nothing_on_failure() {
+    let pair = Value::list(vec![Value::Int(7), Value::Int(8)]);
+    assert_eq!(
+        Vm::new().run(&match_case_program(pair), 0).unwrap(),
+        Value::Int(8)
+    );
+    let single = Value::list(vec![Value::Int(1)]);
+    assert_eq!(
+        Vm::new()
+            .run(&match_case_program(single.clone()), 0)
+            .unwrap(),
+        single
+    );
+}
+
+#[test]
+fn verifies_a_failed_match_case_jump_with_only_its_subject() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::MatchCase {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![slug_vm::MatchPattern::Binding],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 3,
+        })
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("the failure edge carries no bindings");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("instruction 4 requires 1 stack values, has 0"),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

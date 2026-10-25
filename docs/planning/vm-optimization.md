@@ -1814,3 +1814,29 @@ Instructions dispatched, against the statement change: `word-frequency`
 and `function-call` 0.96x, `http-server` 0.97x, `crawl-game` 0.98x, with
 hold-outs `tiny-interpreter` 0.95x and `text-wrap` 0.98x; tuned and hold-out
 geomean 0.98x, no workload slower beyond its spread.
+
+## Match cases test their subject in place (2026-10-25)
+
+Each `match` case lowered to `Duplicate`, its pattern operands, `TryMatch`,
+and `JumpIfFalsePop`. On failure `TryMatch` pushed one `nil` per binding
+for the case's failure path to pop. A new `MatchCase { pattern, operands,
+target }` instruction (packed as pattern, target, operand count; the binding
+count comes from the pattern) pops the operands, matches the value under
+them without consuming it, and on success pushes the bindings above it. On
+failure it pushes nothing and jumps to `target`, the next case. The case
+loses its `Duplicate`, its branch, and its failure `Pop`s, and the subject
+is matched by move rather than through a clone.
+
+The verifier now gives each successor its own stack height: a failed match
+reaches its target with only the subject, while the next instruction has
+the bindings too. Last-read analysis treats the target as a successor.
+Destructuring declarations keep `TryMatch`, whose failure path ends in
+`MatchFailure` and so gains nothing.
+
+Instructions dispatched, against the local-`val` change: `higher-order`
+-15.1%, `binary-trees` and `fannkuch-redux` -13.6%, `crawl-game` -3.6%,
+`invaders-game` -2.4%, `http-server` -1.2%. Seven interleaved rounds against
+`60bb8ce`: `binary-trees` and `higher-order` 0.95x, `fannkuch-redux` 0.97x,
+`http-server` 0.98x, with hold-outs `expression-evaluator` and
+`tiny-interpreter` 0.93x; `shared-append`, which has no `match`, read 1.02x
+against a 1-2% spread. Tuned geomean 0.98x, hold-out 0.96x.

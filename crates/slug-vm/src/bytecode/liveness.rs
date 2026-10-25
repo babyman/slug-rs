@@ -115,7 +115,7 @@ fn live_before(
             join(instruction.a as usize);
             join(index + 1);
         }
-        PackedOpcode::JumpIfProvided => {
+        PackedOpcode::JumpIfProvided | PackedOpcode::MatchCase => {
             join(instruction.b as usize);
             join(index + 1);
         }
@@ -166,6 +166,20 @@ mod tests {
         mark_last_local_reads(&mut code, 1, &[]);
         assert_eq!(code[0].b, 0);
         assert_eq!(code[1].b, MOVE_LOCAL);
+    }
+
+    #[test]
+    fn a_failed_match_case_jump_keeps_its_target_reads_live() {
+        let mut code = [
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::MatchCase, 0, 3, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+        ];
+        mark_last_local_reads(&mut code, 1, &[]);
+        assert_eq!(code[0].b, 0);
+        assert_eq!(code[3].b, MOVE_LOCAL);
     }
 
     #[test]
