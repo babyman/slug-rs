@@ -1479,7 +1479,7 @@ impl Vm {
     ///
     /// Returns a checked error when the entry is invalid or the program's
     /// private bytecode is malformed.
-    pub fn install(&mut self, program: Program, entry: usize) -> VmResult<InstalledProgram> {
+    pub fn install(&mut self, mut program: Program, entry: usize) -> VmResult<InstalledProgram> {
         #[cfg(feature = "metrics")]
         let verification_started = Instant::now();
         program
@@ -1498,6 +1498,7 @@ impl Vm {
             metrics.program_validations += 1;
             metrics.verification_time += verification_started.elapsed();
         }
+        program.share_string_constants();
         Ok(InstalledProgram {
             program: Rc::new(program),
             entry,
@@ -3067,14 +3068,26 @@ impl Vm {
 
     fn get_index_constant(&mut self, program: &Program, constant: usize) -> VmResult<()> {
         let collection = self.pop()?;
-        let Some(crate::Constant::Value(key)) =
-            self.current_chunk(program)?.constants.get(constant)
-        else {
+        let chunk = self.current_chunk(program)?;
+        let Some(crate::Constant::Value(key)) = chunk.constants.get(constant) else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("index constant {constant} does not exist"),
             ));
         };
+        let hint = chunk.index_hints.get(constant);
+        if let Value::Map(map) = &collection {
+            #[cfg(feature = "metrics")]
+            {
+                self.metrics.borrow_mut().collection_lookups += 1;
+            }
+            let value = hint
+                .map_or_else(|| map.get(key), |hint| map.get_hinted(key, hint))
+                .cloned()
+                .unwrap_or(Value::Nil);
+            self.stack.push(value);
+            return Ok(());
+        }
         let value = index_value(
             collection,
             key,

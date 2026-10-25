@@ -411,3 +411,33 @@ fn last_read_of_a_captured_local_preserves_the_closure_binding() {
     program.add_chunk(captured);
     assert_eq!(Vm::new().run(&program, 0).unwrap(), Value::list(Vec::new()));
 }
+
+#[test]
+fn one_constant_key_lookup_site_follows_maps_with_different_entry_orders() {
+    // `get`'s `m.x` remembers where it last found `x`; each map below moves,
+    // drops, or rebuilds that key, so a stale position must still look up.
+    let program = compile(
+        "index-hints.slug",
+        "val Point = struct { y:num, x:num }\n\
+         val get = fn(m) { m.x }\n\
+         val main = fn() {\n\
+             val key = \"x\" + \"\"\n\
+             [get({x: 1, y: 2}), get({y: 3, x: 4}), get({y: 5}), get({[key]: 6}),\n\
+              get({a: 0, b: 0, c: 0, x: 7}), get({x: 8, y: 2}), get(Point {y: 0, x: 9})]\n\
+         }\n",
+    )
+    .expect("compile index hint workload");
+
+    assert_eq!(
+        Vm::new().run_program(&program).unwrap(),
+        Value::list(vec![
+            Value::Int(1),
+            Value::Int(4),
+            Value::Nil,
+            Value::Int(6),
+            Value::Int(7),
+            Value::Int(8),
+            Value::Int(9),
+        ])
+    );
+}

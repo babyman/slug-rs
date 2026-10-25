@@ -194,7 +194,8 @@ impl Str {
 
 impl PartialEq for Str {
     fn eq(&self, other: &Self) -> bool {
-        self.0.text == other.0.text
+        // Shared string constants make equal keys the same allocation.
+        Rc::ptr_eq(&self.0, &other.0) || self.0.text == other.0.text
     }
 }
 
@@ -831,6 +832,20 @@ impl Map {
         self.0
             .position(key)
             .map(|position| &self.0.entries[position].1)
+    }
+
+    /// Looks `key` up, trying the entry at `hint` first and leaving the found
+    /// entry's position there for the next lookup.
+    pub(crate) fn get_hinted(&self, key: &Value, hint: &core::cell::Cell<u32>) -> Option<&Value> {
+        let entries = &self.0.entries;
+        if let Some((candidate, value)) = entries.get(hint.get() as usize)
+            && candidate == key
+        {
+            return Some(value);
+        }
+        let position = self.0.position(key)?;
+        hint.set(u32::try_from(position).expect("map length fits in u32"));
+        Some(&entries[position].1)
     }
 
     pub(crate) fn merge(self, other: &Self) -> Self {

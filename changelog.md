@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reading a map field by name, as in `game.player.x`, is faster. Equal
+  string constants now share one allocation across a program, so equal keys
+  usually compare by pointer, and each such lookup remembers where it last
+  found its key and checks there first. An agent's Crawl solution, which
+  keeps its state in maps, runs 0.92x as long, and the Tiny interpreter
+  0.94x; other workloads are unchanged. A new `crawl-game` benchmark
+  workload plays that solution.
+
 - `slug.std` adds `range(end)`, `range(start, end)`, `times(n, f)`,
   `contains(xs, v)`, `any(xs, f)`, and `all(xs, f)`; `slug.math` adds `abs`,
   `min`, and `max`; `slug.string` adds `isDigit`, `isLetter`, and `isSpace`.

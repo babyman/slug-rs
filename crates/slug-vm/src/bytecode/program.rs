@@ -182,6 +182,27 @@ impl Program {
         self.chunks = chunks;
     }
 
+    /// Makes equal string constants share one allocation, across every chunk,
+    /// so a map key built from one constant and a lookup by another usually
+    /// compare by pointer.
+    pub(crate) fn share_string_constants(&mut self) {
+        let mut shared: HashMap<String, crate::Value> = HashMap::new();
+        for chunk in &mut self.chunks {
+            for constant in &mut chunk.constants {
+                if let Constant::Value(value @ crate::Value::Str(_)) = constant {
+                    let crate::Value::Str(text) = &*value else {
+                        unreachable!()
+                    };
+                    if let Some(existing) = shared.get(text.as_ref()) {
+                        *value = existing.clone();
+                    } else {
+                        shared.insert(String::from(text.as_ref()), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn contains_non_finite_number(&self) -> bool {
         self.chunks.iter().any(|chunk| {
             chunk.constants.iter().any(|constant| match constant {
@@ -267,6 +288,7 @@ impl Program {
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),
+            index_hints: super::chunk::index_hints(chunk.constants.len()),
             code,
             invalid_instructions,
         };

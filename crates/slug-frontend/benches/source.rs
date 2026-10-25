@@ -113,6 +113,12 @@ const WORKLOADS: &[Workload] = &[
         python: false,
     },
     Workload {
+        name: "crawl-game",
+        held_out: false,
+        expected_stdout: "26 1 12 1061522789\n",
+        python: false,
+    },
+    Workload {
         name: "http-server",
         held_out: false,
         expected_stdout: "4228 619800\n",

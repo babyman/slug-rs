@@ -64,12 +64,17 @@ another:
   interpolation, and concatenation.
 
 A third group is real programs, copied from the agent evaluation projects'
-reference solutions so that edits there do not change them. They have no
-CPython twin, so `make bench-source` reports only their Slug time:
+reference solutions, or from an agent's solution, so that edits there do not
+change them. They have no CPython twin, so `make bench-source` reports only
+their Slug time:
 
 - `invaders-game` plays the Space Invaders reference for 7,300 frames with
   the `bot-long-1` case's recorded inputs, calling `game.tick` directly
   without the slug.arcade clutch.
+- `crawl-game` plays the first 30 commands of the Crawl `bot-106` case in an
+  agent's solution, which keeps its game state in maps and reads it by field
+  (`g.player.x`), rendering the screen after each command without the
+  slug.arcade clutch.
 - `http-server` serves the HTTP reference's routes to four keep-alive clients
   in the same program, 4,228 requests over loopback. It needs the staged
   `slug.net.tcp` clutch (`make stage-native-clutches`); both runners set

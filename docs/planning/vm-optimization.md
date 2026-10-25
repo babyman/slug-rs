@@ -1678,3 +1678,43 @@ A microbenchmark of 3,000 `bytes[::2]` slices of 7,168 bytes and 3,000
 interleaved runs against `4c329a6`). No source workload uses stepped slices.
 Seven interleaved rounds against `4c329a6`: every workload inside its spread,
 tuned geomean 1.01x, hold-out 1.00x.
+
+## Map field lookups remember where they found their key
+
+A Crawl solution written by an agent ran `bot-106` in 42 s against a 40 s
+limit; the reference takes 9.9 s. It keeps its game state in maps: `g` has
+21 keys and `g.player` 16, below the 32 entries at which a map builds a hash
+index, so `g.player.x` scans about 18 keys. Each comparison went through
+`Value::eq` to a text comparison, because no two string constants shared an
+allocation, not even within one chunk. Key search was 9.3% of the run.
+
+Indexing every map (a threshold of 0) measured 1.00x: the comparisons fell
+from 12% to 4%, but hashing each lookup's key with the randomly keyed SipHash
+cost 5.5%. Hashing would pay only with each string's hash stored once, which
+needs one seed per process rather than per map; that remains an option for
+large maps and runtime keys.
+
+Two changes instead:
+
+- `Vm::install` makes equal string constants share one allocation across the
+  program, and `Str::eq` checks for the same pointer before comparing text.
+  A map key built from a literal and a lookup by a constant then usually
+  match by pointer.
+- Each compiled chunk keeps one hint per constant, the entry position where a
+  `GetIndexConstant` with that key last found it. Lowering gives each
+  occurrence of a key its own constant, so this is one hint per lookup site.
+  The lookup checks the hinted entry first and, when its key differs, falls
+  back to the full lookup and updates the hint.
+
+On `bot-106` (three interleaved runs, symbolized builds): sharing constants
+alone 0.967x, both 0.894x (42.93 to 38.38 s), with identical final state. The
+same hint for struct fields measured 0.960x on a loop of nothing but struct
+field reads and 1.00x on the Crawl reference, so it was dropped; resolving
+struct field positions at compile time, when the type is known, is the
+better option if struct access ever shows in a profile.
+
+`crawl-game` (the agent's solution playing the first 30 `bot-106` commands)
+joins the tuned real programs. Seven interleaved rounds against `1b4569d`:
+`crawl-game` 0.92x (912.0 to 839.1 ms), `tiny-interpreter` (hold-out) 0.94x,
+every other workload 0.97-1.02x within its spread; tuned geomean 0.99x,
+hold-out 0.98x.

@@ -238,6 +238,17 @@ pub struct CompiledChunk {
     #[doc(hidden)]
     pub code: Vec<PackedInstruction>,
     pub(crate) invalid_instructions: HashMap<usize, String>,
+    /// For each constant, the map entry position where a `GetIndexConstant`
+    /// with that key last found it: checked first, then refreshed by a full
+    /// lookup when the key is not there. Lowering gives each occurrence of a
+    /// key its own constant, so this is in effect one hint per lookup site;
+    /// sites that share a constant still look up correctly.
+    pub(crate) index_hints: alloc::boxed::Box<[core::cell::Cell<u32>]>,
+}
+
+/// One unused hint per constant.
+pub(crate) fn index_hints(constants: usize) -> alloc::boxed::Box<[core::cell::Cell<u32>]> {
+    (0..constants).map(|_| core::cell::Cell::new(0)).collect()
 }
 
 impl CompiledChunk {
@@ -257,6 +268,7 @@ impl CompiledChunk {
             parameters,
             callable_identity,
             locals,
+            index_hints: index_hints(constants.len()),
             constants,
             code,
             invalid_instructions: HashMap::new(),
