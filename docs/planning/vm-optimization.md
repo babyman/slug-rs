@@ -1793,3 +1793,24 @@ Instructions dispatched: `defer-errors` -17.9%, `word-frequency` -11.4%,
 `http-server` and `defer-errors` 0.96x, `invaders-game` 0.98x, everything
 else within its spread; tuned geomean 0.99x, hold-out 1.00x. The removed
 instructions are the cheapest the VM has, so `word-frequency` held at 1.00x.
+
+## A local `val` binds without a pattern match (2026-10-24)
+
+While testing the statement change, a plain `val y = x + 1` in a function
+turned out to lower through the general pattern matcher: `TryMatch`,
+`JumpIfFalsePop`, `SetLocal`, `Jump`, plus a failure path of `Pop` and
+`MatchFailure` that a name can never reach. A name always matches, so a
+local one now lowers to `SetLocal` alone, which also skips the match's clone
+of the value. `SetLocal` resolves a module binding as it pops, as the match
+did, so `val early = a.from_a` still fails at the declaration when the
+binding is uninitialized. A top-level name keeps the match: `DefineGlobal`
+stores a binding unresolved, and top-level declarations run once.
+
+Instructions dispatched, against the statement change: `word-frequency`
+-19.3%, `string-building` -12.8%, `invaders-game` -7.0%, `http-server` -4.0%,
+`crawl-game` -2.3%. `higher-order` and `binary-trees` barely move: their
+`TryMatch` share is refutable `match` cases. Seven interleaved rounds against
+`0236431`: `word-frequency` 0.92x, `invaders-game` 0.95x, `string-building`
+and `function-call` 0.96x, `http-server` 0.97x, `crawl-game` 0.98x, with
+hold-outs `tiny-interpreter` 0.95x and `text-wrap` 0.98x; tuned and hold-out
+geomean 0.98x, no workload slower beyond its spread.

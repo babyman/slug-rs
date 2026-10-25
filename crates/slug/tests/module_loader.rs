@@ -2792,6 +2792,36 @@ fn cyclic_imports_reject_calls_before_the_defining_binding_initializes() {
 }
 
 #[test]
+fn local_declarations_resolve_an_uninitialized_cyclic_binding() {
+    let root = root("cyclic-local-declaration");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val from_a = b.from_b\n",
+    )
+    .expect("write first cyclic module");
+    // `early` is never read, but declaring it still resolves the binding.
+    fs::write(
+        root.join("b.slug"),
+        "val a = import(\"a\")\nval read = fn() {\n    val early = a.from_a\n    0\n}\nexport val from_b = read()\n",
+    )
+    .expect("write second cyclic module");
+    let loader = ModuleLoader::new(&root, None);
+
+    let error = loader
+        .initialize(None, "a")
+        .expect_err("a local declaration must resolve its value");
+
+    assert!(
+        error
+            .to_string()
+            .contains("binding `from_a` is not initialized"),
+        "unexpected error: {error}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     let root = root("cyclic-uninitialized");
     fs::create_dir_all(&root).expect("create module directory");

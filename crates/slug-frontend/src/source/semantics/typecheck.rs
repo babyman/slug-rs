@@ -6085,9 +6085,18 @@ mod tests {
                 .map(|instruction| instruction.opcode)
                 .collect::<Vec<_>>()
         };
-        // A declaration's `nil` is not pushed only to be popped.
+        // A declaration's `nil` is not pushed only to be popped, and a plain
+        // name binds without a pattern match.
         let declared = opcodes("val f = fn(x) {\n    val y = x + 1\n    y\n}\nf(2)");
-        assert!(!declared.contains(&Nil));
+        assert_eq!(
+            declared,
+            [
+                slug_vm::PackedOpcode::LocalConstantBinary,
+                slug_vm::PackedOpcode::SetLocal,
+                slug_vm::PackedOpcode::GetLocal,
+                slug_vm::PackedOpcode::Return,
+            ]
+        );
 
         // A statement `if` without `else` pops its branch's value and has
         // no `nil` branch to jump over.

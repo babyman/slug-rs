@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A `val` declared inside a function binds its value directly instead of
+  running the general pattern matcher, which took four instructions for a
+  plain name. Space Invaders runs 0.95x as long, the Tiny interpreter 0.95x,
+  and `word-frequency` 0.92x.
+
 - Statements no longer push a `nil` only to discard it. A declaration or
   `defer` in a block, and an `if` without `else` used as a statement, now
   compile to fewer instructions: the HTTP reference server dispatches 10%

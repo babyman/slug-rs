@@ -1538,6 +1538,17 @@ impl Compiler {
                 return Ok(());
             }
             let names = pattern_bindings(pattern, span)?;
+            // A plain local name always matches, so it binds the value
+            // directly; `SetLocal` resolves a module binding as the match
+            // would. A top-level name keeps the match, because
+            // `DefineGlobal` stores a binding unresolved.
+            if let Pattern::Binding(name) = pattern
+                && !state.is_root()
+            {
+                let slot = state.declare(name.clone(), mutable, callable);
+                state.emit(Op::SetLocal(slot), span);
+                return Ok(());
+            }
             let mut operands = Vec::new();
             let pattern = lower_pattern(pattern, &mut operands);
             for operand in &operands {
