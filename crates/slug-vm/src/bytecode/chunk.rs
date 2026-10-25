@@ -99,6 +99,7 @@ pub enum PackedOpcode {
     MatchCase,
     CallGlobal,
     ConstantBinary,
+    MatchLocals,
 }
 
 impl PackedOpcode {
@@ -187,6 +188,7 @@ impl PackedOpcode {
             PackedOpcode::MatchCase,
             PackedOpcode::CallGlobal,
             PackedOpcode::ConstantBinary,
+            PackedOpcode::MatchLocals,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

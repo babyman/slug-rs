@@ -1447,23 +1447,44 @@ impl Compiler {
         tail: bool,
     ) -> Result<(), SourceError> {
         super::stack::grow(|| {
-            self.expression(state, subject)?;
+            let lowered = cases
+                .iter()
+                .map(|case| {
+                    let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
+                        SourceError::semantic(
+                            SourceErrorCode::Internal,
+                            "missing resolved match constraints",
+                            case.span.clone(),
+                        )
+                        .with_end(case.end)
+                    })?;
+                    lower_case_patterns(&case.patterns, constraints, &case.span)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            // A match on a list of the first locals, such as a function's
+            // `match` body on its parameters, reads them where they are
+            // instead of building the list.
+            let locals = local_list_subject(state, subject).is_some_and(|count| {
+                lowered
+                    .iter()
+                    .all(|(pattern, ..)| local_list_pattern(pattern, count).is_some())
+            });
+            if !locals {
+                self.expression(state, subject)?;
+            }
             let mut ends = Vec::new();
-            for case in cases {
-                let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
-                    SourceError::semantic(
-                        SourceErrorCode::Internal,
-                        "missing resolved match constraints",
-                        case.span.clone(),
-                    )
-                    .with_end(case.end)
-                })?;
-                let (pattern, names, operands) =
-                    lower_case_patterns(&case.patterns, constraints, &case.span)?;
+            for (case, (pattern, names, operands)) in cases.iter().zip(lowered) {
                 for operand in &operands {
                     self.emit_pattern_operand(state, operand, &case.span)?;
                 }
-                let next = state.match_case(pattern, operands.len(), &case.span);
+                let next = if locals {
+                    let pattern = local_list_pattern(&pattern, usize::MAX)
+                        .expect("pattern was checked")
+                        .clone();
+                    state.match_locals(pattern, operands.len(), &case.span)
+                } else {
+                    state.match_case(pattern, operands.len(), &case.span)
+                };
                 state.enter_scope();
                 let slots = names
                     .into_iter()
@@ -1477,7 +1498,9 @@ impl Compiler {
                 } else {
                     None
                 };
-                state.emit(Op::Pop, &case.span);
+                if !locals {
+                    state.emit(Op::Pop, &case.span);
+                }
                 if tail {
                     self.tail_expression(state, &case.value)?;
                 } else {
@@ -1490,7 +1513,9 @@ impl Compiler {
                     state.patch(jump);
                 }
             }
-            state.emit(Op::Pop, &subject.span);
+            if !locals {
+                state.emit(Op::Pop, &subject.span);
+            }
             state.emit(Op::Nil, &subject.span);
             for end in ends {
                 state.patch(end);
@@ -2052,6 +2077,48 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             MatchPattern::Enum(index)
         }
     })
+}
+
+/// The length of a list literal whose elements name locals `0, 1, ...` in
+/// order, which `MatchLocals` can read in place.
+fn local_list_subject(state: &State, subject: &Expr) -> Option<usize> {
+    let ExprKind::List(elements) = &subject.kind else {
+        return None;
+    };
+    elements
+        .iter()
+        .enumerate()
+        .all(|(index, element)| {
+            matches!(
+                element,
+                ListElement::Value(Expr { kind: ExprKind::Name(name), .. })
+                    if matches!(state.lookup_local(name), Some(slot) if slot == index)
+            )
+        })
+        .then_some(elements.len())
+}
+
+/// The list pattern a case applies to a `count`-element local list subject,
+/// when it is one `MatchLocals` can test item by item: a list pattern of a
+/// length that can match, without a rest binding, and constrained at most
+/// to being a list. A `count` of `usize::MAX` skips the length check.
+fn local_list_pattern(pattern: &MatchPattern, count: usize) -> Option<&MatchPattern> {
+    match pattern {
+        MatchPattern::Constrained {
+            pattern,
+            constraint,
+        } if matches!(constraint, MatchType::Any | MatchType::List(None))
+            || matches!(constraint, MatchType::List(Some(item)) if matches!(**item, MatchType::Any)) =>
+        {
+            local_list_pattern(pattern, count)
+        }
+        MatchPattern::List { items, rest } => match rest {
+            MatchRest::None if count == usize::MAX || items.len() == count => Some(pattern),
+            MatchRest::Discard if count == usize::MAX || items.len() <= count => Some(pattern),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn lower_case_patterns(

@@ -5,11 +5,12 @@
 //! by that local uniquely owned, so `acc :+ x` appends in place instead of
 //! copying.
 //!
-//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, and `MakeClosure`
-//! touch local values. A closure reads the local slots in its capture list,
-//! which keeps them live; once captured, a slot is a shared cell, which the
-//! VM clones rather than moves anyway. A closure whose capture list is
-//! missing keeps every slot live. `Recur` assigns every local before it restarts, and
+//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, `MakeClosure`, and
+//! `MatchLocals` touch local values. A closure reads the local slots in its
+//! capture list, which keeps them live; once captured, a slot is a shared
+//! cell, which the VM clones rather than moves anyway. A closure whose
+//! capture list is missing keeps every slot live, and so does `MatchLocals`,
+//! which reads the first locals in place. `Recur` assigns every local before it restarts, and
 //! `Return`, `Throw`, `MatchFailure`, and `NotImplemented` leave the frame,
 //! so none of them has a live successor.
 
@@ -115,7 +116,7 @@ fn live_before(
             join(instruction.a as usize);
             join(index + 1);
         }
-        PackedOpcode::JumpIfProvided | PackedOpcode::MatchCase => {
+        PackedOpcode::JumpIfProvided | PackedOpcode::MatchCase | PackedOpcode::MatchLocals => {
             join(instruction.b as usize);
             join(index + 1);
         }
@@ -139,6 +140,8 @@ fn live_before(
             }
             None => live.fill(u64::MAX),
         },
+        // Its pattern, which says how many locals it reads, is not at hand.
+        PackedOpcode::MatchLocals => live.fill(u64::MAX),
         _ => {}
     }
     live

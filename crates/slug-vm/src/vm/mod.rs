@@ -2396,6 +2396,15 @@ impl Vm {
                     *ip = instruction.b as usize;
                 }
             }
+            PackedOpcode::MatchLocals => {
+                if !self.match_locals(
+                    program,
+                    MatchPatternId::new(instruction.a),
+                    instruction.c as usize,
+                )? {
+                    *ip = instruction.b as usize;
+                }
+            }
             PackedOpcode::MatchFailure => {
                 return Err(self.error_at(
                     RuntimeErrorKind::Match,
@@ -3107,6 +3116,60 @@ impl Vm {
         }
         // Bindings are few, so shifting them up past the value is cheap.
         self.stack.insert(start, value);
+        Ok(matched)
+    }
+
+    /// Matches a list pattern's items against the active frame's first
+    /// locals, as `match_case` would against a list of them, without
+    /// building that list.
+    fn match_locals(
+        &mut self,
+        program: &Program,
+        pattern: MatchPatternId,
+        operands: usize,
+    ) -> VmResult<bool> {
+        let Some(crate::MatchPattern::List { items, .. }) = program.match_pattern(pattern) else {
+            unreachable!("validated local match pattern");
+        };
+        let operands = if operands == 0 {
+            Vec::new()
+        } else {
+            self.pop_values(operands)?
+        };
+        let start = self.stack.len();
+        let locals = &self.frames.last().expect("active frame was checked").locals;
+        let mut list_views_created = 0;
+        let mut matched = Ok(true);
+        for (item, local) in items.iter().zip(locals) {
+            let result = match local {
+                LocalSlot::Direct(value) => matches_pattern(
+                    item,
+                    value,
+                    &operands,
+                    &mut self.stack,
+                    &mut list_views_created,
+                ),
+                LocalSlot::Captured(cell) => matches_pattern(
+                    item,
+                    &cell.borrow(),
+                    &operands,
+                    &mut self.stack,
+                    &mut list_views_created,
+                ),
+            };
+            if !matches!(result, Ok(true)) {
+                matched = result;
+                break;
+            }
+        }
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
+        let matched = matched.map_err(|(kind, message)| self.error_at(kind, message))?;
+        if !matched {
+            self.stack.truncate(start);
+        }
         Ok(matched)
     }
 

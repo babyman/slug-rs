@@ -299,6 +299,47 @@ fn matches_non_binding_case_alternatives_with_guards() {
 }
 
 #[test]
+fn function_match_bodies_test_each_parameter() {
+    let path = fixture_path("parameter-match");
+    fs::write(
+        &path,
+        "var limit = 2\n\
+         val step = fn(values, total, label) match {\n\
+           [[], ...] => \"$label $total\"\n\
+           [[head, ...tail], _, _] if head > 9 => recur(tail, total, label)\n\
+           [[^limit, ...tail], ...] => recur(tail, total * 100, label)\n\
+           [[head, ...tail], ...] => recur(tail, total + head, label)\n\
+         }\n\
+         val count = fn(n, seen) match {\n\
+           [0, _] => seen\n\
+           [_, _] => { val read = fn() { n }; recur(n - 1, seen :+ read()) }\n\
+         }\n\
+         val pair = fn(left, right) match {\n\
+           [1, other] => other\n\
+           [first, ...rest] => first + len(rest)\n\
+         }\n\
+         println(step([1, 20, 2, 3], 0, \"sum\"), count(3, []), pair(1, 5), pair(4, 6))\n",
+    )
+    .expect("write parameter match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run parameter match source");
+    fs::remove_file(path).expect("remove parameter match source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "sum 103 [3, 2, 1] 5 5\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn pinned_patterns_observe_global_local_and_captured_bindings() {
     let path = fixture_path("pinned-bindings");
     fs::write(

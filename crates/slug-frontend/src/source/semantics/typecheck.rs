@@ -6141,6 +6141,41 @@ mod tests {
     }
 
     #[test]
+    fn parameter_matches_read_parameters_in_place() {
+        use slug_vm::PackedOpcode::{List, MatchCase, MatchLocals};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        let summed = opcodes(
+            "val f = fn(xs, n) match {\n    [[], _] => n\n    [[h, ...t], ...] => recur(t, n + h)\n}\nf([1], 0)",
+        );
+        assert_eq!(
+            summed
+                .iter()
+                .filter(|opcode| **opcode == MatchLocals)
+                .count(),
+            2
+        );
+        for opcode in [List, MatchCase] {
+            assert!(!summed.contains(&opcode), "{summed:?}");
+        }
+
+        // Binding the rest of the parameters needs the list itself.
+        let rest = opcodes(
+            "val f = fn(a, b) match {\n    [1, x] => x\n    [x, ...more] => x + len(more)\n}\nf(1, 2)",
+        );
+        assert!(rest.contains(&List), "{rest:?}");
+        assert!(!rest.contains(&MatchLocals), "{rest:?}");
+    }
+
+    #[test]
     fn conditions_branch_without_computing_a_value() {
         use slug_vm::PackedOpcode::{JumpIfFalse, Not, Pop};
         let opcodes = |source: &str| {

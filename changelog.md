@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A function whose body is a `match` on several parameters tests each
+  parameter where it is, instead of building a list of them on every call.
+  `slug.std`'s `map`, `filter`, and `reduce` are such functions:
+  programs that use them heavily run about 0.75x as long, and Crawl 0.90x.
+
 - On 64-bit targets a value's kind tag fills a word, so every value copies
   as three whole words. Programs run about 0.92x as long: Space Invaders
   and the HTTP reference server 0.92x, Crawl 0.94x. Values stay 24 bytes,

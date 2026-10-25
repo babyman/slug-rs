@@ -1191,6 +1191,25 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             },
             "match stack count is too large",
         ),
+        (
+            Op::MatchLocals {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: 0,
+                target: 1,
+            },
+            "local match pattern is not a list",
+        ),
+        (
+            Op::MatchLocals {
+                pattern: slug_vm::MatchPattern::List {
+                    items: vec![slug_vm::MatchPattern::Wildcard],
+                    rest: slug_vm::MatchRest::None,
+                },
+                operands: 0,
+                target: 1,
+            },
+            "local match pattern reads a missing local",
+        ),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);
@@ -1223,6 +1242,47 @@ fn match_case_program(subject: Value) -> Program {
         .emit(Op::Return)
         .emit(Op::Return);
     program_with_main(main)
+}
+
+/// Matches locals `[7, second]` against `[a, 8]`: a match returns `a`, and
+/// a failure jumps past it with nothing pushed.
+fn match_locals_program(second: i64) -> Program {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 2;
+    let first = main.constant(Value::Int(7));
+    let second = main.constant(Value::Int(second));
+    let missed = main.constant(Value::Str("missed".into()));
+    main.emit(Op::Constant(first))
+        .emit(Op::SetLocal(0))
+        .emit(Op::Constant(second))
+        .emit(Op::SetLocal(1))
+        .emit(Op::MatchLocals {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![
+                    slug_vm::MatchPattern::Binding,
+                    slug_vm::MatchPattern::Literal(Value::Int(8)),
+                ],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 6,
+        })
+        .emit(Op::Return)
+        .emit(Op::Constant(missed))
+        .emit(Op::Return);
+    program_with_main(main)
+}
+
+#[test]
+fn match_locals_tests_each_local_without_a_subject() {
+    assert_eq!(
+        Vm::new().run(&match_locals_program(8), 0).unwrap(),
+        Value::Int(7)
+    );
+    assert_eq!(
+        Vm::new().run(&match_locals_program(9), 0).unwrap(),
+        Value::Str("missed".into())
+    );
 }
 
 #[test]

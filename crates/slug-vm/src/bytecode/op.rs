@@ -192,6 +192,21 @@ pub enum Op {
         operands: usize,
         target: usize,
     },
+    /// Matches a list pattern's items against the frame's first locals, item
+    /// `i` against local `i`, as if they were one list. The compiler checks
+    /// the length; it emits this for a `match` on a list of parameters,
+    /// which would otherwise build that list on every call. A match pushes
+    /// the bindings; a failure pushes nothing and jumps to `target`.
+    MatchLocals {
+        pattern: MatchPattern,
+        operands: usize,
+        target: usize,
+    },
+    MatchLocalsPooled {
+        pattern: MatchPatternId,
+        operands: usize,
+        target: usize,
+    },
     MatchFailure,
     Throw,
     EnterScope,

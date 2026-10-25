@@ -2389,3 +2389,44 @@ What the gaps say now:
   string concatenation and interpolation. Neither was profiled this round.
 - `shared-append` is at parity because both runtimes copy the list on
   every step; append-to-tip storage would put Slug ahead.
+
+## Parameter matches read their parameters in place (2026-10-25)
+
+`fn(vs, f, acc) match { ... }` with more than one parameter is parsed as a
+`match` on the list literal `[vs, f, acc]`. Every call therefore built that
+list, matched it through the general `matches_pattern` (the list pattern,
+then the item patterns inside it), shifted the bindings up past it with
+`Vec::insert`, and popped it. `slug.std`'s `map`, `filter`, and `reduce`
+are written this way, so `higher-order` built 110,763 three-element lists
+and ran about 21 instructions per element.
+
+`MatchLocals` (`a` pattern, `b` failure target, `c` operands) matches a
+list pattern's items against the frame's first locals, item `i` against
+local `i`, and pushes the bindings or jumps; there is no subject on the
+stack. The compiler emits it when a `match` subject is a list literal whose
+elements name locals `0, 1, ...` in order, and every case is a list
+pattern of a length that can match, without a rest binding, and
+constrained at most to being a list. Otherwise the whole match keeps the
+general form, so a case such as `[x, ...more]` still builds the list. The
+last-read analysis does not see patterns, so it treats `MatchLocals` as
+reading every local. In a function's `match` body it is the first
+instruction, so that blocks no moves; a later `match [a, b]` on the first
+locals keeps the reads before it as copies.
+
+Counts: `higher-order` built 41 lists instead of 110,763 and ran 2.00M
+instructions instead of 2.56M; `closure-accumulate` 2.90M instead of
+3.70M. `fannkuch-redux` matches single values, so it is unchanged.
+
+Against `e384c24`, seven rounds: tuned 0.96x, hold-out 1.01x;
+`higher-order` 0.75x, `closure-accumulate` 0.74x, `crawl-game` 0.93x
+(it maps and filters through `slug.std`). `invaders-game` and
+`tiny-interpreter` came in at 1.02x there and at 0.99x in a nine-round
+rerun of the affected and unaffected programs, which gave `higher-order`
+0.74x, `closure-accumulate` 0.73x, and `crawl-game` 0.90x. Neither uses a
+parameter match, so both readings are layout noise.
+
+Each element of `map` still runs a `[h, ...t]` match through the general
+matcher, which creates a list view for `t`, plus the append and the
+closure call. A specialized head-and-rest test, or calling a closure
+argument without the general call path, is the next step on these
+workloads.

@@ -240,6 +240,23 @@ impl State {
         );
         index
     }
+    pub(super) fn match_locals(
+        &mut self,
+        pattern: MatchPattern,
+        operands: usize,
+        span: &SourceSpan,
+    ) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(
+            Op::MatchLocals {
+                pattern,
+                operands,
+                target: usize::MAX,
+            },
+            span,
+        );
+        index
+    }
     pub(super) fn jump(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::Jump(usize::MAX), span);
@@ -253,7 +270,8 @@ impl State {
             | Op::JumpIfFalse(value)
             | Op::JumpIfFalsePop(value)
             | Op::JumpIfProvided { target: value, .. }
-            | Op::MatchCase { target: value, .. } => {
+            | Op::MatchCase { target: value, .. }
+            | Op::MatchLocals { target: value, .. } => {
                 *value = target;
             }
             _ => unreachable!("only jump instructions are patched"),
@@ -381,6 +399,13 @@ impl State {
             return Some(binding);
         }
         self.lookup_outer(name)
+    }
+    /// The slot of a name bound to one of this function's locals.
+    pub(super) fn lookup_local(&self, name: &str) -> Option<usize> {
+        match self.scopes.iter().rev().find_map(|scope| scope.get(name))? {
+            Binding::Local { slot, .. } => Some(*slot),
+            _ => None,
+        }
     }
     /// Resolves a name from outside this function, capturing it on first use.
     fn lookup_outer(&mut self, name: &str) -> Option<Binding> {
