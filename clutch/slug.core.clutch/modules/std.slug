@@ -79,3 +79,105 @@ export val find = fn<T>(xs:list<T|nil>, f:fn):T|nil match {
 		if (f(h)) { h } else { recur(t, f) }
 	}
 }
+
+/**
+ * returns true when some element of `xs` is equal to `v`, by `==`.
+ *
+ * `xs` may contain `nil`, and `contains(xs, nil)` finds it.
+ */
+@testWith(
+	[[1, 2, 3], 2], true,
+	[[1, 2, 3], 4], false,
+	[[], 1],        false,
+	[[1, nil], nil], true,
+	[[[1, 2]], [1, 2]], true
+)
+export val contains = fn(xs:list, v):bool {
+	val go = fn(i:num):bool {
+		if (i == len(xs)) { false } else if (xs[i] == v) { true } else { recur(i + 1) }
+	}
+	go(0)
+}
+
+/**
+ * returns true when `f` returns true for some element of `xs`, calling `f`
+ * on the elements in order and stopping at the first that passes. An empty
+ * list gives false.
+ *
+ * Unlike `find(xs, f) != nil`, a passing `nil` element counts.
+ */
+@testWith(
+	[[1, 2, 3], fn(n) { n > 2 }], true,
+	[[1, 2, 3], fn(n) { n > 3 }], false,
+	[[], fn(n) { true }],         false,
+	[[nil], fn(v) { v == nil }],  true
+)
+export val any = fn(xs:list, f:fn):bool {
+	val go = fn(i:num):bool {
+		if (i == len(xs)) { false } else if (f(xs[i])) { true } else { recur(i + 1) }
+	}
+	go(0)
+}
+
+/**
+ * returns true when `f` returns true for every element of `xs`, calling `f`
+ * on the elements in order and stopping at the first that fails. An empty
+ * list gives true.
+ */
+@testWith(
+	[[1, 2, 3], fn(n) { n > 0 }], true,
+	[[1, 2, 3], fn(n) { n > 1 }], false,
+	[[], fn(n) { false }],        true
+)
+export val all = fn(xs:list, f:fn):bool {
+	val go = fn(i:num):bool {
+		if (i == len(xs)) { true } else if (f(xs[i])) { recur(i + 1) } else { false }
+	}
+	go(0)
+}
+
+/**
+ * returns the integers from `start` up to, but not including, `end`:
+ * `range(2, 5)` is `[2, 3, 4]`. The list is empty when `end` is not greater
+ * than `start`.
+ */
+@testWith(
+	[2, 5], [2, 3, 4],
+	[-1, 1], [-1, 0],
+	[3, 3], [],
+	[5, 2], []
+)
+export val range = fn(start:num, end:num):list<num> {
+	val go = fn(i:num, out:list<num>):list<num> {
+		if (i >= end) { out } else { recur(i + 1, out :+ i) }
+	}
+	go(start, [])
+}
+
+/**
+ * returns the integers from 0 up to, but not including, `end`: `range(3)` is
+ * `[0, 1, 2]`. The list is empty when `end` is 0 or less.
+ */
+@testWith(
+	[3], [0, 1, 2],
+	[0], [],
+	[-2], []
+)
+export val range = fn(end:num):list<num> {
+	range(0, end)
+}
+
+/**
+ * calls `f(i)` for each `i` from 0 up to, but not including, `n`, in order,
+ * and returns `nil`: `times(3, f)` calls `f(0)`, `f(1)`, then `f(2)`. Use it
+ * for effects; `map(range(n), f)` collects results instead.
+ */
+export val times = fn(n:num, f:fn):nil {
+	val go = fn(i:num):nil {
+		if (i < n) {
+			f(i)
+			recur(i + 1)
+		}
+	}
+	go(0)
+}

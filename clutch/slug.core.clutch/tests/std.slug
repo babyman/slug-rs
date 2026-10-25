@@ -1,0 +1,33 @@
+val {map, range, times, any, all, contains} = import("slug.std")
+val {assertEqual} = import("slug.test")
+
+@test
+val timesCallsInOrder = fn() {
+    var seen = []
+    assertEqual(times(3, fn(i) { seen = seen :+ i }), nil)
+    assertEqual(seen, [0, 1, 2])
+    times(0, fn(i) { seen = seen :+ i })
+    times(-1, fn(i) { seen = seen :+ i })
+    assertEqual(seen, [0, 1, 2])
+}
+
+@test
+val rangeFeedsMap = fn() {
+    assertEqual(map(range(3), fn(i) { i * i }), [0, 1, 4])
+}
+
+@test
+val anyAndAllStopEarly = fn() {
+    var calls = 0
+    val count = fn(pass:bool):fn { fn(n) { calls = calls + 1; pass } }
+    assertEqual(any([1, 2, 3], count(true)), true)
+    assertEqual(calls, 1)
+    assertEqual(all([1, 2, 3], count(false)), false)
+    assertEqual(calls, 2)
+}
+
+@test
+val containsComparesByValue = fn() {
+    assertEqual(contains([{a: 1}, "x"], {a: 1}), true)
+    assertEqual(contains([1, 2], "1"), false)
+}

@@ -9,7 +9,7 @@
 "slug.random" = { source = "modules/random.slug" }
 
 [tests]
-files = ["tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
+files = ["tests/std.slug", "tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
 
 [native]
 profile = "events"

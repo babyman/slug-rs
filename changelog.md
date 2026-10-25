@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `slug.std` adds `range(end)`, `range(start, end)`, `times(n, f)`,
+  `contains(xs, v)`, `any(xs, f)`, and `all(xs, f)`; `slug.math` adds `abs`,
+  `min`, and `max`; `slug.string` adds `isDigit`, `isLetter`, and `isSpace`.
+  Agents' programs each wrote their own versions of these: counting loops in
+  24 of 115 eval runs, character tests in 38, list membership as
+  `find(...) != nil` in 16, and `min`/`max`/`abs` in every crawl run.
+
 - An index past either end of a list, `bytes`, or string is now an
   `out_of_bounds` error, in diagnostics and in the value `defer onerror`
   receives, instead of `type`, which it shared with real type errors. Agents

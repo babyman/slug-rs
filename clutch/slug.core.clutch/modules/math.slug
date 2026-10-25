@@ -1,5 +1,5 @@
 /**
- * Basic numeric operations implemented by the native core Clutch.
+ * Basic numeric operations, some implemented by the native core Clutch.
  *
  * Invalid operations throw `Error` values whose `type` is `math.range` or
  * `math.domain`.
@@ -65,4 +65,34 @@ export val sqrt = fn(value:num):num {
     } else {
         sqrtRaw(value)
     }
+}
+
+/**
+ * Returns the magnitude of `value`: `abs(-3)` is 3 and `abs(2.5)` is 2.5.
+ *
+ * Throws a `math.range` error for the most negative integer, whose magnitude
+ * does not fit in a Slug integer.
+ */
+@testWith([-3], 3, [3], 3, [0], 0, [-2.5], 2.5)
+export val abs = fn(value:num):num {
+    if (value == -9223372036854775807 - 1) {
+        throw Error {type: "math.range", msg: "abs overflowed"}
+    }
+    if (value < 0) { -value } else { value }
+}
+
+/**
+ * Returns the smaller of `left` and `right`: `min(3, -1)` is -1.
+ */
+@testWith([3, -1], -1, [-1, 3], -1, [2, 2], 2, [1.5, 2], 1.5)
+export val min = fn(left:num, right:num):num {
+    if (right < left) { right } else { left }
+}
+
+/**
+ * Returns the larger of `left` and `right`: `max(3, -1)` is 3.
+ */
+@testWith([3, -1], 3, [-1, 3], 3, [2, 2], 2, [1.5, 2], 2)
+export val max = fn(left:num, right:num):num {
+    if (right > left) { right } else { left }
 }
