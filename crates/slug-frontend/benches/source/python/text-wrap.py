@@ -3,20 +3,25 @@ VOCABULARY = ["slug", "virtual", "machine", "bytecode", "a", "map", "of", "closu
 VOWELS = set("aeiou")
 WIDTH = 60
 
-text, line, lines, vowel_count = "", "", 0, 0
-for remaining in range(30_000, 0, -1):
-    word = VOCABULARY[(remaining * 7) % len(VOCABULARY)]
-    for index in range(len(word)):
-        if word[index] in VOWELS:
-            vowel_count += 1
-    if not line:
-        line = word
-    elif len(line) + 1 + len(word) > WIDTH:
-        text += line + "\n"
-        lines += 1
-        line = word
-    else:
-        line = f"{line} {word}"
-text += line + "\n"
-lines += 1
-print(len(text), lines, vowel_count)
+
+def main():
+    text, line, lines, vowel_count = "", "", 0, 0
+    for remaining in range(30_000, 0, -1):
+        word = VOCABULARY[(remaining * 7) % len(VOCABULARY)]
+        for index in range(len(word)):
+            if word[index] in VOWELS:
+                vowel_count += 1
+        if not line:
+            line = word
+        elif len(line) + 1 + len(word) > WIDTH:
+            text += line + "\n"
+            lines += 1
+            line = word
+        else:
+            line = f"{line} {word}"
+    text += line + "\n"
+    lines += 1
+    print(len(text), lines, vowel_count)
+
+
+main()

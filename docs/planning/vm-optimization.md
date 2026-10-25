@@ -1992,3 +1992,65 @@ own range. That is O(1) amortized for `shared-append`'s shape and keeps
 persistent semantics. It needs the storage to grow while shared, which
 `Rc<Vec<Value>>` cannot do without `unsafe`, so it belongs with the
 persistent-list representation work rather than a local change.
+
+## Python baseline: CPython 3.15 (2026-10-25)
+
+The `Slug / Python` ratios so far were measured against the macOS system
+CPython 3.9.6 and included process startup. CPython 3.11 through 3.15 made
+the interpreter much faster, and every source workload is short enough for
+startup to weigh heavily. The source runner now times a `startup` program
+pair and also reports each ratio with each runtime's `startup` median
+subtracted ("less startup"). It leaves the ratio out when either side does
+under 2 ms of work.
+
+Five Python twins (`string-building`, `word-frequency`, `text-wrap`,
+`graph-search`, and `expression-evaluator`) ran their loops at module level.
+That made every variable a dictionary lookup, and in CPython 3.15 it made
+`text += ...` on a module-level string quadratic: `string-building` took
+49 ms there and 2.2 ms inside a function. Their Slug versions run inside
+`main`, so the twins now do too. This changes only the reference side.
+
+Slug `439f5f4` (profile-guided, mimalloc) against python-build-standalone's
+CPython 3.15.1 (PGO, LTO, tail-call interpreter) and the system 3.9.6, 15
+samples each:
+
+| workload | Slug ms | 3.15 ms | whole | less startup | 3.9 less startup |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.0 | 10.8 | 0.28x | - | - |
+| function-call | 10.5 | 13.3 | 0.79x | 3.01x | 0.98x |
+| n-body | 5.7 | 12.3 | 0.47x | - | 0.90x |
+| typed-n-body | 5.9 | 12.2 | 0.48x | - | 1.18x |
+| spectral-norm | 4.2 | 11.6 | 0.36x | - | - |
+| typed-spectral-norm | 4.2 | 11.6 | 0.36x | - | - |
+| binary-trees | 14.6 | 15.1 | 0.97x | 2.74x | 1.13x |
+| fannkuch-redux | 34.2 | 17.8 | 1.92x | 4.45x | 2.57x |
+| shared-append | 59.0 | 58.2 | 1.02x | 1.18x | 1.68x |
+| higher-order | 31.1 | 16.6 | 1.88x | 4.91x | 3.09x |
+| closure-accumulate | 46.7 | 21.0 | 2.23x | 4.32x | 2.54x |
+| fib | 40.3 | 21.4 | 1.88x | 3.52x | 1.07x |
+| defer-errors | 41.1 | 20.4 | 2.01x | 3.97x | 2.36x |
+| word-frequency | 18.6 | 17.1 | 1.09x | 2.50x | 1.23x |
+| string-building | 8.3 | 14.2 | 0.58x | 1.56x | 1.10x |
+| expression-evaluator (hold-out) | 99.2 | 36.9 | 2.69x | 3.69x | 1.56x |
+| graph-search (hold-out) | 10.7 | 13.6 | 0.78x | 2.75x | 2.12x |
+| text-wrap (hold-out) | 44.1 | 18.1 | 2.43x | 5.63x | 2.49x |
+
+Findings:
+
+- Slug starts in 3.0 ms and CPython 3.15 in 10.8 ms. That alone wins every
+  short program as a whole process, and it is a real advantage for scripts
+  and tools.
+- With startup removed, Slug is slower than CPython 3.15 on every workload
+  that does enough work to measure: geometric mean 3.4x, against 1.7x for
+  3.9. The workloads Slug wins as whole processes win on startup alone.
+- The numeric workloads are too short to compare: CPython 3.15 does about
+  1.5 ms of work in `n-body` and Slug about 2.7 ms. Scale them before
+  claiming anything about numeric code.
+- The largest gaps are calls and closures: `higher-order` 4.9x,
+  `closure-accumulate` 4.3x, `fib` 3.5x, `function-call` 3.0x. They were
+  near parity with 3.9, which had no specializing interpreter and allocated
+  frames on the heap. CPython 3.11+ pushes frames inline in a contiguous
+  stack and specializes calls to Python functions. Per-call cost, not just
+  per-instruction dispatch, is what Stage 7 must measure.
+- `shared-append` (1.18x) is the closest, because both runtimes copy the list
+  on every step.

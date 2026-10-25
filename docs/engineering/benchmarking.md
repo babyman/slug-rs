@@ -31,9 +31,22 @@ and program execution. It validates each checked-in pair of implementations
 against its expected output before timing it. It reports the median and the
 `Slug / Python` ratio, where values below `1.00x` mean Slug was faster.
 
-The default CPython reference is `/usr/bin/python3`. Its resolved path and
-version, the Slug executable/version, the current Git revision, and whether
-tracked local changes were present appear in the report. Override either runtime
+The first workload, `startup`, prints one line. The "less startup" column
+(`compute_slug_over_python` in JSON) subtracts each runtime's `startup`
+median from both sides before dividing, so it compares the work a program
+does rather than how fast each runtime starts. It is left out when either
+side does under 2 ms of work, where it would be mostly noise. Quote it,
+not the whole-process ratio, when comparing interpreter speed.
+`startup` is also a tuned workload: `make bench-ab` times it, so startup
+regressions show up, and profile-guided builds train on it.
+
+The default CPython reference is `/usr/bin/python3`, which on macOS is the
+old CPython 3.9. CPython 3.11 and later are much faster, so compare against
+a current release for any claim about Slug's speed, such as a
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+build unpacked anywhere. Its resolved path and version, the Slug
+executable/version, the current Git revision, and whether tracked local
+changes were present appear in the report. Override either runtime
 only for an explicitly labelled comparison:
 
 ```sh
@@ -53,7 +66,10 @@ comparability. It evaluates all 5,040 permutations of seven values, enough to
 make list transformation materially outweigh fresh-process startup. Each pair
 is intentionally written in the idioms currently
 supported by Slug and Python; keep output checks and workload intent aligned
-when adding a pair.
+when adding a pair. Run a Python twin's work inside a function, as its Slug
+version runs inside `main`: module-level loops make every variable a
+dictionary lookup, and CPython 3.15 concatenates module-level strings in
+quadratic time.
 
 A second group widens the corpus beyond tight numeric `recur` loops, so that
 an optimization tuned on one shape cannot pass unnoticed when it slows

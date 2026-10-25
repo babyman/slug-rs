@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `make bench-source` also reports each Slug / Python ratio with both
+  runtimes' startup time subtracted, from a new `startup` workload. The
+  benchmarking guide recommends a current CPython reference: against CPython
+  3.15 without startup, Slug runs the measurable workloads 3.4x as long.
+  Python twins that looped at module level now run inside a function, like
+  their Slug versions.
+
 - The `slug` executable uses the mimalloc allocator. Allocation-heavy
   programs run faster: the HTTP reference server 0.87x as long, Crawl
   0.90x, and the hold-out benchmarks 0.89x overall. `shared-append`, which

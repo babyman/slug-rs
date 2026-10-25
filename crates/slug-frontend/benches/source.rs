@@ -9,7 +9,18 @@ use serde::Serialize;
 
 const WARMUP_RUNS: usize = 3;
 const DEFAULT_SAMPLES: usize = 15;
+/// A minimal program whose time each runtime's other medians are offset by
+/// for their compute-only ratios.
+const STARTUP: &str = "startup";
+/// Below this much work past startup a compute-only ratio is mostly noise.
+const MINIMUM_COMPUTE: Duration = Duration::from_millis(2);
 const WORKLOADS: &[Workload] = &[
+    Workload {
+        name: STARTUP,
+        held_out: false,
+        expected_stdout: "ok\n",
+        python: true,
+    },
     Workload {
         name: "function-call",
         held_out: false,
@@ -174,6 +185,8 @@ struct WorkloadReport<'a> {
     slug_median_ns: u128,
     python_median_ns: Option<u128>,
     slug_over_python: Option<f64>,
+    /// The ratio once each runtime's `startup` median is subtracted.
+    compute_slug_over_python: Option<f64>,
 }
 
 fn main() {
@@ -192,12 +205,13 @@ fn main() {
         }
     }
 
-    let workloads = WORKLOADS
+    let mut workloads = WORKLOADS
         .iter()
         .map(|workload| benchmark_workload(&slug, &python, &source_root, workload, samples))
         .collect::<Vec<_>>();
+    subtract_startup(&mut workloads);
     let report = BenchmarkReport {
-        schema_version: 3,
+        schema_version: 4,
         revision: git_revision(&root),
         worktree_dirty: git_worktree_dirty(&root),
         samples,
@@ -318,6 +332,31 @@ fn benchmark_workload<'a>(
         python_median_ns: python_median.map(|median| median.as_nanos()),
         slug_over_python: python_median
             .map(|median| slug_median.as_secs_f64() / median.as_secs_f64()),
+        compute_slug_over_python: None,
+    }
+}
+
+fn subtract_startup(workloads: &mut [WorkloadReport<'_>]) {
+    let startup = workloads
+        .iter()
+        .find(|workload| workload.name == STARTUP)
+        .expect("the startup workload is measured");
+    let (slug_startup, python_startup) = (
+        startup.slug_median_ns,
+        startup.python_median_ns.expect("startup has a Python twin"),
+    );
+    let compute = |median: u128, startup: u128| {
+        Some(Duration::from_nanos(
+            u64::try_from(median.checked_sub(startup)?).ok()?,
+        ))
+        .filter(|work| *work >= MINIMUM_COMPUTE)
+    };
+    for workload in workloads {
+        workload.compute_slug_over_python = workload.python_median_ns.and_then(|python| {
+            let slug = compute(workload.slug_median_ns, slug_startup)?;
+            let python = compute(python, python_startup)?;
+            Some(slug.as_secs_f64() / python.as_secs_f64())
+        });
     }
 }
 
@@ -380,18 +419,18 @@ fn print_report(report: &BenchmarkReport<'_>) {
         "Python: {} ({})",
         report.python.executable, report.python.version
     );
-    println!("\nworkload                 Slug median   Python median  Slug / Python");
+    println!("\nworkload                 Slug median   Python median  Slug / Python  less startup");
+    let ratio = |ratio: Option<f64>| ratio.map_or_else(|| "-".to_owned(), |r| format!("{r:.2}x"));
     for workload in &report.workloads {
-        let (python, ratio) = match (workload.python_median_ns, workload.slug_over_python) {
-            (Some(median), Some(ratio)) => (format_millis(median), format!("{ratio:.2}x")),
-            _ => ("-".to_owned(), "-".to_owned()),
-        };
         println!(
-            "{:<24} {:>11} ms {:>11} ms {:>12}{}",
+            "{:<24} {:>11} ms {:>11} ms {:>14} {:>13}{}",
             workload.name,
             format_millis(workload.slug_median_ns),
-            python,
-            ratio,
+            workload
+                .python_median_ns
+                .map_or_else(|| "-".to_owned(), format_millis),
+            ratio(workload.slug_over_python),
+            ratio(workload.compute_slug_over_python),
             if workload.held_out {
                 "  (hold-out)"
             } else {
