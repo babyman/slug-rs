@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The VM fetches each instruction without reloading its position through
+  the call frame, and reads ordinary locals directly. Programs run about
+  0.96x as long: the HTTP reference server 0.91x, Space Invaders 0.93x,
+  Crawl 0.94x.
+
 - Arithmetic, comparisons, and bitwise operators on two integers or two
   floats compute without copying their operands. Space Invaders runs 0.88x
   as long, the HTTP reference server 0.93x, Crawl 0.94x, and recursive

@@ -280,6 +280,9 @@ enum ExecutionOutcome {
 
 enum InstructionOutcome {
     Continue,
+    /// Continue at this instruction of the same frame: a jump, or a `recur`
+    /// restart at 0.
+    Jump(usize),
     Settled(Value),
 }
 
@@ -1953,22 +1956,29 @@ impl Vm {
             }
             let program = program.as_ref().expect("active program was loaded");
             let chunk = self.current_chunk(program)?;
+            // The instruction pointer stays in a local, so fetching the next
+            // instruction does not reload it through the frame. The frame's
+            // copy is kept current for calls and errors, and jumps report
+            // their target instead of writing it.
+            let code = chunk.code.as_slice();
+            let mut ip = self.frames.last().expect("active frame was checked").ip;
             loop {
-                let frame = self.frames.last_mut().expect("active frame was checked");
-                let ip = frame.ip;
-                let Some(instruction) = chunk.code.get(ip) else {
+                let Some(instruction) = code.get(ip) else {
                     return Err(self.missing_return(&chunk.name));
                 };
-                frame.ip = ip + 1;
+                ip += 1;
+                self.frames.last_mut().expect("active frame was checked").ip = ip;
                 #[cfg(feature = "metrics")]
                 {
                     self.metrics.borrow_mut().instructions_executed += 1;
                 }
                 self.active_span = instruction.span;
-                if let InstructionOutcome::Settled(value) =
-                    self.execute_instruction(program, chunk, instruction)?
-                {
-                    return Ok(ExecutionOutcome::Settled(Ok(value)));
+                match self.execute_instruction(program, chunk, instruction)? {
+                    InstructionOutcome::Continue => {}
+                    InstructionOutcome::Jump(target) => ip = target,
+                    InstructionOutcome::Settled(value) => {
+                        return Ok(ExecutionOutcome::Settled(Ok(value)));
+                    }
                 }
                 if self.frame_epoch != epoch {
                     break;
@@ -2031,11 +2041,31 @@ impl Vm {
                 self.pop()?;
             }
             PackedOpcode::Duplicate => self.stack.push(self.peek()?.clone()),
+            // A direct local is read here rather than through a `VmResult`,
+            // which the push otherwise stages through memory. Captured and
+            // missing locals take the helpers.
             PackedOpcode::GetLocal if instruction.b == MOVE_LOCAL => {
-                let value = self.take_local(operand)?;
+                let value = match self
+                    .frames
+                    .last_mut()
+                    .and_then(|frame| frame.locals.get_mut(operand))
+                {
+                    Some(LocalSlot::Direct(value)) => core::mem::replace(value, Value::Nil),
+                    _ => self.take_local(operand)?,
+                };
                 self.stack.push(value);
             }
-            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand)?),
+            PackedOpcode::GetLocal => {
+                let value = match self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.locals.get(operand))
+                {
+                    Some(LocalSlot::Direct(value)) => value.clone(),
+                    _ => self.local_value(operand)?,
+                };
+                self.stack.push(value);
+            }
             PackedOpcode::SetLocal => {
                 let value = self.pop()?;
                 self.set_local(operand, value)?;
@@ -2263,10 +2293,10 @@ impl Vm {
             PackedOpcode::LessNum => self.numeric_compare(cmp::Ordering::Less)?,
             PackedOpcode::GuardGreater => self.guard_compare(cmp::Ordering::Greater)?,
             PackedOpcode::GuardLess => self.guard_compare(cmp::Ordering::Less)?,
-            PackedOpcode::Jump => self.jump(operand)?,
+            PackedOpcode::Jump => return Ok(InstructionOutcome::Jump(operand)),
             PackedOpcode::JumpIfFalse => {
                 if !self.peek()?.is_truthy() {
-                    self.jump(operand)?;
+                    return Ok(InstructionOutcome::Jump(operand));
                 }
             }
             // One arm keeps a single `binary_values` call site in this loop.
@@ -2312,7 +2342,7 @@ impl Vm {
             }
             PackedOpcode::JumpIfFalsePop => {
                 if !self.pop()?.is_truthy() {
-                    self.jump(operand)?;
+                    return Ok(InstructionOutcome::Jump(operand));
                 }
             }
             PackedOpcode::JumpIfProvided => {
@@ -2321,7 +2351,7 @@ impl Vm {
                     .last()
                     .is_some_and(|frame| frame.provided.is_provided(operand))
                 {
-                    self.jump(instruction.b as usize)?;
+                    return Ok(InstructionOutcome::Jump(instruction.b as usize));
                 }
             }
             PackedOpcode::Call => self.call(program, operand, None)?,
@@ -2372,7 +2402,7 @@ impl Vm {
                     MatchPatternId::new(instruction.a),
                     instruction.c as usize,
                 )? {
-                    self.jump(instruction.b as usize)?;
+                    return Ok(InstructionOutcome::Jump(instruction.b as usize));
                 }
             }
             PackedOpcode::MatchFailure => {
@@ -2398,8 +2428,12 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                return Ok(InstructionOutcome::Jump(0));
             }
-            PackedOpcode::RecurPositional => self.recur_positional(program, operand)?,
+            PackedOpcode::RecurPositional => {
+                self.recur_positional(program, operand)?;
+                return Ok(InstructionOutcome::Jump(0));
+            }
             PackedOpcode::Return => {
                 let value = self.pop()?;
                 if let Err(value) = self.return_without_cleanup(value)
@@ -5323,16 +5357,5 @@ impl Vm {
             self.metrics.borrow_mut().source_span_lookups += 1;
         }
         span
-    }
-
-    fn jump(&mut self, target: usize) -> VmResult<()> {
-        if self.frames.last().is_none() {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active call frame".into(),
-            ));
-        }
-        self.frames.last_mut().expect("active frame was checked").ip = target;
-        Ok(())
     }
 }

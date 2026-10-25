@@ -2173,3 +2173,46 @@ Rejected: boxing `RuntimeError`'s details so that `VmResult` is small. The
 spills around `Result<Value, _>` temporaries were not caused by the error
 variant's size, and the boxed build ran tuned 1.02x, hold-out 1.03x, and
 `http-server` 1.07x, from layout changes.
+
+## Per-instruction cost: the fetch chain (2026-10-25)
+
+Instruction-level samples of `invaders-game` came from a stripped copy of
+the symbolized profile-guided build. It keeps the layout, and `sample`
+reports raw addresses for it. They put 43% of the samples on fetching the
+next instruction, which was a chain of dependent loads. Each instruction
+loaded `frames`' pointer and length, the frame, `frame.ip`, the code
+slice's pointer and length, the instruction, its opcode, and the jump
+table entry. The previous instruction's store of `ip + 1` was reloaded on
+the way.
+
+The loop now keeps `ip` and the code slice in locals. It still stores
+`ip + 1` to the frame before each handler, because calls, suspension, and
+errors read it there. That store is no longer on the next fetch's path.
+Jumps, failed `MatchCase`s, and `recur` restarts return
+`InstructionOutcome::Jump(target)` instead of writing the frame. A direct
+`GetLocal` is also read inline rather than through `local_value`'s
+`VmResult`, which the push staged through memory. Calls and returns already
+change `frame_epoch`, which reloads `ip` from the new frame.
+
+Against `3bed479`, five rounds: tuned 0.96x, hold-out 0.96x;
+`http-server` 0.91x, `invaders-game` 0.93x, `fib` 0.93x, `crawl-game`
+0.94x. The local `ip` alone gave tuned and hold-out 0.96x. Measured
+directly against it, the inline `GetLocal` gave 0.99x for both, and
+`http-server` 0.96x.
+
+Rejected: a hand-written `Value::clone` that copies numbers, booleans, and
+nil after one tag check and clones shared values out of line. Copying a
+list's elements then made a call per shared element. `shared-append` ran
+1.43x, and the tuned geomean lost the local `ip`'s gain.
+
+What remains per instruction, from the same samples:
+
+- The operand stack's length, pointer, and capacity live in the VM and go
+  through memory on every push and pop. Each instruction's push therefore
+  waits on the previous instruction's store of the length.
+- Every handler that reads a local, a capture, or a global first
+  re-derives the active frame from `frames`' pointer and length. Keeping
+  the active frame in its own field touches about 90 sites: calls, returns,
+  unwinding, and stack traces.
+- Each instruction stores its span, stores `ip` to the frame, decodes the
+  outcome, and checks `frame_epoch`: a few cheap operations each.
