@@ -1840,3 +1840,33 @@ Instructions dispatched, against the local-`val` change: `higher-order`
 `http-server` 0.98x, with hold-outs `expression-evaluator` and
 `tiny-interpreter` 0.93x; `shared-append`, which has no `match`, read 1.02x
 against a 1-2% spread. Tuned geomean 0.98x, hold-out 0.96x.
+
+## Conditions compile to branches (2026-10-25)
+
+A pair-count survey after `MatchCase` found conditions computed as values
+and then tested: `if (a && b)` kept `a` with `JumpIfFalse` and popped it on
+the true path, and `if (!c)`, `if (a != b)`, `a >= b`, and `a <= b` ran a
+`Not` before the branch. Together about 7.5% of `invaders-game`'s
+dispatches, 5.3% of `crawl-game`'s, and 3.4% of `http-server`'s.
+
+The compiler now lowers every `if` condition (value, tail, and statement
+forms) and every match guard through `branch`, which returns the jumps a
+condition takes when its truthiness equals a given value. `&&` and `||`
+become chained jumps, `!` flips which truthiness jumps, and `!=`, `>=`, and
+`<=` branch on `==`, `<`, and `>` themselves. An `if` whose whole condition
+is negated places its `else` branch first, so the negation costs nothing; a
+negation inside `&&` or `||` that must jump on a truthy value uses a
+`JumpIfFalsePop` over a `Jump`, which is never more work than the `Not` it
+replaces. No instruction was added. A test runs 19 conditions in five `if`
+forms and as a guard and checks each against the condition computed as a
+value.
+
+Instructions dispatched, against `bd8e484`: `invaders-game` -4.7%,
+`http-server` -2.9%, `crawl-game` -0.9%. Crawl's remaining shapes are
+`&&` chains returned as values by predicates (`inside`, `visible`, `free`),
+which keep the value lowering; when every operand is a comparison or a `!`
+the result is a bool, and a branch form pushing `true` or `false` would
+remove one `Pop` per operand. Seven interleaved rounds: `invaders-game` and
+`http-server` 0.98x, `graph-search` (hold-out) 0.98x, `crawl-game` 1.01x
+within a 1% spread (1.00x on a 15-round rerun), everything else within
+spread; tuned geomean 1.00x, hold-out 0.99x.

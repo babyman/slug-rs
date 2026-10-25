@@ -395,15 +395,131 @@ impl Compiler {
             state.emit(Op::Pop, &expression.span);
             return Ok(());
         };
+        self.compile_if(
+            state,
+            &expression.span,
+            condition,
+            then_branch,
+            None,
+            IfForm::Statement,
+        )
+        .map_err(|error: SourceError| error.claimed_by(expression))
+    }
+
+    /// Compiles an `if`. The branch that runs when control falls through the
+    /// condition comes first: the `then` branch, unless the condition is
+    /// negated (`!c`, `a != b`, `a >= b`, `a <= b`), when branching on the
+    /// condition without its negation reaches `then` by the jump instead.
+    fn compile_if(
+        &mut self,
+        state: &mut State,
+        span: &SourceSpan,
+        condition: &Expr,
+        then_branch: &Expr,
+        else_branch: Option<&Expr>,
+        form: IfForm,
+    ) -> Result<(), SourceError> {
         super::stack::grow(|| {
-            self.expression(state, condition)?;
-            let end = state.jump_if_false_pop(&expression.span);
-            self.expression(state, then_branch)?;
-            state.emit(Op::Pop, &expression.span);
+            let arm = |this: &mut Self, state: &mut State, arm: Option<&Expr>| match (arm, form) {
+                (Some(arm), IfForm::Tail) => this.tail_expression(state, arm),
+                (Some(arm), IfForm::Value) => this.expression(state, arm),
+                (Some(arm), IfForm::Statement) => {
+                    this.expression(state, arm)?;
+                    state.emit(Op::Pop, span);
+                    Ok(())
+                }
+                (None, IfForm::Statement) => Ok(()),
+                (None, _) => {
+                    state.emit(Op::Nil, span);
+                    Ok(())
+                }
+            };
+            // A statement without `else` has nothing to jump over, so it
+            // keeps `then` first and needs no jump past the other branch.
+            let swap = negated_condition(condition) && form != IfForm::Statement;
+            let jumps = self.branch(state, condition, swap)?;
+            let (first, second) = if swap {
+                (else_branch, Some(then_branch))
+            } else {
+                (Some(then_branch), else_branch)
+            };
+            arm(self, state, first)?;
+            if second.is_none() && form == IfForm::Statement {
+                for jump in jumps {
+                    state.patch(jump);
+                }
+                return Ok(());
+            }
+            let end = state.jump(span);
+            for jump in jumps {
+                state.patch(jump);
+            }
+            arm(self, state, second)?;
             state.patch(end);
             Ok(())
         })
-        .map_err(|error: SourceError| error.claimed_by(expression))
+    }
+
+    /// Compiles `condition` to jumps instead of a value. The returned jumps
+    /// are taken when its truthiness equals `when`; otherwise control falls
+    /// through. `&&`, `||`, and `!` become control flow, and a negated
+    /// comparison branches on the comparison itself.
+    fn branch(
+        &mut self,
+        state: &mut State,
+        condition: &Expr,
+        when: bool,
+    ) -> Result<Vec<usize>, SourceError> {
+        super::stack::grow(|| {
+            match &condition.kind {
+                ExprKind::Prefix { operators, value }
+                    if operators
+                        .iter()
+                        .all(|(operator, _)| matches!(operator, Prefix::Not)) =>
+                {
+                    return self.branch(state, value, when ^ (operators.len() % 2 == 1));
+                }
+                ExprKind::Binary {
+                    left,
+                    operator: operator @ (Binary::And | Binary::Or),
+                    right,
+                } => {
+                    // `&&` is decided by a falsy operand, `||` by a truthy one.
+                    let deciding = matches!(operator, Binary::Or);
+                    let short_circuit = self.branch(state, left, deciding)?;
+                    if when == deciding {
+                        let mut jumps = short_circuit;
+                        jumps.extend(self.branch(state, right, when)?);
+                        return Ok(jumps);
+                    }
+                    let jumps = self.branch(state, right, when)?;
+                    for jump in short_circuit {
+                        state.patch(jump);
+                    }
+                    return Ok(jumps);
+                }
+                ExprKind::Binary {
+                    left,
+                    operator:
+                        operator @ (Binary::NotEqual | Binary::GreaterEqual | Binary::LessEqual),
+                    right,
+                } => {
+                    self.expression(state, left)?;
+                    self.expression(state, right)?;
+                    let comparison = match operator {
+                        Binary::NotEqual => Op::Equal,
+                        Binary::GreaterEqual => self.less_op(left, right),
+                        _ => self.greater_op(left, right),
+                    };
+                    state.emit(comparison, &condition.span);
+                    return Ok(primitive_branch(state, !when, &condition.span));
+                }
+                _ => {}
+            }
+            self.expression(state, condition)?;
+            Ok(primitive_branch(state, when, &condition.span))
+        })
+        .map_err(|error: SourceError| error.claimed_by(condition))
     }
 
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
@@ -1200,19 +1316,14 @@ impl Compiler {
                     condition,
                     then_branch,
                     else_branch,
-                } => {
-                    self.expression(state, condition)?;
-                    let otherwise = state.jump_if_false_pop(&expression.span);
-                    self.expression(state, then_branch)?;
-                    let end = state.jump(&expression.span);
-                    state.patch(otherwise);
-                    if let Some(otherwise) = else_branch {
-                        self.expression(state, otherwise)?;
-                    } else {
-                        state.emit(Op::Nil, &expression.span);
-                    }
-                    state.patch(end);
-                }
+                } => self.compile_if(
+                    state,
+                    &expression.span,
+                    condition,
+                    then_branch,
+                    else_branch.as_deref(),
+                    IfForm::Value,
+                )?,
                 ExprKind::Function {
                     parameters, body, ..
                 } => {
@@ -1331,8 +1442,7 @@ impl Compiler {
                     state.emit(Op::SetLocal(*slot), &case.span);
                 }
                 let guard_next = if let Some(guard) = &case.guard {
-                    self.guard_expression(state, guard)?;
-                    Some(state.jump_if_false_pop(&case.span))
+                    Some(self.guard_branch(state, guard)?)
                 } else {
                     None
                 };
@@ -1345,8 +1455,8 @@ impl Compiler {
                 state.leave_scope();
                 ends.push(state.jump(&case.span));
                 state.patch(next);
-                if let Some(guard_next) = guard_next {
-                    state.patch(guard_next);
+                for jump in guard_next.into_iter().flatten() {
+                    state.patch(jump);
                 }
             }
             state.emit(Op::Pop, &subject.span);
@@ -1358,14 +1468,15 @@ impl Compiler {
         })
     }
 
-    fn guard_expression(
+    /// Compiles a match guard to the jumps it takes when it fails.
+    fn guard_branch(
         &mut self,
         state: &mut State,
         expression: &Expr,
-    ) -> Result<(), SourceError> {
+    ) -> Result<Vec<usize>, SourceError> {
         super::stack::grow(|| {
             let previous = std::mem::replace(&mut self.guard_comparisons, true);
-            let result = self.expression(state, expression);
+            let result = self.branch(state, expression, false);
             self.guard_comparisons = previous;
             result
         })
@@ -1660,19 +1771,14 @@ impl Compiler {
                     condition,
                     then_branch,
                     else_branch,
-                } => {
-                    self.expression(state, condition)?;
-                    let otherwise = state.jump_if_false_pop(&expression.span);
-                    self.tail_expression(state, then_branch)?;
-                    let end = state.jump(&expression.span);
-                    state.patch(otherwise);
-                    if let Some(otherwise) = else_branch {
-                        self.tail_expression(state, otherwise)?;
-                    } else {
-                        state.emit(Op::Nil, &expression.span);
-                    }
-                    state.patch(end);
-                }
+                } => self.compile_if(
+                    state,
+                    &expression.span,
+                    condition,
+                    then_branch,
+                    else_branch.as_deref(),
+                    IfForm::Tail,
+                )?,
                 ExprKind::Match { subject, cases } => {
                     let subject = subject.as_deref().ok_or_else(|| {
                         SourceError::semantic(
@@ -1733,6 +1839,45 @@ impl Compiler {
             Ok(())
         })
     }
+}
+
+/// How an `if`'s branches are compiled: for their value, in tail position,
+/// or as a statement whose value is discarded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IfForm {
+    Value,
+    Tail,
+    Statement,
+}
+
+/// Whether `condition` is a negation that branching can absorb: `!c`, or a
+/// comparison compiled as the opposite comparison and `Not`.
+fn negated_condition(condition: &Expr) -> bool {
+    match &condition.kind {
+        ExprKind::Prefix { operators, .. } => {
+            operators
+                .iter()
+                .all(|(operator, _)| matches!(operator, Prefix::Not))
+                && operators.len() % 2 == 1
+        }
+        ExprKind::Binary { operator, .. } => matches!(
+            operator,
+            Binary::NotEqual | Binary::GreaterEqual | Binary::LessEqual
+        ),
+        _ => false,
+    }
+}
+
+/// Branches on the value on the stack, jumping when its truthiness equals
+/// `when`. A jump on a truthy value is a `JumpIfFalsePop` over a `Jump`.
+fn primitive_branch(state: &mut State, when: bool, span: &SourceSpan) -> Vec<usize> {
+    let skip = state.jump_if_false_pop(span);
+    if !when {
+        return vec![skip];
+    }
+    let jump = state.jump(span);
+    state.patch(skip);
+    vec![jump]
 }
 
 /// Declares the slot of each function a block declares by name, so the

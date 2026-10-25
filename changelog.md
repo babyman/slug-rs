@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `if` conditions and match guards branch directly instead of computing a
+  value first: `&&` and `||` become jumps, and `!`, `!=`, `>=`, and `<=` no
+  longer run a separate negation. Space Invaders and the HTTP reference
+  server run 0.98x as long.
+
 - Each `match` case runs one instruction to test its pattern instead of
   four, and no longer copies the matched value first. Programs that match
   heavily gain most: the Tiny interpreter and the `expression-evaluator`

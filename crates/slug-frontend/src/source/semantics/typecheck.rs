@@ -6141,6 +6141,45 @@ mod tests {
     }
 
     #[test]
+    fn conditions_branch_without_computing_a_value() {
+        use slug_vm::PackedOpcode::{JumpIfFalse, Not, Pop};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        // A match pops its subject, so only the `if`s are free of `Pop`.
+        for (source, absent) in [
+            (
+                "val f = fn(a, b) { if (a && !b) { 1 } else { 2 } }\nf(true, false)",
+                &[Not, JumpIfFalse, Pop][..],
+            ),
+            (
+                "val f = fn(a, b) { if (a != b || !a) { 1 } else { 2 } }\nf(1, 2)",
+                &[Not, JumpIfFalse, Pop],
+            ),
+            (
+                "val f = fn(a, b) { if (a >= b) { 1 } else { 2 } }\nf(1, 2)",
+                &[Not, JumpIfFalse, Pop],
+            ),
+            (
+                "val f = fn(a, b) match {\n    [x, y] if x <= y && !a => 1\n    _ => 2\n}\nf(1, 2)",
+                &[Not, JumpIfFalse],
+            ),
+        ] {
+            let opcodes = opcodes(source);
+            for opcode in absent {
+                assert!(!opcodes.contains(opcode), "{source}: {opcodes:?}");
+            }
+        }
+    }
+
+    #[test]
     fn constant_index_keys_lower_to_one_instruction() {
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("indexing compiles");

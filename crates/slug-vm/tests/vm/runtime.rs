@@ -454,3 +454,89 @@ fn rejects_missing_opcode_pool_metadata_before_execution() {
         assert!(error.message.contains(expected), "{}", error.message);
     }
 }
+
+/// Runs `condition` over `a` and `b` in every place a condition is lowered
+/// to branches (a value `if` with and without `else`, a tail `if`, a
+/// statement `if`, and a match guard) and as a computed value, which keeps
+/// the value lowering. Every form must agree for every pair.
+fn assert_conditions_agree(conditions: &[&str], pairs: &[(&str, &str)]) {
+    for condition in conditions {
+        let calls = pairs
+            .iter()
+            .map(|(a, b)| {
+                format!(
+                    "[reference({a}, {b}), value({a}, {b}), bare({a}, {b}), tail({a}, {b}), statement({a}, {b}), guard({a}, {b})]"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!(
+            "val reference = fn(a, b) {{\n    val v = {condition}\n    if (v) {{ 1 }} else {{ 0 }}\n}}\n\
+             val value = fn(a, b) {{\n    val r = if ({condition}) {{ 1 }} else {{ 0 }}\n    r\n}}\n\
+             val bare = fn(a, b) {{\n    val r = if ({condition}) {{ 1 }}\n    r ?? 0\n}}\n\
+             val tail = fn(a, b) {{ if ({condition}) {{ 1 }} else {{ 0 }} }}\n\
+             val statement = fn(a, b) {{\n    var hit = 0\n    if ({condition}) {{ hit = 1 }}\n    hit\n}}\n\
+             val guard = fn(a, b) {{\n    match a {{\n        _ if {condition} => 1\n        _ => 0\n    }}\n}}\n\
+             val main = fn() {{ [{calls}] }}\n"
+        );
+        let program = compile("conditions.slug", &source)
+            .unwrap_or_else(|error| panic!("compile `{condition}`: {error:?}"));
+        let result = Vm::new()
+            .run_program(&program)
+            .unwrap_or_else(|error| panic!("run `{condition}`: {error:?}"))
+            .to_string();
+        let groups = result
+            .trim_start_matches("[[")
+            .trim_end_matches("]]")
+            .split("], [");
+        for ((a, b), group) in pairs.iter().zip(groups) {
+            let mut forms = group.split(", ");
+            let reference = forms.next().expect("reference form");
+            assert!(
+                forms.all(|form| form == reference),
+                "`{condition}` with a = {a}, b = {b}: {group}"
+            );
+        }
+    }
+}
+
+#[test]
+fn branching_conditions_agree_with_their_values() {
+    assert_conditions_agree(
+        &[
+            "a && b",
+            "a || b",
+            "!a",
+            "!!a",
+            "!(a && b)",
+            "!a || b",
+            "a && !b",
+            "!(a || !b)",
+            "(a && b) || (!a && !b)",
+            "a || (b && !a)",
+            "a != b",
+            "!(a != b)",
+        ],
+        &[
+            ("true", "true"),
+            ("true", "false"),
+            ("false", "true"),
+            ("false", "false"),
+            ("nil", "true"),
+            ("true", "nil"),
+            ("nil", "nil"),
+        ],
+    );
+    assert_conditions_agree(
+        &[
+            "a >= b",
+            "a <= b",
+            "!(a >= b)",
+            "a >= b && a <= b",
+            "a != b || a >= b",
+            "!(a <= b) || a == b",
+            "a > b || !(b <= a) && a != 2",
+        ],
+        &[("1", "2"), ("2", "1"), ("2", "2")],
+    );
+}
