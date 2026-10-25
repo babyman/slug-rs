@@ -2236,3 +2236,37 @@ a return copies both back, where one vector copy did before.
 
 The remaining per-instruction costs above are still open, the operand
 stack's length store first.
+
+## Per-instruction cost: the operand stack's length (2026-10-25)
+
+A measurement, not a change: how much of each instruction waits on the
+operand stack's length going through memory. Keeping the stack pointer in
+a register would take a redesign of most handlers, so the dispatch loop was
+perturbed instead. Before each instruction, it pushed `nil` onto a vector,
+passed the vector through `black_box`, and popped it again: two extra
+store-to-load round trips through that vector's length. In one build the
+vector was the operand stack, so the round trips sit on the chain the next
+push and pop follow. In the control it was a separate vector off that
+chain, so the build did the same work without the dependency.
+
+| comparison | tuned | hold-out | `invaders-game` | `crawl-game` | `http-server` |
+|---|---:|---:|---:|---:|---:|
+| control / `7be5a69` (5 rounds) | 1.05x | 1.08x | 1.10x | 1.09x | 1.08x |
+| operand stack / control (7 rounds) | 1.05x | 1.04x | 1.12x | 1.10x | 1.09x |
+
+The length is on the critical path. On the real programs, each round trip
+on it costs about 5% of the run, on top of what the same work costs off
+it. Today's hottest instructions (`GetLocal`, `Constant`, `GetGlobal`,
+`JumpIfFalsePop`, `SetLocal`) each make one such round trip, and a fused
+binary operator on the stack top in place makes none. Removing one per
+instruction is therefore worth up to about 5% on the real programs and
+less on the tuned set. That is an upper bound: an added delay shows up in
+full, but a removed one only helps until the next longest chain, such as
+the instruction fetch, sets the pace.
+
+The control's own cost is also informative. Roughly ten extra simple
+operations per instruction, none on a critical chain, cost 5–10%. Each
+instruction's remaining bookkeeping (storing its span and `ip`, decoding
+its outcome, checking `frame_epoch`) is therefore worth about as much per
+operation removed as the stack-length round trip, and it is far cheaper to
+change.
