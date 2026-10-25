@@ -1,0 +1,18 @@
+val {filter, reduce} = import("slug.std")
+
+// Each step appends to its accumulator and then creates closures, which
+// must not stop the append from extending the list in place.
+val collect = fn(remaining, readings, total) {
+    if (remaining == 0) {
+        total + len(readings)
+    } else {
+        val reading = remaining * 7 % 101
+        val next = readings :+ reading
+        val above = fn(value) { value > reading / 2 }
+        val sum = [reading, reading + 1, reading + 2]
+            /> filter(above)
+            /> reduce(0, fn(acc, value) { acc + value })
+        recur(remaining - 1, next, total + sum)
+    }
+}
+val main = fn() { println(collect(20_000, [], 0)) }

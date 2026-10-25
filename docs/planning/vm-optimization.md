@@ -1763,3 +1763,8 @@ live (a missing list still keeps every slot live): 0 elements copied, 0.02 s.
 No benchmark workload has this shape. Seven interleaved rounds against
 `ae51f93`: every workload 0.97-1.03x within its spread, tuned and hold-out
 geomean 1.00x.
+
+The tuned workload `closure-accumulate` now covers this shape: each step
+appends to its accumulator and then filters and reduces with closures.
+Against `ae51f93` (seven interleaved rounds): 648.1 to 70.5 ms (0.11x);
+against CPython 1.87x.

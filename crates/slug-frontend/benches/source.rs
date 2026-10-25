@@ -65,6 +65,12 @@ const WORKLOADS: &[Workload] = &[
         python: true,
     },
     Workload {
+        name: "closure-accumulate",
+        held_out: false,
+        expected_stdout: "3079763\n",
+        python: true,
+    },
+    Workload {
         name: "fib",
         held_out: false,
         expected_stdout: "196418\n",

@@ -62,6 +62,8 @@ another:
   so `:+` must copy rather than extend in place.
 - `higher-order` runs `slug.std` `map`, `filter`, and `reduce` with closures
   that capture their caller's locals.
+- `closure-accumulate` appends to an accumulator and then creates closures
+  in the same loop step, so the append must still extend the list in place.
 - `fib` is naive non-tail recursion: ordinary calls and returns with no
   `recur`.
 - `defer-errors` registers scoped cleanup on every call and recovers a thrown

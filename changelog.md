@@ -6,8 +6,9 @@
   iteration when the loop body also creates a closure. Ownership analysis
   used to assume a closure might capture any local, so a read before the
   closure always copied; it now uses the closure's actual captures. A
-  20,000-step loop of this shape went from 1.20 s to 0.02 s; benchmark
-  workloads, none of which have this shape, are unchanged.
+  20,000-step loop of this shape went from 1.20 s to 0.02 s; other
+  benchmark workloads, none of which have this shape, are unchanged. A new
+  `closure-accumulate` workload covers it (0.11x).
 
 - A `slug` built with the `metrics` feature prints the VM's internal counters
   after a program finishes when `SLUG_DUMP_METRICS` is set.
