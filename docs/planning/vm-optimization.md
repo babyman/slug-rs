@@ -2054,3 +2054,83 @@ Findings:
   per-instruction dispatch, is what Stage 7 must measure.
 - `shared-append` (1.18x) is the closest, because both runtimes copy the list
   on every step.
+
+## Stage 7 counting experiment (2026-10-25)
+
+Before building a register prototype, a counting build estimated how many
+dispatches a register VM would execute for the same programs. It recorded
+how often each instruction ran, then simulated each executed chunk's operand
+stack. Each stack slot was a register reference (a local, or a temporary in
+its own register above the locals) or a constant operand. Under that model:
+
+- Loads of locals and constants, `Pop`, `Duplicate`, and `SetLocal` of a
+  freshly computed value cost nothing.
+- Every other instruction costs one dispatch, plus one copy for each
+  operand a register machine would have to move:
+  - call arguments, which must sit in consecutive registers that become the
+    callee's frame;
+  - values on the stack at a jump to a join, which must land in the same
+    register on every path;
+  - a stored local that a value still on the stack reads;
+  - a `recur` argument whose parameter a later argument still reads.
+- Collection constructors and interpolation take any registers ("operand
+  lists"). Making them consecutive as well, as Lua does, adds under 1% on
+  the real programs and up to 13% on `higher-order` and
+  `closure-accumulate`.
+
+Compare-and-branch fusion is left out of both sides, because the stack VM
+could adopt it too. It would remove 4% to 11% of dispatches from the real
+programs, and 12% to 15% from `fib` and `n-body`.
+
+The experiment ran on `db8d968`. The patch was not committed. Time per
+instruction is the profile-guided build's median from the CPython 3.15
+report, less startup, divided by the stack dispatches:
+
+| workload | stack dispatches | register dispatches | of which copies | ns per instruction |
+|---|---:|---:|---:|---:|
+| invaders-game | 48.3M | 79% | 5% | 9.9 |
+| crawl-game | 54.7M | 80% | 9% | 10.8 |
+| http-server | 40.6M | 80% | 6% | 11.8 |
+| tiny-interpreter (hold-out) | 23.3M | 78% | 12% | 10.9 |
+| expression-evaluator (hold-out) | 7.9M | 73% | 17% | 12.2 |
+| fib | 4.1M | 100% | 8% | 9.0 |
+| function-call | 0.8M | 100% | 13% | 9.3 |
+| n-body | 0.4M | 75% | 0% | 6.8 |
+| fannkuch-redux | 3.4M | 65% | 17% | 9.2 |
+| higher-order | 2.6M | 62% | 14% | 11.0 |
+| closure-accumulate | 3.7M | 60% | 14% | 11.8 |
+| defer-errors | 2.9M | 92% | 18% | 13.3 |
+| shared-append | 0.1M | 92% | 31% | 538 |
+
+Findings:
+
+- A register VM would execute about 80% of today's dispatches on the real
+  programs. The literature's ~45% reduction for stack-to-register
+  translation started from a plain JVM stack machine. This one already fuses
+  the commonest local and constant operand patterns, which took much of that
+  saving.
+- Calls gain nothing. A call's arguments must be copied into the callee's
+  window either way: the stack VM's `GetLocal` becomes the register VM's
+  `MOVE`. `fib` and `function-call` run the same number of dispatches, and
+  `recur` adds copies where a later argument reads a parameter.
+- Slug spends 7 to 13 ns per instruction, even on `n-body`'s floating-point
+  loop. Run 40 times longer, `n-body` still takes 6.7 ns per instruction and
+  `fib(32)` 8.7 ns. CPython 3.15 runs the long `n-body` in 49 ms against
+  Slug's 107 ms, with more instructions: about 12 bytecodes per iteration
+  against Slug's 8. The gap is the cost of each instruction, not their number.
+  A symbolized profile puts the whole loop inside `Vm::execute`, not in calls
+  out of it.
+- Removing a dispatch has bought about a third of its share in time so far
+  (Nil/Pop and branch work). By that rate, a 20% reduction would be worth
+  roughly 0.93x on the real programs. That is less than PGO or the
+  allocator gave, for a rewrite of lowering, the verifier, the packed format,
+  and `.cslug`.
+
+Decision: keep the operand stack, and do not build a register prototype now.
+The next work is the per-instruction cost inside `Vm::execute`: the fetch
+and dispatch skeleton (frame lookup, instruction-pointer traffic through
+memory, span bookkeeping, the per-instruction outcome and epoch checks) and
+value clone and drop traffic. Revisit registers if that work brings the
+per-instruction cost near CPython's, since a 20% dispatch reduction would
+then be a larger share of what remains. Compare-and-branch fusion stays
+available to the stack VM.
