@@ -1926,3 +1926,32 @@ interleaved rounds, twice: `function-call` 0.91-0.94x, `fib` 0.92-0.93x,
 `binary-trees` and `defer-errors` 0.93-0.95x, `closure-accumulate` 0.97x,
 `crawl-game` 0.98-0.99x, everything else within spread. Tuned 0.98x,
 hold-out 0.99x both times.
+
+## Constant right operands fuse with computed left ones (2026-10-25)
+
+`LocalConstantBinary` fuses `x - 1` only when the left operand is a local.
+The pair survey found `Constant` followed by a fusable operator on a
+computed left operand (`buffer[i] == 10`, `g.player.blind > 0`) in nearly
+every workload: at least 4.6% of `invaders-game`'s dispatches, 3.4% of
+`crawl-game`'s, and 6.6% of `spectral-norm`'s. The survey kept only each
+workload's top pairs, so these are lower bounds.
+
+`ConstantBinary` (appended; `b` is the constant, `c` the operator code)
+pops the left operand and applies the operator with the constant on the
+right. `State::emit` tries it after the local fusion. A jump may land on
+the constant, as at the end of `(if c { a } else { b }) - 2`, because the
+fused instruction takes its place and the jump arrives with the left
+operand on the stack. It shares the `LocalConstantBinary` dispatch arm so
+that `binary_values` keeps one call site in the loop (see the `CallGlobal`
+layout notes above). It applies the same operators: the bitwise
+operators are not fusable yet, so `invaders-game`'s `& 0xFF` (1.6% of
+dispatches) still runs `Constant`, `BitAnd`.
+
+Instructions dispatched, against `1ddbdd4`: `spectral-norm` -6.6%,
+`defer-errors` -6.5%, `string-building` -5.1%, `crawl-game` -3.7%,
+`invaders-game` -3.5%, `http-server` -2.7%, hold-outs -1.4% to -5.0%.
+Seven interleaved rounds: `invaders-game` and `http-server` 0.97x,
+`crawl-game` 0.98x, hold-outs 0.97-0.99x, tuned 0.99x, hold-out 0.98x. On
+fifteen rounds: `crawl-game` and `http-server` 0.96x, `invaders-game` 0.98x.
+The two `spectral-norm` variants read 0.98x and 1.03x within 7-9% spreads;
+they run in 7 ms, mostly startup.

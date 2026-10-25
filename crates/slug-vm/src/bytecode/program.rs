@@ -810,6 +810,12 @@ impl Program {
                 operand(*constant),
                 operator.code(),
             ),
+            Op::ConstantBinary { constant, operator } => (
+                PackedOpcode::ConstantBinary,
+                0,
+                operand(*constant),
+                operator.code(),
+            ),
             Op::JumpIfProvided { slot, target } => (
                 PackedOpcode::JumpIfProvided,
                 operand(*slot),
@@ -959,6 +965,12 @@ impl Program {
                     .ok_or_else(|| {
                         String::from("packed instruction references missing binary operator")
                     })?,
+            },
+            PackedOpcode::ConstantBinary => Op::ConstantBinary {
+                constant: n(instruction.b),
+                operator: BinaryOperator::from_code(instruction.c).ok_or_else(|| {
+                    String::from("packed instruction references missing binary operator")
+                })?,
             },
             PackedOpcode::JumpIfProvided => Op::JumpIfProvided {
                 slot: n(instruction.a),
@@ -1248,7 +1260,7 @@ impl Program {
                     location()
                 ))
             }
-            Op::LocalConstantBinary { constant, .. }
+            Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. }
                 if !matches!(chunk.constants.get(*constant), Some(Constant::Value(_))) =>
             {
                 Err(format!(
@@ -1764,7 +1776,8 @@ impl Program {
             | Op::BitNot
             | Op::Spawn
             | Op::SelectApply
-            | Op::GetIndexConstant(_) => (1, 1),
+            | Op::GetIndexConstant(_)
+            | Op::ConstantBinary { .. } => (1, 1),
             Op::Jump(_)
             | Op::JumpIfFalse(_)
             | Op::JumpIfProvided { .. }

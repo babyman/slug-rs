@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An operator whose right operand is a constant, such as `buffer[i] == 10`
+  or `g.player.hp - 1`, runs as one instruction instead of two when its
+  left operand is computed. Programs gain broadly: the HTTP reference
+  server and Crawl run 0.96x as long, Space Invaders 0.98x.
+
 - A call to a function the module declares at its top level, such as a
   recursive call, runs one instruction fewer: when its arguments cannot run
   code, the call reads the function by name after evaluating them instead

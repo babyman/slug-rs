@@ -2253,7 +2253,8 @@ impl Vm {
                     self.jump(operand)?;
                 }
             }
-            PackedOpcode::LocalConstantBinary => {
+            // One arm keeps a single `binary_values` call site in this loop.
+            PackedOpcode::LocalConstantBinary | PackedOpcode::ConstantBinary => {
                 let Some(crate::Constant::Value(right)) =
                     chunk.constants.get(instruction.b as usize)
                 else {
@@ -2263,7 +2264,9 @@ impl Vm {
                     ));
                 };
                 let right = right.clone();
-                let left = if instruction.c & MOVE_LOCAL_OPERAND == 0 {
+                let left = if instruction.opcode == PackedOpcode::ConstantBinary {
+                    self.pop()?
+                } else if instruction.c & MOVE_LOCAL_OPERAND == 0 {
                     self.local_value(operand)?
                 } else {
                     self.take_local(operand)?

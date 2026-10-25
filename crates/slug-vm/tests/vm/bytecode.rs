@@ -1172,6 +1172,47 @@ fn verifies_a_failed_match_case_jump_with_only_its_subject() {
 }
 
 #[test]
+fn rejects_a_constant_binary_without_its_constant_or_operand() {
+    let mut missing = Chunk::new("main", 0);
+    missing
+        .emit(Op::Nil)
+        .emit(Op::ConstantBinary {
+            constant: 0,
+            operator: slug_vm::BinaryOperator::Add,
+        })
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(missing), 0)
+        .expect_err("the operand constant does not exist");
+    assert!(
+        error
+            .message
+            .contains("references missing operand constant"),
+        "{}",
+        error.message
+    );
+
+    let mut empty = Chunk::new("main", 0);
+    let one = empty.constant(Value::Int(1));
+    empty
+        .emit(Op::ConstantBinary {
+            constant: one,
+            operator: slug_vm::BinaryOperator::Add,
+        })
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(empty), 0)
+        .expect_err("the operator has no left operand");
+    assert!(
+        error
+            .message
+            .contains("instruction 0 requires 1 stack values, has 0"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn verifies_a_global_call_against_its_arguments_alone() {
     let mut main = Chunk::new("main", 0);
     main.emit(Op::Nil)

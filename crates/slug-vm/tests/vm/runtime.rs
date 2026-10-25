@@ -501,6 +501,60 @@ fn assert_conditions_agree(conditions: &[&str], pairs: &[(&str, &str)]) {
 }
 
 #[test]
+fn constant_operands_agree_with_local_operands() {
+    // Each operator with a constant right operand and a computed left one,
+    // beside the same operator reading the constant from a local, which
+    // does not fuse. The `if` jumps land on the fused instruction.
+    let cases = [
+        ("xs[0] + 1", "1"),
+        ("xs[1] - 1.5", "1.5"),
+        ("xs[0] * 3", "3"),
+        ("xs[1] / 4", "4"),
+        ("xs[0] % 4", "4"),
+        ("xs[0] == 7", "7"),
+        ("xs[2] == \"a\"", "\"a\""),
+        ("xs[2] + \"!\"", "\"!\""),
+        ("xs[0] < 8", "8"),
+        ("xs[1] > 2", "2"),
+        ("(if (xs[0] > 5) { xs[0] } else { xs[1] }) - 2", "2"),
+        ("xs[0] / 0", "0"),
+    ];
+    for (expression, constant) in cases {
+        let reference = expression.replacen(&format!(" {constant}"), " k", 1);
+        let source = format!(
+            "val fused = fn(xs) {{ {expression} }}\n\
+             val reference = fn(xs) {{\n    val k = {constant}\n    {reference}\n}}\n\
+             val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    [fused(xs), reference(xs)]\n}}\n"
+        );
+        let program = compile("constants.slug", &source)
+            .unwrap_or_else(|error| panic!("compile `{expression}`: {error:?}"));
+        match Vm::new().run_program(&program) {
+            Ok(result) => {
+                let result = result.to_string();
+                let (fused, reference) = result
+                    .trim_matches(['[', ']'])
+                    .split_once(", ")
+                    .expect("two results");
+                assert_eq!(fused, reference, "`{expression}`");
+            }
+            Err(error) => {
+                let source = format!(
+                    "val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    val k = {constant}\n    {reference}\n}}\n"
+                );
+                let reference = Vm::new()
+                    .run_program(&compile("reference.slug", &source).expect("reference compiles"))
+                    .expect_err("the reference fails too");
+                assert_eq!(
+                    (error.kind, error.message),
+                    (reference.kind, reference.message),
+                    "`{expression}`"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn module_function_calls_read_the_live_callee() {
     // `pad` takes generic argument binding, and `swap` is rebound after
     // `before` is read: each call reads the function the name holds then.

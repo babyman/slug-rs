@@ -6180,6 +6180,31 @@ mod tests {
     }
 
     #[test]
+    fn constant_right_operands_fuse_with_their_operator() {
+        use slug_vm::PackedOpcode::{Constant, ConstantBinary, Equal, LocalConstantBinary};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        let indexed = opcodes("val f = fn(xs, i) { xs[i] == 10 }\nf([10], 0)");
+        assert!(indexed.contains(&ConstantBinary), "{indexed:?}");
+        assert!(
+            !indexed.contains(&Constant) && !indexed.contains(&Equal),
+            "{indexed:?}"
+        );
+        // A local left operand keeps the fusion that skips the stack.
+        let local = opcodes("val f = fn(n) { n - 1 }\nf(1)");
+        assert!(local.contains(&LocalConstantBinary), "{local:?}");
+        assert!(!local.contains(&ConstantBinary), "{local:?}");
+    }
+
+    #[test]
     fn module_function_calls_read_their_callee_after_the_arguments() {
         use slug_vm::PackedOpcode::{CallGlobal, CallPositional, GetGlobal};
         let counts = |source: &str| {

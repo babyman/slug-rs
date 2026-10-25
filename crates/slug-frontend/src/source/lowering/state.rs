@@ -105,7 +105,7 @@ impl State {
     }
     pub(super) fn emit(&mut self, op: Op, span: &SourceSpan) {
         if let Some(operator) = BinaryOperator::of(&op)
-            && self.fuse_local_constant(operator, span)
+            && (self.fuse_local_constant(operator, span) || self.fuse_constant(operator, span))
         {
             return;
         }
@@ -172,6 +172,28 @@ impl State {
         };
         self.chunk.code.truncate(start);
         self.chunk.emit_at(fused, span.clone());
+        true
+    }
+    /// Replaces a trailing `Constant` with one `ConstantBinary` applying
+    /// `operator` to the value under it, the shape of `buffer[i] == 10`. A
+    /// jump may land on the constant, which the fused instruction takes
+    /// over, but not on the operator.
+    fn fuse_constant(&mut self, operator: BinaryOperator, span: &SourceSpan) -> bool {
+        let Some(start) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > start {
+            return false;
+        }
+        let Op::Constant(constant) = self.chunk.code[start].op else {
+            return false;
+        };
+        if !matches!(self.chunk.constants.get(constant), Some(Constant::Value(_))) {
+            return false;
+        }
+        self.chunk.code.truncate(start);
+        self.chunk
+            .emit_at(Op::ConstantBinary { constant, operator }, span.clone());
         true
     }
     pub(super) fn constant(&mut self, value: Value) -> usize {

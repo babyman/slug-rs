@@ -122,6 +122,12 @@ pub enum Op {
         constant: usize,
         operator: BinaryOperator,
     },
+    /// Pushes `operator` applied to the popped value and a value constant:
+    /// the fused form of `Constant(constant)`, `operator`.
+    ConstantBinary {
+        constant: usize,
+        operator: BinaryOperator,
+    },
     JumpIfProvided {
         slot: usize,
         target: usize,
