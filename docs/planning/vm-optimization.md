@@ -2337,3 +2337,55 @@ Tried with it: `GetLocal` and `GetCapture` copying `Int`, `Float`, and
 `Bool` after plain compares, before the derived `clone`'s jump on the tag.
 Measured against the word tag alone, it gave tuned 1.00x, hold-out 0.99x,
 and the real programs 0.99x, inside the spread, so it was dropped.
+
+## Python baseline after the per-instruction round (2026-10-25)
+
+Slug `f85517a` (profile-guided, mimalloc) against the same CPython 3.15.1,
+15 samples each. The earlier columns are the `439f5f4` table above.
+
+| workload | Slug ms | 3.15 ms | less startup | at `439f5f4` | change |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.2 | 11.6 | - | - | - |
+| function-call | 7.8 | 14.5 | 1.56x | 3.01x | 0.52x |
+| binary-trees | 12.0 | 16.1 | 1.92x | 2.74x | 0.70x |
+| fannkuch-redux | 27.7 | 18.4 | 3.59x | 4.45x | 0.81x |
+| shared-append | 57.3 | 58.5 | 1.15x | 1.18x | 0.97x |
+| higher-order | 24.4 | 16.5 | 4.27x | 4.91x | 0.87x |
+| closure-accumulate | 38.0 | 20.9 | 3.72x | 4.32x | 0.86x |
+| fib | 26.7 | 21.8 | 2.30x | 3.52x | 0.65x |
+| defer-errors | 34.3 | 21.6 | 3.09x | 3.97x | 0.78x |
+| word-frequency | 16.2 | 17.8 | 2.07x | 2.50x | 0.83x |
+| string-building | 7.3 | 14.8 | 1.27x | 1.56x | 0.81x |
+| expression-evaluator (hold-out) | 87.3 | 38.5 | 3.12x | 3.69x | 0.85x |
+| graph-search (hold-out) | 8.9 | 14.4 | 2.01x | 2.75x | 0.73x |
+| text-wrap (hold-out) | 35.6 | 19.0 | 4.33x | 5.63x | 0.77x |
+
+With startup removed, the geometric mean over these 13 workloads went from
+3.1x to 2.4x slower than CPython 3.15: tuned 2.9x to 2.3x, hold-out 3.9x to
+3.0x. (The 3.4x quoted above, recomputed from that table's own column, is
+3.1x.) CPython's startup ran 11.6 ms this time against 10.8 ms before, so
+the machine was a few percent slower for both runtimes; the ratios cancel
+most of it. The numeric workloads are still too short to compare.
+
+As whole processes, the real programs ran 0.75x as long as at `439f5f4`
+(`invaders-game`), 0.83x (`crawl-game`), 0.72x (`http-server`), and 0.85x
+(`tiny-interpreter`).
+
+What the gaps say now:
+
+- Plain calls closed the most: `function-call` 1.6x and `fib` 2.3x, from
+  3.0x and 3.5x. Fused global calls, numbers in place, and the word tag
+  all land on them.
+- Closures and higher-order calls closed the least: `higher-order` 4.3x,
+  `closure-accumulate` 3.7x. Both spend their time in `slug.std`'s `map`,
+  `filter`, and `reduce`, which are Slug functions. Each element runs a
+  `[h, ...t]` match through the general `matches_pattern`, which builds
+  its bindings and a list view for the tail, then an append to the
+  accumulator and a call to the closure value. A compiled list pattern for
+  the head-and-rest shape, or inlining the combinators' closures, would
+  cut that path; the per-instruction skeleton is a small part of it.
+- `fannkuch-redux` (3.6x) also runs on `[head, ...tail]` matches and
+  appends, and `text-wrap` (4.3x) on string indexing, map lookups, and
+  string concatenation and interpolation. Neither was profiled this round.
+- `shared-append` is at parity because both runtimes copy the list on
+  every step; append-to-tip storage would put Slug ahead.
