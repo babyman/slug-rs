@@ -66,7 +66,8 @@ pub use installation::InstalledProgram;
 use operations::{
     add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
     is_map_key, list_append, list_prepend, map_key_error, matches_pattern, modulo, modulo_num,
-    multiply, multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
+    multiply, multiply_num, negate, numbers, numeric_binary, shift, slice_value, subtract,
+    subtract_num,
 };
 
 const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
@@ -2135,6 +2136,21 @@ impl Vm {
             PackedOpcode::GetSlice => {
                 self.get_slice(instruction.a != 0, instruction.b != 0, instruction.c != 0)?;
             }
+            // Two numbers compute in place; anything else takes the owned arm below.
+            PackedOpcode::Add if self.numeric_in_place(BinaryOperator::Add) => {}
+            PackedOpcode::AddNum if self.numeric_in_place(BinaryOperator::AddNum) => {}
+            PackedOpcode::Subtract if self.numeric_in_place(BinaryOperator::Subtract) => {}
+            PackedOpcode::SubtractNum if self.numeric_in_place(BinaryOperator::SubtractNum) => {}
+            PackedOpcode::Multiply if self.numeric_in_place(BinaryOperator::Multiply) => {}
+            PackedOpcode::MultiplyNum if self.numeric_in_place(BinaryOperator::MultiplyNum) => {}
+            PackedOpcode::Equal if self.numeric_in_place(BinaryOperator::Equal) => {}
+            PackedOpcode::Greater if self.numeric_in_place(BinaryOperator::Greater) => {}
+            PackedOpcode::GreaterNum if self.numeric_in_place(BinaryOperator::GreaterNum) => {}
+            PackedOpcode::Less if self.numeric_in_place(BinaryOperator::Less) => {}
+            PackedOpcode::LessNum if self.numeric_in_place(BinaryOperator::LessNum) => {}
+            PackedOpcode::BitAnd if self.numeric_in_place(BinaryOperator::BitAnd) => {}
+            PackedOpcode::BitOr if self.numeric_in_place(BinaryOperator::BitOr) => {}
+            PackedOpcode::BitXor if self.numeric_in_place(BinaryOperator::BitXor) => {}
             PackedOpcode::Add => {
                 let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
@@ -2263,6 +2279,26 @@ impl Vm {
                         format!("operand constant {} does not exist", instruction.b),
                     ));
                 };
+                let operator = BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
+                    .expect("validated binary operator");
+                // Numbers compute where they are, without cloning either
+                // operand or dispatching through the owned operations.
+                if instruction.opcode == PackedOpcode::ConstantBinary {
+                    if let Some(top) = self.stack.last_mut()
+                        && let Some(value) = numeric_binary(operator, top, right)
+                    {
+                        *top = value;
+                        return Ok(InstructionOutcome::Continue);
+                    }
+                } else if let Some(LocalSlot::Direct(left)) = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.locals.get(operand))
+                    && let Some(value) = numeric_binary(operator, left, right)
+                {
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Continue);
+                }
                 let right = right.clone();
                 let left = if instruction.opcode == PackedOpcode::ConstantBinary {
                     self.pop()?
@@ -2271,8 +2307,6 @@ impl Vm {
                 } else {
                     self.take_local(operand)?
                 };
-                let operator = BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
-                    .expect("validated binary operator");
                 let value = self.binary_values(operator, left, right)?;
                 self.stack.push(value);
             }

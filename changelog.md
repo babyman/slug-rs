@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Arithmetic, comparisons, and bitwise operators on two integers or two
+  floats compute without copying their operands. Space Invaders runs 0.88x
+  as long, the HTTP reference server 0.93x, Crawl 0.94x, and recursive
+  `fib` 0.82x.
+
 - `make bench-source` also reports each Slug / Python ratio with both
   runtimes' startup time subtracted, from a new `startup` workload. The
   benchmarking guide recommends a current CPython reference: against CPython

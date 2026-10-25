@@ -408,25 +408,125 @@ fn executes_checked_bitwise_and_shift_bytecode() {
     assert_eq!(error.message, "shift count is out of range");
 }
 
+/// Runs `left operator right` as a standalone instruction, fused with a
+/// constant right operand, and fused with a local left operand.
+fn binary_forms(
+    left: &Value,
+    right: &Value,
+    operator: slug_vm::BinaryOperator,
+    op: &Op,
+) -> [Result<Value, slug_vm::RuntimeError>; 3] {
+    let run = |emit: &dyn Fn(&mut Chunk, usize, usize)| {
+        let mut main = Chunk::new("main", 0);
+        main.locals = 1;
+        let left = main.constant(left.clone());
+        let right = main.constant(right.clone());
+        emit(&mut main, left, right);
+        main.emit(Op::Return);
+        Vm::new().run(&program_with_main(main), 0)
+    };
+    [
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left))
+                .emit(Op::Constant(right))
+                .emit(op.clone());
+        }),
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left)).emit(Op::ConstantBinary {
+                constant: right,
+                operator,
+            });
+        }),
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left))
+                .emit(Op::SetLocal(0))
+                .emit(Op::LocalConstantBinary {
+                    slot: 0,
+                    constant: right,
+                    operator,
+                });
+        }),
+    ]
+}
+
 #[test]
 fn reports_checked_integer_overflow() {
-    for (left, right, op) in [
-        (i64::MAX, 1, Op::Add),
-        (i64::MAX, 1, Op::AddNum),
-        (i64::MIN, 1, Op::SubtractNum),
+    use slug_vm::BinaryOperator as B;
+    for (left, right, operator, op) in [
+        (i64::MAX, 1, B::Add, Op::Add),
+        (i64::MAX, 1, B::AddNum, Op::AddNum),
+        (i64::MIN, 1, B::Subtract, Op::Subtract),
+        (i64::MIN, 1, B::SubtractNum, Op::SubtractNum),
+        (i64::MAX, 2, B::Multiply, Op::Multiply),
+        (i64::MIN, -1, B::MultiplyNum, Op::MultiplyNum),
     ] {
-        let mut main = Chunk::new("main", 0);
-        let left = main.constant(Value::Int(left));
-        let right = main.constant(Value::Int(right));
-        main.emit(Op::Constant(left))
-            .emit(Op::Constant(right))
-            .emit(op)
-            .emit(Op::Return);
-        let error = Vm::new()
-            .run(&program_with_main(main), 0)
-            .expect_err("integer overflow must remain checked");
-        assert_eq!(error.kind, RuntimeErrorKind::Type);
-        assert_eq!(error.message, "integer overflow");
+        for result in binary_forms(&Value::Int(left), &Value::Int(right), operator, &op) {
+            let error = result.expect_err("integer overflow must remain checked");
+            assert_eq!(error.kind, RuntimeErrorKind::Type);
+            assert_eq!(error.message, "integer overflow");
+        }
+    }
+}
+
+#[test]
+fn numeric_operators_keep_their_semantics_in_every_form() {
+    use slug_vm::BinaryOperator as B;
+    for (operator, op) in [(B::Multiply, Op::Multiply), (B::AddNum, Op::AddNum)] {
+        for result in binary_forms(&Value::Float(1e308), &Value::Float(1e308), operator, &op) {
+            let error = result.expect_err("non-finite results must remain checked");
+            assert_eq!(
+                error.message,
+                "numeric operation produced a non-finite number"
+            );
+        }
+    }
+    for (left, right, operator, op, expected) in [
+        (
+            Value::Int(2),
+            Value::Float(2.0),
+            B::Equal,
+            Op::Equal,
+            Value::Bool(true),
+        ),
+        (
+            Value::Float(2.5),
+            Value::Int(2),
+            B::Greater,
+            Op::Greater,
+            Value::Bool(true),
+        ),
+        (
+            Value::Int(3),
+            Value::Float(0.5),
+            B::Add,
+            Op::Add,
+            Value::Float(3.5),
+        ),
+        (
+            Value::Int(7),
+            Value::Int(-3),
+            B::Less,
+            Op::Less,
+            Value::Bool(false),
+        ),
+        (
+            Value::Float(1.5),
+            Value::Float(1.5),
+            B::Equal,
+            Op::Equal,
+            Value::Bool(true),
+        ),
+        (
+            Value::Int(6),
+            Value::Int(3),
+            B::BitXor,
+            Op::BitXor,
+            Value::Int(5),
+        ),
+    ] {
+        for result in binary_forms(&left, &right, operator, &op) {
+            assert_eq!(result.expect("numeric operation succeeds"), expected);
+        }
     }
 }
 

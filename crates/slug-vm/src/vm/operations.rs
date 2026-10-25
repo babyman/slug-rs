@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use core::cell::RefCell;
 
 use crate::{
-    MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
+    BinaryOperator, MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
     collections::{Bytes, Map, MapKey},
 };
 
@@ -34,6 +34,51 @@ pub(super) fn numbers(left: Value, right: Value) -> Result<(f64, f64), String> {
         )),
     }
 }
+/// Applies `operator` to two integers or two floats without taking either
+/// value, or returns `None` for every other case, including overflow and a
+/// non-finite result, which the owned operations report.
+#[inline]
+pub(super) fn numeric_binary(
+    operator: BinaryOperator,
+    left: &Value,
+    right: &Value,
+) -> Option<Value> {
+    use BinaryOperator as B;
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => {
+            let (a, b) = (*a, *b);
+            Some(match operator {
+                B::Add | B::AddNum => Value::Int(a.checked_add(b)?),
+                B::Subtract | B::SubtractNum => Value::Int(a.checked_sub(b)?),
+                B::Multiply | B::MultiplyNum => Value::Int(a.checked_mul(b)?),
+                B::Equal => Value::Bool(a == b),
+                B::Greater | B::GreaterNum => Value::Bool(a > b),
+                B::Less | B::LessNum => Value::Bool(a < b),
+                B::BitAnd => Value::Int(a & b),
+                B::BitOr => Value::Int(a | b),
+                B::BitXor => Value::Int(a ^ b),
+                _ => return None,
+            })
+        }
+        (Value::Float(a), Value::Float(b)) => {
+            let (a, b) = (*a, *b);
+            let finite = |value: f64| value.is_finite().then_some(Value::Float(value));
+            match operator {
+                B::Add | B::AddNum => finite(a + b),
+                B::Subtract | B::SubtractNum => finite(a - b),
+                B::Multiply | B::MultiplyNum => finite(a * b),
+                // Exact, as `Value`'s equality is.
+                #[allow(clippy::float_cmp)]
+                B::Equal => Some(Value::Bool(a == b)),
+                B::Greater | B::GreaterNum => Some(Value::Bool(a > b)),
+                B::Less | B::LessNum => Some(Value::Bool(a < b)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     match (left, right) {
         (Value::Int(a), Value::Int(b)) => a

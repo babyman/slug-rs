@@ -7,11 +7,16 @@ use alloc::{string::String, vec::Vec};
 use core::cmp::Ordering;
 
 use crate::{
-    Value,
+    BinaryOperator, Value,
     value::{BindingCell, binding_cell},
 };
 
-use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers, operations::compare_num};
+use super::{
+    RuntimeErrorKind, Vm, VmResult,
+    frames::LocalSlot,
+    numbers,
+    operations::{compare_num, numeric_binary},
+};
 
 impl Vm {
     #[inline]
@@ -150,6 +155,22 @@ impl Vm {
             LocalSlot::Captured(cell) => *cell.borrow_mut() = value,
         }
         Ok(())
+    }
+
+    /// Replaces the top two values with `operator` applied to them when both
+    /// are numbers it computes without taking them, returning whether it did.
+    #[inline]
+    pub(super) fn numeric_in_place(&mut self, operator: BinaryOperator) -> bool {
+        let [.., left, right] = self.stack.as_mut_slice() else {
+            return false;
+        };
+        let Some(value) = numeric_binary(operator, left, right) else {
+            return false;
+        };
+        *left = value;
+        // The right operand is a number, which owns nothing to drop.
+        core::mem::forget(self.stack.pop());
+        true
     }
 
     #[inline]

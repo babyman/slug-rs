@@ -2134,3 +2134,42 @@ value clone and drop traffic. Revisit registers if that work brings the
 per-instruction cost near CPython's, since a 20% dispatch reduction would
 then be a larger share of what remains. Compare-and-branch fusion stays
 available to the stack VM.
+
+## Per-instruction cost: numbers in place (2026-10-25)
+
+The disassembly of the profile-guided `Vm::execute` showed what one
+instruction costs. `LocalConstantBinary` for `remaining == 0` made four
+indirect jumps: the opcode, a jump on the constant's `Value` tag to clone it,
+another on the local's tag to clone it, and one on the operator. Then it
+called `Value::eq` out of line with both operands in memory and dropped both
+clones. A `GetLocal` that moves its local passed the value through a
+`VmResult<Value>` temporary on the machine stack before pushing it.
+
+`numeric_binary` now applies an operator to two integers or two floats
+without taking either value. It declines integer overflow, non-finite
+results, and every other operand pair, all of which the owned operations
+still report or compute. The fused constant arm tries it first, on the local
+or the stack top in place. Each standalone `Add`, `Subtract`, `Multiply`,
+comparison, and bitwise arm has a guard arm that replaces the top two stack
+values in place. Nine interleaved rounds against `291635a`:
+
+| workload | ratio |
+|---|---:|
+| fib | 0.82x |
+| typed-n-body | 0.84x |
+| function-call | 0.86x |
+| invaders-game | 0.88x |
+| binary-trees | 0.92x |
+| text-wrap (hold-out) | 0.92x |
+| http-server | 0.93x |
+| crawl-game | 0.94x |
+| tiny-interpreter (hold-out) | 0.98x |
+| shared-append | 1.02x (spread 5%) |
+
+Tuned geomean 0.92x, hold-out 0.97x. The fused constant arm alone gave
+tuned 0.95x and hold-out 0.99x.
+
+Rejected: boxing `RuntimeError`'s details so that `VmResult` is small. The
+spills around `Result<Value, _>` temporaries were not caused by the error
+variant's size, and the boxed build ran tuned 1.02x, hold-out 1.03x, and
+`http-server` 1.07x, from layout changes.
