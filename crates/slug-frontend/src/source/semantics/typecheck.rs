@@ -6181,7 +6181,9 @@ mod tests {
 
     #[test]
     fn constant_right_operands_fuse_with_their_operator() {
-        use slug_vm::PackedOpcode::{Constant, ConstantBinary, Equal, LocalConstantBinary};
+        use slug_vm::PackedOpcode::{
+            BitAnd, Constant, ConstantBinary, Equal, LocalConstantBinary, ShiftRight,
+        };
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("source compiles");
             program
@@ -6202,6 +6204,16 @@ mod tests {
         let local = opcodes("val f = fn(n) { n - 1 }\nf(1)");
         assert!(local.contains(&LocalConstantBinary), "{local:?}");
         assert!(!local.contains(&ConstantBinary), "{local:?}");
+        // Bitwise operators fuse in both forms.
+        let masked = opcodes("val f = fn(xs, n) { (xs[0] & 255) + (n >> 4) }\nf([1], 2)");
+        assert!(
+            masked.contains(&ConstantBinary) && masked.contains(&LocalConstantBinary),
+            "{masked:?}"
+        );
+        assert!(
+            !masked.contains(&BitAnd) && !masked.contains(&ShiftRight),
+            "{masked:?}"
+        );
     }
 
     #[test]

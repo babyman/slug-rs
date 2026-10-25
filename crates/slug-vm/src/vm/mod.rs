@@ -2482,6 +2482,11 @@ impl Vm {
             BinaryOperator::LessNum => {
                 Value::Bool(self.numeric_compare_values(left, right, cmp::Ordering::Less)?)
             }
+            BinaryOperator::BitAnd => bitwise(left, right, |a, b| a & b).map_err(fault)?,
+            BinaryOperator::BitOr => bitwise(left, right, |a, b| a | b).map_err(fault)?,
+            BinaryOperator::BitXor => bitwise(left, right, |a, b| a ^ b).map_err(fault)?,
+            BinaryOperator::ShiftLeft => shift(left, right, i64::checked_shl).map_err(fault)?,
+            BinaryOperator::ShiftRight => shift(left, right, i64::checked_shr).map_err(fault)?,
         })
     }
 

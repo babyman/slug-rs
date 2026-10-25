@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The bitwise operators `&`, `|`, `^`, `<<`, and `>>` with a constant right
+  operand, such as `value & 0xFF`, also run as one instruction. Space
+  Invaders runs 0.96x as long.
+
 - An operator whose right operand is a constant, such as `buffer[i] == 10`
   or `g.player.hp - 1`, runs as one instruction instead of two when its
   left operand is computed. Programs gain broadly: the HTTP reference

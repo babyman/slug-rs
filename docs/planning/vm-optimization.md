@@ -1955,3 +1955,15 @@ Seven interleaved rounds: `invaders-game` and `http-server` 0.97x,
 fifteen rounds: `crawl-game` and `http-server` 0.96x, `invaders-game` 0.98x.
 The two `spectral-norm` variants read 0.98x and 1.03x within 7-9% spreads;
 they run in 7 ms, mostly startup.
+
+### Bitwise operators fuse too
+
+`BinaryOperator` gained `BitAnd`, `BitOr`, `BitXor`, `ShiftLeft`, and
+`ShiftRight`, appended so existing operator codes are unchanged. Both
+`LocalConstantBinary` and `ConstantBinary` apply them through the shared
+`bitwise` and `shift` helpers, so errors match the standalone instructions.
+Only `invaders-game` uses them with constants: -2.8% of its dispatches.
+Fifteen interleaved rounds against `13c58c9`: `invaders-game` 0.97x, then
+0.96x on a second run. `http-server` read 1.02x, then 1.00x on a rerun, and
+its instruction count is unchanged. Everything else was within spread;
+tuned and hold-out geomeans 1.00x.

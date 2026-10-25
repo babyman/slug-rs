@@ -518,12 +518,22 @@ fn constant_operands_agree_with_local_operands() {
         ("xs[1] > 2", "2"),
         ("(if (xs[0] > 5) { xs[0] } else { xs[1] }) - 2", "2"),
         ("xs[0] / 0", "0"),
+        ("xs[0] & 6", "6"),
+        ("xs[0] | 8", "8"),
+        ("xs[0] ^ 5", "5"),
+        ("xs[0] << 2", "2"),
+        ("xs[0] >> 1", "1"),
+        ("xs[0] << 64", "64"),
+        ("xs[1] & 1", "1"),
+        ("n & 6", "6"),
+        ("n << 3", "3"),
+        ("n >> 70", "70"),
     ];
     for (expression, constant) in cases {
         let reference = expression.replacen(&format!(" {constant}"), " k", 1);
         let source = format!(
-            "val fused = fn(xs) {{ {expression} }}\n\
-             val reference = fn(xs) {{\n    val k = {constant}\n    {reference}\n}}\n\
+            "val fused = fn(xs) {{\n    val n = xs[0]\n    {expression}\n}}\n\
+             val reference = fn(xs) {{\n    val n = xs[0]\n    val k = {constant}\n    {reference}\n}}\n\
              val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    [fused(xs), reference(xs)]\n}}\n"
         );
         let program = compile("constants.slug", &source)
@@ -539,7 +549,7 @@ fn constant_operands_agree_with_local_operands() {
             }
             Err(error) => {
                 let source = format!(
-                    "val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    val k = {constant}\n    {reference}\n}}\n"
+                    "val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    val n = xs[0]\n    val k = {constant}\n    {reference}\n}}\n"
                 );
                 let reference = Vm::new()
                     .run_program(&compile("reference.slug", &source).expect("reference compiles"))

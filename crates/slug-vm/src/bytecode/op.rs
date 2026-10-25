@@ -221,7 +221,8 @@ pub enum DeferMode {
     Error,
 }
 
-/// An operator a fused `LocalConstantBinary` instruction can apply. Each one
+/// An operator a fused `LocalConstantBinary` or `ConstantBinary` instruction
+/// can apply. Each one
 /// behaves exactly like its standalone instruction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BinaryOperator {
@@ -240,10 +241,17 @@ pub enum BinaryOperator {
     GreaterNum,
     Less,
     LessNum,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl BinaryOperator {
-    const ALL: [Self; 15] = [
+    // Append new operators: a `.cslug` artifact stores the position as the
+    // operator's code.
+    const ALL: [Self; 20] = [
         Self::Add,
         Self::AddNum,
         Self::Subtract,
@@ -259,6 +267,11 @@ impl BinaryOperator {
         Self::GreaterNum,
         Self::Less,
         Self::LessNum,
+        Self::BitAnd,
+        Self::BitOr,
+        Self::BitXor,
+        Self::ShiftLeft,
+        Self::ShiftRight,
     ];
 
     /// The fusable operator a standalone instruction performs, if any.
@@ -280,6 +293,11 @@ impl BinaryOperator {
             Op::GreaterNum => Self::GreaterNum,
             Op::Less => Self::Less,
             Op::LessNum => Self::LessNum,
+            Op::BitAnd => Self::BitAnd,
+            Op::BitOr => Self::BitOr,
+            Op::BitXor => Self::BitXor,
+            Op::ShiftLeft => Self::ShiftLeft,
+            Op::ShiftRight => Self::ShiftRight,
             _ => return None,
         })
     }
