@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The VM no longer records each instruction's source span as it runs, and
+  looks it up from the call frame only when an error needs it. Each
+  instruction also reports its result to the dispatch loop more cheaply.
+  Programs run about 0.98x as long: Space Invaders and Crawl 0.96x, the
+  HTTP reference server 0.98x.
+
 - The VM fetches each instruction without reloading its position through
   the call frame, and reads ordinary locals directly. Programs run about
   0.96x as long: the HTTP reference server 0.91x, Space Invaders 0.93x,

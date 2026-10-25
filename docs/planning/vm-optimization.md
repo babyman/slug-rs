@@ -2270,3 +2270,43 @@ instruction's remaining bookkeeping (storing its span and `ip`, decoding
 its outcome, checking `frame_epoch`) is therefore worth about as much per
 operation removed as the stack-length round trip, and it is far cheaper to
 change.
+
+## Per-instruction cost: span and outcome bookkeeping (2026-10-25)
+
+Two of the bookkeeping steps each instruction ran are gone.
+
+The dispatch loop stored each instruction's span in `active_span` before
+running it. The frame's `ip` already points one past the executing
+instruction, so diagnostics now look the span up from the active frame's
+chunk at `ip - 1` when they need it, and the field is gone. The lookup
+resolves in the active frame's program, as `active_span` did. An error
+raised just after a call or return pushed or popped a frame now reports
+the instruction that frame is executing instead of a span id from the
+other frame's program.
+
+`InstructionOutcome` carried a jump target and a settled `Value`. Packed
+with `VmResult`'s error into one tag shared with `Value`'s discriminants,
+it cost about a dozen instructions at the end of every handler: setting
+the tag, moving the jump target through a vector register, and decoding
+both with a chain of compares and selects. Jumps now write the dispatch
+loop's `ip` through a `&mut usize`, which stays in a register because
+`execute_instruction` is inlined into its one call site. A settled
+execution leaves its value on the stack for the loop to pop. The outcome
+is `Continue` or `Settled`, and the common handler tail is a single bit
+test, the `frame_epoch` check, and the branch back.
+
+Against `b9fad4c`, seven rounds: the span alone gave tuned and hold-out
+0.99x. Both gave tuned 0.98x, hold-out 0.97x; `invaders-game` and
+`crawl-game` 0.96x, `http-server` 0.98x, `tiny-interpreter` 0.96x.
+
+What the handler tails still show:
+
+- A push of a computed value goes through a tail shared by many handlers,
+  which reassembles the 24-byte `Value` from a tag byte, seven unaligned
+  payload bytes, and two words, with a round trip through the native
+  stack.
+- The instruction's `a` operand is spilled to the native stack on every
+  dispatch.
+- The `frame_epoch` check loads and compares on every instruction. Calls,
+  returns, cleanup, and native callbacks all change frames, so replacing
+  it with an outcome would need every such path to report one.

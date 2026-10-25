@@ -278,12 +278,12 @@ enum ExecutionOutcome {
     Suspended,
 }
 
+/// What the dispatch loop does after an instruction. Jumps write the loop's
+/// instruction pointer instead, and a settled execution leaves its value on
+/// the stack, so the outcome carries no data and decodes with one compare.
 enum InstructionOutcome {
     Continue,
-    /// Continue at this instruction of the same frame: a jump, or a `recur`
-    /// restart at 0.
-    Jump(usize),
-    Settled(Value),
+    Settled,
 }
 
 #[derive(Clone)]
@@ -402,7 +402,6 @@ pub struct Vm {
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
     host_execution: Option<HostExecution>,
-    active_span: Option<SpanId>,
     /// Changes whenever the active frame may have changed or execution was
     /// suspended, so the dispatch loop knows to reload its cached code.
     frame_epoch: u32,
@@ -436,7 +435,6 @@ pub struct InteractiveExecution {
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
     host_execution: Option<HostExecution>,
-    active_span: Option<SpanId>,
 }
 
 /// A scheduler-owned interactive submission running in the shared VM.
@@ -575,7 +573,6 @@ impl Default for Vm {
             resume: None,
             wait_registration: None,
             host_execution: None,
-            active_span: None,
             frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -746,9 +743,6 @@ impl Vm {
         self.stack.push(entrypoint);
         self.stack.extend(arguments);
         let count = self.stack.len() - 1;
-        // The root call has no caller instruction; clear any span left by
-        // module initialization so `main` records no call site.
-        self.active_span = None;
         self.call(&program.program, count, None)?;
         self.run_root_execution()
     }
@@ -857,7 +851,6 @@ impl Vm {
         self.resume = execution.resume.take();
         self.wait_registration = execution.wait_registration.take();
         self.host_execution = execution.host_execution.take();
-        self.active_span = execution.active_span.take();
         (host_globals, host_imported)
     }
 
@@ -889,7 +882,6 @@ impl Vm {
             resume: self.resume.take(),
             wait_registration: self.wait_registration.take(),
             host_execution: self.host_execution.take(),
-            active_span: self.active_span.take(),
         }
     }
 
@@ -1673,8 +1665,8 @@ impl Vm {
         self.run_installed_execution(program)
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn reset_metrics(&mut self) {
-        self.active_span = None;
         #[cfg(feature = "metrics")]
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
     }
@@ -1958,8 +1950,8 @@ impl Vm {
             let chunk = self.current_chunk(program)?;
             // The instruction pointer stays in a local, so fetching the next
             // instruction does not reload it through the frame. The frame's
-            // copy is kept current for calls and errors, and jumps report
-            // their target instead of writing it.
+            // copy is kept current for calls and errors, and jumps write the
+            // local instead.
             let code = chunk.code.as_slice();
             let mut ip = self.frames.last().expect("active frame was checked").ip;
             loop {
@@ -1972,13 +1964,11 @@ impl Vm {
                 {
                     self.metrics.borrow_mut().instructions_executed += 1;
                 }
-                self.active_span = instruction.span;
-                match self.execute_instruction(program, chunk, instruction)? {
-                    InstructionOutcome::Continue => {}
-                    InstructionOutcome::Jump(target) => ip = target,
-                    InstructionOutcome::Settled(value) => {
-                        return Ok(ExecutionOutcome::Settled(Ok(value)));
-                    }
+                if let InstructionOutcome::Settled =
+                    self.execute_instruction(program, chunk, instruction, &mut ip)?
+                {
+                    let value = self.pop_unresolved()?;
+                    return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
                 if self.frame_epoch != epoch {
                     break;
@@ -2007,6 +1997,7 @@ impl Vm {
         program: &Program,
         chunk: &crate::bytecode::CompiledChunk,
         instruction: &PackedInstruction,
+        ip: &mut usize,
     ) -> VmResult<InstructionOutcome> {
         let operand = instruction.a as usize;
         match instruction.opcode {
@@ -2293,10 +2284,10 @@ impl Vm {
             PackedOpcode::LessNum => self.numeric_compare(cmp::Ordering::Less)?,
             PackedOpcode::GuardGreater => self.guard_compare(cmp::Ordering::Greater)?,
             PackedOpcode::GuardLess => self.guard_compare(cmp::Ordering::Less)?,
-            PackedOpcode::Jump => return Ok(InstructionOutcome::Jump(operand)),
+            PackedOpcode::Jump => *ip = operand,
             PackedOpcode::JumpIfFalse => {
                 if !self.peek()?.is_truthy() {
-                    return Ok(InstructionOutcome::Jump(operand));
+                    *ip = operand;
                 }
             }
             // One arm keeps a single `binary_values` call site in this loop.
@@ -2342,7 +2333,7 @@ impl Vm {
             }
             PackedOpcode::JumpIfFalsePop => {
                 if !self.pop()?.is_truthy() {
-                    return Ok(InstructionOutcome::Jump(operand));
+                    *ip = operand;
                 }
             }
             PackedOpcode::JumpIfProvided => {
@@ -2351,7 +2342,7 @@ impl Vm {
                     .last()
                     .is_some_and(|frame| frame.provided.is_provided(operand))
                 {
-                    return Ok(InstructionOutcome::Jump(instruction.b as usize));
+                    *ip = instruction.b as usize;
                 }
             }
             PackedOpcode::Call => self.call(program, operand, None)?,
@@ -2402,7 +2393,7 @@ impl Vm {
                     MatchPatternId::new(instruction.a),
                     instruction.c as usize,
                 )? {
-                    return Ok(InstructionOutcome::Jump(instruction.b as usize));
+                    *ip = instruction.b as usize;
                 }
             }
             PackedOpcode::MatchFailure => {
@@ -2420,7 +2411,8 @@ impl Vm {
                 if !self.leave_scope_without_cleanup()?
                     && let Some(value) = self.leave_scope_with_cleanup()?
                 {
-                    return Ok(InstructionOutcome::Settled(value));
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Settled);
                 }
             }
             PackedOpcode::Defer => self.defer(instruction.a)?,
@@ -2428,18 +2420,19 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
-                return Ok(InstructionOutcome::Jump(0));
+                *ip = 0;
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
-                return Ok(InstructionOutcome::Jump(0));
+                *ip = 0;
             }
             PackedOpcode::Return => {
                 let value = self.pop()?;
                 if let Err(value) = self.return_without_cleanup(value)
                     && let Some(value) = self.begin_return(value)?
                 {
-                    return Ok(InstructionOutcome::Settled(value));
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Settled);
                 }
             }
         }
@@ -3490,7 +3483,6 @@ impl Vm {
             resume: None,
             wait_registration: None,
             host_execution: None,
-            active_span: None,
             frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -5345,13 +5337,28 @@ impl Vm {
     /// entered by the dispatch loop. The caller frame owns the corresponding
     /// program until this frame returns, so diagnostics can resolve it lazily.
     fn frame_call_span(&self) -> Option<CallSpan> {
-        self.active_span.map(CallSpan::Instruction)
+        let frame = self.frames.last()?;
+        Self::executing_span(frame).map(CallSpan::Instruction)
+    }
+
+    /// The span of the instruction `frame` is executing. The dispatch loop
+    /// stores `ip` past each instruction before running it, so the span is
+    /// looked up only when a diagnostic needs it.
+    fn executing_span(frame: &Frame) -> Option<SpanId> {
+        let index = frame.ip.checked_sub(1)?;
+        frame
+            .program
+            .chunk(frame.closure.chunk)?
+            .code
+            .get(index)?
+            .span
     }
 
     fn active_span(&self) -> Option<&SourceSpan> {
         let span = self
-            .active_span
-            .and_then(|span| self.frames.last()?.program.span(span));
+            .frames
+            .last()
+            .and_then(|frame| frame.program.span(Self::executing_span(frame)?));
         #[cfg(feature = "metrics")]
         if span.is_some() {
             self.metrics.borrow_mut().source_span_lookups += 1;
