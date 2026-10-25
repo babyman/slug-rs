@@ -398,6 +398,8 @@ fn reports_vm_runtime_layouts() {
 #[test]
 fn keeps_values_at_three_words() {
     assert_eq!(std::mem::size_of::<Value>(), 24);
+    // The word-sized tag still leaves spare tags for an enclosing enum.
+    assert_eq!(std::mem::size_of::<Option<Value>>(), 24);
 }
 
 #[test]

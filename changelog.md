@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- On 64-bit targets a value's kind tag fills a word, so every value copies
+  as three whole words. Programs run about 0.92x as long: Space Invaders
+  and the HTTP reference server 0.92x, Crawl 0.94x. Values stay 24 bytes,
+  and 32-bit targets such as the ESP32-S3 keep their 16-byte layout.
+
 - The VM no longer records each instruction's source span as it runs, and
   looks it up from the call frame only when an error needs it. Each
   instruction also reports its result to the dispatch loop more cheaply.

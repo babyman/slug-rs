@@ -1015,7 +1015,14 @@ pub struct ForeignDeclaration {
 ///
 /// Collections are reference-counted so closures and later concurrency support
 /// can share them without requiring a copying garbage collector.
+///
+/// On 64-bit targets the tag fills a word. Every payload then starts at the
+/// next word, so a value copies as three words instead of a tag byte, seven
+/// payload bytes that only `Bool` and `Builtin` use, and two words. The
+/// payloads are word-aligned there anyway, so the size stays 24 bytes; on
+/// 32-bit targets a word tag would grow the value, so it keeps the default.
 #[derive(Clone)]
+#[cfg_attr(target_pointer_width = "64", repr(u64))]
 pub enum Value {
     /// Internal marker for a predeclared module binding that has not run yet.
     Uninitialized,

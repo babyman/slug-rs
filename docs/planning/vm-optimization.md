@@ -2310,3 +2310,30 @@ What the handler tails still show:
 - The `frame_epoch` check loads and compares on every instruction. Calls,
   returns, cleanup, and native callbacks all change frames, so replacing
   it with an outcome would need every such path to report one.
+
+## Per-instruction cost: a word-sized value tag (2026-10-25)
+
+The push tail that many handlers share stored a computed `Value` as a tag
+byte, seven payload bytes in three partial stores (`stur`, `sturh`,
+`strb`), and two words, with the seven bytes staged through the native
+stack. Only `Bool` and `Builtin` keep a payload in bytes 1–7, but every
+copy of every value carried them, including the clone in `GetLocal`.
+
+`Value` is now `#[repr(u64)]` on 64-bit targets. The tag fills the first
+word and every payload starts at the next, so a copy is three word moves:
+`GetLocal`'s copy of an `Int` is one load pair and two stores into the
+stack slot. Partial stores in `Vm::execute` went from 17 to 5. The payloads
+are word-aligned there already, so `Value` stays 24 bytes and
+`Option<Value>` still uses a spare tag. On the ESP32-S3 a word tag would
+grow `Value` from 16 bytes to 24, since some 32-bit payloads need 12 bytes
+after the tag, so 32-bit targets keep the default layout.
+
+Against `db3ee9e`, nine rounds: tuned 0.93x, hold-out 0.91x;
+`function-call` 0.89x, `fib` 0.90x, `invaders-game` and `http-server`
+0.92x, `crawl-game` 0.94x, `tiny-interpreter` 0.91x. `shared-append` ran
+0.93x, because copying a list copies its elements as words too.
+
+Tried with it: `GetLocal` and `GetCapture` copying `Int`, `Float`, and
+`Bool` after plain compares, before the derived `clone`'s jump on the tag.
+Measured against the word tag alone, it gave tuned 1.00x, hold-out 0.99x,
+and the real programs 0.99x, inside the spread, so it was dropped.
