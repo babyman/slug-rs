@@ -23,7 +23,8 @@ SLUG_DUMP_METRICS=1 target/metrics/release/slug program.slug
 A separate target directory keeps the counting build from replacing the
 release executable the timing runners use.
 
-`make bench-source` builds the release `slug` executable and runs
+`make bench-source` builds the profile-guided `slug` executable (see
+[Profile-guided builds](#profile-guided-builds)) and runs
 `crates/slug-frontend/benches/source.rs`. The runner starts a fresh Slug or CPython
 process for each sample, so its timings include source compilation, VM startup,
 and program execution. It validates each checked-in pair of implementations
@@ -131,6 +132,36 @@ each side's interquartile range relative to its median, and peak RSS, then
 the geometric-mean ratio of the tuned and hold-out groups separately. Treat a
 ratio inside the spread as noise, and read the hold-out geomean before
 accepting a change.
+
+## Profile-guided builds
+
+Release executables are profile-guided builds, and the benchmark runners
+measure them. `make release-pgo` builds one at `target/pgo/slug`. It
+needs the toolchain's `llvm-profdata`, from `rustup component add
+llvm-tools`. `scripts/pgo-build.py` builds an instrumented executable, runs
+it once over every tuned workload, merges the profiles, and rebuilds with
+them. It never trains on the hold-out workloads, so they show whether a
+profile generalizes. It passes `--target` so build scripts are not
+instrumented, and keeps its builds under `target/pgo/`, apart from the
+ordinary release build.
+
+On 2026-10-25 (`ee62cc3`) the profile-guided build ran every workload
+faster than the ordinary release build of the same revision. The tuned
+geomean was 0.86x and the hold-out geomean 0.85x. The real programs ran
+0.83-0.86x and `shared-append` 0.52x.
+
+A profile-guided build also chooses code layout from measured behavior, and
+the dispatch loop's layout has swung single changes by several percent
+(see `docs/planning/vm-optimization.md`). `make bench-ab` therefore compares
+profile-guided builds on both sides. Each side trains on this checkout's
+workloads, so both learn from the same programs. A revision's build is
+cached under its commit and a hash of the training programs. Building one
+takes about a minute and a half. `--no-pgo` compares ordinary release
+builds:
+
+```sh
+make bench-ab BENCH_AB_ARGS="--no-pgo"
+```
 
 The in-process suite also includes a nested task tree. Unlike the timer and
 large-`select` pressure cases, it measures structured task fanout, nested

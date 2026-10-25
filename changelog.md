@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Release executables are profile-guided builds (`make release-pgo`),
+  trained on the benchmark workloads. They run them 0.86x as long as the
+  ordinary release build, including the hold-out workloads they never
+  trained on. `make bench-source` and `make bench-ab` now measure
+  profile-guided builds; `BENCH_AB_ARGS=--no-pgo` compares ordinary ones.
+
 - Add the marketing favicon and Slug logo as reusable SVG assets in
   `docs/assets/`.
 
