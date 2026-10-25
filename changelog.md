@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- List patterns bind plain names and skip `_` items without a recursive
+  match, and no longer copy the list they match. `[head, ...tail]` loops
+  such as `slug.std`'s `map` run about 0.97x as long.
+
 - A function whose body is a `match` on several parameters tests each
   parameter where it is, instead of building a list of them on every call.
   `slug.std`'s `map`, `filter`, and `reduce` are such functions:

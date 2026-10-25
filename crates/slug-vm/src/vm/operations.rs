@@ -408,7 +408,6 @@ pub(super) fn matches_pattern(
         }
         MatchPattern::List { items, rest } => match value {
             Value::List(values) => {
-                let values = values.clone();
                 if values.len() < items.len()
                     || (*rest == MatchRest::None && values.len() != items.len())
                 {
@@ -416,9 +415,22 @@ pub(super) fn matches_pattern(
                 }
                 let binding_start = bindings.len();
                 for (item, value) in items.iter().zip(values.iter()) {
-                    if !matches_pattern(item, value, operands, bindings, list_views_created)? {
-                        bindings.truncate(binding_start);
-                        return Ok(false);
+                    // Plain names and `_`, the common items, need no recursion.
+                    match item {
+                        MatchPattern::Binding => bindings.push(value.clone()),
+                        MatchPattern::Wildcard => {}
+                        _ => {
+                            if !matches_pattern(
+                                item,
+                                value,
+                                operands,
+                                bindings,
+                                list_views_created,
+                            )? {
+                                bindings.truncate(binding_start);
+                                return Ok(false);
+                            }
+                        }
                     }
                 }
                 if *rest == MatchRest::Binding {

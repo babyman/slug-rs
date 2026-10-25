@@ -2430,3 +2430,22 @@ matcher, which creates a list view for `t`, plus the append and the
 closure call. A specialized head-and-rest test, or calling a closure
 argument without the general call path, is the next step on these
 workloads.
+
+### Plain list items skip the recursive match
+
+`matches_pattern`'s list arm cloned the matched `List` (a reference-count
+round trip) and recursed for every item. It now matches the borrowed list,
+and pushes a `Binding` item or skips a `Wildcard` without recursing; other
+items still recurse. Against `12fee82`, seven rounds: tuned 0.99x,
+hold-out 1.01x; `higher-order` 0.97x, `closure-accumulate` 0.98x,
+`fannkuch-redux` 0.99x, the rest within the spread.
+
+The matcher was not most of the cost. Before the change it held 9% of
+`higher-order`'s samples, as much as `call_positional_closure`.
+Instruction-level samples now put the largest shares on the dispatch jump
+(9%) and the moving `GetLocal` with its `frame_epoch` check (about 15%):
+each `map` element costs its roughly 14 instructions plus the closure
+call. The levers left on these workloads are fewer instructions per
+element, such as `MatchLocals` writing its bindings straight into their
+slots instead of pushing them for `SetLocal`s, and a cheaper call of a
+closure value.
