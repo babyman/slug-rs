@@ -2216,3 +2216,23 @@ What remains per instruction, from the same samples:
   unwinding, and stack traces.
 - Each instruction stores its span, stores `ip` to the frame, decodes the
   outcome, and checks `frame_epoch`: a few cheap operations each.
+
+## Per-instruction cost: the active frame (2026-10-25)
+
+Rejected: holding the active frame apart from its callers, so a handler
+reaches it at a fixed place in the VM instead of through `frames`' pointer
+and length. A `Frames` type with `Vec`'s interface held an
+`Option<Frame>` and a vector of callers. Of the roughly 60 sites that use
+`frames`, only the stack trace had to change.
+
+Against `07e2e4e`, seven rounds: tuned 1.01x, hold-out 1.00x; `fib`
+1.08x, `defer-errors` 1.10x, `binary-trees` 1.05x, and `invaders-game`,
+`crawl-game`, and `http-server` 1.01x. The instructions that read the
+frame gained nothing measurable. The pointer and length loads are
+independent, so re-deriving the frame adds one load to the chain, and out
+of order execution hides it. Calls paid for the change: a push copies the
+`Frame`, about 150 bytes, into place and its caller out to the vector, and
+a return copies both back, where one vector copy did before.
+
+The remaining per-instruction costs above are still open, the operand
+stack's length store first.
