@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add the marketing favicon and Slug logo as reusable SVG assets in
+  `docs/assets/`.
+
 - The bitwise operators `&`, `|`, `^`, `<<`, and `>>` with a constant right
   operand, such as `value & 0xFF`, also run as one instruction. Space
   Invaders runs 0.96x as long.
