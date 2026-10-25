@@ -1870,3 +1870,59 @@ remove one `Pop` per operand. Seven interleaved rounds: `invaders-game` and
 `http-server` 0.98x, `graph-search` (hold-out) 0.98x, `crawl-game` 1.01x
 within a 1% spread (1.00x on a 15-round rerun), everything else within
 spread; tuned geomean 1.00x, hold-out 0.99x.
+
+### Rejected: boolean `&&` and `||` values as branches
+
+The follow-up lowered a value-context `&&` or `||` to jumps when its left
+operand is always a boolean (a comparison, a `!`, or a nested `&&`/`||` of
+those) and is negated or itself a `&&`/`||`; the deciding path pushed `true`
+or `false`. A plain comparison on the left kept the old lowering, which
+leaves its value with one fewer instruction on the short-circuit path.
+Instructions dispatched, against `c42d53c`: `crawl-game` -2.3%,
+`http-server` -2.1%, everything else under 0.1%. Time was 1.00x for every
+real program on seven and on fifteen interleaved rounds (tuned 1.00x,
+hold-out 0.99x): the removed `Pop` and `Not` are the cheapest instructions,
+and each path adds a `Jump` or a constant. Not kept.
+
+## Calls read module functions by name (2026-10-25)
+
+The pair-count survey's third target was a call of a module-level function:
+`GetGlobal`, the arguments, `CallPositional`. It was 13% of `fib`'s
+dispatches, 11% of `function-call`'s, and 10.5% of `binary-trees`'s. The new
+`CallGlobal` (appended; `a` is the global name, `b` the argument count) runs
+after the arguments and reads the name itself. An exact positional closure
+call moves the arguments into the frame with no callee on the stack, so the
+frame's stack base is the first argument. Any other callee is pushed and
+swapped down under the arguments and finishes as `CallPositional`.
+
+Reading the callee after its arguments is the same only when the arguments
+cannot rebind it. The compiler emits `CallGlobal` only when every argument
+is a literal, name, interpolation, list, index, or built-in operator, which
+run no Slug code. A call such as `g(g(n))` keeps the old shape for its outer
+call. Only one ordering can differ: when the name is uninitialized and an
+argument also fails, the argument's error is reported first. The callee
+must also be a function the module declares at top level (`val f = fn`).
+Natives such as `len` keep `CallPositional`, which calls them directly. Sent
+through `CallGlobal`, they made `text-wrap` and `http-server` 1.03x.
+
+The VM side was sensitive to code layout. Dispatch counts fell in every
+variant, but time did not:
+
+- Sharing the frame entry and inserting the callee with `Vec::insert` made
+  `fib` 0.92x but `crawl-game` 1.02x. A profile showed `global_value`,
+  `call_positional`, `call`, and `binary` called out of line from the
+  dispatch loop, where they had been inlined.
+- Inserting the callee and calling the unchanged `call_positional` made
+  `fib` 1.07x: the `memmove` cost more than the dispatch saved.
+- The kept form keeps one call site for `call_positional`, which the
+  `CallPositional` and `CallGlobal` arms share. `call_global` is
+  `#[inline(never)]`. `global_value` and the shared
+  `enter_positional_closure` are `#[inline(always)]`.
+
+Instructions dispatched, against `c42d53c`: `fib` -13.3%, `function-call`
+-11.1%, `binary-trees` -10.5%, `defer-errors` -6.1%, `string-building` and
+`word-frequency` -4.9% and -4.0%, real programs -0.5% to -1.6%. Seven
+interleaved rounds, twice: `function-call` 0.91-0.94x, `fib` 0.92-0.93x,
+`binary-trees` and `defer-errors` 0.93-0.95x, `closure-accumulate` 0.97x,
+`crawl-game` 0.98-0.99x, everything else within spread. Tuned 0.98x,
+hold-out 0.99x both times.

@@ -501,6 +501,25 @@ fn assert_conditions_agree(conditions: &[&str], pairs: &[(&str, &str)]) {
 }
 
 #[test]
+fn module_function_calls_read_the_live_callee() {
+    // `pad` takes generic argument binding, and `swap` is rebound after
+    // `before` is read: each call reads the function the name holds then.
+    let source = "val inc = fn(x) { x + 1 }\n\
+                  val pad = fn(a, b = 10) { a + b }\n\
+                  var swap = fn(x) { x }\n\
+                  val twice = fn(x) { swap(x) }\n\
+                  val count = fn(n, acc) { if (n == 0) { acc } else { count(n - 1, acc + inc(n)) } }\n\
+                  val main = fn() {\n\
+                      val before = twice(1)\n\
+                      swap = fn(x) { x * 10 }\n\
+                      [inc(1), pad(1), pad(1, 2), before, twice(2), count(3, 0)]\n\
+                  }\n";
+    let program = compile("calls.slug", source).expect("calls compile");
+    let result = Vm::new().run_program(&program).expect("calls run");
+    assert_eq!(result.to_string(), "[2, 11, 3, 1, 20, 9]");
+}
+
+#[test]
 fn branching_conditions_agree_with_their_values() {
     assert_conditions_agree(
         &[

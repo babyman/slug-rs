@@ -6180,6 +6180,42 @@ mod tests {
     }
 
     #[test]
+    fn module_function_calls_read_their_callee_after_the_arguments() {
+        use slug_vm::PackedOpcode::{CallGlobal, CallPositional, GetGlobal};
+        let counts = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            let opcodes = (0..program.chunk_count())
+                .flat_map(|index| {
+                    program
+                        .chunk(index)
+                        .expect("chunk")
+                        .code
+                        .iter()
+                        .map(|instruction| instruction.opcode)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            [CallGlobal, GetGlobal, CallPositional]
+                .map(|opcode| opcodes.iter().filter(|found| **found == opcode).count())
+        };
+        // Arguments that run no code: one `CallGlobal`, no callee load.
+        assert_eq!(
+            counts("val g = fn(x, y) { x }\nval f = fn(n, s) { g(n - 1, [s[0], \"{s}\"]) }"),
+            [1, 0, 0]
+        );
+        // A call argument could rebind `g`, so the outer call reads it first.
+        assert_eq!(
+            counts("val g = fn(x) { x }\nval f = fn(n) { g(g(n)) }"),
+            [1, 1, 1]
+        );
+        // A native and a local function keep `CallPositional`.
+        assert_eq!(
+            counts("val f = fn(s) {\n    val h = fn(x) { x }\n    h(len(s))\n}"),
+            [0, 1, 2]
+        );
+    }
+
+    #[test]
     fn constant_index_keys_lower_to_one_instruction() {
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("indexing compiles");

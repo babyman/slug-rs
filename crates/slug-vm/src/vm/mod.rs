@@ -2288,7 +2288,20 @@ impl Vm {
                 }
             }
             PackedOpcode::Call => self.call(program, operand, None)?,
-            PackedOpcode::CallPositional => self.call_positional(program, operand)?,
+            // One call site keeps `call_positional` inlined here: a second
+            // caller changed this loop's code layout and slowed every call.
+            PackedOpcode::CallPositional | PackedOpcode::CallGlobal => {
+                let count = if instruction.opcode == PackedOpcode::CallGlobal {
+                    let count = instruction.b as usize;
+                    if self.call_global(program, GlobalNameId::new(instruction.a), count)? {
+                        return Ok(InstructionOutcome::Continue);
+                    }
+                    count
+                } else {
+                    operand
+                };
+                self.call_positional(program, count)?;
+            }
             PackedOpcode::CallSpread => {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
@@ -2363,8 +2376,11 @@ impl Vm {
     }
 
     /// Reads a global through the active closure's cached slot, resolving
-    /// and caching the slot by name on its first read.
-    #[inline]
+    /// and caching the slot by name on its first read. With `call_global` as
+    /// a second caller, `#[inline]` left it out of the dispatch loop, which
+    /// slowed every `GetGlobal`.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     fn global_value(&self, program: &Program, id: GlobalNameId) -> VmResult<Value> {
         let slot = self
             .frames
@@ -3922,6 +3938,41 @@ impl Vm {
         self.call(program, count, Some(provided))
     }
 
+    /// Starts a call of a module-level name whose `count` positional
+    /// arguments are on the stack, inserting the callee under them. It
+    /// enters an exact closure call itself and reports whether it did;
+    /// otherwise the caller finishes the call as `CallPositional`.
+    #[inline(never)]
+    fn call_global(&mut self, program: &Program, id: GlobalNameId, count: usize) -> VmResult<bool> {
+        let callee = self.global_value(program, id)?;
+        let base = self.stack.len().checked_sub(count).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+            )
+        })?;
+        let callee = match callee {
+            Value::Closure(closure) => {
+                match self.enter_positional_closure(program, closure, base, count)? {
+                    None => {
+                        #[cfg(feature = "metrics")]
+                        self.record_exact_positional_closure_call();
+                        return Ok(true);
+                    }
+                    Some(closure) => Value::Closure(closure),
+                }
+            }
+            callee => callee,
+        };
+        // Swapping the callee down under a call's few arguments is cheaper
+        // than `Vec::insert`'s `memmove`.
+        self.stack.push(callee);
+        for index in (base..self.stack.len() - 1).rev() {
+            self.stack.swap(index, index + 1);
+        }
+        Ok(false)
+    }
+
     /// Reports whether a positional call's callee is a native function, looking
     /// through a live binding without cloning it.
     ///
@@ -3988,13 +4039,33 @@ impl Vm {
         let Some(Value::Closure(closure)) = callee else {
             return Ok(false);
         };
+        Ok(self
+            .enter_positional_closure(program, closure, base, count)?
+            .is_none())
+    }
+
+    /// Enters `closure` with the `count` arguments at the top of the stack as
+    /// its locals, discarding the stack from `stack_base` when it returns.
+    /// It hands the closure back when the call needs generic argument
+    /// binding instead. Both callers are out of line, so inlining it into each
+    /// keeps an exact call to one function call.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn enter_positional_closure(
+        &mut self,
+        program: &Program,
+        closure: Rc<Closure>,
+        stack_base: usize,
+        count: usize,
+    ) -> VmResult<Option<Rc<Closure>>> {
+        let arguments = self.stack.len() - count;
         // Arguments move from the stack into the callee's locals. A live
         // module binding must be resolved first, which the general path does.
-        if self.stack[base + 1..]
+        if self.stack[arguments..]
             .iter()
             .any(|value| matches!(value, Value::Binding { .. }))
         {
-            return Ok(false);
+            return Ok(Some(closure));
         }
         let frame_program = closure
             .program
@@ -4009,7 +4080,7 @@ impl Vm {
                 )
             })?;
             if chunk.arity != count || !chunk.binds_full_positional_calls {
-                return Ok(false);
+                return Ok(Some(closure));
             }
             if chunk.locals < chunk.arity {
                 return Err(self.error_at(
@@ -4023,7 +4094,7 @@ impl Vm {
             chunk.locals
         };
         let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);
-        for (local, value) in locals.iter_mut().zip(self.stack.drain(base + 1..)) {
+        for (local, value) in locals.iter_mut().zip(self.stack.drain(arguments..)) {
             *local = LocalSlot::Direct(value);
         }
         self.record_frame_locals(locals.capacity(), count, reused);
@@ -4039,7 +4110,7 @@ impl Vm {
             closure,
             call_span: self.frame_call_span(),
             ip: 0,
-            stack_base: base,
+            stack_base,
             locals,
             provided: ProvidedArguments::All,
             scope_depth: 1,
@@ -4048,7 +4119,7 @@ impl Vm {
             cleanup_recovers: false,
             cleanup_owner_depth: None,
         });
-        Ok(true)
+        Ok(None)
     }
 
     fn pipeline_call(

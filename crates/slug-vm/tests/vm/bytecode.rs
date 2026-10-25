@@ -1172,6 +1172,29 @@ fn verifies_a_failed_match_case_jump_with_only_its_subject() {
 }
 
 #[test]
+fn verifies_a_global_call_against_its_arguments_alone() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::CallGlobal {
+            name: "f".into(),
+            count: 2,
+        })
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("the call has one of its two arguments");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("instruction 1 requires 2 stack values, has 1"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn rejects_stack_underflow_after_try_match_before_execution() {
     let mut main = Chunk::new("main", 0);
     main.emit(Op::Nil)

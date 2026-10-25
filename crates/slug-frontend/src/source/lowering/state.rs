@@ -131,6 +131,18 @@ impl State {
         self.chunk.code.truncate(end - 1);
         true
     }
+    /// Removes the `GetGlobal` just emitted for a call's callee and returns
+    /// its name, so that `CallGlobal` reads the name after the arguments.
+    /// A jump to the `GetGlobal` lands on the arguments instead.
+    pub(super) fn take_trailing_global(&mut self) -> Option<String> {
+        let Some(Op::GetGlobal(name)) = self.chunk.code.last().map(|instruction| &instruction.op)
+        else {
+            return None;
+        };
+        let name = name.clone();
+        self.chunk.code.pop();
+        Some(name)
+    }
     /// Replaces a trailing `GetLocal`, `Constant` pair with one
     /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or
     /// `n == 0`. It skips the operand stack and two dispatches. No jump may

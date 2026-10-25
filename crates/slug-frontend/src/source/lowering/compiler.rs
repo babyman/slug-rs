@@ -27,6 +27,9 @@ pub(super) struct Compiler {
     chunks: Vec<Chunk>,
     globals: HashMap<String, bool>,
     callable_globals: HashSet<String>,
+    /// The functions this module declares at its top level, which calls
+    /// read by name after their arguments (`CallGlobal`).
+    module_functions: HashSet<String>,
     declarations: Vec<ModuleDeclaration>,
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
@@ -67,12 +70,24 @@ impl Compiler {
         globals: HashMap<String, bool>,
         callable_globals: HashSet<String>,
     ) -> Self {
+        let module_functions = expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                ExprKind::Declare {
+                    pattern: Pattern::Binding(name),
+                    value,
+                    ..
+                } if matches!(value.kind, ExprKind::Function { .. }) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         Self {
             path: path.into(),
             expressions,
             chunks: Vec::new(),
             globals,
             callable_globals,
+            module_functions,
             declarations: Vec::new(),
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
@@ -1110,6 +1125,17 @@ impl Compiler {
                     if !import {
                         self.expression(state, callee)?;
                     }
+                    // A module function can be read after the arguments when
+                    // they cannot run code that would rebind it. Natives keep
+                    // `CallPositional`, which calls them without a detour.
+                    let global = (positional
+                        && matches!(&callee.kind, ExprKind::Name(name) if self.module_functions.contains(name))
+                        && !self.selected_calls.contains_key(&expression.span)
+                        && arguments.iter().all(|argument| {
+                            matches!(argument, CallArgument::Positional(argument) if runs_no_code(argument))
+                        }))
+                    .then(|| state.take_trailing_global())
+                    .flatten();
                     let mut kinds = Vec::with_capacity(arguments.len());
                     for argument in arguments {
                         let argument = match argument {
@@ -1130,6 +1156,11 @@ impl Compiler {
                     }
                     let op = if import {
                         Op::Import(kinds)
+                    } else if let Some(name) = global {
+                        Op::CallGlobal {
+                            name,
+                            count: arguments.len(),
+                        }
                     } else if let Some(identity) = self.selected_identity(&expression.span) {
                         Op::CallSelected { kinds, identity }
                     } else if positional {
@@ -1864,6 +1895,26 @@ fn negated_condition(condition: &Expr) -> bool {
             operator,
             Binary::NotEqual | Binary::GreaterEqual | Binary::LessEqual
         ),
+        _ => false,
+    }
+}
+
+/// Whether evaluating `expression` can run no user code: it reads names and
+/// literals and applies built-in operators, so it cannot rebind a module
+/// name.
+fn runs_no_code(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Value(_) | ExprKind::Name(_) | ExprKind::Interpolate(_) => true,
+        ExprKind::Prefix { value, .. } => runs_no_code(value),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => !matches!(operator, Binary::Pipeline) && runs_no_code(left) && runs_no_code(right),
+        ExprKind::Index { collection, index } => runs_no_code(collection) && runs_no_code(index),
+        ExprKind::List(values) => values.iter().all(|value| match value {
+            ListElement::Value(value) | ListElement::Spread(value) => runs_no_code(value),
+        }),
         _ => false,
     }
 }

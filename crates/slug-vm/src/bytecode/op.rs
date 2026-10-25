@@ -129,6 +129,16 @@ pub enum Op {
     Call(usize),
     /// A source call whose arguments are syntactically positional.
     CallPositional(usize),
+    /// A positional call of a module-level name, whose `count` arguments are
+    /// on the stack without the callee: it reads the name itself.
+    CallGlobal {
+        name: String,
+        count: usize,
+    },
+    CallGlobalPooled {
+        name: GlobalNameId,
+        count: usize,
+    },
     CallSpread(Vec<CallArgumentKind>),
     CallSpreadPooled(CallArgumentsId),
     CallSelected {

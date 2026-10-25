@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A call to a function the module declares at its top level, such as a
+  recursive call, runs one instruction fewer: when its arguments cannot run
+  code, the call reads the function by name after evaluating them instead
+  of loading it first. `fib` runs 0.93x as long, `function-call` 0.91x,
+  `binary-trees` 0.95x, and `defer-errors` 0.93x.
+
 - `if` conditions and match guards branch directly instead of computing a
   value first: `&&` and `||` become jumps, and `!`, `!=`, `>=`, and `<=` no
   longer run a separate negation. Space Invaders and the HTTP reference

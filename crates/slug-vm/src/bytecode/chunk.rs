@@ -97,6 +97,7 @@ pub enum PackedOpcode {
     JumpIfFalsePop,
     LocalConstantBinary,
     MatchCase,
+    CallGlobal,
 }
 
 impl PackedOpcode {
@@ -183,6 +184,7 @@ impl PackedOpcode {
             PackedOpcode::JumpIfFalsePop,
             PackedOpcode::LocalConstantBinary,
             PackedOpcode::MatchCase,
+            PackedOpcode::CallGlobal,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

@@ -559,6 +559,10 @@ impl Program {
             Op::SetGlobal(name) => Some(Op::SetGlobalPooled(
                 self.intern_global_name(mem::take(name)),
             )),
+            Op::CallGlobal { name, count } => Some(Op::CallGlobalPooled {
+                name: self.intern_global_name(mem::take(name)),
+                count: *count,
+            }),
             Op::MakeClosure { chunk, captures } => Some(Op::MakeClosurePooled {
                 chunk: *chunk,
                 captures: self.push_capture_list(mem::take(captures)),
@@ -814,6 +818,9 @@ impl Program {
             ),
             Op::Call(v) => (PackedOpcode::Call, operand(*v), 0, 0),
             Op::CallPositional(v) => (PackedOpcode::CallPositional, operand(*v), 0, 0),
+            Op::CallGlobalPooled { name, count } => {
+                (PackedOpcode::CallGlobal, name.0, operand(*count), 0)
+            }
             Op::CallSpreadPooled(v) => (PackedOpcode::CallSpread, v.0, 0, 0),
             Op::CallSelectedPooled(v) => (PackedOpcode::CallSelected, v.0, 0, 0),
             Op::PipelineCallPooled(v) => (PackedOpcode::PipelineCall, v.0, 0, 0),
@@ -959,6 +966,10 @@ impl Program {
             },
             PackedOpcode::Call => Op::Call(n(instruction.a)),
             PackedOpcode::CallPositional => Op::CallPositional(n(instruction.a)),
+            PackedOpcode::CallGlobal => Op::CallGlobalPooled {
+                name: GlobalNameId(instruction.a),
+                count: n(instruction.b),
+            },
             PackedOpcode::CallSpread => Op::CallSpreadPooled(CallArgumentsId(instruction.a)),
             PackedOpcode::CallSelected => Op::CallSelectedPooled(SelectedCallId(instruction.a)),
             PackedOpcode::PipelineCall => Op::PipelineCallPooled(CallArgumentsId(instruction.a)),
@@ -1296,7 +1307,10 @@ impl Program {
             {
                 Err(format!("{} captures a missing local", location()))
             }
-            Op::GetGlobalPooled(id) | Op::DefineGlobalPooled(id) | Op::SetGlobalPooled(id)
+            Op::GetGlobalPooled(id)
+            | Op::DefineGlobalPooled(id)
+            | Op::SetGlobalPooled(id)
+            | Op::CallGlobalPooled { name: id, .. }
                 if self.global_name(*id).is_none() =>
             {
                 Err(format!(
@@ -1455,6 +1469,7 @@ impl Program {
             Op::GetGlobal(_)
             | Op::DefineGlobal(_)
             | Op::SetGlobal(_)
+            | Op::CallGlobal { .. }
             | Op::MakeClosure { .. }
             | Op::StructSchema(_)
             | Op::Struct(_)
@@ -1680,7 +1695,9 @@ impl Program {
             | Op::Return => (1, 0),
             Op::Duplicate => (1, 2),
             Op::RecordModuleTag { arguments, .. } => (*arguments, 0),
-            Op::List(count) => (*count, 1),
+            Op::List(count) | Op::CallGlobal { count, .. } | Op::CallGlobalPooled { count, .. } => {
+                (*count, 1)
+            }
             Op::ListSpread(spreads) => (spreads.len(), 1),
             Op::ListSpreadPooled(id) => (
                 self.list_spread(*id)
