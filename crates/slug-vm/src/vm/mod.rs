@@ -3679,6 +3679,26 @@ impl Vm {
         }
     }
 
+    /// Whether `value` is the callable `selected` names, read without
+    /// building its runtime signature.
+    fn has_callable_identity(value: &Value, selected: &CallableIdentity) -> bool {
+        match value {
+            Value::Closure(closure) => {
+                closure.program.as_deref().and_then(|program| {
+                    program
+                        .chunk(closure.chunk)?
+                        .callable_identity
+                        .and_then(|identity| program.callable_identity(identity))
+                }) == Some(selected)
+            }
+            Value::DeclaredNative { declaration, .. } => &declaration.identity == selected,
+            Value::Binding { .. } => value
+                .resolve()
+                .is_ok_and(|value| Self::has_callable_identity(&value, selected)),
+            _ => false,
+        }
+    }
+
     fn callable_signatures(value: &Value) -> Option<Vec<CallableRuntimeSignature>> {
         match value {
             Value::Overloads(overloads) => overloads.iter().map(Self::callable_signature).collect(),
@@ -3789,10 +3809,7 @@ impl Vm {
             }
         } else {
             if let Some(selected) = selected
-                && Self::callable_signature(&callee)
-                    .and_then(|signature| signature.identity)
-                    .as_ref()
-                    != Some(selected)
+                && !Self::has_callable_identity(&callee, selected)
             {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
@@ -3913,20 +3930,14 @@ impl Vm {
             Value::Overloads(overloads) => selected.and_then(|selected| {
                 overloads.iter().find_map(|candidate| {
                     let candidate = candidate.resolve().ok()?;
-                    (Self::callable_signature(&candidate)
-                        .and_then(|signature| signature.identity)
-                        .as_ref()
-                        == Some(selected))
-                    .then_some(candidate)
+                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
                 })
             }),
             candidate => match selected {
                 None => Some(candidate),
-                Some(selected) => (Self::callable_signature(&candidate)
-                    .and_then(|signature| signature.identity)
-                    .as_ref()
-                    == Some(selected))
-                .then_some(candidate),
+                Some(selected) => {
+                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
+                }
             },
         };
         let Some(Value::Closure(closure)) = callee else {
@@ -4919,9 +4930,7 @@ impl Vm {
             let callee = callee
                 .resolve()
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
-            let identity =
-                Self::callable_signature(&callee).and_then(|signature| signature.identity);
-            if identity.as_ref() != Some(selected) {
+            if !Self::has_callable_identity(&callee, selected) {
                 continue;
             }
             let (arguments, provided) =

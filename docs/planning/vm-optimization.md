@@ -1737,8 +1737,8 @@ building anything.
   1%. Not built.
 - Checking a selected call's identity without building its runtime
   signature (`callable_signature` clones the identity and collects the
-  parameter shape on every `CallSelected` call). Prototyped: `function-call`
-  0.94x, everything else within spread. Not kept for now.
+  parameter shape on every `CallSelected` call). `function-call` 0.94x,
+  everything else within spread. Kept, as simpler code as well as faster.
 - A contiguous local-slot arena: the earlier upper bound of 1-2% stands.
 - Closure-aware last-read analysis: kept, below.
 

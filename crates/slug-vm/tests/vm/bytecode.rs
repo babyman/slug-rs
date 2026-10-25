@@ -995,6 +995,55 @@ fn rejects_missing_selected_callable_identity_in_private_bytecode() {
     assert_eq!(error.message, "selected callable identity does not exist");
 }
 
+fn selected_call_program(selected: usize) -> Program {
+    let mut answer = Chunk::new("answer", 0);
+    answer.callable_identity = Some(0);
+    let value = answer.constant(Value::Int(42));
+    answer.emit(Op::Constant(value)).emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 0,
+        captures: Vec::new(),
+    })
+    .emit(Op::CallSelected {
+        kinds: Vec::new(),
+        identity: selected,
+    })
+    .emit(Op::Return);
+
+    let mut program = ProgramBuilder::new();
+    program.add_chunk(answer);
+    program.add_chunk(main);
+    program.set_callable_identities(vec![
+        CallableIdentity::new("answer()"),
+        CallableIdentity::new("answer(x)"),
+    ]);
+    program.finish()
+}
+
+#[test]
+fn calls_a_closure_whose_identity_matches_the_selected_one() {
+    assert_eq!(
+        Vm::new()
+            .run_named(&selected_call_program(0), "main")
+            .unwrap(),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn rejects_a_selected_call_whose_live_callee_has_another_identity() {
+    let error = Vm::new()
+        .run_named(&selected_call_program(1), "main")
+        .expect_err("a different live callable must be rejected");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(
+        error.message,
+        "selected callable signature is no longer present in the live binding"
+    );
+}
+
 #[test]
 fn rejects_structurally_invalid_private_bytecode_before_execution() {
     let cases = [
