@@ -14,6 +14,10 @@ use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Value, Vm,
 };
 
+// See docs/decisions/2026-10-25-desktop-allocator.md.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
     native_write(call, false)
 }

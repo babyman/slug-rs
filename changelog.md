@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The `slug` executable uses the mimalloc allocator. Allocation-heavy
+  programs run faster: the HTTP reference server 0.87x as long, Crawl
+  0.90x, and the hold-out benchmarks 0.89x overall. `shared-append`, which
+  copies a growing list on every step, runs 1.24x as long.
+
 - Release executables are profile-guided builds (`make release-pgo`),
   trained on the benchmark workloads. They run them 0.86x as long as the
   ordinary release build, including the hold-out workloads they never

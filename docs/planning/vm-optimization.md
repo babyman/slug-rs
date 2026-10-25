@@ -1967,3 +1967,28 @@ Fifteen interleaved rounds against `13c58c9`: `invaders-game` 0.97x, then
 0.96x on a second run. `http-server` read 1.02x, then 1.00x on a rerun, and
 its instruction count is unchanged. Everything else was within spread;
 tuned and hold-out geomeans 1.00x.
+
+## Allocator and shared-list copies (2026-10-25)
+
+The desktop executable uses mimalloc (see
+[Use mimalloc in the desktop executable](../decisions/2026-10-25-desktop-allocator.md)).
+Profile-guided builds against `90a47cd`: tuned geomean 0.92x, hold-out
+0.89x, `shared-append` 1.24x.
+
+`shared-append` appends to a list whose previous version stays live, so
+`List::append` clones the shared vector at its exact length and pushes. The
+push grows the block. The macOS allocator extends a large block in place;
+mimalloc copies it, so each step copies the list twice. Copying once into a
+buffer with room for the value did not recover it. Under PGO, the copy loop
+alone decides the time: `Vec::clone` ran 1.0x, `extend_from_slice` 1.18x,
+and a push loop 1.39x against the double copy. All three clone each 24-byte
+value through the tag's jump table and increment heap reference counts, so
+no safe single-copy loop beats the one `Vec::clone` is compiled to.
+
+The fix is to not copy. A list whose range ends where its storage ends is
+the storage's tip: no other list sees the elements past it. Appending to a
+tip could push into the shared storage, because every other list keeps its
+own range. That is O(1) amortized for `shared-append`'s shape and keeps
+persistent semantics. It needs the storage to grow while shared, which
+`Rc<Vec<Value>>` cannot do without `unsafe`, so it belongs with the
+persistent-list representation work rather than a local change.
