@@ -6073,6 +6073,38 @@ mod tests {
     }
 
     #[test]
+    fn discarded_statement_values_push_nothing() {
+        use slug_vm::PackedOpcode::{Jump, Nil, Pop};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        // A declaration's `nil` is not pushed only to be popped.
+        let declared = opcodes("val f = fn(x) {\n    val y = x + 1\n    y\n}\nf(2)");
+        assert!(!declared.contains(&Nil));
+
+        // A statement `if` without `else` pops its branch's value and has
+        // no `nil` branch to jump over.
+        let guarded = opcodes("val f = fn(x) {\n    if (x) { x }\n    2\n}\nf(true)");
+        assert!(!guarded.contains(&Nil));
+        assert!(!guarded.contains(&Jump));
+        assert_eq!(guarded.iter().filter(|opcode| **opcode == Pop).count(), 1);
+
+        // The `then` branch jumps to the `Pop` with its own value, so the
+        // `nil` of the declaration ending the `else` branch stays.
+        let branched =
+            opcodes("val f = fn(c) {\n    if (c) { 1 } else { val z = c }\n    2\n}\nf(true)");
+        assert!(branched.contains(&Nil));
+        assert!(branched.contains(&Pop));
+    }
+
+    #[test]
     fn constant_index_keys_lower_to_one_instruction() {
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("indexing compiles");

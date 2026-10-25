@@ -109,7 +109,27 @@ impl State {
         {
             return;
         }
+        if matches!(op, Op::Pop) && self.drop_trailing_nil() {
+            return;
+        }
         self.chunk.emit_at(op, span.clone());
+    }
+    /// Removes a trailing `Nil` that a `Pop` would discard at once, the
+    /// value of a declaration or `defer` in statement position. A jump to the
+    /// `Pop` would arrive with a different value to discard, so none may
+    /// land there; a jump to the `Nil` lands on whatever follows instead.
+    fn drop_trailing_nil(&mut self) -> bool {
+        let end = self.chunk.code.len();
+        if self.last_jump_target >= end
+            || !matches!(
+                self.chunk.code.last().map(|instruction| &instruction.op),
+                Some(Op::Nil)
+            )
+        {
+            return false;
+        }
+        self.chunk.code.truncate(end - 1);
+        true
     }
     /// Replaces a trailing `GetLocal`, `Constant` pair with one
     /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or

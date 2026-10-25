@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Statements no longer push a `nil` only to discard it. A declaration or
+  `defer` in a block, and an `if` without `else` used as a statement, now
+  compile to fewer instructions: the HTTP reference server dispatches 10%
+  fewer and runs 0.96x as long.
+
 - Appending to a list in a loop no longer copies the whole list on every
   iteration when the loop body also creates a closure. Ownership analysis
   used to assume a closure might capture any local, so a read before the

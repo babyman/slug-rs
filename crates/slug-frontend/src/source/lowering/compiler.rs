@@ -313,9 +313,10 @@ impl Compiler {
         let expressions = self.expressions.clone();
         let mut state = State::root();
         for (index, expression) in expressions.iter().enumerate() {
-            self.expression(&mut state, expression)?;
             if index + 1 < expressions.len() {
-                state.emit(Op::Pop, &expression.span);
+                self.statement(&mut state, expression)?;
+            } else {
+                self.expression(&mut state, expression)?;
             }
         }
         if expressions.is_empty() {
@@ -378,6 +379,31 @@ impl Compiler {
             ));
         }
         Ok(entrypoint)
+    }
+
+    /// Compiles a block statement, whose value is discarded. An `if`
+    /// without `else` skips the `nil` its false branch would push only to
+    /// be popped.
+    fn statement(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
+        let ExprKind::If {
+            condition,
+            then_branch,
+            else_branch: None,
+        } = &expression.kind
+        else {
+            self.expression(state, expression)?;
+            state.emit(Op::Pop, &expression.span);
+            return Ok(());
+        };
+        super::stack::grow(|| {
+            self.expression(state, condition)?;
+            let end = state.jump_if_false_pop(&expression.span);
+            self.expression(state, then_branch)?;
+            state.emit(Op::Pop, &expression.span);
+            state.patch(end);
+            Ok(())
+        })
+        .map_err(|error: SourceError| error.claimed_by(expression))
     }
 
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
@@ -1156,9 +1182,10 @@ impl Compiler {
                         state.emit(Op::EnterScope, &expression.span);
                     }
                     for (index, value) in values.iter().enumerate() {
-                        self.expression(state, value)?;
                         if index + 1 < values.len() {
-                            state.emit(Op::Pop, &value.span);
+                            self.statement(state, value)?;
+                        } else {
+                            self.expression(state, value)?;
                         }
                     }
                     if values.is_empty() {
@@ -1619,8 +1646,7 @@ impl Compiler {
                         if index + 1 == values.len() {
                             self.tail_expression(state, value)?;
                         } else {
-                            self.expression(state, value)?;
-                            state.emit(Op::Pop, &value.span);
+                            self.statement(state, value)?;
                         }
                     }
                     if values.is_empty() {
@@ -1699,8 +1725,7 @@ impl Compiler {
                 if index + 1 == values.len() {
                     self.tail_expression(state, value)?;
                 } else {
-                    self.expression(state, value)?;
-                    state.emit(Op::Pop, &value.span);
+                    self.statement(state, value)?;
                 }
             }
             if values.is_empty() {

@@ -1768,3 +1768,28 @@ The tuned workload `closure-accumulate` now covers this shape: each step
 appends to its accumulator and then filters and reduces with closures.
 Against `ae51f93` (seven interleaved rounds): 648.1 to 70.5 ms (0.11x);
 against CPython 1.87x.
+
+## Statements push no discarded `nil` (2026-10-24)
+
+An opcode-pair counter over the tuned workloads, taken to bound
+compare-and-branch fusion, showed `Nil` followed by `Pop` at 8.9% of
+`defer-errors`' pairs, 5.7% of `word-frequency`'s, and 5.1% of
+`http-server`'s. Recording the source site of each such `Nil` found two
+shapes: a declaration or `defer` in statement position, whose `nil` value
+the block popped at once, and an `if` without `else` in statement position,
+whose false path pushed `nil` only to pop it, and whose true path jumped over
+that `nil`.
+
+- `State::emit` drops a trailing `Nil` instead of emitting a `Pop`, unless a
+  jump lands on the `Pop`; such a jump arrives with a value of its own.
+- Every non-final item of a block, a function body, or the top level is
+  compiled as a statement. An `if` without `else` there lowers to its
+  condition, a `JumpIfFalsePop` past the branch, the branch, and one `Pop`.
+
+Instructions dispatched: `defer-errors` -17.9%, `word-frequency` -11.4%,
+`http-server` -10.1%, `string-building` -7.8%, `invaders-game` -5.3%,
+`crawl-game` -3.4%, with identical output. Seven interleaved rounds against
+`19b72be` (a noisy run, spreads up to 31% on the smallest workloads):
+`http-server` and `defer-errors` 0.96x, `invaders-game` 0.98x, everything
+else within its spread; tuned geomean 0.99x, hold-out 1.00x. The removed
+instructions are the cheapest the VM has, so `word-frequency` held at 1.00x.
