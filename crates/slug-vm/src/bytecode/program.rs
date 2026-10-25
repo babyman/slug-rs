@@ -276,7 +276,7 @@ impl Program {
             self.pool_instruction_metadata(&mut instruction.op);
         }
         let mut code: Vec<_> = chunk.code.iter().map(Self::pack_instruction).collect();
-        liveness::mark_last_local_reads(&mut code, chunk.locals);
+        liveness::mark_last_local_reads(&mut code, chunk.locals, &self.capture_lists);
         let compiled = CompiledChunk {
             name: chunk.name.clone(),
             arity: chunk.arity,
@@ -1077,7 +1077,7 @@ impl Program {
     /// verified bytecode: slots in range and jumps forward.
     pub(crate) fn mark_cslug_local_reads(&mut self) {
         for chunk in &mut self.chunks {
-            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
+            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals, &self.capture_lists);
         }
     }
 

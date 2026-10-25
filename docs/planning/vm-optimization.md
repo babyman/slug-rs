@@ -1718,3 +1718,48 @@ joins the tuned real programs. Seven interleaved rounds against `1b4569d`:
 `crawl-game` 0.92x (912.0 to 839.1 ms), `tiny-interpreter` (hold-out) 0.94x,
 every other workload 0.97-1.02x within its spread; tuned geomean 0.99x,
 hold-out 0.98x.
+
+## Second look at suggested optimizations (2026-10-24)
+
+A batch of suggested optimizations was checked against the real-program
+workloads, using counters from a `metrics` build of `slug`
+(`SLUG_DUMP_METRICS`, see `docs/engineering/benchmarking.md`) before
+building anything.
+
+- Updating a uniquely owned list, `bytes`, map, or struct in place instead
+  of unwrapping and rewrapping its `Rc`. The inner buffer was already
+  reused; only the `Rc` allocation is saved. Prototyped: `invaders-game`
+  (1.1M unique-owner updates) 0.98x, every other workload within its spread.
+  Not kept.
+- A binder that writes generic call arguments straight into locals. Exact
+  positional calls are 94.5-99.99% of calls (`crawl-game` 253 generic of
+  2.9M, `invaders-game` 3%, `http-server` 5.5%), so the upper bound is below
+  1%. Not built.
+- Checking a selected call's identity without building its runtime
+  signature (`callable_signature` clones the identity and collects the
+  parameter shape on every `CallSelected` call). Prototyped: `function-call`
+  0.94x, everything else within spread. Not kept for now.
+- A contiguous local-slot arena: the earlier upper bound of 1-2% stands.
+- Closure-aware last-read analysis: kept, below.
+
+The last-read analysis treated every local as live at each `MakeClosure`, so
+no read before a closure in the same pass could move. A loop that appends to
+its accumulator and then creates a closure copies the whole list on every
+iteration:
+
+```slug
+val build = fn(remaining, acc) {
+    if (remaining == 0) { len(acc) } else {
+        val next = acc :+ remaining
+        val scale = fn(x) { x * remaining }
+        recur(remaining - 1, next :+ scale(2))
+    }
+}
+```
+
+At 20,000 iterations it copied 400M elements and ran in 1.20 s. The analysis
+now reads the closure's capture list and keeps only its captured local slots
+live (a missing list still keeps every slot live): 0 elements copied, 0.02 s.
+No benchmark workload has this shape. Seven interleaved rounds against
+`ae51f93`: every workload 0.97-1.03x within its spread, tuned and hold-out
+geomean 1.00x.

@@ -10,6 +10,19 @@ dispatch, frame-local vector creation and capacity, argument-to-local movement,
 collection operations, and executable layout. Use it to identify the
 implementation cost an internal representation change affects.
 
+The same counters are available for any program, including the real-program
+workloads that import modules or clutches and so cannot run in-process. A
+`slug` executable built with the `metrics` feature prints them to stderr after
+a program finishes when `SLUG_DUMP_METRICS` is set:
+
+```sh
+cargo build --release -p slug --bin slug --features metrics --target-dir target/metrics
+SLUG_DUMP_METRICS=1 target/metrics/release/slug program.slug
+```
+
+A separate target directory keeps the counting build from replacing the
+release executable the timing runners use.
+
 `make bench-source` builds the release `slug` executable and runs
 `crates/slug-frontend/benches/source.rs`. The runner starts a fresh Slug or CPython
 process for each sample, so its timings include source compilation, VM startup,

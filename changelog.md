@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Appending to a list in a loop no longer copies the whole list on every
+  iteration when the loop body also creates a closure. Ownership analysis
+  used to assume a closure might capture any local, so a read before the
+  closure always copied; it now uses the closure's actual captures. A
+  20,000-step loop of this shape went from 1.20 s to 0.02 s; benchmark
+  workloads, none of which have this shape, are unchanged.
+
+- A `slug` built with the `metrics` feature prints the VM's internal counters
+  after a program finishes when `SLUG_DUMP_METRICS` is set.
+
 - Reading a map field by name, as in `game.player.x`, is faster. Equal
   string constants now share one allocation across a program, so equal keys
   usually compare by pointer, and each such lookup remembers where it last

@@ -506,7 +506,14 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
     };
     program.set_module_name(entry_module);
     register_native_modules(&mut vm);
-    match vm.run_program(&program) {
+    let outcome = vm.run_program(&program);
+    // Counting builds report the VM's internal counters, documented in
+    // docs/engineering/benchmarking.md.
+    #[cfg(feature = "metrics")]
+    if std::env::var_os("SLUG_DUMP_METRICS").is_some() {
+        eprintln!("{:#?}", vm.metrics());
+    }
+    match outcome {
         Ok(result) => {
             for warning in loader.take_warnings() {
                 eprintln!("slug: warning: {warning}");
