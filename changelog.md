@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Crawl's web front end draws the game from Mustache templates in its
+  clutch's assets (`page.mustache`, `game.mustache`, `pack-item.mustache`)
+  with `slug.text.mustache`, and serves its style and script as asset files.
+  `slug.games.crawl.web` now builds only the data the templates show.
+
 - The `slug.text.mustache` clutch renders Mustache templates:
   `parse(template)` and `render(template, data, partials)`, with variables,
   sections, inverted sections, comments, partials, set delimiters, and

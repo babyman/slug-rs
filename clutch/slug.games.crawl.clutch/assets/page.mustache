@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crawl</title>
+  <link rel="stylesheet" href="/crawl.css">
+  <script src="/htmx.js"></script>
+  <script src="/crawl.js"></script>
+</head>
+{{! Each key press posts to /key; buttons in the game post their own keys.
+    Requests run one at a time, in order, so fast typing is never reordered. }}
+<body hx-target="#game" hx-sync="#keys:queue all">
+  <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
+  <header><h1>CRAWL</h1><p>Find the Orb on depth 8 and live.</p></header>
+  <main id="game">
+    {{>game}}
+  </main>
+  <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
+  Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
+  <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
+  click an item to use it. Find the Orb on depth 8.</p>
+</body>
+</html>

@@ -1,0 +1,58 @@
+:root {
+  --bg: #0d0f14; --panel: #151922; --line: #252b38; --text: #c9cfdb; --muted: #6c7486;
+  --accent: #e0b84f; --red: #ff5f5f; --green: #6fd08c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 18px; letter-spacing: .2em; color: var(--accent); }
+header p { margin: 0; color: var(--muted); font-size: 12px; }
+kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+#game { display: flex; gap: 16px; padding: 16px 20px; align-items: flex-start; }
+.board { position: relative; background: #07080b; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.top { width: 0; min-width: 100%; min-height: 2.8em; font: 13px/1.4 ui-monospace, Menlo, monospace; color: #fff; }
+.top span + span::before { content: ""; margin-left: 4px; }
+.top.prompt { color: var(--accent); }
+.map { margin: 0; font: 15px/1.12 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #2a2f3a; }
+.map .floor { color: #4a5263; } .map .corridor { color: #5e6676; } .map .wall { color: #9aa3b5; }
+.map .door { color: #c8904c; } .map .stairs { color: #f2d36b; font-weight: 700; }
+.map .you { color: #fff; font-weight: 700; text-shadow: 0 0 6px #8fb8ff; }
+.map .monster { color: var(--red); font-weight: 700; cursor: help; }
+.map .seen { opacity: .4; }
+.gold { color: #ffd447; } .potion { color: #c58cff; } .scroll { color: #efe6cc; } .food { color: #8bd17c; }
+.weapon { color: #7fb7ff; } .armour { color: #7fd4d4; } .orb { color: #ff9de2; text-shadow: 0 0 6px #ff9de2; }
+aside { width: 300px; flex: none; display: flex; flex-direction: column; gap: 12px; }
+.play { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+aside section, .log { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+h2 small { float: right; letter-spacing: 0; }
+.hp { display: flex; justify-content: space-between; }
+.bar { height: 6px; background: #0a0c10; border-radius: 3px; overflow: hidden; margin: 4px 0 8px; }
+.bar div { height: 100%; transition: width .15s; }
+.bar.high div { background: var(--green); } .bar.mid div { background: var(--accent); } .bar.low div, .bar.foe div { background: var(--red); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+.stat { display: flex; justify-content: space-between; } .stat span { color: var(--muted); }
+.conditions span { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 9px; background: #3a2a12; color: var(--accent); font-size: 12px; }
+ul, ol { list-style: none; margin: 0; padding: 0; }
+.item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }
+.item i { font: 700 14px ui-monospace, Menlo, monospace; font-style: normal; width: 1ch; }
+.item em, .foes em { color: var(--muted); font-size: 12px; }
+.item.choose { border-color: var(--accent); }
+.item:disabled { opacity: .35; cursor: default; }
+button { font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+button:hover:not(:disabled) { background: #1e2430; border-color: var(--line); }
+button.cancel, button.primary { margin-top: 8px; border-color: var(--line); }
+button.primary { background: var(--accent); color: #111; font-weight: 600; padding: 6px 14px; }
+.foes li { display: grid; grid-template-columns: 1.4ch 1fr 70px; gap: 8px; align-items: center; }
+.foes i { font: 700 14px ui-monospace, Menlo, monospace; font-style: normal; color: var(--red); }
+.foes .bar { margin: 0; }
+.foes .none { margin: 0; color: var(--muted); font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.actions button { border-color: var(--line); }
+.log .scroll { height: 150px; overflow-y: auto; display: flex; flex-direction: column-reverse; }
+.log li { color: var(--muted); font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.end { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(7, 8, 11, .82); text-align: center; }
+.end h1 { margin: 0 0 6px; color: var(--accent); }
+.help { padding: 0 20px 20px; color: var(--muted); font-size: 12px; }
+.help kbd { margin: 0 2px; }
