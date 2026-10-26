@@ -1,7 +1,7 @@
 val http = import("slug.net.http")
 val tcp = import("slug.net.tcp")
 val {await} = import("slug.channel")
-val {fromBytes} = import("slug.string")
+val {fromBytes, toBytes} = import("slug.string")
 val {assertEqual} = import("slug.test")
 
 val request = fn(method:str, path:str):map {
@@ -68,4 +68,22 @@ val rejectsMalformedRequests = fn() {
 val answersAnInvalidResponseWith500 = fn() {
     val answer = exchange(fn(request) { {status: "abc"} }, "GET / HTTP/1.0\r\n\r\n")
     assertEqual(answer, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+@test
+val readsFormBodies = fn() {
+    val post = fn(type:str, body:bytes):map {
+        request("POST", "/") + {headers: {"content-type": type}, body: body}
+    }
+    assertEqual(http.form(post("application/x-www-form-urlencoded", toBytes("key=a+b&shift=true&&x"))), {key: "a b", shift: "true", x: ""})
+    assertEqual(http.form(post("Application/X-WWW-Form-Urlencoded; charset=utf-8", toBytes("q=%C3%A9"))), {q: "é"})
+    assertEqual(http.form(post("text/plain", toBytes("key=a"))), {})
+    assertEqual(http.form(request("POST", "/")), {})
+}
+
+@test
+val answersABadFormWith400 = fn() {
+    val handler = fn(request) { http.form(request).key ?? "none" }
+    val answer = exchange(handler, "POST / HTTP/1.0\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\nkey=%Z")
+    assertEqual(answer, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 }

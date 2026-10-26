@@ -19,11 +19,14 @@
  * A request is a map of `method`, `path` (percent-decoded), `query` (a map
  * of decoded parameters), `headers` (a map from lowercased name to value,
  * repeated headers joined with ", "), `body` (bytes), and `params` (what
- * `router` matched). A response is a string, sent as a `200` text body, or a
- * map of `status`, and optionally `headers` and `body` (a string or bytes).
- * The server adds `Content-Length`, a default `Content-Type`, and
- * `Connection: close` when it closes the connection. A handler that throws,
- * or returns something that is not a response, is answered with `500`.
+ * `router` matched); `form(request)` decodes a form body's fields. A
+ * response is a string, sent as a `200` text body, or a map of `status`, and
+ * optionally `headers` and `body` (a string or bytes). The server adds
+ * `Content-Length`, a default `Content-Type`, and `Connection: close` when it
+ * closes the connection. A handler that throws, or returns something that is
+ * not a response, is answered with `500`, except that an `http.reject` error,
+ * such as `form`'s for a body that does not decode, is answered with its
+ * status.
  *
  * The server reads requests as RFC 9112 describes: it decodes chunked
  * bodies, answers `Expect: 100-continue`, keeps HTTP/1.1 connections open
@@ -315,11 +318,11 @@ val readChunked = fn(input:map, maxHeaderBytes:num, maxBodyBytes:num):bytes {
     readChunks(0x"")
 }
 
-// The target's decoded path and its query parameters.
-val parseTarget = fn(target:str):[str, map] {
-    val parts = split(target, "?")
-    val query = if (len(parts) > 1) { join(parts[1:], "?") } else { "" }
-    val parameters = split(query, "&")
+// The decoded parameters of `text`, a query string or form body: `+` is a
+// space, a parameter without `=` is "", empty parameters are skipped, and
+// when a name repeats the last value wins.
+val parseParameters = fn(text:str):map {
+    val parameters = split(text, "&")
     val readParameters = fn(i:num, out:map):map {
         if (i == len(parameters)) { return out }
         if (parameters[i] == "") { return recur(i + 1, out) }
@@ -327,7 +330,14 @@ val parseTarget = fn(target:str):[str, map] {
         val value = if (len(pair) > 1) { join(pair[1:], "=") } else { "" }
         recur(i + 1, out + {[decode(pair[0], true)]: decode(value, true)})
     }
-    [decode(parts[0]), readParameters(0, {})]
+    readParameters(0, {})
+}
+
+// The target's decoded path and its query parameters.
+val parseTarget = fn(target:str):[str, map] {
+    val parts = split(target, "?")
+    val query = if (len(parts) > 1) { join(parts[1:], "?") } else { "" }
+    [decode(parts[0]), parseParameters(query)]
 }
 
 // Reads one request: the request map and whether the connection closes after
@@ -455,9 +465,15 @@ val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool) {
     if (!head && !bodiless && len(data) > 0) { tcp.write(connection, data) }
 }
 
-// Calls `handler`; a throw is answered with `500`.
+// Calls `handler`; an `http.reject` throw is answered with its status, and
+// any other throw with `500`.
 val invoke = fn(handler:fn, request:map) {
-    defer onerror(_) { return {status: 500} }
+    defer onerror(error) {
+        return match error {
+            {type: "http.reject", data: data} => {status: data.status}
+            _ => {status: 500}
+        }
+    }
     handler(request)
 }
 
@@ -513,6 +529,19 @@ export val serve = fn(listener:tcp.Listener, handler:fn, options:map = {}) {
         }
     }
     accept()
+}
+
+// --- Forms -------------------------------------------------------------------
+
+/**
+ * The fields of `request`'s form body, decoded as its `query` is, when its
+ * `Content-Type` is `application/x-www-form-urlencoded`; `{}` otherwise. A
+ * body that does not decode is answered with `400`.
+ */
+export val form = fn(request:map):map {
+    val type = lower(request.headers["content-type"] ?? "")
+    if (trim(split(type, ";")[0]) != "application/x-www-form-urlencoded") { return {} }
+    parseParameters(utf8(request.body))
 }
 
 // --- Routing -----------------------------------------------------------------

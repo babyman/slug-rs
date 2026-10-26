@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `slug.net.http` adds `form(request)`, which decodes a
+  `application/x-www-form-urlencoded` body's fields as the query is decoded.
+  A handler that throws an `http.reject` error, as `form` does for a body
+  that does not decode, is answered with that error's status instead of
+  `500`.
+
 - Prepending to a list that nothing else holds shifts its own storage
   instead of copying it into a new one.
 
