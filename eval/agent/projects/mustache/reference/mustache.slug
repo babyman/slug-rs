@@ -1,12 +1,37 @@
 /**
- * mustache — Mustache templates
+ * slug.text.mustache — Mustache templates
  *
  * `parse(template)` checks a template's syntax and returns it parsed;
  * `render(template, data, partials)` renders a template, given as text or
  * parsed, against `data`, with `partials` naming the templates its partial
- * and parent tags use. It implements the Mustache specification's required
- * modules (interpolation, sections, inverted sections, comments, partials,
- * and set delimiters) and inheritance, as spec.md describes.
+ * and parent tags use.
+ *
+ * ```slug
+ * val mustache = import("slug.text.mustache")
+ *
+ * val page = mustache.parse("<h1>{{title}}</h1>{{#items}}<li>{{.}}</li>{{/items}}")
+ * mustache.render(page, {title: "Pack", items: ["mace", "ring mail"]})
+ * ```
+ *
+ * It implements the Mustache specification (v1.4) for variables, sections,
+ * inverted sections, comments, partials, set delimiters, and inheritance
+ * (parent and block tags), with every standalone-line rule; it does not
+ * implement lambdas, dynamic names, or the reindentation of block arguments.
+ *
+ * Data is maps with string keys, lists, strings, numbers, booleans, and
+ * `nil`. `nil`, `false`, and an empty list are falsy; every other value,
+ * including `""`, `0`, and `{}`, is truthy. A name is found in the topmost
+ * map on the context stack that has its key, even when the key's value is
+ * `nil`; a dotted name's later parts are looked up only in the value before
+ * them. `{{name}}` escapes `&`, `<`, `>`, and `"`; numbers and booleans
+ * render as `"" + value` does.
+ *
+ * Partials are parsed when first rendered, with `{{` `}}` delimiters, and a
+ * missing one renders as nothing. A parent tag's block arguments yield to
+ * those its caller was given, so the outermost template's argument wins; an
+ * argument holding a block of its own name renders that block's contents.
+ * A malformed template throws a `mustache.syntax` error whose `data.line` is
+ * the line of the offending tag.
  */
 
 val {split, join, chars, trim} = import("slug.string")
@@ -357,7 +382,12 @@ export val render = fn(template, data, partials:map = {}):str {
                     }
                 }
             } else if (kind == "block") {
-                renderNodes(blocks[node.name] ?? node.nodes, stack, blocks, out)
+                // An argument that holds a block of its own name renders that
+                // block's contents, rather than itself again.
+                match blocks[node.name] {
+                    nil => renderNodes(node.nodes, stack, blocks, out)
+                    argument => renderNodes(argument, stack, blocks - node.name, out)
+                }
             } else {
                 // A partial, or a parent whose arguments yield to any the
                 // template rendering it was given.

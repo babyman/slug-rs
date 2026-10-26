@@ -1,0 +1,89 @@
+val mustache = import("slug.text.mustache")
+val {assertEqual, assertTrue} = import("slug.test")
+
+// The `mustache.syntax` error's line when rendering `template` fails, or nil.
+val errorLine = fn(template:str, partials:map = {}) {
+    defer onerror(e) {
+        return match e {
+            {type: "mustache.syntax", data: data} => data.line
+            _ => nil
+        }
+    }
+    mustache.render(template, {}, partials)
+    nil
+}
+
+@test
+val variablesEscapeHtml = fn() {
+    assertEqual(mustache.render("{{a}} {{{a}}} {{&a}}", {a: "<b>&\"'"}), "&lt;b&gt;&amp;&quot;' <b>&\"' <b>&\"'")
+    assertEqual(mustache.render("{{n}} {{x}} {{t}} [{{missing}}]", {n: 85, x: 1.5, t: true}), "85 1.5 true []")
+}
+
+@test
+val sectionsFollowTruthiness = fn() {
+    val template = "{{#v}}yes{{/v}}{{^v}}no{{/v}}"
+    assertEqual(mustache.render(template, {v: ""}), "yes")
+    assertEqual(mustache.render(template, {v: 0}), "yes")
+    assertEqual(mustache.render(template, {v: {}}), "yes")
+    assertEqual(mustache.render(template, {v: []}), "no")
+    assertEqual(mustache.render(template, {v: nil}), "no")
+    assertEqual(mustache.render("{{#xs}}{{.}},{{/xs}}", {xs: [1, 2, 3]}), "1,2,3,")
+}
+
+@test
+val namesWalkTheContextStack = fn() {
+    val data = {a: "outer", masked: {a: nil}, open: {}, deep: {b: {c: "found"}}}
+    assertEqual(mustache.render("{{#masked}}[{{a}}]{{/masked}}{{#open}}[{{a}}]{{/open}}", data), "[][outer]")
+    assertEqual(mustache.render("{{deep.b.c}}|{{deep.x.c}}", data), "found|")
+}
+
+@test
+val standaloneLinesLeaveNoTrace = fn() {
+    assertEqual(mustache.render("| A\n  {{#t}}\n| B\n  {{/t}}\n| C\n", {t: true}), "| A\n| B\n| C\n")
+    assertEqual(mustache.render("a\r\n{{! note }}\r\nb", {}), "a\r\nb")
+    assertEqual(mustache.render("| A {{#t}}{{/t}} B\n", {t: true}), "| A  B\n")
+}
+
+@test
+val partialsIndentWhenStandalone = fn() {
+    val partials = {row: "<li>{{name}}</li>\n"}
+    val template = "<ul>\n  {{#people}}\n  {{>row}}\n  {{/people}}\n</ul>\n"
+    assertEqual(mustache.render(template, {people: [{name: "A"}, {name: "B"}]}, partials), "<ul>\n  <li>A</li>\n  <li>B</li>\n</ul>\n")
+    assertEqual(mustache.render("[{{>missing}}]", {}), "[]")
+}
+
+@test
+val setDelimitersLastToTheEnd = fn() {
+    assertEqual(mustache.render("{{=<% %>=}}<%a%> {{a}} <%={{ }}=%>{{a}}", {a: 1}), "1 {{a}} 1")
+}
+
+@test
+val parentsTakeBlockArguments = fn() {
+    // Block tags hold `$`, which double-quoted Slug strings interpolate.
+    val partials = {layout: '<title>{{$title}}Untitled{{/title}}</title>{{$body}}{{/body}}'}
+    assertEqual(mustache.render('{{<layout}}{{$title}}Home{{/title}}{{/layout}}', {}, partials), "<title>Home</title>")
+    val chain = {parent: '{{<older}}{{$a}}p{{/a}}{{/older}}', older: '{{$a}}o{{/a}}'}
+    assertEqual(mustache.render('{{<parent}}{{$a}}c{{/a}}{{/parent}}', {}, chain), "c")
+    // An argument holding a block of its own name renders that block's contents.
+    assertEqual(
+        mustache.render('{{<p}}{{$x}}[{{$x}}inner{{/x}}]{{/x}}{{/p}}', {}, {p: '<{{$x}}default{{/x}}>'}),
+        "<[inner]>",
+    )
+}
+
+@test
+val parsedTemplatesRenderRepeatedly = fn() {
+    val template = mustache.parse("{{greeting}}, {{>name}}!")
+    assertEqual(mustache.render(template, {greeting: "Hi", who: "Ada"}, {name: "{{who}}"}), "Hi, Ada!")
+    assertEqual(mustache.render(template, {greeting: "Bye"}, {name: "you"}), "Bye, you!")
+}
+
+@test
+val malformedTemplatesReportTheirLine = fn() {
+    assertEqual(errorLine("Hello {{name"), 1)
+    assertEqual(errorLine("a\nb {{#s}}\nc"), 2)
+    assertEqual(errorLine("{{#a}}\n{{/b}}"), 2)
+    assertEqual(errorLine("a\n{{first name}}"), 2)
+    assertEqual(errorLine("ok {{>p}}", {p: "a\n{{#x}}"}), 2)
+    assertEqual(errorLine("{{#no}}{{>p}}{{/no}}", {p: "{{#x}}"}), nil)
+}

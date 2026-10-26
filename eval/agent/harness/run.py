@@ -95,11 +95,12 @@ TESTING_DOCS = ["docs/language/testing.md"]
 # Library modules a project asks agents to write, with their source files,
 # withheld from that project's documentation and install so its agents do not
 # find one ready-made: `slug.fmt.json` is the JSON project's chosen solution,
-# and `slug.net.http` the HTTP project's. Other runs have them as ordinary
-# library modules.
+# `slug.net.http` the HTTP project's, and `slug.text.mustache` the Mustache
+# project's reference. Other runs have them as ordinary library modules.
 WITHHELD_MODULES = {
     "json": {"slug.fmt.json": "json.slug"},
     "http": {"slug.net.http": "http.slug"},
+    "mustache": {"slug.text.mustache": "mustache.slug"},
 }
 
 
@@ -119,6 +120,7 @@ LIBRARY_SOURCES = [
     ("clutch/slug.db.sqlite.clutch/modules", "library/sqlite"),
     ("clutch/slug.net.tcp.clutch/modules", "library/net"),
     ("clutch/slug.net.http.clutch/modules", "library/http"),
+    ("clutch/slug.text.mustache.clutch/modules", "library/mustache"),
     ("clutch/slug.arcade.clutch/modules", "library/arcade"),
 ]
 

@@ -4,6 +4,7 @@
 "slug.io.stdin" = "slug.core.clutch"
 "slug.net.tcp" = "slug.net.tcp.clutch"
 "slug.net.http" = "slug.net.http.clutch"
+"slug.text.mustache" = "slug.text.mustache.clutch"
 "slug.db.sqlite" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.statement" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.transaction" = "slug.db.sqlite.clutch"

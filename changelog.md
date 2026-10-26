@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The `slug.text.mustache` clutch renders Mustache templates:
+  `parse(template)` and `render(template, data, partials)`, with variables,
+  sections, inverted sections, comments, partials, set delimiters, and
+  inheritance, and syntax errors at exact lines. It passes the Mustache
+  specification's tests for those modules. It is the Mustache eval project's
+  reference, which agents' runs of that project do not see.
+
 - A clutch can ship other files, such as scripts or images, in an `assets`
   folder. `asset("htmx.js")` in one of its modules, test files, or programs
   embeds that file's bytes when the module compiles, so `.cslug` artifacts

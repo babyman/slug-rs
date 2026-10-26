@@ -50,6 +50,7 @@ default or Claude Code, headless on small tasks, once per feature arm and severa
   syntax errors at exact lines. Its 223 cases, written by `make_cases.py`,
   are the specification's tests (v1.4.2, vendored in `spec/`) and cases for
   what `task.md` adds; each renders from text and from `parse`'s result.
+  `reference/mustache.slug` is `slug.text.mustache`, withheld from these runs.
   Project runs default to a $5 budget and a 45-minute timeout and
   use the coding arms.
 
