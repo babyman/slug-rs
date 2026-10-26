@@ -387,11 +387,22 @@ impl List {
     }
 
     pub(crate) fn prepend(self, value: Value) -> Self {
-        let values = self.into_values();
-        let mut result = Vec::with_capacity(values.len() + 1);
-        result.push(value);
-        result.extend(values);
-        Self::from_values(result)
+        let range = self.range();
+        match Rc::try_unwrap(self.values) {
+            // A uniquely owned list drops what lies outside its range and
+            // shifts its own storage once to make room for the head.
+            Ok(mut values) => {
+                values.truncate(range.end);
+                values.splice(..range.start, [value]);
+                Self::from_values(values)
+            }
+            Err(values) => {
+                let mut result = Vec::with_capacity(range.len() + 1);
+                result.push(value);
+                result.extend(values[range].iter().cloned());
+                Self::from_values(result)
+            }
+        }
     }
 
     pub(crate) fn slice(&self, indexes: impl Iterator<Item = usize>) -> Self {
@@ -451,6 +462,32 @@ mod list_tests {
 
         assert!(!list.is_uniquely_owned());
         assert!(!view.is_uniquely_owned());
+    }
+
+    fn ints(list: &List) -> Vec<Value> {
+        list.iter().cloned().collect()
+    }
+
+    #[test]
+    fn prepend_keeps_only_the_logical_elements_however_the_list_is_owned() {
+        let numbers = || List::from_values((1..=4).map(Value::Int).collect());
+
+        let whole = numbers().prepend(Value::Int(0));
+        assert_eq!(ints(&whole), (0..=4).map(Value::Int).collect::<Vec<_>>());
+
+        // A view whose parent is gone owns storage beyond its range.
+        let view = numbers().view(1, 3);
+        assert!(view.is_uniquely_owned());
+        let view = view.prepend(Value::Int(0));
+        assert_eq!(
+            ints(&view),
+            vec![Value::Int(0), Value::Int(2), Value::Int(3)]
+        );
+
+        let shared = numbers();
+        let extended = shared.clone().prepend(Value::Int(0));
+        assert_eq!(ints(&shared), (1..=4).map(Value::Int).collect::<Vec<_>>());
+        assert_eq!(ints(&extended), (0..=4).map(Value::Int).collect::<Vec<_>>());
     }
 }
 

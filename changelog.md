@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prepending to a list that nothing else holds shifts its own storage
+  instead of copying it into a new one.
+
 - List patterns bind plain names and skip `_` items without a recursive
   match, and no longer copy the list they match. `[head, ...tail]` loops
   such as `slug.std`'s `map` run about 0.97x as long.

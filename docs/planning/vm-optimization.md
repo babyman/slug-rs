@@ -2449,3 +2449,39 @@ call. The levers left on these workloads are fewer instructions per
 element, such as `MatchLocals` writing its bindings straight into their
 slots instead of pushing them for `SetLocal`s, and a cheaper call of a
 closure value.
+
+## Shared list copies, and two small follow-ups (2026-10-25)
+
+A temporary split of `collection_elements_copied` by operation showed what
+the real programs copy when they update a shared collection:
+
+| workload | shared copies |
+|---|---|
+| `invaders-game` | `bytes + bytes`: 76M bytes |
+| `crawl-game` | `bytes + bytes` 72M bytes, byte append 24M bytes, list append 1.8M values, `map + map` 1.9M entries |
+| `http-server` | about 0.5M bytes in all |
+| `tiny-interpreter` | `list + list` 0.4M values, `map + map` 0.16M entries |
+| `fannkuch-redux` | list append 74k values |
+
+The large counts are bytes, copied with `memcpy`: about 10 ms per program.
+Shared list copies are a few million values at most, and no native updates
+a list in place, so the counters cover all of them. A persistent vector
+would make the 3M list lookups in `invaders-game` and the 6.7M in
+`crawl-game` walk a tree, give up constant-time `[h, ...t]` views, and
+replace `List`'s slice interface, to speed up `shared-append`, which copies
+on purpose and is at parity with CPython. Not worth it now.
+
+The split turned up `List::prepend` copying every list into a new vector,
+even one nothing else held. A uniquely owned list now drops what lies
+outside its range and shifts its own storage once; a shared one is still
+copied once. It was measured only together with the change below, and
+the pair was within the spread everywhere.
+
+Rejected: `MatchLocals` storing its bindings in their locals itself, so
+no `SetLocal`s follow it. The operand count and first binding slot shared
+operand `c`, 16 bits each. It cut `higher-order` from 2.00M instructions
+to 1.76M and its time by about 1% (eleven rounds against `a50f21d`:
+`higher-order` 0.99x, `closure-accumulate` 1.00x, the rest 0.98–0.99x).
+`SetLocal` is a short, predictable handler; removing dispatches pays only
+when the removed handlers do real work, as with the value-context booleans
+earlier. The packed operand was not worth that.
