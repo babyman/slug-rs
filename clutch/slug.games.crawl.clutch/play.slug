@@ -1,0 +1,16 @@
+/**
+ * Plays Crawl in a web browser: serves slug.games.crawl.web and prints its
+ * address.
+ *
+ * Options: `--port N` (default 8080; 0 picks a free one), `--host H`
+ * (default 127.0.0.1), and `--seed N` (default 1).
+ */
+val tcp = import("slug.net.tcp")
+val web = import("slug.games.crawl.web")
+
+val main = fn() {
+    val host = cfg("host", "127.0.0.1")
+    val listener = tcp.listen(host, cfg("port", 8080))
+    println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/")
+    web.serve(listener, {seed: cfg("seed", 1)})
+}

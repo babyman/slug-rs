@@ -1,0 +1,437 @@
+/**
+ * slug.games.crawl.web — Crawl in a web browser
+ *
+ * Serves one game of Crawl over `slug.net.http`, drawn as HTML that HTMX
+ * swaps in after each command. The engine is `slug.games.crawl`, unchanged:
+ * the page posts each key the game knows to `/key`, the server runs it with
+ * `command`, and answers with the game's new HTML.
+ *
+ * The page shows what the terminal screen folds into 24 rows on its own: the
+ * map, with squares out of sight dimmed; the player's stats; the pack, whose
+ * items act when clicked; the monsters in view; and a message log. It pages
+ * through `--More--` itself, and the pack is always shown, so `i` is unused.
+ *
+ * ```slug
+ * val tcp = import("slug.net.tcp")
+ * val web = import("slug.games.crawl.web")
+ *
+ * web.serve(tcp.listen("127.0.0.1", 8080), {seed: 7})
+ * ```
+ */
+
+val http = import("slug.net.http")
+val tcp = import("slug.net.tcp")
+val game = import("slug.games.crawl")
+val data = import("slug.games.crawl.data")
+val level = import("slug.games.crawl.level")
+val htmx = import("slug.games.crawl.htmx")
+val {map, filter, contains} = import("slug.std")
+val {join, chars} = import("slug.string")
+val math = import("slug.math")
+
+// The keys `/key` accepts, as the engine names them. `i` shows the pack in
+// place of the map, which the page does not need.
+val KEYS = chars("abcdefghjklmnopqrstuvwxyz") + ["left", "down", "up", "right", "space", "enter"]
+
+// The command that uses each kind of item, with its button label.
+val USES = {
+    food: ["e", "Eat"], potion: ["q", "Quaff"], scroll: ["r", "Read"],
+    weapon: ["w", "Wield"], armour: ["a", "Wear"],
+}
+
+// The item kind each item command's prompt asks for; nil for any.
+val PROMPT_KINDS = {e: "food", q: "potion", r: "scroll", w: "weapon", a: "armour", d: nil}
+
+val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]", orb: ","}
+
+// The class of each map character; capital letters are monsters.
+val CLASSES = {
+    "@": "you", ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
+    "%": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
+    ")": "weapon", "]": "armour", ",": "orb",
+}
+
+// How many messages the log keeps.
+val LOG_SIZE = 60
+
+// The log: [move, message] pairs, oldest first. `moves` counts the commands
+// that did something, so the latest move's messages can be told apart.
+var log = []
+var moves = 0
+
+// --- Text --------------------------------------------------------------------
+
+val ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;"}
+
+val escape = fn(text:str):str { join(map(chars(text), fn(c) { ESCAPES[c] ?? c }), "") }
+
+val percent = fn(part:num, whole:num):num {
+    if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
+}
+
+// --- Playing -----------------------------------------------------------------
+
+// Records the messages of a move that did something.
+val record = fn(messages:list) {
+    moves = moves + 1
+    val entries = map(messages, fn(message) { [moves, message] })
+    val all = log + entries
+    log = if (len(all) > LOG_SIZE) { all[len(all) - LOG_SIZE:] } else { all }
+}
+
+/**
+ * Runs one command `key`, with `shift` held or not, then pages through any
+ * `--More--`, logging what the move said. A prompt's question is shown by
+ * the page rather than logged.
+ */
+export val play = fn(key:str, shift:bool) {
+    val before = game.current()
+    game.command(key, shift)
+    val after = game.current()
+    if (after == before) { return nil }
+    if ((before.dead || before.won) && !after.dead) { log = [] }
+    if (after.prompt != nil) { return nil }
+    val page = fn(out:list):list {
+        if (len(game.current().more) == 0) { return out }
+        game.command("space", false)
+        recur(out + game.current().messages)
+    }
+    record(page(after.messages))
+}
+
+// --- The map -----------------------------------------------------------------
+
+// The attributes of the span that draws `c` at (x, y): its class, dimmed
+// when the square is out of sight, and for a monster its name.
+val cellAttributes = fn(c:str, x:num, y:num):str {
+    val monster = c >= "A" && c <= "Z"
+    val kind = if (monster) { "monster" } else { CLASSES[c] ?? "" }
+    if (kind == "") {
+        ""
+    } else if (monster) {
+        val named = filter(data.monsters, fn(m) { m.letter == c })
+        val name = if (len(named) > 0) { named[0].name } else { "monster" }
+        "class=\"monster\" title=\"" + name + "\""
+    } else if (kind != "you" && !game.visible(x, y)) {
+        "class=\"" + kind + " seen\""
+    } else {
+        "class=\"" + kind + "\""
+    }
+}
+
+val run = fn(attributes:str, text:str):str {
+    if (text == "" || attributes == "") { text } else { "<span " + attributes + ">" + text + "</span>" }
+}
+
+// One row of the map, its characters grouped into runs that look alike.
+val mapRow = fn(text:str, y:num):str {
+    val go = fn(x:num, start:num, attributes:str, out:str):str {
+        if (x == len(text)) { return out + run(attributes, text[start:x]) }
+        val next = cellAttributes(text[x], x, y)
+        if (next == attributes) {
+            recur(x + 1, start, attributes, out)
+        } else {
+            recur(x + 1, x, next, out + run(attributes, text[start:x]))
+        }
+    }
+    go(0, 0, "", "")
+}
+
+val mapHtml = fn(rows:list):str {
+    val go = fn(y:num, out:list<str>):list<str> {
+        if (y == level.HEIGHT) { out } else { recur(y + 1, out :+ mapRow(rows[y + 1], y)) }
+    }
+    "<pre class=\"map\">" + join(go(0, []), "\n") + "</pre>"
+}
+
+// --- Panels ------------------------------------------------------------------
+
+// A button that sends `key` as a command.
+val keyButton = fn(key:str, label:str, hint:str, classes:str = ""):str {
+    "<button class=\"" + classes + "\" hx-post=\"/key\" hx-vals='{\"key\": \"" + key + "\"}'>"
+        + label + (if (hint == "") { "" } else { " <kbd>" + hint + "</kbd>" }) + "</button>"
+}
+
+val bar = fn(value:num, max:num, classes:str):str {
+    "<div class=\"bar " + classes + "\"><div style=\"width:" + percent(value, max) + "%\"></div></div>"
+}
+
+val stat = fn(label:str, value:str):str {
+    "<div class=\"stat\"><span>" + label + "</span><b>" + value + "</b></div>"
+}
+
+val statsHtml = fn(state:map):str {
+    val p = state.player
+    val health = if (p.hp * 3 <= p.maxHp) { "low" } else if (p.hp * 3 <= p.maxHp * 2) { "mid" } else { "high" }
+    val hunger = if (p.food <= 0) { "Faint" } else if (p.food <= 50) { "Weak" } else if (p.food <= 150) { "Hungry" } else { "" }
+    val conditions = filter([
+        hunger,
+        if (p.confused > 0) { "Confused" } else { "" },
+        if (p.blind > 0) { "Blind" } else { "" },
+        if (p.frozen > 0) { "Frozen" } else { "" },
+        if (state.sense) { "Sensing" } else { "" },
+    ], fn(c) { c != "" })
+    "<section class=\"stats\">"
+        + "<div class=\"hp\"><span>Health</span><b>" + p.hp + " / " + p.maxHp + "</b></div>"
+        + bar(p.hp, p.maxHp, health)
+        + "<div class=\"grid\">"
+        + stat("Depth", "" + state.depth + " / " + level.DEEPEST)
+        + stat("Gold", "" + p.gold)
+        + stat("Str", "" + p.str + " / " + p.maxStr)
+        + stat("Armour", "" + game.armourValue())
+        + stat("Level", "" + p.level)
+        + stat("Exp", "" + p.xp)
+        + "</div>"
+        + "<div class=\"conditions\">" + join(map(conditions, fn(c) { "<span>" + c + "</span>" }), "") + "</div>"
+        + "</section>"
+}
+
+val packHtml = fn(state:map):str {
+    val p = state.player
+    val asking = state.prompt != nil
+    val wanted = if (asking) { PROMPT_KINDS[state.prompt] } else { nil }
+    val entry = fn(e:map):str {
+        val kind = e.item.kind
+        val tag = if (e.letter == p.weapon) { " <em>in hand</em>" } else if (e.letter == p.armour) { " <em>worn</em>" } else { "" }
+        val label = "<kbd>" + e.letter + "</kbd><i class=\"" + kind + "\">" + (GLYPHS[kind] ?? "?") + "</i>"
+            + "<span>" + escape(game.itemName(e.item, e.count)) + tag + "</span>"
+        if (asking) {
+            if (wanted == nil || kind == wanted) {
+                "<li><button class=\"item choose\" hx-post=\"/key\" hx-vals='{\"key\": \"" + e.letter + "\"}'>" + label + "</button></li>"
+            } else {
+                "<li><button class=\"item\" disabled>" + label + "</button></li>"
+            }
+        } else {
+            val use = USES[kind]
+            val title = if (use == nil) { "" } else { " title=\"" + use[1] + "\"" }
+            "<li><button class=\"item\"" + title + " hx-post=\"/use\" hx-vals='{\"letter\": \"" + e.letter + "\"}'>" + label + "</button></li>"
+        }
+    }
+    val heading = if (asking) { "Choose an item" } else { "Pack <small>" + len(state.pack) + " / 22</small>" }
+    "<section class=\"pack\"><h2>" + heading + "</h2><ul>" + join(map(state.pack, entry), "") + "</ul>"
+        + (if (asking) { keyButton("space", "Cancel", "space", "cancel") } else { "" })
+        + "</section>"
+}
+
+val monstersHtml = fn(state:map):str {
+    val seen = filter(state.monsters, fn(m) { state.sense || game.visible(m.x, m.y) })
+    val entry = fn(m:map):str {
+        val kind = data.monsters[m.kind]
+        "<li><i class=\"monster\">" + kind.letter + "</i><span>" + kind.name
+            + (if (m.state == "asleep") { " <em>asleep</em>" } else { "" }) + "</span>"
+            + bar(m.hp, m.maxHp, "foe") + "</li>"
+    }
+    val list = if (len(seen) == 0) { "<p class=\"none\">Nothing in sight.</p>" } else { "<ul>" + join(map(seen, entry), "") + "</ul>" }
+    "<section class=\"foes\"><h2>In view</h2>" + list + "</section>"
+}
+
+val actionsHtml = fn():str {
+    "<section class=\"actions\">"
+        + keyButton("space", "Wait", "space") + keyButton("enter", "Descend", "enter")
+        + keyButton("e", "Eat", "e") + keyButton("q", "Quaff", "q") + keyButton("r", "Read", "r")
+        + keyButton("w", "Wield", "w") + keyButton("a", "Wear", "a") + keyButton("d", "Drop", "d")
+        + "</section>"
+}
+
+val logHtml = fn():str {
+    val older = filter(log, fn(entry) { entry[0] != moves })
+    val lines = map(older, fn(entry) { "<li>" + escape(entry[1]) + "</li>" })
+    "<section class=\"log\"><h2>Log</h2><div class=\"scroll\"><ol>" + join(lines, "") + "</ol></div></section>"
+}
+
+// The line above the map: the prompt's question, or what the latest move said.
+val topLine = fn(state:map):str {
+    val messages = if (state.prompt != nil) {
+        state.messages
+    } else {
+        map(filter(log, fn(entry) { entry[0] == moves }), fn(entry) { entry[1] })
+    }
+    val classes = if (state.prompt != nil) { "top prompt" } else { "top" }
+    "<div class=\"" + classes + "\">" + join(map(messages, fn(m) { "<span>" + escape(m) + "</span>" }), " ") + "</div>"
+}
+
+val endHtml = fn(state:map):str {
+    if (!state.dead && !state.won) { return "" }
+    val title = if (state.won) { "You escaped with the Orb!" } else { "You died." }
+    val detail = if (state.won) {
+        "With " + state.player.gold + " gold, at experience level " + state.player.level + "."
+    } else {
+        "On depth " + state.depth + ", with " + state.player.gold + " gold, at experience level " + state.player.level + "."
+    }
+    "<div class=\"end\"><div><h1>" + title + "</h1><p>" + detail + "</p>"
+        + keyButton("enter", "Play again", "enter", "primary") + "</div></div>"
+}
+
+/**
+ * The game's HTML, which the page's `#game` element holds.
+ */
+export val gameHtml = fn():str {
+    val state = game.current()
+    "<div class=\"play\"><div class=\"board\">" + topLine(state) + mapHtml(game.text()) + endHtml(state) + "</div>"
+        + logHtml() + "</div>"
+        + "<aside>" + monstersHtml(state) + statsHtml(state) + packHtml(state) + actionsHtml() + "</aside>"
+}
+
+// --- The page ----------------------------------------------------------------
+
+val STYLE = '''
+:root {
+  --bg: #0d0f14; --panel: #151922; --line: #252b38; --text: #c9cfdb; --muted: #6c7486;
+  --accent: #e0b84f; --red: #ff5f5f; --green: #6fd08c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 18px; letter-spacing: .2em; color: var(--accent); }
+header p { margin: 0; color: var(--muted); font-size: 12px; }
+kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+#game { display: flex; gap: 16px; padding: 16px 20px; align-items: flex-start; }
+.board { position: relative; background: #07080b; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.top { width: 0; min-width: 100%; min-height: 2.8em; font: 13px/1.4 ui-monospace, Menlo, monospace; color: #fff; }
+.top span + span::before { content: ""; margin-left: 4px; }
+.top.prompt { color: var(--accent); }
+.map { margin: 0; font: 15px/1.12 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #2a2f3a; }
+.map .floor { color: #4a5263; } .map .corridor { color: #5e6676; } .map .wall { color: #9aa3b5; }
+.map .door { color: #c8904c; } .map .stairs { color: #f2d36b; font-weight: 700; }
+.map .you { color: #fff; font-weight: 700; text-shadow: 0 0 6px #8fb8ff; }
+.map .monster { color: var(--red); font-weight: 700; cursor: help; }
+.map .seen { opacity: .4; }
+.gold { color: #ffd447; } .potion { color: #c58cff; } .scroll { color: #efe6cc; } .food { color: #8bd17c; }
+.weapon { color: #7fb7ff; } .armour { color: #7fd4d4; } .orb { color: #ff9de2; text-shadow: 0 0 6px #ff9de2; }
+aside { width: 300px; flex: none; display: flex; flex-direction: column; gap: 12px; }
+.play { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+aside section, .log { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+h2 small { float: right; letter-spacing: 0; }
+.hp { display: flex; justify-content: space-between; }
+.bar { height: 6px; background: #0a0c10; border-radius: 3px; overflow: hidden; margin: 4px 0 8px; }
+.bar div { height: 100%; transition: width .15s; }
+.bar.high div { background: var(--green); } .bar.mid div { background: var(--accent); } .bar.low div, .bar.foe div { background: var(--red); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+.stat { display: flex; justify-content: space-between; } .stat span { color: var(--muted); }
+.conditions span { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 9px; background: #3a2a12; color: var(--accent); font-size: 12px; }
+ul, ol { list-style: none; margin: 0; padding: 0; }
+.item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }
+.item i { font: 700 14px ui-monospace, Menlo, monospace; font-style: normal; width: 1ch; }
+.item em, .foes em { color: var(--muted); font-size: 12px; }
+.item.choose { border-color: var(--accent); }
+.item:disabled { opacity: .35; cursor: default; }
+button { font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+button:hover:not(:disabled) { background: #1e2430; border-color: var(--line); }
+button.cancel, button.primary { margin-top: 8px; border-color: var(--line); }
+button.primary { background: var(--accent); color: #111; font-weight: 600; padding: 6px 14px; }
+.foes li { display: grid; grid-template-columns: 1.4ch 1fr 70px; gap: 8px; align-items: center; }
+.foes i { font: 700 14px ui-monospace, Menlo, monospace; font-style: normal; color: var(--red); }
+.foes .bar { margin: 0; }
+.foes .none { margin: 0; color: var(--muted); font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.actions button { border-color: var(--line); }
+.log .scroll { height: 150px; overflow-y: auto; display: flex; flex-direction: column-reverse; }
+.log li { color: var(--muted); font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.end { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(7, 8, 11, .82); text-align: center; }
+.end h1 { margin: 0 0 6px; color: var(--accent); }
+.help { padding: 0 20px 20px; color: var(--muted); font-size: 12px; }
+.help kbd { margin: 0 2px; }
+'''
+
+// Turns key presses into the game's key names; the page sends only these.
+val SCRIPT = '''
+const NAMED = { ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up", ArrowRight: "right", " ": "space", Enter: "enter" };
+function gameKey(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return null;
+  if (/^[a-zA-Z]$/.test(e.key)) return e.key === "i" || e.key === "I" ? null : e.key.toLowerCase();
+  return NAMED[e.key] || null;
+}
+// An htmx trigger filter must return exactly true.
+function isGameKey(e) { return gameKey(e) !== null; }
+document.addEventListener("keydown", e => { if (gameKey(e)) e.preventDefault(); });
+document.addEventListener("htmx:configRequest", e => {
+  const t = e.detail.triggeringEvent;
+  if (t && t.type === "keydown") {
+    e.detail.parameters.key = gameKey(t);
+    e.detail.parameters.shift = t.shiftKey;
+  }
+});
+'''
+
+val HELP = '''
+<p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
+Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
+<kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
+click an item to use it. Find the Orb on depth 8.</p>
+'''
+
+// Each key press posts to /key; buttons in the game post their own keys.
+// Requests run one at a time, in order, so fast typing is never reordered.
+val page = fn():str {
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        + "<title>Crawl</title><style>" + STYLE + "</style>"
+        + "<script src=\"/htmx.js\"></script><script>" + SCRIPT + "</script></head>"
+        + "<body hx-target=\"#game\" hx-sync=\"#keys:queue all\">"
+        + "<div id=\"keys\" hx-post=\"/key\" hx-trigger=\"keydown[isGameKey(event)] from:document\"></div>"
+        + "<header><h1>CRAWL</h1><p>Find the Orb on depth 8 and live.</p></header>"
+        + "<main id=\"game\">" + gameHtml() + "</main>" + HELP + "</body></html>"
+}
+
+// --- Serving -----------------------------------------------------------------
+
+val html = fn(body:str):map {
+    {status: 200, headers: {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}, body: body}
+}
+
+val onKey = fn(request:map):map {
+    val fields = http.form(request)
+    val key = fields.key ?? ""
+    if (!contains(KEYS, key)) { return {status: 204} }
+    play(key, fields.shift == "true")
+    html(gameHtml())
+}
+
+// Uses a pack item the way its kind is used: eats food, wields a weapon.
+val onUse = fn(request:map):map {
+    val letter = http.form(request).letter ?? ""
+    val state = game.current()
+    val held = filter(state.pack, fn(e) { e.letter == letter })
+    if (len(held) == 0 || state.prompt != nil || state.dead || state.won || len(state.more) > 0) { return {status: 204} }
+    val use = USES[held[0].item.kind]
+    if (use == nil) { return {status: 204} }
+    play(use[0], false)
+    if (game.current().prompt != nil) { play(letter, false) }
+    html(gameHtml())
+}
+
+/**
+ * The HTTP handler for the game: `GET /` serves the page, `GET /htmx.js`
+ * the vendored HTMX, and `POST /key` and `POST /use` play.
+ */
+export val handler = fn():fn {
+    http.router([
+        ["GET", "/", fn(request) { html(page()) }],
+        ["GET", "/htmx.js", fn(request) {
+            {status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "max-age=86400"}, body: htmx.SOURCE}
+        }],
+        ["POST", "/key", onKey],
+        ["POST", "/use", onUse],
+    ])
+}
+
+/**
+ * Starts a new game with `seed`, with an empty log.
+ */
+export val start = fn(seed:num) {
+    game.newGame(seed)
+    log = []
+    moves = 0
+    record(game.current().messages)
+}
+
+/**
+ * Starts a new game with `options.seed` (default 1) and serves it on
+ * `listener` until the listener closes.
+ */
+export val serve = fn(listener:tcp.Listener, options:map = {}) {
+    start(options.seed ?? 1)
+    http.serve(listener, handler())
+}

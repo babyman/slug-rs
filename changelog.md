@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The `slug.games.crawl` clutch holds Crawl, the roguelike from the agent
+  eval: its engine, unchanged apart from module names, and a web front end,
+  `slug.games.crawl.web`, served by `slug.net.http` and drawn with a
+  vendored HTMX. `slug clutch/slug.games.crawl.clutch/play.slug` serves it
+  on port 8080. Eval runs never install it.
+
 - `slug.net.http` adds `form(request)`, which decodes a
   `application/x-www-form-urlencoded` body's fields as the query is decoded.
   A handler that throws an `http.reject` error, as `form` does for a body

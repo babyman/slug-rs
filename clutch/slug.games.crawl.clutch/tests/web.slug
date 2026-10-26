@@ -1,0 +1,103 @@
+val web = import("slug.games.crawl.web")
+val game = import("slug.games.crawl")
+val {toBytes} = import("slug.string")
+val {assertEqual, assertTrue} = import("slug.test")
+
+// Whether `text` contains `part`.
+val includes = fn(text:str, part:str):bool {
+    val go = fn(i:num):bool {
+        if (i + len(part) > len(text)) { false } else if (text[i:i + len(part)] == part) { true } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+val get = fn(path:str):map {
+    web.handler()({method: "GET", path: path, query: {}, headers: {}, body: 0x"", params: {}})
+}
+
+val post = fn(path:str, body:str):map {
+    val headers = {"content-type": "application/x-www-form-urlencoded"}
+    web.handler()({method: "POST", path: path, query: {}, headers: headers, body: toBytes(body), params: {}})
+}
+
+@test
+val servesThePageAndHtmx = fn() {
+    web.start(1)
+    val page = get("/")
+    assertEqual(page.status, 200)
+    assertTrue(includes(page.body, "<script src=\"/htmx.js\"></script>"))
+    assertTrue(includes(page.body, "Welcome to the dungeon."))
+    val script = get("/htmx.js")
+    assertEqual(script.headers["Content-Type"], "text/javascript; charset=utf-8")
+    assertTrue(includes(script.body, "var htmx="))
+}
+
+@test
+val keysPlayCommands = fn() {
+    web.start(1)
+    val before = game.current().player
+    val moved = post("/key", "key=h&shift=false")
+    assertEqual(moved.status, 200)
+    assertEqual(game.current().player.x, before.x - 1)
+    assertTrue(includes(moved.body, "class=\"you\""))
+}
+
+@test
+val unknownKeysAreIgnored = fn() {
+    web.start(1)
+    val before = game.current()
+    assertEqual(post("/key", "key=i").status, 204)
+    assertEqual(post("/key", "key=f1").status, 204)
+    assertEqual(post("/key", "").status, 204)
+    assertEqual(game.current(), before)
+}
+
+@test
+val itemPromptsOfferMatchingItems = fn() {
+    web.start(1)
+    val asked = post("/key", "key=e")
+    assertTrue(includes(asked.body, "Eat which item?"))
+    assertTrue(includes(asked.body, "hx-vals='{\"key\": \"c\"}'"))
+    assertTrue(includes(asked.body, "<button class=\"item\" disabled>"))
+    post("/key", "key=space")
+    assertEqual(game.current().prompt, nil)
+}
+
+@test
+val clickingAnItemUsesIt = fn() {
+    web.start(1)
+    assertEqual(len(game.current().pack), 3)
+    assertEqual(post("/use", "letter=c").status, 200)
+    assertEqual(len(game.current().pack), 2)
+    assertEqual(post("/use", "letter=z").status, 204)
+}
+
+@test
+val endScreensOfferANewGame = fn() {
+    web.start(1)
+    game.load(game.snapshot() + {dead: true})
+    assertTrue(includes(web.gameHtml(), "You died."))
+    post("/key", "key=enter")
+    assertEqual(game.current().seed, 2)
+    assertEqual(game.current().dead, false)
+    game.load(game.snapshot() + {won: true})
+    assertTrue(includes(web.gameHtml(), "You escaped with the Orb!"))
+}
+
+// Plays many seeded games with pseudo-random keys: every move renders, and
+// none leaves a --More-- waiting.
+@test
+val randomPlayNeverLeavesMore = fn() {
+    val keys = ["h", "j", "k", "l", "y", "u", "b", "n", "space", "enter", "e", "q", "r", "w", "a", "d", "c", "f"]
+    val go = fn(i:num, seed:num) {
+        if (i == 800) { return nil }
+        val next = (seed * 1103515245 + 12345) % 2147483648
+        val key = keys[next % len(keys)]
+        web.play(key, next % 7 == 0)
+        assertEqual(game.current().more, [])
+        assertTrue(len(web.gameHtml()) > 0)
+        recur(i + 1, next)
+    }
+    web.start(3)
+    go(0, 3)
+}

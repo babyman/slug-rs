@@ -103,6 +103,11 @@ WITHHELD_MODULES = {
 }
 
 
+# Clutches no run installs: `slug.games.crawl` is the Crawl project's
+# reference solution.
+HIDDEN_CLUTCHES = ["slug.games.crawl.clutch"]
+
+
 def withheld(run):
     """The modules withheld from `run`, by module name, with source files."""
     return WITHHELD_MODULES.get(run["task"], {}) if run["kind"] == "project" else {}
@@ -446,12 +451,13 @@ def isolated_install(slug, withheld_modules):
     solutions and hidden cases live, leaving out `withheld_modules`."""
     install = Path(tempfile.mkdtemp(prefix="slug-eval-install-"))
     # Clutch tests are left out: some hold project suites' hidden cases.
-    ignore = shutil.ignore_patterns(".DS_Store", "tests", *withheld_modules.values())
+    ignore = shutil.ignore_patterns(".DS_Store", "tests", *HIDDEN_CLUTCHES, *withheld_modules.values())
     for directory in ("lib", "clutch"):
         shutil.copytree(REPO / directory, install / "home" / directory, ignore=ignore)
+    hidden = [*withheld_modules, *HIDDEN_CLUTCHES]
     for manifest in (install / "home" / "clutch").glob("**/*.toml"):
         lines = manifest.read_text().splitlines(keepends=True)
-        kept = [line for line in lines if not any(f'"{name}"' in line for name in withheld_modules)]
+        kept = [line for line in lines if not any(f'"{name}"' in line for name in hidden)]
         manifest.write_text("".join(kept))
     (install / "bin").mkdir()
     shutil.copy2(slug, install / "bin" / "slug-real")
