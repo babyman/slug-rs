@@ -73,6 +73,49 @@ val check = fn() {{
 }}
 check()
 """,
+    # A Mustache template rendered from text and from `parse`'s result; data
+    # and partials arrive as JSON.
+    "render": """\
+val mustache = import("{module}")
+val json = import("slug.fmt.json")
+val check = fn() {{
+  defer onerror(err) {{ println("FAIL threw", err) }}
+  val template = cfg("template", "")
+  val data = json.parse(cfg("data", "null"))
+  val partials = json.parse(cfg("partials", "{{}}"))
+  val direct = mustache.render(template, data, partials)
+  val parsed = mustache.render(mustache.parse(template), data, partials)
+  if (direct != cfg("expect", "")) {{
+    println("FAIL got", json.stringify(direct))
+  }} else if (parsed != direct) {{
+    println("FAIL from parse got", json.stringify(parsed))
+  }} else {{
+    println("PASS")
+  }}
+}}
+check()
+""",
+    # A malformed template: `parse` throws, or `render` does for a partial.
+    "syntax_error": """\
+val mustache = import("{module}")
+val json = import("slug.fmt.json")
+val check = fn() {{
+  defer onerror(err) {{
+    match err {{
+      e if e.type == "mustache.syntax" && e.data.line == {line} => println("PASS")
+      e => println("FAIL wrong error", e)
+    }}
+  }}
+  val partials = json.parse(cfg("partials", "{{}}"))
+  val actual = if (len(keys(partials)) == 0) {{
+    mustache.parse(cfg("template", ""))
+  }} else {{
+    mustache.render(cfg("template", ""), json.parse(cfg("data", "null")), partials)
+  }}
+  println("FAIL no error", actual)
+}}
+check()
+""",
     "roundtrip": """\
 val json = import("{module}")
 val check = fn() {{
@@ -139,6 +182,7 @@ def case_program(case, module, prelude=""):
         value=case.get("value", "nil"),
         setup=case.get("setup", ""),
         offset="" if offset is None else f" && e.data.offset == {offset}",
+        line=case.get("line"),
     )
 
 
@@ -150,6 +194,10 @@ def case_toml(case):
         lines.append(f"input = {json.dumps(case['input'], ensure_ascii=False)}")
     if case["kind"] in ("stringify", "roundtrip"):
         lines.append(f"expect = {json.dumps(case['expect'], ensure_ascii=False)}")
+    if case["kind"] in ("render", "syntax_error"):
+        for name in ("template", "data", "partials", "expect"):
+            if name in case:
+                lines.append(f"{name} = {json.dumps(case[name], ensure_ascii=False)}")
     return "\n".join(lines) + "\n"
 
 
