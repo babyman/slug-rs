@@ -2849,3 +2849,179 @@ fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     assert_eq!(loader.initialized_module_count(), 0);
     fs::remove_dir_all(root).expect("remove module test directory");
 }
+
+/// A clutch with `example.assets`, whose `assets` folder holds `htmx.js`,
+/// `images/dot.png`, and a directory `empty`, in a repository a loader uses.
+fn asset_clutch(kind: &str, module_source: &str) -> (std::path::PathBuf, ModuleLoader) {
+    let root = root(kind);
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create asset root");
+    let clutch = write_source_clutch(&root, &[("example.assets", "assets.slug", module_source)]);
+    fs::create_dir_all(clutch.join("assets/images")).expect("create asset folders");
+    fs::create_dir_all(clutch.join("assets/empty")).expect("create empty asset folder");
+    fs::write(clutch.join("assets/htmx.js"), "var htmx=1;\n").expect("write script asset");
+    fs::write(
+        clutch.join("assets/images/dot.png"),
+        [0x89, b'P', b'N', b'G', 0, 255],
+    )
+    .expect("write image asset");
+    let repository = ClutchRepository::new(vec![("example.assets".into(), clutch)])
+        .expect("create clutch repository");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    (root, loader)
+}
+
+#[test]
+fn clutch_modules_and_programs_embed_their_assets() {
+    let (root, loader) = asset_clutch(
+        "clutch-assets",
+        "export val script = asset(\"htmx.js\")\n\
+         export val image = asset(\"images/dot.png\")\n\
+         export val again = asset(\"htmx.js\") == script\n",
+    );
+    let program = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "val {script, image, again} = import(\"example.assets\")\n\
+             export val text = script\nexport val png = image\nexport val same = again\n",
+        )
+        .expect("compile asset importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main").expect("run asset importer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"text\": 0x\"7661722068746d783d313b0a\", \"png\": 0x\"89504e4700ff\", \"same\": true}"
+    );
+
+    // A program in the clutch, which no manifest lists, has its assets too.
+    let inside = root.join("example.clutch/play.slug");
+    let program = loader
+        .compile_source(
+            &inside.to_string_lossy(),
+            "export val image = asset(\"images/dot.png\")\n",
+        )
+        .expect("compile program in clutch");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run program in clutch");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"image\": 0x\"89504e4700ff\"}"
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[test]
+fn asset_calls_that_name_no_shipped_file_are_compile_errors() {
+    let (root, loader) = asset_clutch("clutch-asset-errors", "export val x = 1\n");
+    let inside = root.join("example.clutch/play.slug");
+    let compile_inside = |source: &str| {
+        loader
+            .compile_source(&inside.to_string_lossy(), source)
+            .expect_err("asset call must not compile")
+    };
+    for (source, message) in [
+        (
+            "asset(\"missing.js\")\n",
+            "no asset `missing.js` in example.clutch's assets folder",
+        ),
+        (
+            "asset(\"HTMX.js\")\n",
+            "`htmx.js` differs from `HTMX.js` only in case",
+        ),
+        (
+            "asset(\"images/DOT.png\")\n",
+            "`dot.png` differs from `DOT.png` only in case",
+        ),
+        (
+            "asset(\"empty\")\n",
+            "asset `empty` in example.clutch is not a file",
+        ),
+        (
+            "asset(\"../clutch.toml\")\n",
+            "invalid asset name `../clutch.toml`",
+        ),
+        ("asset(\"/htmx.js\")\n", "invalid asset name `/htmx.js`"),
+        (
+            "val name = \"htmx.js\"\nasset(name)\n",
+            "`asset` takes one string literal",
+        ),
+        (
+            "asset(\"htmx.js\", \"images/dot.png\")\n",
+            "`asset` takes one string literal",
+        ),
+        ("\"htmx.js\" /> asset()\n", "not through `/>`"),
+    ] {
+        let error = compile_inside(source);
+        assert_eq!(error.code.as_str(), "invalid_asset", "{source}");
+        assert!(
+            error.message.contains(message),
+            "{source}: {}",
+            error.message
+        );
+        assert!(error.span.is_some(), "{source}");
+    }
+
+    let outside = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "asset(\"htmx.js\")\n",
+        )
+        .expect_err("a program outside a clutch has no assets");
+    assert_eq!(outside.code.as_str(), "invalid_asset");
+    assert!(
+        outside.message.contains("is not in a clutch"),
+        "{}",
+        outside.message
+    );
+
+    let standalone = compile("standalone.slug", "asset(\"htmx.js\")\n")
+        .expect_err("compiling without a host has no assets");
+    assert_eq!(standalone.code.as_str(), "invalid_asset");
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[cfg(unix)]
+#[test]
+fn assets_cannot_link_outside_their_folder() {
+    let (root, loader) = asset_clutch("clutch-asset-link", "export val x = 1\n");
+    let clutch = root.join("example.clutch");
+    std::os::unix::fs::symlink(clutch.join("clutch.toml"), clutch.join("assets/manifest"))
+        .expect("link outside the assets folder");
+    let error = loader
+        .compile_source(
+            &clutch.join("play.slug").to_string_lossy(),
+            "asset(\"manifest\")\n",
+        )
+        .expect_err("a link out of the folder is not an asset");
+    assert_eq!(error.code.as_str(), "invalid_asset");
+    assert!(
+        error.message.contains("links outside its assets folder"),
+        "{}",
+        error.message
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[test]
+fn compiled_artifacts_carry_assets_without_their_clutch() {
+    let (root, loader) = asset_clutch(
+        "clutch-asset-artifact",
+        "export val script = asset(\"htmx.js\")\n",
+    );
+    let artifact = loader
+        .compile_artifact(
+            &root.join("main.slug").to_string_lossy(),
+            "val {script} = import(\"example.assets\")\nval main = fn() { script }\n",
+        )
+        .expect("compile artifact");
+    let bytes = slug_vm::cslug::encode(&artifact).expect("encode artifact");
+    fs::remove_dir_all(&root).expect("remove the clutch before running");
+    let artifact =
+        slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()).expect("decode artifact");
+    let result = slug_frontend::ArtifactHost::new(artifact, Rc::new(slug_vm::EmptyVmConfiguration))
+        .expect("valid artifact")
+        .run()
+        .expect("run artifact");
+    assert_eq!(result.to_string(), "0x\"7661722068746d783d313b0a\"");
+}

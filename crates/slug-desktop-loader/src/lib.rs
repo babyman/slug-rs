@@ -513,6 +513,21 @@ impl ModuleResolver for DesktopResolver {
         }
         Err(self.not_found(request.name, &candidates, &relative))
     }
+
+    /// A module's assets are the files in the `assets` folder of the indexed
+    /// clutch its source file is in.
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        let root = self
+            .clutch_repository
+            .clutch_containing(Path::new(module.as_str()))
+            .ok_or_else(|| {
+                format!(
+                    "no asset `{name}`: {} is not in a clutch, and only a clutch has assets",
+                    module.as_str()
+                )
+            })?;
+        clutch::read_asset(&root, name)
+    }
 }
 
 /// How many directories above a searched one to look for a misplaced module.

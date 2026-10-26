@@ -24,7 +24,6 @@ val tcp = import("slug.net.tcp")
 val game = import("slug.games.crawl")
 val data = import("slug.games.crawl.data")
 val level = import("slug.games.crawl.level")
-val htmx = import("slug.games.crawl.htmx")
 val {map, filter, contains} = import("slug.std")
 val {join, chars} = import("slug.string")
 val math = import("slug.math")
@@ -404,13 +403,13 @@ val onUse = fn(request:map):map {
 
 /**
  * The HTTP handler for the game: `GET /` serves the page, `GET /htmx.js`
- * the vendored HTMX, and `POST /key` and `POST /use` play.
+ * the clutch's htmx asset, and `POST /key` and `POST /use` play.
  */
 export val handler = fn():fn {
     http.router([
         ["GET", "/", fn(request) { html(page()) }],
         ["GET", "/htmx.js", fn(request) {
-            {status: 200, headers: {"Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "max-age=86400"}, body: htmx.SOURCE}
+            {status: 200, headers: {"Content-Type": http.mediaType("htmx.js"), "Cache-Control": "max-age=86400"}, body: asset("htmx.js")}
         }],
         ["POST", "/key", onKey],
         ["POST", "/use", onUse],

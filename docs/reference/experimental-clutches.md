@@ -120,6 +120,25 @@ programs from loading the repository.
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 
+### Assets
+
+A clutch ships other files, such as scripts, images, or fonts, in an
+`assets` folder at its root. There is no manifest entry: every file in the
+folder is an asset, named by its path there written with `/`, such as
+`htmx.js` or `images/logo.png`. A module whose source file is inside the
+clutch embeds one with `asset("htmx.js")`, which the compiler reads through
+the host's module resolver (`ModuleResolver::asset`) and stores as a bytes
+constant; see [Assets](../language/language-specification.md#assets). Only
+the files a program names are read, so a packaging tool learns which assets a
+program uses by compiling it.
+
+The desktop resolver reads an asset from the `assets` folder of the indexed
+clutch whose directory holds the module's source. Each name segment must match
+a directory entry exactly, case included; the file must be a regular file of at
+most 16 MiB that stays inside the folder once links resolve. A static or nil
+host provides no assets. `slug.net.http`'s `mediaType(name)` gives an asset's
+media type from its extension when it is served.
+
 ## Repository index and resolution
 
 `$SLUG_HOME/clutch/manifest.toml` is the explicit local repository index. Its

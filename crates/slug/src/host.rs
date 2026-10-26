@@ -279,6 +279,10 @@ impl ModuleResolver for DesktopLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
+
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        self.state.resolver.asset(module, name)
+    }
 }
 
 impl ModuleGraphHost for DesktopLoader {

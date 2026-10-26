@@ -116,6 +116,20 @@ pub trait ModuleResolver {
     /// Returns a checked failure when the name is invalid, unavailable, or its
     /// host-provided source cannot be read.
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
+
+    /// Reads the asset `name` for the module whose key is `module`: a file
+    /// its clutch ships, which `asset(name)` embeds when the module compiles.
+    /// `name` is already a valid asset name: `/`-separated segments, none
+    /// empty, `.`, or `..`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message for the compile error when the module has no such
+    /// asset. A resolver that provides no assets refuses every request.
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        let _ = module;
+        Err(format!("no asset `{name}`: this host provides no assets"))
+    }
 }
 
 /// One source module selected by a statically linked host.

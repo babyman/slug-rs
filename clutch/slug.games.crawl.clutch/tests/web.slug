@@ -1,6 +1,6 @@
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
-val {toBytes} = import("slug.string")
+val {toBytes, fromBytes} = import("slug.string")
 val {assertEqual, assertTrue} = import("slug.test")
 
 // Whether `text` contains `part`.
@@ -29,7 +29,7 @@ val servesThePageAndHtmx = fn() {
     assertTrue(includes(page.body, "Welcome to the dungeon."))
     val script = get("/htmx.js")
     assertEqual(script.headers["Content-Type"], "text/javascript; charset=utf-8")
-    assertTrue(includes(script.body, "var htmx="))
+    assertTrue(includes(fromBytes(script.body), "var htmx="))
 }
 
 @test

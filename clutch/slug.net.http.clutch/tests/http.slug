@@ -87,3 +87,13 @@ val answersABadFormWith400 = fn() {
     val answer = exchange(handler, "POST / HTTP/1.0\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\nkey=%Z")
     assertEqual(answer, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 }
+
+@test
+val mediaTypesComeFromExtensions = fn() {
+    assertEqual(http.mediaType("htmx.js"), "text/javascript; charset=utf-8")
+    assertEqual(http.mediaType("images/Foo.PNG"), "image/png")
+    assertEqual(http.mediaType("archive.tar.gz"), "application/octet-stream")
+    assertEqual(http.mediaType("README"), "application/octet-stream")
+    assertEqual(http.mediaType(".css"), "application/octet-stream")
+    assertEqual(http.mediaType("dir.d/file"), "application/octet-stream")
+}

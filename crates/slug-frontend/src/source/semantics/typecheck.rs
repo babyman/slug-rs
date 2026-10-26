@@ -4547,6 +4547,10 @@ fn check_call(
     piped: Option<Type>,
 ) -> Result<Type, SourceError> {
     super::stack::grow(|| {
+        // Its argument is a literal, already checked when the asset was read.
+        if super::assets::is_asset(callee) {
+            return Ok(Type::Bytes);
+        }
         check_expression(callee, environment, type_parameters)?;
         let mut actuals = piped.into_iter().collect::<Vec<_>>();
         actuals.extend(

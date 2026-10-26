@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A clutch can ship other files, such as scripts or images, in an `assets`
+  folder. `asset("htmx.js")` in one of its modules, test files, or programs
+  embeds that file's bytes when the module compiles, so `.cslug` artifacts
+  carry it and nothing reads it at run time. A name that is not a string
+  literal, or that names no file with exactly that spelling, is a compile
+  error with the code `invalid_asset`. `slug.games.crawl` now ships htmx as
+  `assets/htmx.js`, unchanged, in place of a generated Slug module.
+
+- `slug.net.http` adds `mediaType(name)`, a file name's media type from its
+  extension, such as `text/javascript; charset=utf-8` for `htmx.js`.
+
 - The `slug.games.crawl` clutch holds Crawl, the roguelike from the agent
   eval: its engine, unchanged apart from module names, and a web front end,
   `slug.games.crawl.web`, served by `slug.net.http` and drawn with a

@@ -66,6 +66,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `???` checked runtime placeholder | implemented | `crates/slug/tests/cli.rs` |
 | Top-level `export` declaration metadata | partial | `crates/slug-vm/tests/vm.rs` |
 | Source-level module imports and exported-value maps | partial | `crates/slug/tests/module_loader.rs` |
+| Compile-time clutch assets with `asset(name)` | implemented | `crates/slug/tests/module_loader.rs` and `crates/slug/tests/cli/modules.rs` |
 | Predeclared module bindings and cyclic initialization | implemented | `crates/slug/tests/module_loader.rs` |
 | Live imported module bindings | implemented | `crates/slug/tests/module_loader.rs` |
 | Imported-name shadowing and non-callable conflict warnings | implemented | `crates/slug/tests/cli.rs` and `crates/slug/tests/module_loader.rs` |

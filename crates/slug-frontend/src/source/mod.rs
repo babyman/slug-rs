@@ -10,6 +10,7 @@ pub use slug_vm::{
     apply_fix,
 };
 
+mod assets;
 #[path = "syntax/ast.rs"]
 mod ast;
 #[path = "lowering/compiler.rs"]
@@ -109,6 +110,7 @@ pub enum SourceErrorCode {
     RepeatedMapKey,
     LostUpdate,
     InvalidEntrypoint,
+    InvalidAsset,
     Internal,
 }
 
@@ -146,6 +148,7 @@ impl SourceErrorCode {
         Self::RepeatedMapKey,
         Self::LostUpdate,
         Self::InvalidEntrypoint,
+        Self::InvalidAsset,
         Self::Internal,
     ];
 
@@ -184,6 +187,7 @@ impl SourceErrorCode {
             Self::RepeatedMapKey => "repeated_map_key",
             Self::LostUpdate => "lost_update",
             Self::InvalidEntrypoint => "invalid_entrypoint",
+            Self::InvalidAsset => "invalid_asset",
             Self::Internal => "internal",
         }
     }
@@ -372,8 +376,15 @@ impl From<&SourceError> for SourceDiagnostic {
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let mut compilation =
-        compile_expressions(path, expressions, ImportSnapshots::new(), None, None)?;
+    let assets = assets::load(&expressions, no_assets)?;
+    let mut compilation = compile_expressions(
+        path,
+        expressions,
+        ImportSnapshots::new(),
+        assets,
+        None,
+        None,
+    )?;
     compilation.program.set_module_key(path);
     Ok(compilation.program)
 }
@@ -381,15 +392,18 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
 /// Compiles a module's source. `module_name` is the name it is imported by,
 /// which its resource and enum types carry at runtime; an entry program has
 /// none. Every module but `slug.builtin` sees that module's exports.
+/// `read_asset` reads each asset the module names.
 pub(crate) fn compile_with_resolver(
     path: &str,
     source: &str,
     module_name: Option<&str>,
     mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
+    read_asset: impl FnMut(&str) -> Result<Vec<u8>, String>,
 ) -> Result<CompiledSource, SourceError> {
     let include_implicit_builtins = module_name != Some("slug.builtin");
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
+    let assets = assets::load(&expressions, read_asset)?;
     let mut imports = typecheck::static_import_names(&expressions)
         .into_iter()
         .filter_map(|name| resolve(&name).map(|snapshot| (name, snapshot)))
@@ -414,10 +428,23 @@ pub(crate) fn compile_with_resolver(
                 .map(String::from)
                 .collect::<Vec<_>>()
         });
-    let mut compilation =
-        compile_expressions(path, expressions, imports, implicit_globals, module_name)?;
+    let mut compilation = compile_expressions(
+        path,
+        expressions,
+        imports,
+        assets,
+        implicit_globals,
+        module_name,
+    )?;
     compilation.program.set_module_key(path);
     Ok(compilation)
+}
+
+/// The asset reader of a compilation with no host to read assets from.
+pub(crate) fn no_assets(name: &str) -> Result<Vec<u8>, String> {
+    Err(format!(
+        "no asset `{name}`: only a module compiled from a clutch has assets"
+    ))
 }
 
 pub(crate) fn static_import_names(path: &str, source: &str) -> Result<Vec<String>, SourceError> {
@@ -546,13 +573,14 @@ fn compile_expressions(
     path: &str,
     expressions: Vec<ast::Expr>,
     imports: ImportSnapshots,
+    assets: assets::Assets,
     implicit_globals: Option<Vec<String>>,
     module_name: Option<&str>,
 ) -> Result<CompiledSource, SourceError> {
     stack::grow(|| {
         let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
         updates::check_lost_updates(&expressions)?;
-        let mut compiler = Compiler::new(path, expressions, &analysis);
+        let mut compiler = Compiler::new(path, expressions, &analysis).with_assets(assets);
         if let Some(name) = module_name {
             compiler = compiler.with_module_name(name);
         }

@@ -723,6 +723,30 @@ imports with the same name and signature likewise retain the first loaded
 callable and issue a warning; callables with distinct signatures combine into
 the imported overload set.
 
+### Assets
+
+`asset(name)` evaluates to the contents, as `bytes`, of a file the module's
+clutch ships in its `assets` folder. It is a compile-time form recognised by
+name, like `import`: its one argument must be a string literal, and the
+compiler reads the file through the host and embeds its bytes as a constant
+of the compiled module, so a running program, a `.cslug` artifact, or a
+firmware image never reads it again. A local binding named `asset` does not
+change what a call to `asset` means.
+
+```slug
+val script = asset("htmx.js")          // assets/htmx.js
+val logo = asset("images/logo.png")    // assets/images/logo.png
+```
+
+`name` is a path in the `assets` folder written with `/`: non-empty segments,
+none `.` or `..`, without `\` or NUL. Each segment must match the file's
+name exactly, case included, even where the file system ignores case. Only a
+module whose source file is inside an indexed clutch, including that clutch's
+test files and programs, has assets, and only its own clutch's; a host that
+provides no assets has none. A call that is not one string literal, is
+piped, or names no such file is a compile error with the code
+`invalid_asset`. See [Experimental Clutches](../reference/experimental-clutches.md#assets).
+
 ## Implicit builtin module
 
 `slug.builtin` is the small, host-provided foundation module. When the host

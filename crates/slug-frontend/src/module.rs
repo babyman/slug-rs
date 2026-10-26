@@ -346,9 +346,13 @@ impl ModuleGraph {
         source: &str,
         module_name: Option<&str>,
     ) -> Result<crate::source::CompiledSource, SourceError> {
-        compile_with_resolver(diagnostic_name, source, module_name, |name| {
-            self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
-        })
+        compile_with_resolver(
+            diagnostic_name,
+            source,
+            module_name,
+            |name| self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name)),
+            |name| resolver.asset(key, name),
+        )
     }
 
     fn semantic_snapshot(
@@ -685,6 +689,10 @@ impl ModuleHost {
 impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
+    }
+
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        self.state.resolver.asset(module, name)
     }
 }
 

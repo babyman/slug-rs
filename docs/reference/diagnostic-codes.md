@@ -47,6 +47,7 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 | `repeated_map_key` | semantic | A map literal that repeats a constant key. | ``map literal repeats key `a` `` |
 | `lost_update` | semantic | An assignment to a `var` that reads it before a call that can assign it, so the call's change is discarded. | ``this assignment to `output` discards what the call to `evaluate` at 6:28 assigns to it: ...`` |
 | `invalid_entrypoint` | semantic | A program whose `main` entrypoint cannot be identified. | ``program has more than one eligible `main` entrypoint`` |
+| `invalid_asset` | semantic | An `asset` call that does not name a file its clutch ships: not one string literal, an invalid name, or a missing, differently-cased, or escaping file. | ``no asset `htmx.js` in slug.games.crawl.clutch's assets folder`` |
 | `internal` | semantic | An implementation invariant failed. Report it as a bug. | `missing resolved match constraint` |
 
 ## Runtime codes

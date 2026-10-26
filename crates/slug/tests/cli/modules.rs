@@ -583,3 +583,80 @@ fn describes_a_modules_declarations_and_gates_unexported_ones() {
     );
     fs::remove_dir_all(root).expect("remove describe fixture directory");
 }
+
+#[test]
+fn clutch_assets_embed_at_compile_time() {
+    let root = std::env::temp_dir().join(format!("slug-cli-assets-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let clutch = root.join("home/clutch/example.clutch");
+    fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+    fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+    fs::write(
+        root.join("home/clutch/manifest.toml"),
+        "[modules]\n\"example.assets\" = \"example.clutch\"\n",
+    )
+    .expect("write repository manifest");
+    fs::write(
+        clutch.join("clutch.toml"),
+        "[modules]\n\"example.assets\" = { source = \"modules/assets.slug\" }\n",
+    )
+    .expect("write clutch manifest");
+    fs::write(
+        clutch.join("modules/assets.slug"),
+        "export val greeting = asset(\"greeting.txt\")\n",
+    )
+    .expect("write clutch module");
+    fs::write(clutch.join("assets/greeting.txt"), "hello\n").expect("write asset");
+    fs::write(
+        clutch.join("play.slug"),
+        "println(len(asset(\"greeting.txt\")))\n",
+    )
+    .expect("write program in clutch");
+    fs::write(
+        root.join("main.slug"),
+        "val {greeting} = import(\"example.assets\")\nprintln(greeting)\n",
+    )
+    .expect("write importer");
+    fs::write(
+        root.join("outside.slug"),
+        "println(asset(\"greeting.txt\"))\n",
+    )
+    .expect("write program outside clutch");
+    let run = |program: &std::path::Path, json: bool| {
+        let mut command = slug();
+        if json {
+            command.arg("--diagnostic-format=json");
+        }
+        let output = command
+            .env("SLUG_HOME", root.join("home"))
+            .arg(program)
+            .output()
+            .expect("run asset program");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(&root.join("main.slug"), false);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"68656c6c6f0a\"\n");
+    let (code, stdout, stderr) = run(&clutch.join("play.slug"), false);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "6\n");
+
+    let (code, stdout, stderr) = run(&root.join("outside.slug"), false);
+    assert_eq!(code, Some(1));
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("semantic error: no asset `greeting.txt`:")
+            && stderr.contains("is not in a clutch"),
+        "{stderr}"
+    );
+    let (_, _, stderr) = run(&root.join("outside.slug"), true);
+    let diagnostic: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("JSON diagnostic");
+    assert_eq!(diagnostic["code"], "invalid_asset");
+    fs::remove_dir_all(root).expect("remove asset fixture");
+}

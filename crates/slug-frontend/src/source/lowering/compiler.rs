@@ -47,6 +47,8 @@ pub(super) struct Compiler {
     module_name: Option<String>,
     /// The names `{*}` declarations define, when they are known.
     selected_globals: Option<HashSet<String>>,
+    /// The bytes of each asset the module names, read before analysis.
+    assets: super::assets::Assets,
 }
 
 /// The VM's own builtins, which it installs in every module's globals.
@@ -100,7 +102,13 @@ impl Compiler {
             implicit_globals: None,
             module_name: None,
             selected_globals: analysis.selected_globals.clone(),
+            assets: super::assets::Assets::new(),
         }
+    }
+
+    pub(super) fn with_assets(mut self, assets: super::assets::Assets) -> Self {
+        self.assets = assets;
+        self
     }
 
     /// Makes a name that is neither declared nor one of `names`, the
@@ -1116,6 +1124,19 @@ impl Compiler {
                             span,
                         );
                     }
+                }
+                ExprKind::Call { callee, arguments } if super::assets::is_asset(callee) => {
+                    let bytes = super::assets::literal_name(arguments)
+                        .and_then(|name| self.assets.get(name))
+                        .ok_or_else(|| {
+                            SourceError::semantic(
+                                SourceErrorCode::Internal,
+                                "asset was not read before compilation",
+                                expression.span.clone(),
+                            )
+                        })?;
+                    let constant = state.constant(bytes.clone());
+                    state.emit(Op::Constant(constant), &expression.span);
                 }
                 ExprKind::Call { callee, arguments } => {
                     let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");

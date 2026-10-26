@@ -121,6 +121,7 @@ pub(crate) fn compile_interactive_forms_with_resolver(
             entry.insert(snapshot);
         }
         let expressions = vec![expression];
+        let assets = super::assets::load(&expressions, super::no_assets)?;
         let analysis =
             typecheck::analyze_with_imports_and_session(&expressions, imports, &state.semantic)?;
         let compiled = Compiler::with_globals(
@@ -130,6 +131,7 @@ pub(crate) fn compile_interactive_forms_with_resolver(
             state.globals.clone(),
             state.callable_globals.clone(),
         )
+        .with_assets(assets)
         .compile()?;
         let program = compiled.program;
         state = InteractiveCompilerState {

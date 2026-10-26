@@ -19,7 +19,8 @@
  * A request is a map of `method`, `path` (percent-decoded), `query` (a map
  * of decoded parameters), `headers` (a map from lowercased name to value,
  * repeated headers joined with ", "), `body` (bytes), and `params` (what
- * `router` matched); `form(request)` decodes a form body's fields. A
+ * `router` matched); `form(request)` decodes a form body's fields, and
+ * `mediaType(name)` gives a file name's media type from its extension. A
  * response is a string, sent as a `200` text body, or a map of `status`, and
  * optionally `headers` and `body` (a string or bytes). The server adds
  * `Content-Length`, a default `Content-Type`, and `Connection: close` when it
@@ -542,6 +543,34 @@ export val form = fn(request:map):map {
     val type = lower(request.headers["content-type"] ?? "")
     if (trim(split(type, ";")[0]) != "application/x-www-form-urlencoded") { return {} }
     parseParameters(utf8(request.body))
+}
+
+// --- Media types -------------------------------------------------------------
+
+val TEXT = "; charset=utf-8"
+
+val MEDIA_TYPES = {
+    html: "text/html" + TEXT, htm: "text/html" + TEXT, css: "text/css" + TEXT,
+    js: "text/javascript" + TEXT, mjs: "text/javascript" + TEXT, txt: "text/plain" + TEXT,
+    csv: "text/csv" + TEXT, md: "text/markdown" + TEXT, xml: "application/xml",
+    json: "application/json", wasm: "application/wasm", pdf: "application/pdf",
+    svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", avif: "image/avif", ico: "image/x-icon",
+    woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+    mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav", mp4: "video/mp4", webm: "video/webm",
+}
+
+/**
+ * The media type for a file named `name`, such as an asset's name, from its
+ * extension, case ignored: `"htmx.js"` is `text/javascript; charset=utf-8`
+ * and `"images/foo.png"` is `image/png`. A name with no extension, or one
+ * not in the table, is `application/octet-stream`.
+ */
+export val mediaType = fn(name:str):str {
+    val file = split(name, "/")
+    val parts = split(file[len(file) - 1], ".")
+    if (len(parts) < 2 || (parts[0] == "" && len(parts) == 2)) { return "application/octet-stream" }
+    MEDIA_TYPES[lower(parts[len(parts) - 1])] ?? "application/octet-stream"
 }
 
 // --- Routing -----------------------------------------------------------------

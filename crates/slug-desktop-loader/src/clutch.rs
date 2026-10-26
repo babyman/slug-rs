@@ -210,6 +210,24 @@ impl ClutchRepository {
         self.providers.get(name)
     }
 
+    /// The root of the indexed clutch whose directory holds `path`, such as
+    /// a module's source file, a test file, or a program in the clutch.
+    #[must_use]
+    pub fn clutch_containing(&self, path: &Path) -> Option<PathBuf> {
+        // An entry program's source need not be a file, but its directory is.
+        let path = fs::canonicalize(path).ok().or_else(|| {
+            let parent = match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent,
+                _ => Path::new("."),
+            };
+            Some(fs::canonicalize(parent).ok()?.join(path.file_name()?))
+        })?;
+        self.providers
+            .values()
+            .filter_map(|root| fs::canonicalize(root).ok())
+            .find(|root| path.starts_with(root))
+    }
+
     /// The names of every module a clutch in this repository provides.
     pub fn module_names(&self) -> impl Iterator<Item = &str> {
         self.providers.keys().map(String::as_str)
@@ -717,6 +735,66 @@ fn supported_platform(platform: &str) -> bool {
         platform,
         "macos-aarch64" | "macos-x86_64" | "linux-x86_64" | "windows-x86_64"
     )
+}
+
+/// The largest asset a clutch may ship, in bytes.
+const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Reads the asset `name`, a valid asset name, from the `assets` folder of
+/// the clutch at `root`. Each segment must name a directory entry exactly,
+/// case included, even on a file system that ignores case, so a program
+/// that builds on one host builds on every other; and the file must stay in
+/// the folder once links resolve.
+#[doc(hidden)]
+pub fn read_asset(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let clutch = root.file_name().map_or_else(
+        || root.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let folder = root.join("assets");
+    let mut path = folder.clone();
+    for segment in name.split('/') {
+        let entries = fs::read_dir(&path)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !entries.iter().any(|entry| entry == segment) {
+            let lower = segment.to_lowercase();
+            return Err(
+                match entries.iter().find(|entry| entry.to_lowercase() == lower) {
+                    Some(entry) => format!(
+                        "no asset `{name}` in {clutch}: `{entry}` differs from `{segment}` only in case"
+                    ),
+                    None => format!("no asset `{name}` in {clutch}'s assets folder"),
+                },
+            );
+        }
+        path.push(segment);
+    }
+    let read_error =
+        |error: std::io::Error| format!("cannot read asset `{name}` in {clutch}: {error}");
+    let folder = fs::canonicalize(&folder).map_err(read_error)?;
+    let path = fs::canonicalize(&path).map_err(read_error)?;
+    if !path.starts_with(&folder) {
+        return Err(format!(
+            "asset `{name}` in {clutch} links outside its assets folder"
+        ));
+    }
+    let metadata = fs::metadata(&path).map_err(read_error)?;
+    if !metadata.is_file() {
+        return Err(format!("asset `{name}` in {clutch} is not a file"));
+    }
+    if metadata.len() > MAX_ASSET_BYTES {
+        return Err(format!(
+            "asset `{name}` in {clutch} is {} bytes, more than the {MAX_ASSET_BYTES}-byte limit",
+            metadata.len()
+        ));
+    }
+    fs::read(&path).map_err(read_error)
 }
 
 fn source_path(root: &Path, source: &str) -> Result<PathBuf, String> {
