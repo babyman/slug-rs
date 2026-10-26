@@ -408,25 +408,125 @@ fn executes_checked_bitwise_and_shift_bytecode() {
     assert_eq!(error.message, "shift count is out of range");
 }
 
+/// Runs `left operator right` as a standalone instruction, fused with a
+/// constant right operand, and fused with a local left operand.
+fn binary_forms(
+    left: &Value,
+    right: &Value,
+    operator: slug_vm::BinaryOperator,
+    op: &Op,
+) -> [Result<Value, slug_vm::RuntimeError>; 3] {
+    let run = |emit: &dyn Fn(&mut Chunk, usize, usize)| {
+        let mut main = Chunk::new("main", 0);
+        main.locals = 1;
+        let left = main.constant(left.clone());
+        let right = main.constant(right.clone());
+        emit(&mut main, left, right);
+        main.emit(Op::Return);
+        Vm::new().run(&program_with_main(main), 0)
+    };
+    [
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left))
+                .emit(Op::Constant(right))
+                .emit(op.clone());
+        }),
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left)).emit(Op::ConstantBinary {
+                constant: right,
+                operator,
+            });
+        }),
+        run(&|main, left, right| {
+            main.emit(Op::Constant(left))
+                .emit(Op::SetLocal(0))
+                .emit(Op::LocalConstantBinary {
+                    slot: 0,
+                    constant: right,
+                    operator,
+                });
+        }),
+    ]
+}
+
 #[test]
 fn reports_checked_integer_overflow() {
-    for (left, right, op) in [
-        (i64::MAX, 1, Op::Add),
-        (i64::MAX, 1, Op::AddNum),
-        (i64::MIN, 1, Op::SubtractNum),
+    use slug_vm::BinaryOperator as B;
+    for (left, right, operator, op) in [
+        (i64::MAX, 1, B::Add, Op::Add),
+        (i64::MAX, 1, B::AddNum, Op::AddNum),
+        (i64::MIN, 1, B::Subtract, Op::Subtract),
+        (i64::MIN, 1, B::SubtractNum, Op::SubtractNum),
+        (i64::MAX, 2, B::Multiply, Op::Multiply),
+        (i64::MIN, -1, B::MultiplyNum, Op::MultiplyNum),
     ] {
-        let mut main = Chunk::new("main", 0);
-        let left = main.constant(Value::Int(left));
-        let right = main.constant(Value::Int(right));
-        main.emit(Op::Constant(left))
-            .emit(Op::Constant(right))
-            .emit(op)
-            .emit(Op::Return);
-        let error = Vm::new()
-            .run(&program_with_main(main), 0)
-            .expect_err("integer overflow must remain checked");
-        assert_eq!(error.kind, RuntimeErrorKind::Type);
-        assert_eq!(error.message, "integer overflow");
+        for result in binary_forms(&Value::Int(left), &Value::Int(right), operator, &op) {
+            let error = result.expect_err("integer overflow must remain checked");
+            assert_eq!(error.kind, RuntimeErrorKind::Type);
+            assert_eq!(error.message, "integer overflow");
+        }
+    }
+}
+
+#[test]
+fn numeric_operators_keep_their_semantics_in_every_form() {
+    use slug_vm::BinaryOperator as B;
+    for (operator, op) in [(B::Multiply, Op::Multiply), (B::AddNum, Op::AddNum)] {
+        for result in binary_forms(&Value::Float(1e308), &Value::Float(1e308), operator, &op) {
+            let error = result.expect_err("non-finite results must remain checked");
+            assert_eq!(
+                error.message,
+                "numeric operation produced a non-finite number"
+            );
+        }
+    }
+    for (left, right, operator, op, expected) in [
+        (
+            Value::Int(2),
+            Value::Float(2.0),
+            B::Equal,
+            Op::Equal,
+            Value::Bool(true),
+        ),
+        (
+            Value::Float(2.5),
+            Value::Int(2),
+            B::Greater,
+            Op::Greater,
+            Value::Bool(true),
+        ),
+        (
+            Value::Int(3),
+            Value::Float(0.5),
+            B::Add,
+            Op::Add,
+            Value::Float(3.5),
+        ),
+        (
+            Value::Int(7),
+            Value::Int(-3),
+            B::Less,
+            Op::Less,
+            Value::Bool(false),
+        ),
+        (
+            Value::Float(1.5),
+            Value::Float(1.5),
+            B::Equal,
+            Op::Equal,
+            Value::Bool(true),
+        ),
+        (
+            Value::Int(6),
+            Value::Int(3),
+            B::BitXor,
+            Op::BitXor,
+            Value::Int(5),
+        ),
+    ] {
+        for result in binary_forms(&left, &right, operator, &op) {
+            assert_eq!(result.expect("numeric operation succeeds"), expected);
+        }
     }
 }
 
@@ -995,6 +1095,55 @@ fn rejects_missing_selected_callable_identity_in_private_bytecode() {
     assert_eq!(error.message, "selected callable identity does not exist");
 }
 
+fn selected_call_program(selected: usize) -> Program {
+    let mut answer = Chunk::new("answer", 0);
+    answer.callable_identity = Some(0);
+    let value = answer.constant(Value::Int(42));
+    answer.emit(Op::Constant(value)).emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 0,
+        captures: Vec::new(),
+    })
+    .emit(Op::CallSelected {
+        kinds: Vec::new(),
+        identity: selected,
+    })
+    .emit(Op::Return);
+
+    let mut program = ProgramBuilder::new();
+    program.add_chunk(answer);
+    program.add_chunk(main);
+    program.set_callable_identities(vec![
+        CallableIdentity::new("answer()"),
+        CallableIdentity::new("answer(x)"),
+    ]);
+    program.finish()
+}
+
+#[test]
+fn calls_a_closure_whose_identity_matches_the_selected_one() {
+    assert_eq!(
+        Vm::new()
+            .run_named(&selected_call_program(0), "main")
+            .unwrap(),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn rejects_a_selected_call_whose_live_callee_has_another_identity() {
+    let error = Vm::new()
+        .run_named(&selected_call_program(1), "main")
+        .expect_err("a different live callable must be rejected");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(
+        error.message,
+        "selected callable signature is no longer present in the live binding"
+    );
+}
+
 #[test]
 fn rejects_structurally_invalid_private_bytecode_before_execution() {
     let cases = [
@@ -1026,6 +1175,41 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             },
             "match stack count is too large",
         ),
+        (
+            Op::MatchCase {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: 0,
+                target: 2,
+            },
+            "jumps to missing instruction 2",
+        ),
+        (
+            Op::MatchCase {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: usize::MAX,
+                target: 1,
+            },
+            "match stack count is too large",
+        ),
+        (
+            Op::MatchLocals {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                operands: 0,
+                target: 1,
+            },
+            "local match pattern is not a list",
+        ),
+        (
+            Op::MatchLocals {
+                pattern: slug_vm::MatchPattern::List {
+                    items: vec![slug_vm::MatchPattern::Wildcard],
+                    rest: slug_vm::MatchRest::None,
+                },
+                operands: 0,
+                target: 1,
+            },
+            "local match pattern reads a missing local",
+        ),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);
@@ -1036,6 +1220,179 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
         assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
         assert!(error.message.contains(expected), "{}", error.message);
     }
+}
+
+/// Matches `subject` against `[a, b]`: a match returns `b`, the top binding,
+/// and a failure returns what the failure edge leaves, the subject alone.
+fn match_case_program(subject: Value) -> Program {
+    let mut main = Chunk::new("main", 0);
+    let subject = main.constant(subject);
+    main.emit(Op::Constant(subject))
+        .emit(Op::MatchCase {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![
+                    slug_vm::MatchPattern::Binding,
+                    slug_vm::MatchPattern::Binding,
+                ],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 3,
+        })
+        .emit(Op::Return)
+        .emit(Op::Return);
+    program_with_main(main)
+}
+
+/// Matches locals `[7, second]` against `[a, 8]`: a match returns `a`, and
+/// a failure jumps past it with nothing pushed.
+fn match_locals_program(second: i64) -> Program {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 2;
+    let first = main.constant(Value::Int(7));
+    let second = main.constant(Value::Int(second));
+    let missed = main.constant(Value::Str("missed".into()));
+    main.emit(Op::Constant(first))
+        .emit(Op::SetLocal(0))
+        .emit(Op::Constant(second))
+        .emit(Op::SetLocal(1))
+        .emit(Op::MatchLocals {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![
+                    slug_vm::MatchPattern::Binding,
+                    slug_vm::MatchPattern::Literal(Value::Int(8)),
+                ],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 6,
+        })
+        .emit(Op::Return)
+        .emit(Op::Constant(missed))
+        .emit(Op::Return);
+    program_with_main(main)
+}
+
+#[test]
+fn match_locals_tests_each_local_without_a_subject() {
+    assert_eq!(
+        Vm::new().run(&match_locals_program(8), 0).unwrap(),
+        Value::Int(7)
+    );
+    assert_eq!(
+        Vm::new().run(&match_locals_program(9), 0).unwrap(),
+        Value::Str("missed".into())
+    );
+}
+
+#[test]
+fn match_case_pushes_bindings_on_success_and_nothing_on_failure() {
+    let pair = Value::list(vec![Value::Int(7), Value::Int(8)]);
+    assert_eq!(
+        Vm::new().run(&match_case_program(pair), 0).unwrap(),
+        Value::Int(8)
+    );
+    let single = Value::list(vec![Value::Int(1)]);
+    assert_eq!(
+        Vm::new()
+            .run(&match_case_program(single.clone()), 0)
+            .unwrap(),
+        single
+    );
+}
+
+#[test]
+fn verifies_a_failed_match_case_jump_with_only_its_subject() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::MatchCase {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![slug_vm::MatchPattern::Binding],
+                rest: slug_vm::MatchRest::None,
+            },
+            operands: 0,
+            target: 3,
+        })
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("the failure edge carries no bindings");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("instruction 4 requires 1 stack values, has 0"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn rejects_a_constant_binary_without_its_constant_or_operand() {
+    let mut missing = Chunk::new("main", 0);
+    missing
+        .emit(Op::Nil)
+        .emit(Op::ConstantBinary {
+            constant: 0,
+            operator: slug_vm::BinaryOperator::Add,
+        })
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(missing), 0)
+        .expect_err("the operand constant does not exist");
+    assert!(
+        error
+            .message
+            .contains("references missing operand constant"),
+        "{}",
+        error.message
+    );
+
+    let mut empty = Chunk::new("main", 0);
+    let one = empty.constant(Value::Int(1));
+    empty
+        .emit(Op::ConstantBinary {
+            constant: one,
+            operator: slug_vm::BinaryOperator::Add,
+        })
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(empty), 0)
+        .expect_err("the operator has no left operand");
+    assert!(
+        error
+            .message
+            .contains("instruction 0 requires 1 stack values, has 0"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn verifies_a_global_call_against_its_arguments_alone() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::CallGlobal {
+            name: "f".into(),
+            count: 2,
+        })
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("the call has one of its two arguments");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("instruction 1 requires 2 stack values, has 1"),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

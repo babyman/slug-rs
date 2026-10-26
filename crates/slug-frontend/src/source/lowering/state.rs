@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{BinaryOperator, Capture, Chunk, Constant, Op, SourceSpan, Value};
+use slug_vm::{BinaryOperator, Capture, Chunk, Constant, MatchPattern, Op, SourceSpan, Value};
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
 /// `Local` is a slot of the enclosing function and a `Capture` is a slot of
@@ -105,11 +105,43 @@ impl State {
     }
     pub(super) fn emit(&mut self, op: Op, span: &SourceSpan) {
         if let Some(operator) = BinaryOperator::of(&op)
-            && self.fuse_local_constant(operator, span)
+            && (self.fuse_local_constant(operator, span) || self.fuse_constant(operator, span))
         {
             return;
         }
+        if matches!(op, Op::Pop) && self.drop_trailing_nil() {
+            return;
+        }
         self.chunk.emit_at(op, span.clone());
+    }
+    /// Removes a trailing `Nil` that a `Pop` would discard at once, the
+    /// value of a declaration or `defer` in statement position. A jump to the
+    /// `Pop` would arrive with a different value to discard, so none may
+    /// land there; a jump to the `Nil` lands on whatever follows instead.
+    fn drop_trailing_nil(&mut self) -> bool {
+        let end = self.chunk.code.len();
+        if self.last_jump_target >= end
+            || !matches!(
+                self.chunk.code.last().map(|instruction| &instruction.op),
+                Some(Op::Nil)
+            )
+        {
+            return false;
+        }
+        self.chunk.code.truncate(end - 1);
+        true
+    }
+    /// Removes the `GetGlobal` just emitted for a call's callee and returns
+    /// its name, so that `CallGlobal` reads the name after the arguments.
+    /// A jump to the `GetGlobal` lands on the arguments instead.
+    pub(super) fn take_trailing_global(&mut self) -> Option<String> {
+        let Some(Op::GetGlobal(name)) = self.chunk.code.last().map(|instruction| &instruction.op)
+        else {
+            return None;
+        };
+        let name = name.clone();
+        self.chunk.code.pop();
+        Some(name)
     }
     /// Replaces a trailing `GetLocal`, `Constant` pair with one
     /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or
@@ -142,6 +174,28 @@ impl State {
         self.chunk.emit_at(fused, span.clone());
         true
     }
+    /// Replaces a trailing `Constant` with one `ConstantBinary` applying
+    /// `operator` to the value under it, the shape of `buffer[i] == 10`. A
+    /// jump may land on the constant, which the fused instruction takes
+    /// over, but not on the operator.
+    fn fuse_constant(&mut self, operator: BinaryOperator, span: &SourceSpan) -> bool {
+        let Some(start) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > start {
+            return false;
+        }
+        let Op::Constant(constant) = self.chunk.code[start].op else {
+            return false;
+        };
+        if !matches!(self.chunk.constants.get(constant), Some(Constant::Value(_))) {
+            return false;
+        }
+        self.chunk.code.truncate(start);
+        self.chunk
+            .emit_at(Op::ConstantBinary { constant, operator }, span.clone());
+        true
+    }
     pub(super) fn constant(&mut self, value: Value) -> usize {
         self.chunk.constant(value)
     }
@@ -167,6 +221,42 @@ impl State {
         );
         index
     }
+    /// Emits a match of the value under `operands` that leaves the value on
+    /// the stack, pushes its bindings on success, and jumps on failure.
+    pub(super) fn match_case(
+        &mut self,
+        pattern: MatchPattern,
+        operands: usize,
+        span: &SourceSpan,
+    ) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(
+            Op::MatchCase {
+                pattern,
+                operands,
+                target: usize::MAX,
+            },
+            span,
+        );
+        index
+    }
+    pub(super) fn match_locals(
+        &mut self,
+        pattern: MatchPattern,
+        operands: usize,
+        span: &SourceSpan,
+    ) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(
+            Op::MatchLocals {
+                pattern,
+                operands,
+                target: usize::MAX,
+            },
+            span,
+        );
+        index
+    }
     pub(super) fn jump(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::Jump(usize::MAX), span);
@@ -179,7 +269,9 @@ impl State {
             Op::Jump(value)
             | Op::JumpIfFalse(value)
             | Op::JumpIfFalsePop(value)
-            | Op::JumpIfProvided { target: value, .. } => {
+            | Op::JumpIfProvided { target: value, .. }
+            | Op::MatchCase { target: value, .. }
+            | Op::MatchLocals { target: value, .. } => {
                 *value = target;
             }
             _ => unreachable!("only jump instructions are patched"),
@@ -307,6 +399,13 @@ impl State {
             return Some(binding);
         }
         self.lookup_outer(name)
+    }
+    /// The slot of a name bound to one of this function's locals.
+    pub(super) fn lookup_local(&self, name: &str) -> Option<usize> {
+        match self.scopes.iter().rev().find_map(|scope| scope.get(name))? {
+            Binding::Local { slot, .. } => Some(*slot),
+            _ => None,
+        }
     }
     /// Resolves a name from outside this function, capturing it on first use.
     fn lookup_outer(&mut self, name: &str) -> Option<Binding> {

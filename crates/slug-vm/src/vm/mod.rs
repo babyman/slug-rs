@@ -66,7 +66,8 @@ pub use installation::InstalledProgram;
 use operations::{
     add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
     is_map_key, list_append, list_prepend, map_key_error, matches_pattern, modulo, modulo_num,
-    multiply, multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
+    multiply, multiply_num, negate, numbers, numeric_binary, shift, slice_value, subtract,
+    subtract_num,
 };
 
 const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
@@ -277,9 +278,12 @@ enum ExecutionOutcome {
     Suspended,
 }
 
+/// What the dispatch loop does after an instruction. Jumps write the loop's
+/// instruction pointer instead, and a settled execution leaves its value on
+/// the stack, so the outcome carries no data and decodes with one compare.
 enum InstructionOutcome {
     Continue,
-    Settled(Value),
+    Settled,
 }
 
 #[derive(Clone)]
@@ -398,7 +402,6 @@ pub struct Vm {
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
     host_execution: Option<HostExecution>,
-    active_span: Option<SpanId>,
     /// Changes whenever the active frame may have changed or execution was
     /// suspended, so the dispatch loop knows to reload its cached code.
     frame_epoch: u32,
@@ -432,7 +435,6 @@ pub struct InteractiveExecution {
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
     host_execution: Option<HostExecution>,
-    active_span: Option<SpanId>,
 }
 
 /// A scheduler-owned interactive submission running in the shared VM.
@@ -571,7 +573,6 @@ impl Default for Vm {
             resume: None,
             wait_registration: None,
             host_execution: None,
-            active_span: None,
             frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -742,9 +743,6 @@ impl Vm {
         self.stack.push(entrypoint);
         self.stack.extend(arguments);
         let count = self.stack.len() - 1;
-        // The root call has no caller instruction; clear any span left by
-        // module initialization so `main` records no call site.
-        self.active_span = None;
         self.call(&program.program, count, None)?;
         self.run_root_execution()
     }
@@ -853,7 +851,6 @@ impl Vm {
         self.resume = execution.resume.take();
         self.wait_registration = execution.wait_registration.take();
         self.host_execution = execution.host_execution.take();
-        self.active_span = execution.active_span.take();
         (host_globals, host_imported)
     }
 
@@ -885,7 +882,6 @@ impl Vm {
             resume: self.resume.take(),
             wait_registration: self.wait_registration.take(),
             host_execution: self.host_execution.take(),
-            active_span: self.active_span.take(),
         }
     }
 
@@ -1479,7 +1475,7 @@ impl Vm {
     ///
     /// Returns a checked error when the entry is invalid or the program's
     /// private bytecode is malformed.
-    pub fn install(&mut self, program: Program, entry: usize) -> VmResult<InstalledProgram> {
+    pub fn install(&mut self, mut program: Program, entry: usize) -> VmResult<InstalledProgram> {
         #[cfg(feature = "metrics")]
         let verification_started = Instant::now();
         program
@@ -1498,6 +1494,7 @@ impl Vm {
             metrics.program_validations += 1;
             metrics.verification_time += verification_started.elapsed();
         }
+        program.share_string_constants();
         Ok(InstalledProgram {
             program: Rc::new(program),
             entry,
@@ -1668,8 +1665,8 @@ impl Vm {
         self.run_installed_execution(program)
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn reset_metrics(&mut self) {
-        self.active_span = None;
         #[cfg(feature = "metrics")]
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
     }
@@ -1951,21 +1948,26 @@ impl Vm {
             }
             let program = program.as_ref().expect("active program was loaded");
             let chunk = self.current_chunk(program)?;
+            // The instruction pointer stays in a local, so fetching the next
+            // instruction does not reload it through the frame. The frame's
+            // copy is kept current for calls and errors, and jumps write the
+            // local instead.
+            let code = chunk.code.as_slice();
+            let mut ip = self.frames.last().expect("active frame was checked").ip;
             loop {
-                let frame = self.frames.last_mut().expect("active frame was checked");
-                let ip = frame.ip;
-                let Some(instruction) = chunk.code.get(ip) else {
+                let Some(instruction) = code.get(ip) else {
                     return Err(self.missing_return(&chunk.name));
                 };
-                frame.ip = ip + 1;
+                ip += 1;
+                self.frames.last_mut().expect("active frame was checked").ip = ip;
                 #[cfg(feature = "metrics")]
                 {
                     self.metrics.borrow_mut().instructions_executed += 1;
                 }
-                self.active_span = instruction.span;
-                if let InstructionOutcome::Settled(value) =
-                    self.execute_instruction(program, chunk, instruction)?
+                if let InstructionOutcome::Settled =
+                    self.execute_instruction(program, chunk, instruction, &mut ip)?
                 {
+                    let value = self.pop_unresolved()?;
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
                 if self.frame_epoch != epoch {
@@ -1995,6 +1997,7 @@ impl Vm {
         program: &Program,
         chunk: &crate::bytecode::CompiledChunk,
         instruction: &PackedInstruction,
+        ip: &mut usize,
     ) -> VmResult<InstructionOutcome> {
         let operand = instruction.a as usize;
         match instruction.opcode {
@@ -2029,11 +2032,31 @@ impl Vm {
                 self.pop()?;
             }
             PackedOpcode::Duplicate => self.stack.push(self.peek()?.clone()),
+            // A direct local is read here rather than through a `VmResult`,
+            // which the push otherwise stages through memory. Captured and
+            // missing locals take the helpers.
             PackedOpcode::GetLocal if instruction.b == MOVE_LOCAL => {
-                let value = self.take_local(operand)?;
+                let value = match self
+                    .frames
+                    .last_mut()
+                    .and_then(|frame| frame.locals.get_mut(operand))
+                {
+                    Some(LocalSlot::Direct(value)) => core::mem::replace(value, Value::Nil),
+                    _ => self.take_local(operand)?,
+                };
                 self.stack.push(value);
             }
-            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand)?),
+            PackedOpcode::GetLocal => {
+                let value = match self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.locals.get(operand))
+                {
+                    Some(LocalSlot::Direct(value)) => value.clone(),
+                    _ => self.local_value(operand)?,
+                };
+                self.stack.push(value);
+            }
             PackedOpcode::SetLocal => {
                 let value = self.pop()?;
                 self.set_local(operand, value)?;
@@ -2128,12 +2151,27 @@ impl Vm {
                         #[cfg(feature = "metrics")]
                         &self.metrics,
                     )
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
+                    .map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
             }
             PackedOpcode::GetSlice => {
                 self.get_slice(instruction.a != 0, instruction.b != 0, instruction.c != 0)?;
             }
+            // Two numbers compute in place; anything else takes the owned arm below.
+            PackedOpcode::Add if self.numeric_in_place(BinaryOperator::Add) => {}
+            PackedOpcode::AddNum if self.numeric_in_place(BinaryOperator::AddNum) => {}
+            PackedOpcode::Subtract if self.numeric_in_place(BinaryOperator::Subtract) => {}
+            PackedOpcode::SubtractNum if self.numeric_in_place(BinaryOperator::SubtractNum) => {}
+            PackedOpcode::Multiply if self.numeric_in_place(BinaryOperator::Multiply) => {}
+            PackedOpcode::MultiplyNum if self.numeric_in_place(BinaryOperator::MultiplyNum) => {}
+            PackedOpcode::Equal if self.numeric_in_place(BinaryOperator::Equal) => {}
+            PackedOpcode::Greater if self.numeric_in_place(BinaryOperator::Greater) => {}
+            PackedOpcode::GreaterNum if self.numeric_in_place(BinaryOperator::GreaterNum) => {}
+            PackedOpcode::Less if self.numeric_in_place(BinaryOperator::Less) => {}
+            PackedOpcode::LessNum if self.numeric_in_place(BinaryOperator::LessNum) => {}
+            PackedOpcode::BitAnd if self.numeric_in_place(BinaryOperator::BitAnd) => {}
+            PackedOpcode::BitOr if self.numeric_in_place(BinaryOperator::BitOr) => {}
+            PackedOpcode::BitXor if self.numeric_in_place(BinaryOperator::BitXor) => {}
             PackedOpcode::Add => {
                 let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
@@ -2246,13 +2284,14 @@ impl Vm {
             PackedOpcode::LessNum => self.numeric_compare(cmp::Ordering::Less)?,
             PackedOpcode::GuardGreater => self.guard_compare(cmp::Ordering::Greater)?,
             PackedOpcode::GuardLess => self.guard_compare(cmp::Ordering::Less)?,
-            PackedOpcode::Jump => self.jump(operand)?,
+            PackedOpcode::Jump => *ip = operand,
             PackedOpcode::JumpIfFalse => {
                 if !self.peek()?.is_truthy() {
-                    self.jump(operand)?;
+                    *ip = operand;
                 }
             }
-            PackedOpcode::LocalConstantBinary => {
+            // One arm keeps a single `binary_values` call site in this loop.
+            PackedOpcode::LocalConstantBinary | PackedOpcode::ConstantBinary => {
                 let Some(crate::Constant::Value(right)) =
                     chunk.constants.get(instruction.b as usize)
                 else {
@@ -2261,20 +2300,40 @@ impl Vm {
                         format!("operand constant {} does not exist", instruction.b),
                     ));
                 };
+                let operator = BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
+                    .expect("validated binary operator");
+                // Numbers compute where they are, without cloning either
+                // operand or dispatching through the owned operations.
+                if instruction.opcode == PackedOpcode::ConstantBinary {
+                    if let Some(top) = self.stack.last_mut()
+                        && let Some(value) = numeric_binary(operator, top, right)
+                    {
+                        *top = value;
+                        return Ok(InstructionOutcome::Continue);
+                    }
+                } else if let Some(LocalSlot::Direct(left)) = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.locals.get(operand))
+                    && let Some(value) = numeric_binary(operator, left, right)
+                {
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Continue);
+                }
                 let right = right.clone();
-                let left = if instruction.c & MOVE_LOCAL_OPERAND == 0 {
+                let left = if instruction.opcode == PackedOpcode::ConstantBinary {
+                    self.pop()?
+                } else if instruction.c & MOVE_LOCAL_OPERAND == 0 {
                     self.local_value(operand)?
                 } else {
                     self.take_local(operand)?
                 };
-                let operator = BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
-                    .expect("validated binary operator");
                 let value = self.binary_values(operator, left, right)?;
                 self.stack.push(value);
             }
             PackedOpcode::JumpIfFalsePop => {
                 if !self.pop()?.is_truthy() {
-                    self.jump(operand)?;
+                    *ip = operand;
                 }
             }
             PackedOpcode::JumpIfProvided => {
@@ -2283,11 +2342,24 @@ impl Vm {
                     .last()
                     .is_some_and(|frame| frame.provided.is_provided(operand))
                 {
-                    self.jump(instruction.b as usize)?;
+                    *ip = instruction.b as usize;
                 }
             }
             PackedOpcode::Call => self.call(program, operand, None)?,
-            PackedOpcode::CallPositional => self.call_positional(program, operand)?,
+            // One call site keeps `call_positional` inlined here: a second
+            // caller changed this loop's code layout and slowed every call.
+            PackedOpcode::CallPositional | PackedOpcode::CallGlobal => {
+                let count = if instruction.opcode == PackedOpcode::CallGlobal {
+                    let count = instruction.b as usize;
+                    if self.call_global(program, GlobalNameId::new(instruction.a), count)? {
+                        return Ok(InstructionOutcome::Continue);
+                    }
+                    count
+                } else {
+                    operand
+                };
+                self.call_positional(program, count)?;
+            }
             PackedOpcode::CallSpread => {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
@@ -2315,6 +2387,24 @@ impl Vm {
                 instruction.b as usize,
                 instruction.c as usize,
             )?,
+            PackedOpcode::MatchCase => {
+                if !self.match_case(
+                    program,
+                    MatchPatternId::new(instruction.a),
+                    instruction.c as usize,
+                )? {
+                    *ip = instruction.b as usize;
+                }
+            }
+            PackedOpcode::MatchLocals => {
+                if !self.match_locals(
+                    program,
+                    MatchPatternId::new(instruction.a),
+                    instruction.c as usize,
+                )? {
+                    *ip = instruction.b as usize;
+                }
+            }
             PackedOpcode::MatchFailure => {
                 return Err(self.error_at(
                     RuntimeErrorKind::Match,
@@ -2330,7 +2420,8 @@ impl Vm {
                 if !self.leave_scope_without_cleanup()?
                     && let Some(value) = self.leave_scope_with_cleanup()?
                 {
-                    return Ok(InstructionOutcome::Settled(value));
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Settled);
                 }
             }
             PackedOpcode::Defer => self.defer(instruction.a)?,
@@ -2338,14 +2429,19 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                *ip = 0;
             }
-            PackedOpcode::RecurPositional => self.recur_positional(program, operand)?,
+            PackedOpcode::RecurPositional => {
+                self.recur_positional(program, operand)?;
+                *ip = 0;
+            }
             PackedOpcode::Return => {
                 let value = self.pop()?;
                 if let Err(value) = self.return_without_cleanup(value)
                     && let Some(value) = self.begin_return(value)?
                 {
-                    return Ok(InstructionOutcome::Settled(value));
+                    self.stack.push(value);
+                    return Ok(InstructionOutcome::Settled);
                 }
             }
         }
@@ -2353,8 +2449,11 @@ impl Vm {
     }
 
     /// Reads a global through the active closure's cached slot, resolving
-    /// and caching the slot by name on its first read.
-    #[inline]
+    /// and caching the slot by name on its first read. With `call_global` as
+    /// a second caller, `#[inline]` left it out of the dispatch loop, which
+    /// slowed every `GetGlobal`.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     fn global_value(&self, program: &Program, id: GlobalNameId) -> VmResult<Value> {
         let slot = self
             .frames
@@ -2453,6 +2552,11 @@ impl Vm {
             BinaryOperator::LessNum => {
                 Value::Bool(self.numeric_compare_values(left, right, cmp::Ordering::Less)?)
             }
+            BinaryOperator::BitAnd => bitwise(left, right, |a, b| a & b).map_err(fault)?,
+            BinaryOperator::BitOr => bitwise(left, right, |a, b| a | b).map_err(fault)?,
+            BinaryOperator::BitXor => bitwise(left, right, |a, b| a ^ b).map_err(fault)?,
+            BinaryOperator::ShiftLeft => shift(left, right, i64::checked_shl).map_err(fault)?,
+            BinaryOperator::ShiftRight => shift(left, right, i64::checked_shr).map_err(fault)?,
         })
     }
 
@@ -2979,6 +3083,96 @@ impl Vm {
         Ok(true)
     }
 
+    /// Matches the value under `operands` in place, leaving it on the stack.
+    /// A match pushes the pattern's bindings above it; a failure pushes
+    /// nothing.
+    fn match_case(
+        &mut self,
+        program: &Program,
+        pattern: MatchPatternId,
+        operands: usize,
+    ) -> VmResult<bool> {
+        let pattern = program
+            .match_pattern(pattern)
+            .expect("validated match pattern metadata");
+        let operands = self.pop_values(operands)?;
+        let value = self.pop()?;
+        let start = self.stack.len();
+        let mut list_views_created = 0;
+        let matched = matches_pattern(
+            pattern,
+            &value,
+            &operands,
+            &mut self.stack,
+            &mut list_views_created,
+        );
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
+        let matched = matched.map_err(|(kind, message)| self.error_at(kind, message))?;
+        if !matched {
+            self.stack.truncate(start);
+        }
+        // Bindings are few, so shifting them up past the value is cheap.
+        self.stack.insert(start, value);
+        Ok(matched)
+    }
+
+    /// Matches a list pattern's items against the active frame's first
+    /// locals, as `match_case` would against a list of them, without
+    /// building that list.
+    fn match_locals(
+        &mut self,
+        program: &Program,
+        pattern: MatchPatternId,
+        operands: usize,
+    ) -> VmResult<bool> {
+        let Some(crate::MatchPattern::List { items, .. }) = program.match_pattern(pattern) else {
+            unreachable!("validated local match pattern");
+        };
+        let operands = if operands == 0 {
+            Vec::new()
+        } else {
+            self.pop_values(operands)?
+        };
+        let start = self.stack.len();
+        let locals = &self.frames.last().expect("active frame was checked").locals;
+        let mut list_views_created = 0;
+        let mut matched = Ok(true);
+        for (item, local) in items.iter().zip(locals) {
+            let result = match local {
+                LocalSlot::Direct(value) => matches_pattern(
+                    item,
+                    value,
+                    &operands,
+                    &mut self.stack,
+                    &mut list_views_created,
+                ),
+                LocalSlot::Captured(cell) => matches_pattern(
+                    item,
+                    &cell.borrow(),
+                    &operands,
+                    &mut self.stack,
+                    &mut list_views_created,
+                ),
+            };
+            if !matches!(result, Ok(true)) {
+                matched = result;
+                break;
+            }
+        }
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
+        let matched = matched.map_err(|(kind, message)| self.error_at(kind, message))?;
+        if !matched {
+            self.stack.truncate(start);
+        }
+        Ok(matched)
+    }
+
     fn try_match(
         &mut self,
         program: &Program,
@@ -3067,21 +3261,33 @@ impl Vm {
 
     fn get_index_constant(&mut self, program: &Program, constant: usize) -> VmResult<()> {
         let collection = self.pop()?;
-        let Some(crate::Constant::Value(key)) =
-            self.current_chunk(program)?.constants.get(constant)
-        else {
+        let chunk = self.current_chunk(program)?;
+        let Some(crate::Constant::Value(key)) = chunk.constants.get(constant) else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("index constant {constant} does not exist"),
             ));
         };
+        let hint = chunk.index_hints.get(constant);
+        if let Value::Map(map) = &collection {
+            #[cfg(feature = "metrics")]
+            {
+                self.metrics.borrow_mut().collection_lookups += 1;
+            }
+            let value = hint
+                .map_or_else(|| map.get(key), |hint| map.get_hinted(key, hint))
+                .cloned()
+                .unwrap_or(Value::Nil);
+            self.stack.push(value);
+            return Ok(());
+        }
         let value = index_value(
             collection,
             key,
             #[cfg(feature = "metrics")]
             &self.metrics,
         )
-        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
+        .map_err(|(kind, message)| self.error_at(kind, message))?;
         self.stack.push(value);
         Ok(())
     }
@@ -3340,7 +3546,6 @@ impl Vm {
             resume: None,
             wait_registration: None,
             host_execution: None,
-            active_span: None,
             frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -3666,6 +3871,26 @@ impl Vm {
         }
     }
 
+    /// Whether `value` is the callable `selected` names, read without
+    /// building its runtime signature.
+    fn has_callable_identity(value: &Value, selected: &CallableIdentity) -> bool {
+        match value {
+            Value::Closure(closure) => {
+                closure.program.as_deref().and_then(|program| {
+                    program
+                        .chunk(closure.chunk)?
+                        .callable_identity
+                        .and_then(|identity| program.callable_identity(identity))
+                }) == Some(selected)
+            }
+            Value::DeclaredNative { declaration, .. } => &declaration.identity == selected,
+            Value::Binding { .. } => value
+                .resolve()
+                .is_ok_and(|value| Self::has_callable_identity(&value, selected)),
+            _ => false,
+        }
+    }
+
     fn callable_signatures(value: &Value) -> Option<Vec<CallableRuntimeSignature>> {
         match value {
             Value::Overloads(overloads) => overloads.iter().map(Self::callable_signature).collect(),
@@ -3776,10 +4001,7 @@ impl Vm {
             }
         } else {
             if let Some(selected) = selected
-                && Self::callable_signature(&callee)
-                    .and_then(|signature| signature.identity)
-                    .as_ref()
-                    != Some(selected)
+                && !Self::has_callable_identity(&callee, selected)
             {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
@@ -3847,6 +4069,41 @@ impl Vm {
         self.call(program, count, Some(provided))
     }
 
+    /// Starts a call of a module-level name whose `count` positional
+    /// arguments are on the stack, inserting the callee under them. It
+    /// enters an exact closure call itself and reports whether it did;
+    /// otherwise the caller finishes the call as `CallPositional`.
+    #[inline(never)]
+    fn call_global(&mut self, program: &Program, id: GlobalNameId, count: usize) -> VmResult<bool> {
+        let callee = self.global_value(program, id)?;
+        let base = self.stack.len().checked_sub(count).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+            )
+        })?;
+        let callee = match callee {
+            Value::Closure(closure) => {
+                match self.enter_positional_closure(program, closure, base, count)? {
+                    None => {
+                        #[cfg(feature = "metrics")]
+                        self.record_exact_positional_closure_call();
+                        return Ok(true);
+                    }
+                    Some(closure) => Value::Closure(closure),
+                }
+            }
+            callee => callee,
+        };
+        // Swapping the callee down under a call's few arguments is cheaper
+        // than `Vec::insert`'s `memmove`.
+        self.stack.push(callee);
+        for index in (base..self.stack.len() - 1).rev() {
+            self.stack.swap(index, index + 1);
+        }
+        Ok(false)
+    }
+
     /// Reports whether a positional call's callee is a native function, looking
     /// through a live binding without cloning it.
     ///
@@ -3900,32 +4157,46 @@ impl Vm {
             Value::Overloads(overloads) => selected.and_then(|selected| {
                 overloads.iter().find_map(|candidate| {
                     let candidate = candidate.resolve().ok()?;
-                    (Self::callable_signature(&candidate)
-                        .and_then(|signature| signature.identity)
-                        .as_ref()
-                        == Some(selected))
-                    .then_some(candidate)
+                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
                 })
             }),
             candidate => match selected {
                 None => Some(candidate),
-                Some(selected) => (Self::callable_signature(&candidate)
-                    .and_then(|signature| signature.identity)
-                    .as_ref()
-                    == Some(selected))
-                .then_some(candidate),
+                Some(selected) => {
+                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
+                }
             },
         };
         let Some(Value::Closure(closure)) = callee else {
             return Ok(false);
         };
+        Ok(self
+            .enter_positional_closure(program, closure, base, count)?
+            .is_none())
+    }
+
+    /// Enters `closure` with the `count` arguments at the top of the stack as
+    /// its locals, discarding the stack from `stack_base` when it returns.
+    /// It hands the closure back when the call needs generic argument
+    /// binding instead. Both callers are out of line, so inlining it into each
+    /// keeps an exact call to one function call.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn enter_positional_closure(
+        &mut self,
+        program: &Program,
+        closure: Rc<Closure>,
+        stack_base: usize,
+        count: usize,
+    ) -> VmResult<Option<Rc<Closure>>> {
+        let arguments = self.stack.len() - count;
         // Arguments move from the stack into the callee's locals. A live
         // module binding must be resolved first, which the general path does.
-        if self.stack[base + 1..]
+        if self.stack[arguments..]
             .iter()
             .any(|value| matches!(value, Value::Binding { .. }))
         {
-            return Ok(false);
+            return Ok(Some(closure));
         }
         let frame_program = closure
             .program
@@ -3940,7 +4211,7 @@ impl Vm {
                 )
             })?;
             if chunk.arity != count || !chunk.binds_full_positional_calls {
-                return Ok(false);
+                return Ok(Some(closure));
             }
             if chunk.locals < chunk.arity {
                 return Err(self.error_at(
@@ -3954,7 +4225,7 @@ impl Vm {
             chunk.locals
         };
         let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);
-        for (local, value) in locals.iter_mut().zip(self.stack.drain(base + 1..)) {
+        for (local, value) in locals.iter_mut().zip(self.stack.drain(arguments..)) {
             *local = LocalSlot::Direct(value);
         }
         self.record_frame_locals(locals.capacity(), count, reused);
@@ -3970,7 +4241,7 @@ impl Vm {
             closure,
             call_span: self.frame_call_span(),
             ip: 0,
-            stack_base: base,
+            stack_base,
             locals,
             provided: ProvidedArguments::All,
             scope_depth: 1,
@@ -3979,7 +4250,7 @@ impl Vm {
             cleanup_recovers: false,
             cleanup_owner_depth: None,
         });
-        Ok(true)
+        Ok(None)
     }
 
     fn pipeline_call(
@@ -4906,9 +5177,7 @@ impl Vm {
             let callee = callee
                 .resolve()
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
-            let identity =
-                Self::callable_signature(&callee).and_then(|signature| signature.identity);
-            if identity.as_ref() != Some(selected) {
+            if !Self::has_callable_identity(&callee, selected) {
                 continue;
             }
             let (arguments, provided) =
@@ -5131,28 +5400,32 @@ impl Vm {
     /// entered by the dispatch loop. The caller frame owns the corresponding
     /// program until this frame returns, so diagnostics can resolve it lazily.
     fn frame_call_span(&self) -> Option<CallSpan> {
-        self.active_span.map(CallSpan::Instruction)
+        let frame = self.frames.last()?;
+        Self::executing_span(frame).map(CallSpan::Instruction)
+    }
+
+    /// The span of the instruction `frame` is executing. The dispatch loop
+    /// stores `ip` past each instruction before running it, so the span is
+    /// looked up only when a diagnostic needs it.
+    fn executing_span(frame: &Frame) -> Option<SpanId> {
+        let index = frame.ip.checked_sub(1)?;
+        frame
+            .program
+            .chunk(frame.closure.chunk)?
+            .code
+            .get(index)?
+            .span
     }
 
     fn active_span(&self) -> Option<&SourceSpan> {
         let span = self
-            .active_span
-            .and_then(|span| self.frames.last()?.program.span(span));
+            .frames
+            .last()
+            .and_then(|frame| frame.program.span(Self::executing_span(frame)?));
         #[cfg(feature = "metrics")]
         if span.is_some() {
             self.metrics.borrow_mut().source_span_lookups += 1;
         }
         span
-    }
-
-    fn jump(&mut self, target: usize) -> VmResult<()> {
-        if self.frames.last().is_none() {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active call frame".into(),
-            ));
-        }
-        self.frames.last_mut().expect("active frame was checked").ip = target;
-        Ok(())
     }
 }

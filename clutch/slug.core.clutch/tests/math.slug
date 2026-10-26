@@ -32,3 +32,9 @@ val divRejectsZeroAndTheOneOverflow = fn() {
     assertEqual(failure(fn() { math.div(1, 0) }), ["math.domain", "div requires a non-zero divisor"])
     assertEqual(failure(fn() { math.div(MIN, -1) }), ["math.range", "integer division overflowed"])
 }
+
+@test
+val absOfTheMostNegativeIntegerOverflows = fn() {
+    assertEqual(math.abs(MIN + 1), 9223372036854775807)
+    assertEqual(failure(fn() { math.abs(MIN) }), ["math.range", "abs overflowed"])
+}

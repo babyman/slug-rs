@@ -5,17 +5,21 @@
 //! by that local uniquely owned, so `acc :+ x` appends in place instead of
 //! copying.
 //!
-//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, and `MakeClosure`
-//! touch local values. A
-//! closure keeps every slot live because its capture list is pooled
-//! metadata; a captured slot is a shared cell, which the VM clones rather
-//! than moves anyway. `Recur` assigns every local before it restarts, and
+//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, `MakeClosure`, and
+//! `MatchLocals` touch local values. A closure reads the local slots in its
+//! capture list, which keeps them live; once captured, a slot is a shared
+//! cell, which the VM clones rather than moves anyway. A closure whose
+//! capture list is missing keeps every slot live, and so does `MatchLocals`,
+//! which reads the first locals in place. `Recur` assigns every local before it restarts, and
 //! `Return`, `Throw`, `MatchFailure`, and `NotImplemented` leave the frame,
 //! so none of them has a live successor.
 
 use alloc::{vec, vec::Vec};
 
-use super::chunk::{PackedInstruction, PackedOpcode};
+use super::{
+    chunk::{PackedInstruction, PackedOpcode},
+    metadata::Capture,
+};
 
 /// Operand `b` of a `GetLocal` that moves its value out of the slot.
 pub(crate) const MOVE_LOCAL: u32 = 1;
@@ -33,7 +37,11 @@ const ANALYSIS_WORDS: usize = 4 * 1024 * 1024;
 ///
 /// A chunk whose bitsets would exceed [`ANALYSIS_WORDS`] keeps every flag
 /// clear: each read copies its local, which is always correct.
-pub(crate) fn mark_last_local_reads(code: &mut [PackedInstruction], locals: usize) {
+pub(crate) fn mark_last_local_reads(
+    code: &mut [PackedInstruction],
+    locals: usize,
+    capture_lists: &[Vec<Capture>],
+) {
     for instruction in code.iter_mut() {
         match instruction.opcode {
             PackedOpcode::GetLocal => instruction.b = 0,
@@ -56,7 +64,7 @@ pub(crate) fn mark_last_local_reads(code: &mut [PackedInstruction], locals: usiz
     loop {
         let mut changed = false;
         for index in (0..code.len()).rev() {
-            let live = live_before(code[index], index, &live_in, locals);
+            let live = live_before(code[index], index, &live_in, locals, capture_lists);
             if live != live_in[index] {
                 live_in[index] = live;
                 changed = true;
@@ -87,6 +95,7 @@ fn live_before(
     index: usize,
     live_in: &[Vec<u64>],
     locals: usize,
+    capture_lists: &[Vec<Capture>],
 ) -> Vec<u64> {
     let mut live = vec![0_u64; live_in[0].len()];
     let mut join = |target: usize| {
@@ -107,7 +116,7 @@ fn live_before(
             join(instruction.a as usize);
             join(index + 1);
         }
-        PackedOpcode::JumpIfProvided => {
+        PackedOpcode::JumpIfProvided | PackedOpcode::MatchCase | PackedOpcode::MatchLocals => {
             join(instruction.b as usize);
             join(index + 1);
         }
@@ -119,7 +128,20 @@ fn live_before(
         PackedOpcode::GetLocal | PackedOpcode::LocalConstantBinary if slot < locals => {
             live[slot / 64] |= 1 << (slot % 64);
         }
-        PackedOpcode::MakeClosure => live.fill(u64::MAX),
+        PackedOpcode::MakeClosure => match capture_lists.get(instruction.b as usize) {
+            Some(captures) => {
+                for capture in captures {
+                    if let Capture::Local(slot) = *capture
+                        && slot < locals
+                    {
+                        live[slot / 64] |= 1 << (slot % 64);
+                    }
+                }
+            }
+            None => live.fill(u64::MAX),
+        },
+        // Its pattern, which says how many locals it reads, is not at hand.
+        PackedOpcode::MatchLocals => live.fill(u64::MAX),
         _ => {}
     }
     live
@@ -144,9 +166,47 @@ mod tests {
             instruction(PackedOpcode::GetLocal, 0, 0, 0),
             instruction(PackedOpcode::Return, 0, 0, 0),
         ];
-        mark_last_local_reads(&mut code, 1);
+        mark_last_local_reads(&mut code, 1, &[]);
         assert_eq!(code[0].b, 0);
         assert_eq!(code[1].b, MOVE_LOCAL);
+    }
+
+    #[test]
+    fn a_failed_match_case_jump_keeps_its_target_reads_live() {
+        let mut code = [
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::MatchCase, 0, 3, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+        ];
+        mark_last_local_reads(&mut code, 1, &[]);
+        assert_eq!(code[0].b, 0);
+        assert_eq!(code[3].b, MOVE_LOCAL);
+    }
+
+    #[test]
+    fn a_closure_keeps_only_its_captured_locals_live() {
+        let mut code = [
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 1, 0, 0),
+            instruction(PackedOpcode::MakeClosure, 0, 0, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+        ];
+        mark_last_local_reads(&mut code, 2, &[vec![Capture::Local(1)]]);
+        assert_eq!(code[0].b, MOVE_LOCAL);
+        assert_eq!(code[1].b, 0);
+    }
+
+    #[test]
+    fn a_closure_without_capture_metadata_keeps_every_local_live() {
+        let mut code = [
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::MakeClosure, 0, 0, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+        ];
+        mark_last_local_reads(&mut code, 1, &[]);
+        assert_eq!(code[0].b, 0);
     }
 
     #[test]
@@ -159,7 +219,7 @@ mod tests {
             instruction(PackedOpcode::Return, 0, 0, 0),
         ];
         let locals = ANALYSIS_WORDS / code.len() * 64 + 64;
-        mark_last_local_reads(&mut code, locals);
+        mark_last_local_reads(&mut code, locals, &[]);
         assert_eq!(code[0].b, 0);
         assert_eq!(code[1].c & MOVE_LOCAL_OPERAND, 0);
         assert_eq!(code[2].b, 0);

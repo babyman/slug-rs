@@ -1678,3 +1678,810 @@ A microbenchmark of 3,000 `bytes[::2]` slices of 7,168 bytes and 3,000
 interleaved runs against `4c329a6`). No source workload uses stepped slices.
 Seven interleaved rounds against `4c329a6`: every workload inside its spread,
 tuned geomean 1.01x, hold-out 1.00x.
+
+## Map field lookups remember where they found their key
+
+A Crawl solution written by an agent ran `bot-106` in 42 s against a 40 s
+limit; the reference takes 9.9 s. It keeps its game state in maps: `g` has
+21 keys and `g.player` 16, below the 32 entries at which a map builds a hash
+index, so `g.player.x` scans about 18 keys. Each comparison went through
+`Value::eq` to a text comparison, because no two string constants shared an
+allocation, not even within one chunk. Key search was 9.3% of the run.
+
+Indexing every map (a threshold of 0) measured 1.00x: the comparisons fell
+from 12% to 4%, but hashing each lookup's key with the randomly keyed SipHash
+cost 5.5%. Hashing would pay only with each string's hash stored once, which
+needs one seed per process rather than per map; that remains an option for
+large maps and runtime keys.
+
+Two changes instead:
+
+- `Vm::install` makes equal string constants share one allocation across the
+  program, and `Str::eq` checks for the same pointer before comparing text.
+  A map key built from a literal and a lookup by a constant then usually
+  match by pointer.
+- Each compiled chunk keeps one hint per constant, the entry position where a
+  `GetIndexConstant` with that key last found it. Lowering gives each
+  occurrence of a key its own constant, so this is one hint per lookup site.
+  The lookup checks the hinted entry first and, when its key differs, falls
+  back to the full lookup and updates the hint.
+
+On `bot-106` (three interleaved runs, symbolized builds): sharing constants
+alone 0.967x, both 0.894x (42.93 to 38.38 s), with identical final state. The
+same hint for struct fields measured 0.960x on a loop of nothing but struct
+field reads and 1.00x on the Crawl reference, so it was dropped; resolving
+struct field positions at compile time, when the type is known, is the
+better option if struct access ever shows in a profile.
+
+`crawl-game` (the agent's solution playing the first 30 `bot-106` commands)
+joins the tuned real programs. Seven interleaved rounds against `1b4569d`:
+`crawl-game` 0.92x (912.0 to 839.1 ms), `tiny-interpreter` (hold-out) 0.94x,
+every other workload 0.97-1.02x within its spread; tuned geomean 0.99x,
+hold-out 0.98x.
+
+## Second look at suggested optimizations (2026-10-24)
+
+A batch of suggested optimizations was checked against the real-program
+workloads, using counters from a `metrics` build of `slug`
+(`SLUG_DUMP_METRICS`, see `docs/engineering/benchmarking.md`) before
+building anything.
+
+- Updating a uniquely owned list, `bytes`, map, or struct in place instead
+  of unwrapping and rewrapping its `Rc`. The inner buffer was already
+  reused; only the `Rc` allocation is saved. Prototyped: `invaders-game`
+  (1.1M unique-owner updates) 0.98x, every other workload within its spread.
+  Not kept.
+- A binder that writes generic call arguments straight into locals. Exact
+  positional calls are 94.5-99.99% of calls (`crawl-game` 253 generic of
+  2.9M, `invaders-game` 3%, `http-server` 5.5%), so the upper bound is below
+  1%. Not built.
+- Checking a selected call's identity without building its runtime
+  signature (`callable_signature` clones the identity and collects the
+  parameter shape on every `CallSelected` call). `function-call` 0.94x,
+  everything else within spread. Kept, as simpler code as well as faster.
+- A contiguous local-slot arena: the earlier upper bound of 1-2% stands.
+- Closure-aware last-read analysis: kept, below.
+
+The last-read analysis treated every local as live at each `MakeClosure`, so
+no read before a closure in the same pass could move. A loop that appends to
+its accumulator and then creates a closure copies the whole list on every
+iteration:
+
+```slug
+val build = fn(remaining, acc) {
+    if (remaining == 0) { len(acc) } else {
+        val next = acc :+ remaining
+        val scale = fn(x) { x * remaining }
+        recur(remaining - 1, next :+ scale(2))
+    }
+}
+```
+
+At 20,000 iterations it copied 400M elements and ran in 1.20 s. The analysis
+now reads the closure's capture list and keeps only its captured local slots
+live (a missing list still keeps every slot live): 0 elements copied, 0.02 s.
+No benchmark workload has this shape. Seven interleaved rounds against
+`ae51f93`: every workload 0.97-1.03x within its spread, tuned and hold-out
+geomean 1.00x.
+
+The tuned workload `closure-accumulate` now covers this shape: each step
+appends to its accumulator and then filters and reduces with closures.
+Against `ae51f93` (seven interleaved rounds): 648.1 to 70.5 ms (0.11x);
+against CPython 1.87x.
+
+## Statements push no discarded `nil` (2026-10-24)
+
+An opcode-pair counter over the tuned workloads, taken to bound
+compare-and-branch fusion, showed `Nil` followed by `Pop` at 8.9% of
+`defer-errors`' pairs, 5.7% of `word-frequency`'s, and 5.1% of
+`http-server`'s. Recording the source site of each such `Nil` found two
+shapes: a declaration or `defer` in statement position, whose `nil` value
+the block popped at once, and an `if` without `else` in statement position,
+whose false path pushed `nil` only to pop it, and whose true path jumped over
+that `nil`.
+
+- `State::emit` drops a trailing `Nil` instead of emitting a `Pop`, unless a
+  jump lands on the `Pop`; such a jump arrives with a value of its own.
+- Every non-final item of a block, a function body, or the top level is
+  compiled as a statement. An `if` without `else` there lowers to its
+  condition, a `JumpIfFalsePop` past the branch, the branch, and one `Pop`.
+
+Instructions dispatched: `defer-errors` -17.9%, `word-frequency` -11.4%,
+`http-server` -10.1%, `string-building` -7.8%, `invaders-game` -5.3%,
+`crawl-game` -3.4%, with identical output. Seven interleaved rounds against
+`19b72be` (a noisy run, spreads up to 31% on the smallest workloads):
+`http-server` and `defer-errors` 0.96x, `invaders-game` 0.98x, everything
+else within its spread; tuned geomean 0.99x, hold-out 1.00x. The removed
+instructions are the cheapest the VM has, so `word-frequency` held at 1.00x.
+
+## A local `val` binds without a pattern match (2026-10-24)
+
+While testing the statement change, a plain `val y = x + 1` in a function
+turned out to lower through the general pattern matcher: `TryMatch`,
+`JumpIfFalsePop`, `SetLocal`, `Jump`, plus a failure path of `Pop` and
+`MatchFailure` that a name can never reach. A name always matches, so a
+local one now lowers to `SetLocal` alone, which also skips the match's clone
+of the value. `SetLocal` resolves a module binding as it pops, as the match
+did, so `val early = a.from_a` still fails at the declaration when the
+binding is uninitialized. A top-level name keeps the match: `DefineGlobal`
+stores a binding unresolved, and top-level declarations run once.
+
+Instructions dispatched, against the statement change: `word-frequency`
+-19.3%, `string-building` -12.8%, `invaders-game` -7.0%, `http-server` -4.0%,
+`crawl-game` -2.3%. `higher-order` and `binary-trees` barely move: their
+`TryMatch` share is refutable `match` cases. Seven interleaved rounds against
+`0236431`: `word-frequency` 0.92x, `invaders-game` 0.95x, `string-building`
+and `function-call` 0.96x, `http-server` 0.97x, `crawl-game` 0.98x, with
+hold-outs `tiny-interpreter` 0.95x and `text-wrap` 0.98x; tuned and hold-out
+geomean 0.98x, no workload slower beyond its spread.
+
+## Match cases test their subject in place (2026-10-25)
+
+Each `match` case lowered to `Duplicate`, its pattern operands, `TryMatch`,
+and `JumpIfFalsePop`. On failure `TryMatch` pushed one `nil` per binding
+for the case's failure path to pop. A new `MatchCase { pattern, operands,
+target }` instruction (packed as pattern, target, operand count; the binding
+count comes from the pattern) pops the operands, matches the value under
+them without consuming it, and on success pushes the bindings above it. On
+failure it pushes nothing and jumps to `target`, the next case. The case
+loses its `Duplicate`, its branch, and its failure `Pop`s, and the subject
+is matched by move rather than through a clone.
+
+The verifier now gives each successor its own stack height: a failed match
+reaches its target with only the subject, while the next instruction has
+the bindings too. Last-read analysis treats the target as a successor.
+Destructuring declarations keep `TryMatch`, whose failure path ends in
+`MatchFailure` and so gains nothing.
+
+Instructions dispatched, against the local-`val` change: `higher-order`
+-15.1%, `binary-trees` and `fannkuch-redux` -13.6%, `crawl-game` -3.6%,
+`invaders-game` -2.4%, `http-server` -1.2%. Seven interleaved rounds against
+`60bb8ce`: `binary-trees` and `higher-order` 0.95x, `fannkuch-redux` 0.97x,
+`http-server` 0.98x, with hold-outs `expression-evaluator` and
+`tiny-interpreter` 0.93x; `shared-append`, which has no `match`, read 1.02x
+against a 1-2% spread. Tuned geomean 0.98x, hold-out 0.96x.
+
+## Conditions compile to branches (2026-10-25)
+
+A pair-count survey after `MatchCase` found conditions computed as values
+and then tested: `if (a && b)` kept `a` with `JumpIfFalse` and popped it on
+the true path, and `if (!c)`, `if (a != b)`, `a >= b`, and `a <= b` ran a
+`Not` before the branch. Together about 7.5% of `invaders-game`'s
+dispatches, 5.3% of `crawl-game`'s, and 3.4% of `http-server`'s.
+
+The compiler now lowers every `if` condition (value, tail, and statement
+forms) and every match guard through `branch`, which returns the jumps a
+condition takes when its truthiness equals a given value. `&&` and `||`
+become chained jumps, `!` flips which truthiness jumps, and `!=`, `>=`, and
+`<=` branch on `==`, `<`, and `>` themselves. An `if` whose whole condition
+is negated places its `else` branch first, so the negation costs nothing; a
+negation inside `&&` or `||` that must jump on a truthy value uses a
+`JumpIfFalsePop` over a `Jump`, which is never more work than the `Not` it
+replaces. No instruction was added. A test runs 19 conditions in five `if`
+forms and as a guard and checks each against the condition computed as a
+value.
+
+Instructions dispatched, against `bd8e484`: `invaders-game` -4.7%,
+`http-server` -2.9%, `crawl-game` -0.9%. Crawl's remaining shapes are
+`&&` chains returned as values by predicates (`inside`, `visible`, `free`),
+which keep the value lowering; when every operand is a comparison or a `!`
+the result is a bool, and a branch form pushing `true` or `false` would
+remove one `Pop` per operand. Seven interleaved rounds: `invaders-game` and
+`http-server` 0.98x, `graph-search` (hold-out) 0.98x, `crawl-game` 1.01x
+within a 1% spread (1.00x on a 15-round rerun), everything else within
+spread; tuned geomean 1.00x, hold-out 0.99x.
+
+### Rejected: boolean `&&` and `||` values as branches
+
+The follow-up lowered a value-context `&&` or `||` to jumps when its left
+operand is always a boolean (a comparison, a `!`, or a nested `&&`/`||` of
+those) and is negated or itself a `&&`/`||`; the deciding path pushed `true`
+or `false`. A plain comparison on the left kept the old lowering, which
+leaves its value with one fewer instruction on the short-circuit path.
+Instructions dispatched, against `c42d53c`: `crawl-game` -2.3%,
+`http-server` -2.1%, everything else under 0.1%. Time was 1.00x for every
+real program on seven and on fifteen interleaved rounds (tuned 1.00x,
+hold-out 0.99x): the removed `Pop` and `Not` are the cheapest instructions,
+and each path adds a `Jump` or a constant. Not kept.
+
+## Calls read module functions by name (2026-10-25)
+
+The pair-count survey's third target was a call of a module-level function:
+`GetGlobal`, the arguments, `CallPositional`. It was 13% of `fib`'s
+dispatches, 11% of `function-call`'s, and 10.5% of `binary-trees`'s. The new
+`CallGlobal` (appended; `a` is the global name, `b` the argument count) runs
+after the arguments and reads the name itself. An exact positional closure
+call moves the arguments into the frame with no callee on the stack, so the
+frame's stack base is the first argument. Any other callee is pushed and
+swapped down under the arguments and finishes as `CallPositional`.
+
+Reading the callee after its arguments is the same only when the arguments
+cannot rebind it. The compiler emits `CallGlobal` only when every argument
+is a literal, name, interpolation, list, index, or built-in operator, which
+run no Slug code. A call such as `g(g(n))` keeps the old shape for its outer
+call. Only one ordering can differ: when the name is uninitialized and an
+argument also fails, the argument's error is reported first. The callee
+must also be a function the module declares at top level (`val f = fn`).
+Natives such as `len` keep `CallPositional`, which calls them directly. Sent
+through `CallGlobal`, they made `text-wrap` and `http-server` 1.03x.
+
+The VM side was sensitive to code layout. Dispatch counts fell in every
+variant, but time did not:
+
+- Sharing the frame entry and inserting the callee with `Vec::insert` made
+  `fib` 0.92x but `crawl-game` 1.02x. A profile showed `global_value`,
+  `call_positional`, `call`, and `binary` called out of line from the
+  dispatch loop, where they had been inlined.
+- Inserting the callee and calling the unchanged `call_positional` made
+  `fib` 1.07x: the `memmove` cost more than the dispatch saved.
+- The kept form keeps one call site for `call_positional`, which the
+  `CallPositional` and `CallGlobal` arms share. `call_global` is
+  `#[inline(never)]`. `global_value` and the shared
+  `enter_positional_closure` are `#[inline(always)]`.
+
+Instructions dispatched, against `c42d53c`: `fib` -13.3%, `function-call`
+-11.1%, `binary-trees` -10.5%, `defer-errors` -6.1%, `string-building` and
+`word-frequency` -4.9% and -4.0%, real programs -0.5% to -1.6%. Seven
+interleaved rounds, twice: `function-call` 0.91-0.94x, `fib` 0.92-0.93x,
+`binary-trees` and `defer-errors` 0.93-0.95x, `closure-accumulate` 0.97x,
+`crawl-game` 0.98-0.99x, everything else within spread. Tuned 0.98x,
+hold-out 0.99x both times.
+
+## Constant right operands fuse with computed left ones (2026-10-25)
+
+`LocalConstantBinary` fuses `x - 1` only when the left operand is a local.
+The pair survey found `Constant` followed by a fusable operator on a
+computed left operand (`buffer[i] == 10`, `g.player.blind > 0`) in nearly
+every workload: at least 4.6% of `invaders-game`'s dispatches, 3.4% of
+`crawl-game`'s, and 6.6% of `spectral-norm`'s. The survey kept only each
+workload's top pairs, so these are lower bounds.
+
+`ConstantBinary` (appended; `b` is the constant, `c` the operator code)
+pops the left operand and applies the operator with the constant on the
+right. `State::emit` tries it after the local fusion. A jump may land on
+the constant, as at the end of `(if c { a } else { b }) - 2`, because the
+fused instruction takes its place and the jump arrives with the left
+operand on the stack. It shares the `LocalConstantBinary` dispatch arm so
+that `binary_values` keeps one call site in the loop (see the `CallGlobal`
+layout notes above). It applies the same operators: the bitwise
+operators are not fusable yet, so `invaders-game`'s `& 0xFF` (1.6% of
+dispatches) still runs `Constant`, `BitAnd`.
+
+Instructions dispatched, against `1ddbdd4`: `spectral-norm` -6.6%,
+`defer-errors` -6.5%, `string-building` -5.1%, `crawl-game` -3.7%,
+`invaders-game` -3.5%, `http-server` -2.7%, hold-outs -1.4% to -5.0%.
+Seven interleaved rounds: `invaders-game` and `http-server` 0.97x,
+`crawl-game` 0.98x, hold-outs 0.97-0.99x, tuned 0.99x, hold-out 0.98x. On
+fifteen rounds: `crawl-game` and `http-server` 0.96x, `invaders-game` 0.98x.
+The two `spectral-norm` variants read 0.98x and 1.03x within 7-9% spreads;
+they run in 7 ms, mostly startup.
+
+### Bitwise operators fuse too
+
+`BinaryOperator` gained `BitAnd`, `BitOr`, `BitXor`, `ShiftLeft`, and
+`ShiftRight`, appended so existing operator codes are unchanged. Both
+`LocalConstantBinary` and `ConstantBinary` apply them through the shared
+`bitwise` and `shift` helpers, so errors match the standalone instructions.
+Only `invaders-game` uses them with constants: -2.8% of its dispatches.
+Fifteen interleaved rounds against `13c58c9`: `invaders-game` 0.97x, then
+0.96x on a second run. `http-server` read 1.02x, then 1.00x on a rerun, and
+its instruction count is unchanged. Everything else was within spread;
+tuned and hold-out geomeans 1.00x.
+
+## Allocator and shared-list copies (2026-10-25)
+
+The desktop executable uses mimalloc (see
+[Use mimalloc in the desktop executable](../decisions/2026-10-25-desktop-allocator.md)).
+Profile-guided builds against `90a47cd`: tuned geomean 0.92x, hold-out
+0.89x, `shared-append` 1.24x.
+
+`shared-append` appends to a list whose previous version stays live, so
+`List::append` clones the shared vector at its exact length and pushes. The
+push grows the block. The macOS allocator extends a large block in place;
+mimalloc copies it, so each step copies the list twice. Copying once into a
+buffer with room for the value did not recover it. Under PGO, the copy loop
+alone decides the time: `Vec::clone` ran 1.0x, `extend_from_slice` 1.18x,
+and a push loop 1.39x against the double copy. All three clone each 24-byte
+value through the tag's jump table and increment heap reference counts, so
+no safe single-copy loop beats the one `Vec::clone` is compiled to.
+
+The fix is to not copy. A list whose range ends where its storage ends is
+the storage's tip: no other list sees the elements past it. Appending to a
+tip could push into the shared storage, because every other list keeps its
+own range. That is O(1) amortized for `shared-append`'s shape and keeps
+persistent semantics. It needs the storage to grow while shared, which
+`Rc<Vec<Value>>` cannot do without `unsafe`, so it belongs with the
+persistent-list representation work rather than a local change.
+
+## Python baseline: CPython 3.15 (2026-10-25)
+
+The `Slug / Python` ratios so far were measured against the macOS system
+CPython 3.9.6 and included process startup. CPython 3.11 through 3.15 made
+the interpreter much faster, and every source workload is short enough for
+startup to weigh heavily. The source runner now times a `startup` program
+pair and also reports each ratio with each runtime's `startup` median
+subtracted ("less startup"). It leaves the ratio out when either side does
+under 2 ms of work.
+
+Five Python twins (`string-building`, `word-frequency`, `text-wrap`,
+`graph-search`, and `expression-evaluator`) ran their loops at module level.
+That made every variable a dictionary lookup, and in CPython 3.15 it made
+`text += ...` on a module-level string quadratic: `string-building` took
+49 ms there and 2.2 ms inside a function. Their Slug versions run inside
+`main`, so the twins now do too. This changes only the reference side.
+
+Slug `439f5f4` (profile-guided, mimalloc) against python-build-standalone's
+CPython 3.15.1 (PGO, LTO, tail-call interpreter) and the system 3.9.6, 15
+samples each:
+
+| workload | Slug ms | 3.15 ms | whole | less startup | 3.9 less startup |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.0 | 10.8 | 0.28x | - | - |
+| function-call | 10.5 | 13.3 | 0.79x | 3.01x | 0.98x |
+| n-body | 5.7 | 12.3 | 0.47x | - | 0.90x |
+| typed-n-body | 5.9 | 12.2 | 0.48x | - | 1.18x |
+| spectral-norm | 4.2 | 11.6 | 0.36x | - | - |
+| typed-spectral-norm | 4.2 | 11.6 | 0.36x | - | - |
+| binary-trees | 14.6 | 15.1 | 0.97x | 2.74x | 1.13x |
+| fannkuch-redux | 34.2 | 17.8 | 1.92x | 4.45x | 2.57x |
+| shared-append | 59.0 | 58.2 | 1.02x | 1.18x | 1.68x |
+| higher-order | 31.1 | 16.6 | 1.88x | 4.91x | 3.09x |
+| closure-accumulate | 46.7 | 21.0 | 2.23x | 4.32x | 2.54x |
+| fib | 40.3 | 21.4 | 1.88x | 3.52x | 1.07x |
+| defer-errors | 41.1 | 20.4 | 2.01x | 3.97x | 2.36x |
+| word-frequency | 18.6 | 17.1 | 1.09x | 2.50x | 1.23x |
+| string-building | 8.3 | 14.2 | 0.58x | 1.56x | 1.10x |
+| expression-evaluator (hold-out) | 99.2 | 36.9 | 2.69x | 3.69x | 1.56x |
+| graph-search (hold-out) | 10.7 | 13.6 | 0.78x | 2.75x | 2.12x |
+| text-wrap (hold-out) | 44.1 | 18.1 | 2.43x | 5.63x | 2.49x |
+
+Findings:
+
+- Slug starts in 3.0 ms and CPython 3.15 in 10.8 ms. That alone wins every
+  short program as a whole process, and it is a real advantage for scripts
+  and tools.
+- With startup removed, Slug is slower than CPython 3.15 on every workload
+  that does enough work to measure: geometric mean 3.4x, against 1.7x for
+  3.9. The workloads Slug wins as whole processes win on startup alone.
+- The numeric workloads are too short to compare: CPython 3.15 does about
+  1.5 ms of work in `n-body` and Slug about 2.7 ms. Scale them before
+  claiming anything about numeric code.
+- The largest gaps are calls and closures: `higher-order` 4.9x,
+  `closure-accumulate` 4.3x, `fib` 3.5x, `function-call` 3.0x. They were
+  near parity with 3.9, which had no specializing interpreter and allocated
+  frames on the heap. CPython 3.11+ pushes frames inline in a contiguous
+  stack and specializes calls to Python functions. Per-call cost, not just
+  per-instruction dispatch, is what Stage 7 must measure.
+- `shared-append` (1.18x) is the closest, because both runtimes copy the list
+  on every step.
+
+## Stage 7 counting experiment (2026-10-25)
+
+Before building a register prototype, a counting build estimated how many
+dispatches a register VM would execute for the same programs. It recorded
+how often each instruction ran, then simulated each executed chunk's operand
+stack. Each stack slot was a register reference (a local, or a temporary in
+its own register above the locals) or a constant operand. Under that model:
+
+- Loads of locals and constants, `Pop`, `Duplicate`, and `SetLocal` of a
+  freshly computed value cost nothing.
+- Every other instruction costs one dispatch, plus one copy for each
+  operand a register machine would have to move:
+  - call arguments, which must sit in consecutive registers that become the
+    callee's frame;
+  - values on the stack at a jump to a join, which must land in the same
+    register on every path;
+  - a stored local that a value still on the stack reads;
+  - a `recur` argument whose parameter a later argument still reads.
+- Collection constructors and interpolation take any registers ("operand
+  lists"). Making them consecutive as well, as Lua does, adds under 1% on
+  the real programs and up to 13% on `higher-order` and
+  `closure-accumulate`.
+
+Compare-and-branch fusion is left out of both sides, because the stack VM
+could adopt it too. It would remove 4% to 11% of dispatches from the real
+programs, and 12% to 15% from `fib` and `n-body`.
+
+The experiment ran on `db8d968`. The patch was not committed. Time per
+instruction is the profile-guided build's median from the CPython 3.15
+report, less startup, divided by the stack dispatches:
+
+| workload | stack dispatches | register dispatches | of which copies | ns per instruction |
+|---|---:|---:|---:|---:|
+| invaders-game | 48.3M | 79% | 5% | 9.9 |
+| crawl-game | 54.7M | 80% | 9% | 10.8 |
+| http-server | 40.6M | 80% | 6% | 11.8 |
+| tiny-interpreter (hold-out) | 23.3M | 78% | 12% | 10.9 |
+| expression-evaluator (hold-out) | 7.9M | 73% | 17% | 12.2 |
+| fib | 4.1M | 100% | 8% | 9.0 |
+| function-call | 0.8M | 100% | 13% | 9.3 |
+| n-body | 0.4M | 75% | 0% | 6.8 |
+| fannkuch-redux | 3.4M | 65% | 17% | 9.2 |
+| higher-order | 2.6M | 62% | 14% | 11.0 |
+| closure-accumulate | 3.7M | 60% | 14% | 11.8 |
+| defer-errors | 2.9M | 92% | 18% | 13.3 |
+| shared-append | 0.1M | 92% | 31% | 538 |
+
+Findings:
+
+- A register VM would execute about 80% of today's dispatches on the real
+  programs. The literature's ~45% reduction for stack-to-register
+  translation started from a plain JVM stack machine. This one already fuses
+  the commonest local and constant operand patterns, which took much of that
+  saving.
+- Calls gain nothing. A call's arguments must be copied into the callee's
+  window either way: the stack VM's `GetLocal` becomes the register VM's
+  `MOVE`. `fib` and `function-call` run the same number of dispatches, and
+  `recur` adds copies where a later argument reads a parameter.
+- Slug spends 7 to 13 ns per instruction, even on `n-body`'s floating-point
+  loop. Run 40 times longer, `n-body` still takes 6.7 ns per instruction and
+  `fib(32)` 8.7 ns. CPython 3.15 runs the long `n-body` in 49 ms against
+  Slug's 107 ms, with more instructions: about 12 bytecodes per iteration
+  against Slug's 8. The gap is the cost of each instruction, not their number.
+  A symbolized profile puts the whole loop inside `Vm::execute`, not in calls
+  out of it.
+- Removing a dispatch has bought about a third of its share in time so far
+  (Nil/Pop and branch work). By that rate, a 20% reduction would be worth
+  roughly 0.93x on the real programs. That is less than PGO or the
+  allocator gave, for a rewrite of lowering, the verifier, the packed format,
+  and `.cslug`.
+
+Decision: keep the operand stack, and do not build a register prototype now.
+The next work is the per-instruction cost inside `Vm::execute`: the fetch
+and dispatch skeleton (frame lookup, instruction-pointer traffic through
+memory, span bookkeeping, the per-instruction outcome and epoch checks) and
+value clone and drop traffic. Revisit registers if that work brings the
+per-instruction cost near CPython's, since a 20% dispatch reduction would
+then be a larger share of what remains. Compare-and-branch fusion stays
+available to the stack VM.
+
+## Per-instruction cost: numbers in place (2026-10-25)
+
+The disassembly of the profile-guided `Vm::execute` showed what one
+instruction costs. `LocalConstantBinary` for `remaining == 0` made four
+indirect jumps: the opcode, a jump on the constant's `Value` tag to clone it,
+another on the local's tag to clone it, and one on the operator. Then it
+called `Value::eq` out of line with both operands in memory and dropped both
+clones. A `GetLocal` that moves its local passed the value through a
+`VmResult<Value>` temporary on the machine stack before pushing it.
+
+`numeric_binary` now applies an operator to two integers or two floats
+without taking either value. It declines integer overflow, non-finite
+results, and every other operand pair, all of which the owned operations
+still report or compute. The fused constant arm tries it first, on the local
+or the stack top in place. Each standalone `Add`, `Subtract`, `Multiply`,
+comparison, and bitwise arm has a guard arm that replaces the top two stack
+values in place. Nine interleaved rounds against `291635a`:
+
+| workload | ratio |
+|---|---:|
+| fib | 0.82x |
+| typed-n-body | 0.84x |
+| function-call | 0.86x |
+| invaders-game | 0.88x |
+| binary-trees | 0.92x |
+| text-wrap (hold-out) | 0.92x |
+| http-server | 0.93x |
+| crawl-game | 0.94x |
+| tiny-interpreter (hold-out) | 0.98x |
+| shared-append | 1.02x (spread 5%) |
+
+Tuned geomean 0.92x, hold-out 0.97x. The fused constant arm alone gave
+tuned 0.95x and hold-out 0.99x.
+
+Rejected: boxing `RuntimeError`'s details so that `VmResult` is small. The
+spills around `Result<Value, _>` temporaries were not caused by the error
+variant's size, and the boxed build ran tuned 1.02x, hold-out 1.03x, and
+`http-server` 1.07x, from layout changes.
+
+## Per-instruction cost: the fetch chain (2026-10-25)
+
+Instruction-level samples of `invaders-game` came from a stripped copy of
+the symbolized profile-guided build. It keeps the layout, and `sample`
+reports raw addresses for it. They put 43% of the samples on fetching the
+next instruction, which was a chain of dependent loads. Each instruction
+loaded `frames`' pointer and length, the frame, `frame.ip`, the code
+slice's pointer and length, the instruction, its opcode, and the jump
+table entry. The previous instruction's store of `ip + 1` was reloaded on
+the way.
+
+The loop now keeps `ip` and the code slice in locals. It still stores
+`ip + 1` to the frame before each handler, because calls, suspension, and
+errors read it there. That store is no longer on the next fetch's path.
+Jumps, failed `MatchCase`s, and `recur` restarts return
+`InstructionOutcome::Jump(target)` instead of writing the frame. A direct
+`GetLocal` is also read inline rather than through `local_value`'s
+`VmResult`, which the push staged through memory. Calls and returns already
+change `frame_epoch`, which reloads `ip` from the new frame.
+
+Against `3bed479`, five rounds: tuned 0.96x, hold-out 0.96x;
+`http-server` 0.91x, `invaders-game` 0.93x, `fib` 0.93x, `crawl-game`
+0.94x. The local `ip` alone gave tuned and hold-out 0.96x. Measured
+directly against it, the inline `GetLocal` gave 0.99x for both, and
+`http-server` 0.96x.
+
+Rejected: a hand-written `Value::clone` that copies numbers, booleans, and
+nil after one tag check and clones shared values out of line. Copying a
+list's elements then made a call per shared element. `shared-append` ran
+1.43x, and the tuned geomean lost the local `ip`'s gain.
+
+What remains per instruction, from the same samples:
+
+- The operand stack's length, pointer, and capacity live in the VM and go
+  through memory on every push and pop. Each instruction's push therefore
+  waits on the previous instruction's store of the length.
+- Every handler that reads a local, a capture, or a global first
+  re-derives the active frame from `frames`' pointer and length. Keeping
+  the active frame in its own field touches about 90 sites: calls, returns,
+  unwinding, and stack traces.
+- Each instruction stores its span, stores `ip` to the frame, decodes the
+  outcome, and checks `frame_epoch`: a few cheap operations each.
+
+## Per-instruction cost: the active frame (2026-10-25)
+
+Rejected: holding the active frame apart from its callers, so a handler
+reaches it at a fixed place in the VM instead of through `frames`' pointer
+and length. A `Frames` type with `Vec`'s interface held an
+`Option<Frame>` and a vector of callers. Of the roughly 60 sites that use
+`frames`, only the stack trace had to change.
+
+Against `07e2e4e`, seven rounds: tuned 1.01x, hold-out 1.00x; `fib`
+1.08x, `defer-errors` 1.10x, `binary-trees` 1.05x, and `invaders-game`,
+`crawl-game`, and `http-server` 1.01x. The instructions that read the
+frame gained nothing measurable. The pointer and length loads are
+independent, so re-deriving the frame adds one load to the chain, and out
+of order execution hides it. Calls paid for the change: a push copies the
+`Frame`, about 150 bytes, into place and its caller out to the vector, and
+a return copies both back, where one vector copy did before.
+
+The remaining per-instruction costs above are still open, the operand
+stack's length store first.
+
+## Per-instruction cost: the operand stack's length (2026-10-25)
+
+A measurement, not a change: how much of each instruction waits on the
+operand stack's length going through memory. Keeping the stack pointer in
+a register would take a redesign of most handlers, so the dispatch loop was
+perturbed instead. Before each instruction, it pushed `nil` onto a vector,
+passed the vector through `black_box`, and popped it again: two extra
+store-to-load round trips through that vector's length. In one build the
+vector was the operand stack, so the round trips sit on the chain the next
+push and pop follow. In the control it was a separate vector off that
+chain, so the build did the same work without the dependency.
+
+| comparison | tuned | hold-out | `invaders-game` | `crawl-game` | `http-server` |
+|---|---:|---:|---:|---:|---:|
+| control / `7be5a69` (5 rounds) | 1.05x | 1.08x | 1.10x | 1.09x | 1.08x |
+| operand stack / control (7 rounds) | 1.05x | 1.04x | 1.12x | 1.10x | 1.09x |
+
+The length is on the critical path. On the real programs, each round trip
+on it costs about 5% of the run, on top of what the same work costs off
+it. Today's hottest instructions (`GetLocal`, `Constant`, `GetGlobal`,
+`JumpIfFalsePop`, `SetLocal`) each make one such round trip, and a fused
+binary operator on the stack top in place makes none. Removing one per
+instruction is therefore worth up to about 5% on the real programs and
+less on the tuned set. That is an upper bound: an added delay shows up in
+full, but a removed one only helps until the next longest chain, such as
+the instruction fetch, sets the pace.
+
+The control's own cost is also informative. Roughly ten extra simple
+operations per instruction, none on a critical chain, cost 5–10%. Each
+instruction's remaining bookkeeping (storing its span and `ip`, decoding
+its outcome, checking `frame_epoch`) is therefore worth about as much per
+operation removed as the stack-length round trip, and it is far cheaper to
+change.
+
+## Per-instruction cost: span and outcome bookkeeping (2026-10-25)
+
+Two of the bookkeeping steps each instruction ran are gone.
+
+The dispatch loop stored each instruction's span in `active_span` before
+running it. The frame's `ip` already points one past the executing
+instruction, so diagnostics now look the span up from the active frame's
+chunk at `ip - 1` when they need it, and the field is gone. The lookup
+resolves in the active frame's program, as `active_span` did. An error
+raised just after a call or return pushed or popped a frame now reports
+the instruction that frame is executing instead of a span id from the
+other frame's program.
+
+`InstructionOutcome` carried a jump target and a settled `Value`. Packed
+with `VmResult`'s error into one tag shared with `Value`'s discriminants,
+it cost about a dozen instructions at the end of every handler: setting
+the tag, moving the jump target through a vector register, and decoding
+both with a chain of compares and selects. Jumps now write the dispatch
+loop's `ip` through a `&mut usize`, which stays in a register because
+`execute_instruction` is inlined into its one call site. A settled
+execution leaves its value on the stack for the loop to pop. The outcome
+is `Continue` or `Settled`, and the common handler tail is a single bit
+test, the `frame_epoch` check, and the branch back.
+
+Against `b9fad4c`, seven rounds: the span alone gave tuned and hold-out
+0.99x. Both gave tuned 0.98x, hold-out 0.97x; `invaders-game` and
+`crawl-game` 0.96x, `http-server` 0.98x, `tiny-interpreter` 0.96x.
+
+What the handler tails still show:
+
+- A push of a computed value goes through a tail shared by many handlers,
+  which reassembles the 24-byte `Value` from a tag byte, seven unaligned
+  payload bytes, and two words, with a round trip through the native
+  stack.
+- The instruction's `a` operand is spilled to the native stack on every
+  dispatch.
+- The `frame_epoch` check loads and compares on every instruction. Calls,
+  returns, cleanup, and native callbacks all change frames, so replacing
+  it with an outcome would need every such path to report one.
+
+## Per-instruction cost: a word-sized value tag (2026-10-25)
+
+The push tail that many handlers share stored a computed `Value` as a tag
+byte, seven payload bytes in three partial stores (`stur`, `sturh`,
+`strb`), and two words, with the seven bytes staged through the native
+stack. Only `Bool` and `Builtin` keep a payload in bytes 1–7, but every
+copy of every value carried them, including the clone in `GetLocal`.
+
+`Value` is now `#[repr(u64)]` on 64-bit targets. The tag fills the first
+word and every payload starts at the next, so a copy is three word moves:
+`GetLocal`'s copy of an `Int` is one load pair and two stores into the
+stack slot. Partial stores in `Vm::execute` went from 17 to 5. The payloads
+are word-aligned there already, so `Value` stays 24 bytes and
+`Option<Value>` still uses a spare tag. On the ESP32-S3 a word tag would
+grow `Value` from 16 bytes to 24, since some 32-bit payloads need 12 bytes
+after the tag, so 32-bit targets keep the default layout.
+
+Against `db3ee9e`, nine rounds: tuned 0.93x, hold-out 0.91x;
+`function-call` 0.89x, `fib` 0.90x, `invaders-game` and `http-server`
+0.92x, `crawl-game` 0.94x, `tiny-interpreter` 0.91x. `shared-append` ran
+0.93x, because copying a list copies its elements as words too.
+
+Tried with it: `GetLocal` and `GetCapture` copying `Int`, `Float`, and
+`Bool` after plain compares, before the derived `clone`'s jump on the tag.
+Measured against the word tag alone, it gave tuned 1.00x, hold-out 0.99x,
+and the real programs 0.99x, inside the spread, so it was dropped.
+
+## Python baseline after the per-instruction round (2026-10-25)
+
+Slug `f85517a` (profile-guided, mimalloc) against the same CPython 3.15.1,
+15 samples each. The earlier columns are the `439f5f4` table above.
+
+| workload | Slug ms | 3.15 ms | less startup | at `439f5f4` | change |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.2 | 11.6 | - | - | - |
+| function-call | 7.8 | 14.5 | 1.56x | 3.01x | 0.52x |
+| binary-trees | 12.0 | 16.1 | 1.92x | 2.74x | 0.70x |
+| fannkuch-redux | 27.7 | 18.4 | 3.59x | 4.45x | 0.81x |
+| shared-append | 57.3 | 58.5 | 1.15x | 1.18x | 0.97x |
+| higher-order | 24.4 | 16.5 | 4.27x | 4.91x | 0.87x |
+| closure-accumulate | 38.0 | 20.9 | 3.72x | 4.32x | 0.86x |
+| fib | 26.7 | 21.8 | 2.30x | 3.52x | 0.65x |
+| defer-errors | 34.3 | 21.6 | 3.09x | 3.97x | 0.78x |
+| word-frequency | 16.2 | 17.8 | 2.07x | 2.50x | 0.83x |
+| string-building | 7.3 | 14.8 | 1.27x | 1.56x | 0.81x |
+| expression-evaluator (hold-out) | 87.3 | 38.5 | 3.12x | 3.69x | 0.85x |
+| graph-search (hold-out) | 8.9 | 14.4 | 2.01x | 2.75x | 0.73x |
+| text-wrap (hold-out) | 35.6 | 19.0 | 4.33x | 5.63x | 0.77x |
+
+With startup removed, the geometric mean over these 13 workloads went from
+3.1x to 2.4x slower than CPython 3.15: tuned 2.9x to 2.3x, hold-out 3.9x to
+3.0x. (The 3.4x quoted above, recomputed from that table's own column, is
+3.1x.) CPython's startup ran 11.6 ms this time against 10.8 ms before, so
+the machine was a few percent slower for both runtimes; the ratios cancel
+most of it. The numeric workloads are still too short to compare.
+
+As whole processes, the real programs ran 0.75x as long as at `439f5f4`
+(`invaders-game`), 0.83x (`crawl-game`), 0.72x (`http-server`), and 0.85x
+(`tiny-interpreter`).
+
+What the gaps say now:
+
+- Plain calls closed the most: `function-call` 1.6x and `fib` 2.3x, from
+  3.0x and 3.5x. Fused global calls, numbers in place, and the word tag
+  all land on them.
+- Closures and higher-order calls closed the least: `higher-order` 4.3x,
+  `closure-accumulate` 3.7x. Both spend their time in `slug.std`'s `map`,
+  `filter`, and `reduce`, which are Slug functions. Each element runs a
+  `[h, ...t]` match through the general `matches_pattern`, which builds
+  its bindings and a list view for the tail, then an append to the
+  accumulator and a call to the closure value. A compiled list pattern for
+  the head-and-rest shape, or inlining the combinators' closures, would
+  cut that path; the per-instruction skeleton is a small part of it.
+- `fannkuch-redux` (3.6x) also runs on `[head, ...tail]` matches and
+  appends, and `text-wrap` (4.3x) on string indexing, map lookups, and
+  string concatenation and interpolation. Neither was profiled this round.
+- `shared-append` is at parity because both runtimes copy the list on
+  every step; append-to-tip storage would put Slug ahead.
+
+## Parameter matches read their parameters in place (2026-10-25)
+
+`fn(vs, f, acc) match { ... }` with more than one parameter is parsed as a
+`match` on the list literal `[vs, f, acc]`. Every call therefore built that
+list, matched it through the general `matches_pattern` (the list pattern,
+then the item patterns inside it), shifted the bindings up past it with
+`Vec::insert`, and popped it. `slug.std`'s `map`, `filter`, and `reduce`
+are written this way, so `higher-order` built 110,763 three-element lists
+and ran about 21 instructions per element.
+
+`MatchLocals` (`a` pattern, `b` failure target, `c` operands) matches a
+list pattern's items against the frame's first locals, item `i` against
+local `i`, and pushes the bindings or jumps; there is no subject on the
+stack. The compiler emits it when a `match` subject is a list literal whose
+elements name locals `0, 1, ...` in order, and every case is a list
+pattern of a length that can match, without a rest binding, and
+constrained at most to being a list. Otherwise the whole match keeps the
+general form, so a case such as `[x, ...more]` still builds the list. The
+last-read analysis does not see patterns, so it treats `MatchLocals` as
+reading every local. In a function's `match` body it is the first
+instruction, so that blocks no moves; a later `match [a, b]` on the first
+locals keeps the reads before it as copies.
+
+Counts: `higher-order` built 41 lists instead of 110,763 and ran 2.00M
+instructions instead of 2.56M; `closure-accumulate` 2.90M instead of
+3.70M. `fannkuch-redux` matches single values, so it is unchanged.
+
+Against `e384c24`, seven rounds: tuned 0.96x, hold-out 1.01x;
+`higher-order` 0.75x, `closure-accumulate` 0.74x, `crawl-game` 0.93x
+(it maps and filters through `slug.std`). `invaders-game` and
+`tiny-interpreter` came in at 1.02x there and at 0.99x in a nine-round
+rerun of the affected and unaffected programs, which gave `higher-order`
+0.74x, `closure-accumulate` 0.73x, and `crawl-game` 0.90x. Neither uses a
+parameter match, so both readings are layout noise.
+
+Each element of `map` still runs a `[h, ...t]` match through the general
+matcher, which creates a list view for `t`, plus the append and the
+closure call. A specialized head-and-rest test, or calling a closure
+argument without the general call path, is the next step on these
+workloads.
+
+### Plain list items skip the recursive match
+
+`matches_pattern`'s list arm cloned the matched `List` (a reference-count
+round trip) and recursed for every item. It now matches the borrowed list,
+and pushes a `Binding` item or skips a `Wildcard` without recursing; other
+items still recurse. Against `12fee82`, seven rounds: tuned 0.99x,
+hold-out 1.01x; `higher-order` 0.97x, `closure-accumulate` 0.98x,
+`fannkuch-redux` 0.99x, the rest within the spread.
+
+The matcher was not most of the cost. Before the change it held 9% of
+`higher-order`'s samples, as much as `call_positional_closure`.
+Instruction-level samples now put the largest shares on the dispatch jump
+(9%) and the moving `GetLocal` with its `frame_epoch` check (about 15%):
+each `map` element costs its roughly 14 instructions plus the closure
+call. The levers left on these workloads are fewer instructions per
+element, such as `MatchLocals` writing its bindings straight into their
+slots instead of pushing them for `SetLocal`s, and a cheaper call of a
+closure value.
+
+## Shared list copies, and two small follow-ups (2026-10-25)
+
+A temporary split of `collection_elements_copied` by operation showed what
+the real programs copy when they update a shared collection:
+
+| workload | shared copies |
+|---|---|
+| `invaders-game` | `bytes + bytes`: 76M bytes |
+| `crawl-game` | `bytes + bytes` 72M bytes, byte append 24M bytes, list append 1.8M values, `map + map` 1.9M entries |
+| `http-server` | about 0.5M bytes in all |
+| `tiny-interpreter` | `list + list` 0.4M values, `map + map` 0.16M entries |
+| `fannkuch-redux` | list append 74k values |
+
+The large counts are bytes, copied with `memcpy`: about 10 ms per program.
+Shared list copies are a few million values at most, and no native updates
+a list in place, so the counters cover all of them. A persistent vector
+would make the 3M list lookups in `invaders-game` and the 6.7M in
+`crawl-game` walk a tree, give up constant-time `[h, ...t]` views, and
+replace `List`'s slice interface, to speed up `shared-append`, which copies
+on purpose and is at parity with CPython. Not worth it now.
+
+The split turned up `List::prepend` copying every list into a new vector,
+even one nothing else held. A uniquely owned list now drops what lies
+outside its range and shifts its own storage once; a shared one is still
+copied once. It was measured only together with the change below, and
+the pair was within the spread everywhere.
+
+Rejected: `MatchLocals` storing its bindings in their locals itself, so
+no `SetLocal`s follow it. The operand count and first binding slot shared
+operand `c`, 16 bits each. It cut `higher-order` from 2.00M instructions
+to 1.76M and its time by about 1% (eleven rounds against `a50f21d`:
+`higher-order` 0.99x, `closure-accumulate` 1.00x, the rest 0.98–0.99x).
+`SetLocal` is a short, predictable handler; removing dispatches pays only
+when the removed handlers do real work, as with the value-context booleans
+earlier. The packed operand was not worth that.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs a coding agent, Codex or Claude Code, headless on Slug tasks and records
 one JSON line per run. The `python` arm implements a project in Python
-instead, as a control, for projects that ship checks.json and python/task.md.
+instead, as a control, for projects that ship python/task.md and checks.json
+(or python/cases.json).
 
     python3 eval/agent/harness/run.py plan --arms baseline,json --repeats 3
     python3 eval/agent/harness/run.py run --arms baseline,json --repeats 3 --yes
@@ -48,11 +49,13 @@ RESULTS = EVAL / "results"
 REVIEW_KINDS = ["filesystem", "stdin", "database", "configuration", "native", "dynamic_import"]
 
 # Each Slug arm is one combination of the three features under test. The
-# `python` arm writes the project in Python, with none of them.
+# `testing` arm is `fixes` plus a guide to testing a program in one process.
+# The `python` arm writes the project in Python, with none of them.
 ARMS = {
     "baseline": {"diagnostics": "text", "fixes": "off", "report": "off"},
     "json": {"diagnostics": "json", "fixes": "off", "report": "off"},
     "fixes": {"diagnostics": "json", "fixes": "on", "report": "off"},
+    "testing": {"diagnostics": "json", "fixes": "on", "report": "off", "testing": "on"},
     "report": {"diagnostics": "text", "fixes": "off", "report": "on"},
     "python": {"diagnostics": "text", "fixes": "off", "report": "off", "language": "python"},
 }
@@ -88,6 +91,7 @@ JSON_DOCS = [
     "docs/reference/value-json.md",
 ]
 REPORT_DOCS = ["docs/reference/capability-report.md"]
+TESTING_DOCS = ["docs/language/testing.md"]
 # Library modules a project asks agents to write, with their source files,
 # withheld from that project's documentation and install so its agents do not
 # find one ready-made: `slug.fmt.json` is the JSON project's chosen solution,
@@ -197,6 +201,12 @@ ARM_NOTES = {
         "slug-docs/diagnostics.md. A diagnostic's `fixes` are edits that are\n"
         "safe to apply.\n"
     ),
+    "testing": (
+        "\n`slug` reports errors as JSON diagnostics, described in\n"
+        "slug-docs/diagnostics.md. A diagnostic's `fixes` are edits that are\n"
+        "safe to apply. slug-docs/testing.md shows how to test a program's\n"
+        "logic in one `slug` run.\n"
+    ),
     "report": (
         "\n`slug report <file>` prints a JSON capability report of what a\n"
         "program can touch, described in slug-docs/capability-report.md.\n"
@@ -227,7 +237,7 @@ def plan(arguments):
             # for review. Skipping the other pairings keeps runs informative.
             if kind in ("coding", "project") and arm == "report":
                 continue
-            if kind == "review" and arm in ("json", "fixes"):
+            if kind == "review" and arm in ("json", "fixes", "testing"):
                 continue
             if arm == "python" and not (kind == "project" and projects.supports_python(directory)):
                 continue
@@ -253,6 +263,11 @@ def prepare_workspace(run, run_temp):
     if language(run) == "python":
         workspace.mkdir()
         shutil.copyfile(PROJECTS / run["task"] / "python" / "task.md", workspace / "spec.md")
+        provided = PROJECTS / run["task"] / "python" / "workspace"
+        if provided.is_dir():
+            for source in provided.iterdir():
+                if source.is_file():
+                    shutil.copyfile(source, workspace / source.name)
         return workspace
     docs = workspace / "slug-docs"
     docs.mkdir(parents=True)
@@ -261,6 +276,8 @@ def prepare_workspace(run, run_temp):
         paths += JSON_DOCS
     if ARMS[run["arm"]]["report"] == "on":
         paths += REPORT_DOCS
+    if ARMS[run["arm"]].get("testing") == "on":
+        paths += TESTING_DOCS
     for path in paths:
         shutil.copyfile(REPO / path, docs / Path(path).name)
     for source, target in LIBRARY_SOURCES:
@@ -796,7 +813,7 @@ def command_run(arguments):
                 status = "pass" if record["passed"] else "FAIL"
                 session = session_of(record)
                 print(f"{status} {record['task']} {record['arm']} #{record['repeat']} "
-                      f"turns={session.get('num_turns')} slug_runs={record['slug_runs']} "
+                      f"turns={session.get('num_turns')} "
                       f"output_tokens={(session.get('usage') or {}).get('output_tokens')} "
                       f"cost={session.get('total_cost_usd')}")
     finally:
@@ -856,7 +873,11 @@ def summarize(path):
     def show(value, digits=1):
         return "-" if value is None else f"{value:.{digits}f}"
 
-    print(f"{'agent':6} {'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'score':>6} {'turns':>6} {'slug':>5} {'fails':>5} {'out_tok':>8} {'cost':>7} {'secs':>6}")
+    # The headline compares arms, so it counts only what means the same in
+    # every language: turns, shell commands, and tokens. `slug_runs` counts
+    # processes, and a Slug test suite that runs one process per check counts
+    # dozens where a Python suite counts one, so it is shown apart.
+    print(f"{'agent':6} {'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'score':>6} {'turns':>6} {'cmds':>5} {'in_tok':>9} {'out_tok':>8} {'cost':>7} {'secs':>6}")
     for (agent, kind, arm), items in sorted(groups.items()):
         sessions = [session_of(item) for item in items]
         usage = [session.get("usage") or {} for session in sessions]
@@ -865,11 +886,18 @@ def summarize(path):
             f"{sum(item['passed'] for item in items) / len(items):>5.0%} "
             f"{show(mean([item.get('score') for item in items]), 2):>6} "
             f"{show(mean([session.get('num_turns') for session in sessions])):>6} "
-            f"{show(mean([item['slug_runs'] for item in items])):>5} "
-            f"{show(mean([item['slug_failures'] for item in items])):>5} "
+            f"{show(mean([sum((session.get('tool_calls') or {}).values()) for session in sessions])):>5} "
+            f"{show(mean([u.get('input_tokens') for u in usage]), 0):>9} "
             f"{show(mean([u.get('output_tokens') for u in usage]), 0):>8} "
             f"{show(mean([session.get('total_cost_usd') for session in sessions]), 3):>7} "
             f"{show(mean([item['wall_seconds'] for item in items])):>6}"
+        )
+    print(f"\n{'runtime':6} {'kind':7} {'arm':9} {'program runs':>12} {'failed':>6}")
+    for (agent, kind, arm), items in sorted(groups.items()):
+        print(
+            f"{agent:6} {kind:7} {arm:9} "
+            f"{show(mean([item['slug_runs'] for item in items])):>12} "
+            f"{show(mean([item['slug_failures'] for item in items])):>6}"
         )
     codes = collections.Counter(code for record in records for code in record["codes"])
     if codes:

@@ -120,19 +120,24 @@ SOURCES = [
     "((a + 1) * (b + 2) * (c + 3)) / (1 + 2 * 3) + x - y",
 ]
 
-programs = [parse(source) for source in SOURCES]
-parsed = sum(len([parse(source) for source in SOURCES]) for _ in range(300))
-total = 0
-for remaining in range(5_000, 0, -1):
-    env = {
-        "a": remaining % 7,
-        "b": remaining % 11,
-        "c": remaining % 13,
-        "x": remaining % 17,
-        "y": remaining % 19,
-    }
-    subtotal = 0
-    for program in programs:
-        subtotal += evaluate(program, env)
-    total += subtotal
-print(parsed, int(total * 1_000))
+
+def main():
+    programs = [parse(source) for source in SOURCES]
+    parsed = sum(len([parse(source) for source in SOURCES]) for _ in range(300))
+    total = 0
+    for remaining in range(5_000, 0, -1):
+        env = {
+            "a": remaining % 7,
+            "b": remaining % 11,
+            "c": remaining % 13,
+            "x": remaining % 17,
+            "y": remaining % 19,
+        }
+        subtotal = 0
+        for program in programs:
+            subtotal += evaluate(program, env)
+        total += subtotal
+    print(parsed, int(total * 1_000))
+
+
+main()

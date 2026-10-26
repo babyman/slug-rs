@@ -10,16 +10,43 @@ dispatch, frame-local vector creation and capacity, argument-to-local movement,
 collection operations, and executable layout. Use it to identify the
 implementation cost an internal representation change affects.
 
-`make bench-source` builds the release `slug` executable and runs
+The same counters are available for any program, including the real-program
+workloads that import modules or clutches and so cannot run in-process. A
+`slug` executable built with the `metrics` feature prints them to stderr after
+a program finishes when `SLUG_DUMP_METRICS` is set:
+
+```sh
+cargo build --release -p slug --bin slug --features metrics --target-dir target/metrics
+SLUG_DUMP_METRICS=1 target/metrics/release/slug program.slug
+```
+
+A separate target directory keeps the counting build from replacing the
+release executable the timing runners use.
+
+`make bench-source` builds the profile-guided `slug` executable (see
+[Profile-guided builds](#profile-guided-builds)) and runs
 `crates/slug-frontend/benches/source.rs`. The runner starts a fresh Slug or CPython
 process for each sample, so its timings include source compilation, VM startup,
 and program execution. It validates each checked-in pair of implementations
 against its expected output before timing it. It reports the median and the
 `Slug / Python` ratio, where values below `1.00x` mean Slug was faster.
 
-The default CPython reference is `/usr/bin/python3`. Its resolved path and
-version, the Slug executable/version, the current Git revision, and whether
-tracked local changes were present appear in the report. Override either runtime
+The first workload, `startup`, prints one line. The "less startup" column
+(`compute_slug_over_python` in JSON) subtracts each runtime's `startup`
+median from both sides before dividing, so it compares the work a program
+does rather than how fast each runtime starts. It is left out when either
+side does under 2 ms of work, where it would be mostly noise. Quote it,
+not the whole-process ratio, when comparing interpreter speed.
+`startup` is also a tuned workload: `make bench-ab` times it, so startup
+regressions show up, and profile-guided builds train on it.
+
+The default CPython reference is `/usr/bin/python3`, which on macOS is the
+old CPython 3.9. CPython 3.11 and later are much faster, so compare against
+a current release for any claim about Slug's speed, such as a
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+build unpacked anywhere. Its resolved path and version, the Slug
+executable/version, the current Git revision, and whether tracked local
+changes were present appear in the report. Override either runtime
 only for an explicitly labelled comparison:
 
 ```sh
@@ -39,7 +66,10 @@ comparability. It evaluates all 5,040 permutations of seven values, enough to
 make list transformation materially outweigh fresh-process startup. Each pair
 is intentionally written in the idioms currently
 supported by Slug and Python; keep output checks and workload intent aligned
-when adding a pair.
+when adding a pair. Run a Python twin's work inside a function, as its Slug
+version runs inside `main`: module-level loops make every variable a
+dictionary lookup, and CPython 3.15 concatenates module-level strings in
+quadratic time.
 
 A second group widens the corpus beyond tight numeric `recur` loops, so that
 an optimization tuned on one shape cannot pass unnoticed when it slows
@@ -49,6 +79,8 @@ another:
   so `:+` must copy rather than extend in place.
 - `higher-order` runs `slug.std` `map`, `filter`, and `reduce` with closures
   that capture their caller's locals.
+- `closure-accumulate` appends to an accumulator and then creates closures
+  in the same loop step, so the append must still extend the list in place.
 - `fib` is naive non-tail recursion: ordinary calls and returns with no
   `recur`.
 - `defer-errors` registers scoped cleanup on every call and recovers a thrown
@@ -64,12 +96,17 @@ another:
   interpolation, and concatenation.
 
 A third group is real programs, copied from the agent evaluation projects'
-reference solutions so that edits there do not change them. They have no
-CPython twin, so `make bench-source` reports only their Slug time:
+reference solutions, or from an agent's solution, so that edits there do not
+change them. They have no CPython twin, so `make bench-source` reports only
+their Slug time:
 
 - `invaders-game` plays the Space Invaders reference for 7,300 frames with
   the `bot-long-1` case's recorded inputs, calling `game.tick` directly
   without the slug.arcade clutch.
+- `crawl-game` plays the first 30 commands of the Crawl `bot-106` case in an
+  agent's solution, which keeps its game state in maps and reads it by field
+  (`g.player.x`), rendering the screen after each command without the
+  slug.arcade clutch.
 - `http-server` serves the HTTP reference's routes to four keep-alive clients
   in the same program, 4,228 requests over loopback. It needs the staged
   `slug.net.tcp` clutch (`make stage-native-clutches`); both runners set
@@ -111,6 +148,36 @@ each side's interquartile range relative to its median, and peak RSS, then
 the geometric-mean ratio of the tuned and hold-out groups separately. Treat a
 ratio inside the spread as noise, and read the hold-out geomean before
 accepting a change.
+
+## Profile-guided builds
+
+Release executables are profile-guided builds, and the benchmark runners
+measure them. `make release-pgo` builds one at `target/pgo/slug`. It
+needs the toolchain's `llvm-profdata`, from `rustup component add
+llvm-tools`. `scripts/pgo-build.py` builds an instrumented executable, runs
+it once over every tuned workload, merges the profiles, and rebuilds with
+them. It never trains on the hold-out workloads, so they show whether a
+profile generalizes. It passes `--target` so build scripts are not
+instrumented, and keeps its builds under `target/pgo/`, apart from the
+ordinary release build.
+
+On 2026-10-25 (`ee62cc3`) the profile-guided build ran every workload
+faster than the ordinary release build of the same revision. The tuned
+geomean was 0.86x and the hold-out geomean 0.85x. The real programs ran
+0.83-0.86x and `shared-append` 0.52x.
+
+A profile-guided build also chooses code layout from measured behavior, and
+the dispatch loop's layout has swung single changes by several percent
+(see `docs/planning/vm-optimization.md`). `make bench-ab` therefore compares
+profile-guided builds on both sides. Each side trains on this checkout's
+workloads, so both learn from the same programs. A revision's build is
+cached under its commit and a hash of the training programs. Building one
+takes about a minute and a half. `--no-pgo` compares ordinary release
+builds:
+
+```sh
+make bench-ab BENCH_AB_ARGS="--no-pgo"
+```
 
 The in-process suite also includes a nested task tree. Unlike the timer and
 large-`select` pressure cases, it measures structured task fanout, nested

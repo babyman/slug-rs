@@ -1,0 +1,39 @@
+// Crawl, a real program: an agent's solution to the eval's roguelike
+// (crawl/engine.slug and data.slug, copied from the codex-crawl-testing-2
+// run 1 workspace), which keeps its game state in maps. It plays the first
+// 30 commands of the `bot-106` case from seed 106 without the slug.arcade
+// clutch, rendering the screen after every command as its crawl.slug does
+// when the screen changes.
+val engine = import("crawl.engine")
+
+// Keys in order; a leading `^` means shift is held.
+val KEYS = [
+    "^n", "q", "h", "enter", "l", "n", "k", "y", "^l", "^y", "^k", "h", "h", "h", "h", "h",
+    "k", "k", "d", "a", "u", "space", "^y", "space", "space", "space", "space", "space",
+    "space", "space"
+]
+
+// FNV-1a over a frame's bytes, 32-bit.
+val checksum = fn(frame:bytes):num {
+    val go = fn(i:num, hash:num):num {
+        if (i == len(frame)) { hash } else { recur(i + 1, ((hash ^ frame[i]) * 16777619) & 0xFFFFFFFF) }
+    }
+    go(0, 2166136261)
+}
+
+val main = fn() {
+    engine.newGame(106)
+    val play = fn(i:num, frame:bytes):bytes {
+        if (i == len(KEYS)) { return frame }
+        val key = KEYS[i]
+        if (key[0] == "^") { engine.command(key[1:], true) } else { engine.command(key, false) }
+        recur(i + 1, engine.render())
+    }
+    val frame = play(0, engine.render())
+    val g = engine.g
+    val turn = g.turn
+    val depth = g.depth
+    val hp = g.player.hp
+    val sum = checksum(frame)
+    println("$turn $depth $hp $sum")
+}

@@ -11,6 +11,9 @@ BASE and CANDIDATE are Git revisions. CANDIDATE defaults to the working tree,
 including uncommitted changes. Each revision is built once in a detached
 worktree and cached under target/bench-ab/; the working tree is rebuilt every
 run. Pass --bin LABEL=PATH (twice) to compare prebuilt executables instead.
+Both sides are profile-guided builds, each trained by scripts/pgo-build.py
+on this checkout's tuned workloads; --no-pgo compares ordinary release
+builds instead.
 
 Timings are host-specific evidence for one decision, never a CI threshold.
 """
@@ -29,6 +32,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "crates/slug-frontend/benches/source")
 CACHE = os.path.join(ROOT, "target/bench-ab")
+PGO_BUILD = os.path.join(ROOT, "scripts/pgo-build.py")
 # `http-server` imports the staged slug.net.tcp clutch from this checkout.
 ENVIRONMENT = {**os.environ, "SLUG_HOME": os.environ.get("SLUG_HOME", ROOT)}
 
@@ -48,39 +52,65 @@ def install(source, binary):
     os.replace(staging, binary)
 
 
-def build_revision(revision):
+def pgo_build(source, target_dir, binary):
+    subprocess.run(
+        [
+            sys.executable, "-I", PGO_BUILD, "--source", source,
+            "--target-dir", target_dir, "--out", binary,
+        ],
+        check=True,
+    )
+
+
+def pgo_digest():
+    return subprocess.run(
+        [sys.executable, "-I", PGO_BUILD, "--digest"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def build_revision(revision, pgo):
     sha = git("rev-parse", "--verify", f"{revision}^{{commit}}")
-    binary = os.path.join(CACHE, "bin", f"slug-{sha[:12]}")
+    # A profile-guided build depends on its training programs as well.
+    name = f"slug-pgo-{sha[:12]}-{pgo_digest()}" if pgo else f"slug-{sha[:12]}"
+    binary = os.path.join(CACHE, "bin", name)
+    label = f"{revision} ({sha[:9]}{', pgo' if pgo else ''})"
     if os.path.exists(binary):
-        return f"{revision} ({sha[:9]})", binary
+        return label, binary
     worktree = tempfile.mkdtemp(prefix="slug-bench-ab-")
     try:
         git("worktree", "add", "--detach", worktree, sha)
-        print(f"building {revision} ({sha[:9]})", file=sys.stderr)
-        subprocess.run(
-            ["cargo", "build", "--release", "-p", "slug", "--bin", "slug"],
-            cwd=worktree,
-            env={**os.environ, "CARGO_TARGET_DIR": os.path.join(CACHE, "build")},
-            check=True,
-        )
-        install(os.path.join(CACHE, "build/release/slug"), binary)
+        print(f"building {label}", file=sys.stderr)
+        if pgo:
+            pgo_build(worktree, os.path.join(CACHE, "pgo"), binary)
+        else:
+            subprocess.run(
+                ["cargo", "build", "--release", "-p", "slug", "--bin", "slug"],
+                cwd=worktree,
+                env={**os.environ, "CARGO_TARGET_DIR": os.path.join(CACHE, "build")},
+                check=True,
+            )
+            install(os.path.join(CACHE, "build/release/slug"), binary)
     finally:
         git("worktree", "remove", "--force", worktree)
-    return f"{revision} ({sha[:9]})", binary
+    return label, binary
 
 
-def build_working_tree():
+def build_working_tree(pgo):
     print("building working tree", file=sys.stderr)
-    subprocess.run(
-        ["cargo", "build", "--release", "-p", "slug", "--bin", "slug"],
-        cwd=ROOT,
-        check=True,
-    )
-    binary = os.path.join(CACHE, "bin", "slug-worktree")
-    install(os.path.join(ROOT, "target/release/slug"), binary)
+    binary = os.path.join(CACHE, "bin", "slug-pgo-worktree" if pgo else "slug-worktree")
+    if pgo:
+        pgo_build(ROOT, os.path.join(ROOT, "target/pgo"), binary)
+    else:
+        subprocess.run(
+            ["cargo", "build", "--release", "-p", "slug", "--bin", "slug"],
+            cwd=ROOT,
+            check=True,
+        )
+        install(os.path.join(ROOT, "target/release/slug"), binary)
     dirty = git("status", "--porcelain", "--untracked-files=no") != ""
     head = git("rev-parse", "--short=9", "HEAD")
-    return f"worktree ({head}{', dirty' if dirty else ''})", binary
+    return f"worktree ({head}{', dirty' if dirty else ''}{', pgo' if pgo else ''})", binary
 
 
 def workloads(only):
@@ -152,6 +182,12 @@ def main():
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--only", help="comma-separated workload names")
     parser.add_argument("--bin", action="append", metavar="LABEL=PATH")
+    parser.add_argument(
+        "--pgo",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="compare profile-guided builds",
+    )
     parser.add_argument("--json", action="store_true")
     options = parser.parse_args()
     if options.rounds < 2:
@@ -163,11 +199,11 @@ def main():
         sides = [tuple(entry.split("=", 1)) for entry in options.bin]
     else:
         candidate = (
-            build_revision(options.candidate)
+            build_revision(options.candidate, options.pgo)
             if options.candidate
-            else build_working_tree()
+            else build_working_tree(options.pgo)
         )
-        sides = [build_revision(options.base), candidate]
+        sides = [build_revision(options.base, options.pgo), candidate]
     selected = workloads(options.only)
 
     sources = {

@@ -11,10 +11,10 @@ use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::SelectCase;
 use slug_vm::VmProgress;
 use slug_vm::{
-    CallArgumentKind, Capture, CaptureListId, Chunk, EmptyVmConfiguration, GlobalNameId,
-    MatchMapKey, MatchPatternId, MatchRest, NativeArity, NativeCall, NativeError, NativeModule,
-    NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField,
-    SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm,
+    CallArgumentKind, CallableIdentity, Capture, CaptureListId, Chunk, EmptyVmConfiguration,
+    GlobalNameId, MatchMapKey, MatchPatternId, MatchRest, NativeArity, NativeCall, NativeError,
+    NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program, ProgramBuilder,
+    RuntimeErrorKind, SchemaField, SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm,
 };
 
 #[cfg(feature = "metrics")]

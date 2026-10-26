@@ -2855,7 +2855,12 @@ fn check_expression_inner(
                         {
                             explain_nil_start_assignment(error, name, binding, &actual)
                         } else {
-                            explain_nil_start(error, value, environment)
+                            let error = explain_nil_start(error, value, environment);
+                            if binding.nil_start.is_none() {
+                                explain_possible_nil(error, name, value, expected, &actual)
+                            } else {
+                                error
+                            }
                         }
                     })?;
                 }
@@ -5267,6 +5272,73 @@ fn explain_nil_start(
     error
 }
 
+/// Explains an assignment whose value fits the `var` except that it may be
+/// `nil`, such as `name = find(...)` for a `var name = ""`: it names the two
+/// ways out and suggests a `??` default when the type has an obvious one.
+fn explain_possible_nil(
+    mut error: SourceError,
+    name: &str,
+    value: &Expr,
+    expected: &Type,
+    actual: &Type,
+) -> SourceError {
+    if !matches!(error.code, SourceErrorCode::TypeMismatch)
+        || !matches!(actual, Type::Union(members) if members.contains(&Type::Nil))
+        || expected.includes_nil()
+        || !actual.without_nil().is_assignable_to(expected)
+    {
+        return error;
+    }
+    error.message = format!(
+        "{}: the value may be `nil`; give a default with `??`, or declare `var {name}:{expected}|nil`",
+        error.message
+    );
+    let default = match expected {
+        Type::Str => "\"\"",
+        Type::Num => "0",
+        Type::Bool => "false",
+        Type::List(_) => "[]",
+        Type::Map(_) => "{}",
+        _ => return error,
+    };
+    // `??` binds more loosely than arithmetic, so only a value that is
+    // already a single operand takes it without parentheses.
+    let bare = matches!(
+        value.kind,
+        ExprKind::Call { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Name(_)
+            | ExprKind::TypeApply { .. }
+    );
+    let end = SourceEdit {
+        range: SourceRange {
+            start: value.end,
+            end: value.end,
+        },
+        text: if bare {
+            format!(" ?? {default}")
+        } else {
+            format!(") ?? {default}")
+        },
+    };
+    if bare {
+        error.with_suggestion(format!("use `{default}` when the value is `nil`"), end)
+    } else {
+        let start = value.extent_start();
+        error.with_suggestion_edits(
+            format!("use `{default}` when the value is `nil`"),
+            vec![
+                SourceEdit {
+                    range: SourceRange { start, end: start },
+                    text: "(".into(),
+                },
+                end,
+            ],
+        )
+    }
+}
+
 /// Explains a mismatch in an assignment to a `var` that started as `nil`,
 /// whose declared type its first assignment set: it names that assignment
 /// and the declaration that would hold both types.
@@ -5998,6 +6070,221 @@ mod tests {
         // separate instruction.
         let branched = opcodes("val f = fn(c, x) { (if (c) { 0 } else { x }) - 1 }\nf(true, 2)");
         assert!(!branched.contains(&slug_vm::PackedOpcode::LocalConstantBinary));
+    }
+
+    #[test]
+    fn discarded_statement_values_push_nothing() {
+        use slug_vm::PackedOpcode::{Jump, Nil, Pop};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        // A declaration's `nil` is not pushed only to be popped, and a plain
+        // name binds without a pattern match.
+        let declared = opcodes("val f = fn(x) {\n    val y = x + 1\n    y\n}\nf(2)");
+        assert_eq!(
+            declared,
+            [
+                slug_vm::PackedOpcode::LocalConstantBinary,
+                slug_vm::PackedOpcode::SetLocal,
+                slug_vm::PackedOpcode::GetLocal,
+                slug_vm::PackedOpcode::Return,
+            ]
+        );
+
+        // A statement `if` without `else` pops its branch's value and has
+        // no `nil` branch to jump over.
+        let guarded = opcodes("val f = fn(x) {\n    if (x) { x }\n    2\n}\nf(true)");
+        assert!(!guarded.contains(&Nil));
+        assert!(!guarded.contains(&Jump));
+        assert_eq!(guarded.iter().filter(|opcode| **opcode == Pop).count(), 1);
+
+        // The `then` branch jumps to the `Pop` with its own value, so the
+        // `nil` of the declaration ending the `else` branch stays.
+        let branched =
+            opcodes("val f = fn(c) {\n    if (c) { 1 } else { val z = c }\n    2\n}\nf(true)");
+        assert!(branched.contains(&Nil));
+        assert!(branched.contains(&Pop));
+    }
+
+    #[test]
+    fn match_cases_test_their_subject_in_place() {
+        use slug_vm::PackedOpcode::{Duplicate, JumpIfFalsePop, MatchCase, TryMatch};
+        let program = super::super::compile(
+            "test.slug",
+            "val f = fn(x) match {\n    1 => 10\n    [a, b] => a + b\n    _ => 0\n}\nf([1, 2])",
+        )
+        .expect("source compiles");
+        let opcodes = program
+            .chunk(0)
+            .expect("function chunk")
+            .code
+            .iter()
+            .map(|instruction| instruction.opcode)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            opcodes
+                .iter()
+                .filter(|opcode| **opcode == MatchCase)
+                .count(),
+            3
+        );
+        for opcode in [Duplicate, TryMatch, JumpIfFalsePop] {
+            assert!(!opcodes.contains(&opcode), "{opcodes:?}");
+        }
+    }
+
+    #[test]
+    fn parameter_matches_read_parameters_in_place() {
+        use slug_vm::PackedOpcode::{List, MatchCase, MatchLocals};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        let summed = opcodes(
+            "val f = fn(xs, n) match {\n    [[], _] => n\n    [[h, ...t], ...] => recur(t, n + h)\n}\nf([1], 0)",
+        );
+        assert_eq!(
+            summed
+                .iter()
+                .filter(|opcode| **opcode == MatchLocals)
+                .count(),
+            2
+        );
+        for opcode in [List, MatchCase] {
+            assert!(!summed.contains(&opcode), "{summed:?}");
+        }
+
+        // Binding the rest of the parameters needs the list itself.
+        let rest = opcodes(
+            "val f = fn(a, b) match {\n    [1, x] => x\n    [x, ...more] => x + len(more)\n}\nf(1, 2)",
+        );
+        assert!(rest.contains(&List), "{rest:?}");
+        assert!(!rest.contains(&MatchLocals), "{rest:?}");
+    }
+
+    #[test]
+    fn conditions_branch_without_computing_a_value() {
+        use slug_vm::PackedOpcode::{JumpIfFalse, Not, Pop};
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        // A match pops its subject, so only the `if`s are free of `Pop`.
+        for (source, absent) in [
+            (
+                "val f = fn(a, b) { if (a && !b) { 1 } else { 2 } }\nf(true, false)",
+                &[Not, JumpIfFalse, Pop][..],
+            ),
+            (
+                "val f = fn(a, b) { if (a != b || !a) { 1 } else { 2 } }\nf(1, 2)",
+                &[Not, JumpIfFalse, Pop],
+            ),
+            (
+                "val f = fn(a, b) { if (a >= b) { 1 } else { 2 } }\nf(1, 2)",
+                &[Not, JumpIfFalse, Pop],
+            ),
+            (
+                "val f = fn(a, b) match {\n    [x, y] if x <= y && !a => 1\n    _ => 2\n}\nf(1, 2)",
+                &[Not, JumpIfFalse],
+            ),
+        ] {
+            let opcodes = opcodes(source);
+            for opcode in absent {
+                assert!(!opcodes.contains(opcode), "{source}: {opcodes:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn constant_right_operands_fuse_with_their_operator() {
+        use slug_vm::PackedOpcode::{
+            BitAnd, Constant, ConstantBinary, Equal, LocalConstantBinary, ShiftRight,
+        };
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        let indexed = opcodes("val f = fn(xs, i) { xs[i] == 10 }\nf([10], 0)");
+        assert!(indexed.contains(&ConstantBinary), "{indexed:?}");
+        assert!(
+            !indexed.contains(&Constant) && !indexed.contains(&Equal),
+            "{indexed:?}"
+        );
+        // A local left operand keeps the fusion that skips the stack.
+        let local = opcodes("val f = fn(n) { n - 1 }\nf(1)");
+        assert!(local.contains(&LocalConstantBinary), "{local:?}");
+        assert!(!local.contains(&ConstantBinary), "{local:?}");
+        // Bitwise operators fuse in both forms.
+        let masked = opcodes("val f = fn(xs, n) { (xs[0] & 255) + (n >> 4) }\nf([1], 2)");
+        assert!(
+            masked.contains(&ConstantBinary) && masked.contains(&LocalConstantBinary),
+            "{masked:?}"
+        );
+        assert!(
+            !masked.contains(&BitAnd) && !masked.contains(&ShiftRight),
+            "{masked:?}"
+        );
+    }
+
+    #[test]
+    fn module_function_calls_read_their_callee_after_the_arguments() {
+        use slug_vm::PackedOpcode::{CallGlobal, CallPositional, GetGlobal};
+        let counts = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            let opcodes = (0..program.chunk_count())
+                .flat_map(|index| {
+                    program
+                        .chunk(index)
+                        .expect("chunk")
+                        .code
+                        .iter()
+                        .map(|instruction| instruction.opcode)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            [CallGlobal, GetGlobal, CallPositional]
+                .map(|opcode| opcodes.iter().filter(|found| **found == opcode).count())
+        };
+        // Arguments that run no code: one `CallGlobal`, no callee load.
+        assert_eq!(
+            counts("val g = fn(x, y) { x }\nval f = fn(n, s) { g(n - 1, [s[0], \"{s}\"]) }"),
+            [1, 0, 0]
+        );
+        // A call argument could rebind `g`, so the outer call reads it first.
+        assert_eq!(
+            counts("val g = fn(x) { x }\nval f = fn(n) { g(g(n)) }"),
+            [1, 1, 1]
+        );
+        // A native and a local function keep `CallPositional`.
+        assert_eq!(
+            counts("val f = fn(s) {\n    val h = fn(x) { x }\n    h(len(s))\n}"),
+            [0, 1, 2]
+        );
     }
 
     #[test]

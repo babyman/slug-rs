@@ -1,7 +1,8 @@
 /**
  * String operations: conversion between characters and their Unicode scalar
  * values, conversion to and from UTF-8 bytes, parsing integers, splitting,
- * trimming, changing ASCII case, sorting, and joining.
+ * trimming, classifying ASCII characters, changing ASCII case, sorting, and
+ * joining.
  *
  * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
  * a list element that is not a string throws one whose `type` is
@@ -231,7 +232,33 @@ export val split = fn(text:str, separator:str):list<str> {
     go(0, 0, [])
 }
 
-val isSpace = fn(c:str):bool { c == " " || c == "\t" || c == "\r" || c == "\n" }
+/**
+ * Returns true when `c` is one ASCII digit, `0` through `9`. Any other string,
+ * including `""` and a longer string, gives false.
+ */
+@testWith(["7"], true, ["a"], false, [""], false, ["12"], false, ["٣"], false)
+export val isDigit = fn(c:str):bool {
+    len(c) == 1 && c >= "0" && c <= "9"
+}
+
+/**
+ * Returns true when `c` is one ASCII letter, `a` through `z` or `A` through
+ * `Z`. Any other string, including `""`, `"_"`, `"é"`, and a longer string,
+ * gives false.
+ */
+@testWith(["a"], true, ["Z"], true, ["_"], false, ["é"], false, [""], false, ["ab"], false)
+export val isLetter = fn(c:str):bool {
+    len(c) == 1 && ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z"))
+}
+
+/**
+ * Returns true when `c` is one space, tab, carriage return, or newline, the
+ * characters `trim` removes. Any other string, including `""`, gives false.
+ */
+@testWith([" "], true, ["\t"], true, ["\n"], true, ["\r"], true, ["x"], false, [""], false, ["  "], false)
+export val isSpace = fn(c:str):bool {
+    c == " " || c == "\t" || c == "\r" || c == "\n"
+}
 
 /**
  * Returns `text` without the spaces, tabs, carriage returns, and newlines at

@@ -122,6 +122,12 @@ pub enum Op {
         constant: usize,
         operator: BinaryOperator,
     },
+    /// Pushes `operator` applied to the popped value and a value constant:
+    /// the fused form of `Constant(constant)`, `operator`.
+    ConstantBinary {
+        constant: usize,
+        operator: BinaryOperator,
+    },
     JumpIfProvided {
         slot: usize,
         target: usize,
@@ -129,6 +135,16 @@ pub enum Op {
     Call(usize),
     /// A source call whose arguments are syntactically positional.
     CallPositional(usize),
+    /// A positional call of a module-level name, whose `count` arguments are
+    /// on the stack without the callee: it reads the name itself.
+    CallGlobal {
+        name: String,
+        count: usize,
+    },
+    CallGlobalPooled {
+        name: GlobalNameId,
+        count: usize,
+    },
     CallSpread(Vec<CallArgumentKind>),
     CallSpreadPooled(CallArgumentsId),
     CallSelected {
@@ -163,6 +179,34 @@ pub enum Op {
         bindings: usize,
         operands: usize,
     },
+    /// Matches the value under its `operands` without consuming it. A match
+    /// pushes the pattern's bindings; a failure pushes nothing and jumps to
+    /// `target`.
+    MatchCase {
+        pattern: MatchPattern,
+        operands: usize,
+        target: usize,
+    },
+    MatchCasePooled {
+        pattern: MatchPatternId,
+        operands: usize,
+        target: usize,
+    },
+    /// Matches a list pattern's items against the frame's first locals, item
+    /// `i` against local `i`, as if they were one list. The compiler checks
+    /// the length; it emits this for a `match` on a list of parameters,
+    /// which would otherwise build that list on every call. A match pushes
+    /// the bindings; a failure pushes nothing and jumps to `target`.
+    MatchLocals {
+        pattern: MatchPattern,
+        operands: usize,
+        target: usize,
+    },
+    MatchLocalsPooled {
+        pattern: MatchPatternId,
+        operands: usize,
+        target: usize,
+    },
     MatchFailure,
     Throw,
     EnterScope,
@@ -192,7 +236,8 @@ pub enum DeferMode {
     Error,
 }
 
-/// An operator a fused `LocalConstantBinary` instruction can apply. Each one
+/// An operator a fused `LocalConstantBinary` or `ConstantBinary` instruction
+/// can apply. Each one
 /// behaves exactly like its standalone instruction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BinaryOperator {
@@ -211,10 +256,17 @@ pub enum BinaryOperator {
     GreaterNum,
     Less,
     LessNum,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl BinaryOperator {
-    const ALL: [Self; 15] = [
+    // Append new operators: a `.cslug` artifact stores the position as the
+    // operator's code.
+    const ALL: [Self; 20] = [
         Self::Add,
         Self::AddNum,
         Self::Subtract,
@@ -230,6 +282,11 @@ impl BinaryOperator {
         Self::GreaterNum,
         Self::Less,
         Self::LessNum,
+        Self::BitAnd,
+        Self::BitOr,
+        Self::BitXor,
+        Self::ShiftLeft,
+        Self::ShiftRight,
     ];
 
     /// The fusable operator a standalone instruction performs, if any.
@@ -251,6 +308,11 @@ impl BinaryOperator {
             Op::GreaterNum => Self::GreaterNum,
             Op::Less => Self::Less,
             Op::LessNum => Self::LessNum,
+            Op::BitAnd => Self::BitAnd,
+            Op::BitOr => Self::BitOr,
+            Op::BitXor => Self::BitXor,
+            Op::ShiftLeft => Self::ShiftLeft,
+            Op::ShiftRight => Self::ShiftRight,
             _ => return None,
         })
     }

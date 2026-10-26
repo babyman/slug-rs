@@ -182,6 +182,27 @@ impl Program {
         self.chunks = chunks;
     }
 
+    /// Makes equal string constants share one allocation, across every chunk,
+    /// so a map key built from one constant and a lookup by another usually
+    /// compare by pointer.
+    pub(crate) fn share_string_constants(&mut self) {
+        let mut shared: HashMap<String, crate::Value> = HashMap::new();
+        for chunk in &mut self.chunks {
+            for constant in &mut chunk.constants {
+                if let Constant::Value(value @ crate::Value::Str(_)) = constant {
+                    let crate::Value::Str(text) = &*value else {
+                        unreachable!()
+                    };
+                    if let Some(existing) = shared.get(text.as_ref()) {
+                        *value = existing.clone();
+                    } else {
+                        shared.insert(String::from(text.as_ref()), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn contains_non_finite_number(&self) -> bool {
         self.chunks.iter().any(|chunk| {
             chunk.constants.iter().any(|constant| match constant {
@@ -255,7 +276,7 @@ impl Program {
             self.pool_instruction_metadata(&mut instruction.op);
         }
         let mut code: Vec<_> = chunk.code.iter().map(Self::pack_instruction).collect();
-        liveness::mark_last_local_reads(&mut code, chunk.locals);
+        liveness::mark_last_local_reads(&mut code, chunk.locals, &self.capture_lists);
         let compiled = CompiledChunk {
             name: chunk.name.clone(),
             arity: chunk.arity,
@@ -267,6 +288,7 @@ impl Program {
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),
+            index_hints: super::chunk::index_hints(chunk.constants.len()),
             code,
             invalid_instructions,
         };
@@ -284,6 +306,11 @@ impl Program {
             Op::TryMatch {
                 bindings, operands, ..
             } if operands.checked_add(1).is_none() || bindings.checked_add(1).is_none() => {
+                Some("match stack count is too large".into())
+            }
+            Op::MatchCase { operands, .. } | Op::MatchLocals { operands, .. }
+                if operands.checked_add(1).is_none() =>
+            {
                 Some("match stack count is too large".into())
             }
             _ => None,
@@ -534,6 +561,10 @@ impl Program {
             Op::SetGlobal(name) => Some(Op::SetGlobalPooled(
                 self.intern_global_name(mem::take(name)),
             )),
+            Op::CallGlobal { name, count } => Some(Op::CallGlobalPooled {
+                name: self.intern_global_name(mem::take(name)),
+                count: *count,
+            }),
             Op::MakeClosure { chunk, captures } => Some(Op::MakeClosurePooled {
                 chunk: *chunk,
                 captures: self.push_capture_list(mem::take(captures)),
@@ -555,6 +586,24 @@ impl Program {
                 pattern: self.push_match_pattern(mem::replace(pattern, MatchPattern::Wildcard)),
                 bindings: *bindings,
                 operands: *operands,
+            }),
+            Op::MatchCase {
+                pattern,
+                operands,
+                target,
+            } => Some(Op::MatchCasePooled {
+                pattern: self.push_match_pattern(mem::replace(pattern, MatchPattern::Wildcard)),
+                operands: *operands,
+                target: *target,
+            }),
+            Op::MatchLocals {
+                pattern,
+                operands,
+                target,
+            } => Some(Op::MatchLocalsPooled {
+                pattern: self.push_match_pattern(mem::replace(pattern, MatchPattern::Wildcard)),
+                operands: *operands,
+                target: *target,
             }),
             Op::Interpolate(parts) => Some(Op::InterpolatePooled(
                 self.push_interpolation(mem::take(parts)),
@@ -772,6 +821,12 @@ impl Program {
                 operand(*constant),
                 operator.code(),
             ),
+            Op::ConstantBinary { constant, operator } => (
+                PackedOpcode::ConstantBinary,
+                0,
+                operand(*constant),
+                operator.code(),
+            ),
             Op::JumpIfProvided { slot, target } => (
                 PackedOpcode::JumpIfProvided,
                 operand(*slot),
@@ -780,6 +835,9 @@ impl Program {
             ),
             Op::Call(v) => (PackedOpcode::Call, operand(*v), 0, 0),
             Op::CallPositional(v) => (PackedOpcode::CallPositional, operand(*v), 0, 0),
+            Op::CallGlobalPooled { name, count } => {
+                (PackedOpcode::CallGlobal, name.0, operand(*count), 0)
+            }
             Op::CallSpreadPooled(v) => (PackedOpcode::CallSpread, v.0, 0, 0),
             Op::CallSelectedPooled(v) => (PackedOpcode::CallSelected, v.0, 0, 0),
             Op::PipelineCallPooled(v) => (PackedOpcode::PipelineCall, v.0, 0, 0),
@@ -797,6 +855,26 @@ impl Program {
                 PackedOpcode::TryMatch,
                 pattern.0,
                 operand(*bindings),
+                operand(*operands),
+            ),
+            Op::MatchCasePooled {
+                pattern,
+                operands,
+                target,
+            } => (
+                PackedOpcode::MatchCase,
+                pattern.0,
+                operand(*target),
+                operand(*operands),
+            ),
+            Op::MatchLocalsPooled {
+                pattern,
+                operands,
+                target,
+            } => (
+                PackedOpcode::MatchLocals,
+                pattern.0,
+                operand(*target),
                 operand(*operands),
             ),
             Op::MatchFailure => (PackedOpcode::MatchFailure, 0, 0, 0),
@@ -909,12 +987,22 @@ impl Program {
                         String::from("packed instruction references missing binary operator")
                     })?,
             },
+            PackedOpcode::ConstantBinary => Op::ConstantBinary {
+                constant: n(instruction.b),
+                operator: BinaryOperator::from_code(instruction.c).ok_or_else(|| {
+                    String::from("packed instruction references missing binary operator")
+                })?,
+            },
             PackedOpcode::JumpIfProvided => Op::JumpIfProvided {
                 slot: n(instruction.a),
                 target: n(instruction.b),
             },
             PackedOpcode::Call => Op::Call(n(instruction.a)),
             PackedOpcode::CallPositional => Op::CallPositional(n(instruction.a)),
+            PackedOpcode::CallGlobal => Op::CallGlobalPooled {
+                name: GlobalNameId(instruction.a),
+                count: n(instruction.b),
+            },
             PackedOpcode::CallSpread => Op::CallSpreadPooled(CallArgumentsId(instruction.a)),
             PackedOpcode::CallSelected => Op::CallSelectedPooled(SelectedCallId(instruction.a)),
             PackedOpcode::PipelineCall => Op::PipelineCallPooled(CallArgumentsId(instruction.a)),
@@ -931,6 +1019,16 @@ impl Program {
             PackedOpcode::TryMatch => Op::TryMatchPooled {
                 pattern: MatchPatternId(instruction.a),
                 bindings: n(instruction.b),
+                operands: n(instruction.c),
+            },
+            PackedOpcode::MatchCase => Op::MatchCasePooled {
+                pattern: MatchPatternId(instruction.a),
+                target: n(instruction.b),
+                operands: n(instruction.c),
+            },
+            PackedOpcode::MatchLocals => Op::MatchLocalsPooled {
+                pattern: MatchPatternId(instruction.a),
+                target: n(instruction.b),
                 operands: n(instruction.c),
             },
             PackedOpcode::MatchFailure => Op::MatchFailure,
@@ -1055,7 +1153,7 @@ impl Program {
     /// verified bytecode: slots in range and jumps forward.
     pub(crate) fn mark_cslug_local_reads(&mut self) {
         for chunk in &mut self.chunks {
-            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
+            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals, &self.capture_lists);
         }
     }
 
@@ -1188,7 +1286,7 @@ impl Program {
                     location()
                 ))
             }
-            Op::LocalConstantBinary { constant, .. }
+            Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. }
                 if !matches!(chunk.constants.get(*constant), Some(Constant::Value(_))) =>
             {
                 Err(format!(
@@ -1208,6 +1306,10 @@ impl Program {
             | Op::JumpIfFalse(target)
             | Op::JumpIfFalsePop(target)
             | Op::JumpIfProvided { target, .. }
+            | Op::MatchCase { target, .. }
+            | Op::MatchCasePooled { target, .. }
+            | Op::MatchLocals { target, .. }
+            | Op::MatchLocalsPooled { target, .. }
                 if *target >= chunk.code.len() =>
             {
                 Err(format!(
@@ -1222,6 +1324,10 @@ impl Program {
             | Op::JumpIfFalse(target)
             | Op::JumpIfFalsePop(target)
             | Op::JumpIfProvided { target, .. }
+            | Op::MatchCase { target, .. }
+            | Op::MatchCasePooled { target, .. }
+            | Op::MatchLocals { target, .. }
+            | Op::MatchLocalsPooled { target, .. }
                 if *target <= instruction_index =>
             {
                 Err(format!(
@@ -1243,7 +1349,10 @@ impl Program {
             {
                 Err(format!("{} captures a missing local", location()))
             }
-            Op::GetGlobalPooled(id) | Op::DefineGlobalPooled(id) | Op::SetGlobalPooled(id)
+            Op::GetGlobalPooled(id)
+            | Op::DefineGlobalPooled(id)
+            | Op::SetGlobalPooled(id)
+            | Op::CallGlobalPooled { name: id, .. }
                 if self.global_name(*id).is_none() =>
             {
                 Err(format!(
@@ -1372,15 +1481,72 @@ impl Program {
                 }
                 Ok(())
             }
+            Op::MatchLocals {
+                pattern, operands, ..
+            } => Self::validate_local_list_pattern(pattern, *operands, chunk.locals),
+            Op::MatchLocalsPooled {
+                pattern, operands, ..
+            } => {
+                let pattern = self.match_pattern(*pattern).ok_or_else(|| {
+                    format!("{} references missing match pattern metadata", location())
+                })?;
+                Self::validate_local_list_pattern(pattern, *operands, chunk.locals)
+            }
+            Op::MatchCase {
+                pattern, operands, ..
+            } => {
+                if operands.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
+                Self::validate_pattern(pattern, *operands)?;
+                Self::pattern_bindings(pattern)
+                    .and_then(|bindings| bindings.checked_add(1))
+                    .map(|_| ())
+                    .ok_or_else(|| "match pattern binding count is invalid".into())
+            }
+            Op::MatchCasePooled {
+                pattern, operands, ..
+            } => {
+                if operands.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
+                let pattern = self.match_pattern(*pattern).ok_or_else(|| {
+                    format!("{} references missing match pattern metadata", location())
+                })?;
+                Self::validate_pattern(pattern, *operands)?;
+                Self::pattern_bindings(pattern)
+                    .and_then(|bindings| bindings.checked_add(1))
+                    .map(|_| ())
+                    .ok_or_else(|| "match pattern binding count is invalid".into())
+            }
             Op::GetGlobal(_)
             | Op::DefineGlobal(_)
             | Op::SetGlobal(_)
+            | Op::CallGlobal { .. }
             | Op::MakeClosure { .. }
             | Op::StructSchema(_)
             | Op::Struct(_)
             | Op::StructCopy(_) => Err(format!("{} retains unpooled opcode metadata", location())),
             _ => Ok(()),
         }
+    }
+
+    /// A `MatchLocals` pattern is a list whose items each read a local.
+    fn validate_local_list_pattern(
+        pattern: &MatchPattern,
+        operands: usize,
+        locals: usize,
+    ) -> Result<(), String> {
+        let MatchPattern::List { items, .. } = pattern else {
+            return Err("local match pattern is not a list".into());
+        };
+        if items.len() > locals {
+            return Err("local match pattern reads a missing local".into());
+        }
+        Self::validate_pattern(pattern, operands)?;
+        Self::pattern_bindings(pattern)
+            .map(|_| ())
+            .ok_or_else(|| "match pattern binding count is invalid".into())
     }
 
     fn validate_pattern(pattern: &MatchPattern, operands: usize) -> Result<(), String> {
@@ -1463,6 +1629,42 @@ impl Program {
     /// returns to instruction 0, with the entry state. Where paths join, the
     /// lowest height is kept. Each instruction keeps two integers, so memory
     /// is linear in the chunk's length.
+    /// The instructions `op` continues at, with their stack heights, or
+    /// `None` for a `recur` restart.
+    fn successors(
+        op: &Op,
+        height: usize,
+        remaining: usize,
+        next: Option<(usize, usize)>,
+    ) -> Option<Vec<(usize, usize)>> {
+        Some(match op {
+            Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
+            Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => return None,
+            Op::Jump(target) => vec![(*target, height)],
+            Op::JumpIfFalse(target)
+            | Op::JumpIfFalsePop(target)
+            | Op::JumpIfProvided { target, .. } => [Some((*target, height)), next]
+                .into_iter()
+                .flatten()
+                .collect(),
+            // A failed match jumps with only the matched value left.
+            Op::MatchCase { target, .. } | Op::MatchCasePooled { target, .. } => {
+                [Some((*target, remaining + 1)), next]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            }
+            // `MatchLocals` has no subject, so a failure leaves nothing.
+            Op::MatchLocals { target, .. } | Op::MatchLocalsPooled { target, .. } => {
+                [Some((*target, remaining)), next]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            }
+            _ => next.into_iter().collect(),
+        })
+    }
+
     fn validate_stack(&self, chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
         if chunk.code.is_empty() {
             return Err(format!(
@@ -1508,25 +1710,12 @@ impl Program {
                 })?,
                 _ => state.scope_depth,
             };
-            let successors: Vec<usize> = match &instruction.op {
-                Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
-                // `recur` restarts at instruction 0 with the entry state,
-                // which that instruction already has.
-                Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => continue,
-                Op::Jump(target) => vec![*target],
-                Op::JumpIfFalse(target)
-                | Op::JumpIfFalsePop(target)
-                | Op::JumpIfProvided { target, .. } => [
-                    Some(*target),
-                    (index + 1 < chunk.code.len()).then_some(index + 1),
-                ]
-                .into_iter()
-                .flatten()
-                .collect(),
-                _ => (index + 1 < chunk.code.len())
-                    .then_some(index + 1)
-                    .into_iter()
-                    .collect(),
+            let next = (index + 1 < chunk.code.len()).then_some((index + 1, height));
+            // `recur` restarts at instruction 0 with the entry state, which
+            // that instruction already has.
+            let Some(successors) = Self::successors(&instruction.op, height, remaining, next)
+            else {
+                continue;
             };
             if successors.is_empty()
                 && !matches!(
@@ -1539,7 +1728,7 @@ impl Program {
                     chunk.name
                 ));
             }
-            for successor in successors {
+            for (successor, height) in successors {
                 match &mut states[successor] {
                     Some(existing) => {
                         if existing.scope_depth != scope_depth {
@@ -1598,7 +1787,9 @@ impl Program {
             | Op::Return => (1, 0),
             Op::Duplicate => (1, 2),
             Op::RecordModuleTag { arguments, .. } => (*arguments, 0),
-            Op::List(count) => (*count, 1),
+            Op::List(count) | Op::CallGlobal { count, .. } | Op::CallGlobalPooled { count, .. } => {
+                (*count, 1)
+            }
             Op::ListSpread(spreads) => (spreads.len(), 1),
             Op::ListSpreadPooled(id) => (
                 self.list_spread(*id)
@@ -1665,7 +1856,8 @@ impl Program {
             | Op::BitNot
             | Op::Spawn
             | Op::SelectApply
-            | Op::GetIndexConstant(_) => (1, 1),
+            | Op::GetIndexConstant(_)
+            | Op::ConstantBinary { .. } => (1, 1),
             Op::Jump(_)
             | Op::JumpIfFalse(_)
             | Op::JumpIfProvided { .. }
@@ -1755,6 +1947,41 @@ impl Program {
             | Op::TryMatchPooled {
                 bindings, operands, ..
             } => (operands + 1, bindings + 1),
+            // The value under the operands stays; the effect is the success
+            // path's, and `validate_stack` gives the failure jump its own.
+            Op::MatchCase {
+                pattern, operands, ..
+            } => (
+                operands + 1,
+                Self::pattern_bindings(pattern).expect("validated match pattern") + 1,
+            ),
+            Op::MatchLocals {
+                pattern, operands, ..
+            } => (
+                *operands,
+                Self::pattern_bindings(pattern).expect("validated match pattern"),
+            ),
+            Op::MatchLocalsPooled {
+                pattern, operands, ..
+            } => (
+                *operands,
+                Self::pattern_bindings(
+                    self.match_pattern(*pattern)
+                        .expect("validated match pattern metadata"),
+                )
+                .expect("validated match pattern"),
+            ),
+            Op::MatchCasePooled {
+                pattern, operands, ..
+            } => (
+                operands + 1,
+                Self::pattern_bindings(
+                    self.match_pattern(*pattern)
+                        .expect("validated match pattern metadata"),
+                )
+                .expect("validated match pattern")
+                    + 1,
+            ),
             Op::Recur(kinds) => (kinds.len(), 0),
             Op::RecurPooled(id) => (
                 self.call_arguments(*id)

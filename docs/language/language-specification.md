@@ -652,8 +652,9 @@ throw or checked runtime fault is unwinding.
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
 `data` fields. `type` is one of `invalid_bytecode`, `type`, `name`, `arity`,
-`divide_by_zero`, `invalid_call`, `native`, `module`, `module_not_found`, or
-`match`; `msg` is its
+`divide_by_zero`, `out_of_bounds` (an index past either end of a list, bytes,
+or string), `invalid_call`, `native`, `native_contract`, `module`,
+`module_not_found`, `not_implemented`, `match`, or `permission`; `msg` is its
 diagnostic message; and `data` is `nil` until a fault defines structured extra
 data.
 

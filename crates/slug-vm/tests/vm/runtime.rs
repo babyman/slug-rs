@@ -398,6 +398,8 @@ fn reports_vm_runtime_layouts() {
 #[test]
 fn keeps_values_at_three_words() {
     assert_eq!(std::mem::size_of::<Value>(), 24);
+    // The word-sized tag still leaves spare tags for an enclosing enum.
+    assert_eq!(std::mem::size_of::<Option<Value>>(), 24);
 }
 
 #[test]
@@ -453,4 +455,173 @@ fn rejects_missing_opcode_pool_metadata_before_execution() {
         assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
         assert!(error.message.contains(expected), "{}", error.message);
     }
+}
+
+/// Runs `condition` over `a` and `b` in every place a condition is lowered
+/// to branches (a value `if` with and without `else`, a tail `if`, a
+/// statement `if`, and a match guard) and as a computed value, which keeps
+/// the value lowering. Every form must agree for every pair.
+fn assert_conditions_agree(conditions: &[&str], pairs: &[(&str, &str)]) {
+    for condition in conditions {
+        let calls = pairs
+            .iter()
+            .map(|(a, b)| {
+                format!(
+                    "[reference({a}, {b}), value({a}, {b}), bare({a}, {b}), tail({a}, {b}), statement({a}, {b}), guard({a}, {b})]"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!(
+            "val reference = fn(a, b) {{\n    val v = {condition}\n    if (v) {{ 1 }} else {{ 0 }}\n}}\n\
+             val value = fn(a, b) {{\n    val r = if ({condition}) {{ 1 }} else {{ 0 }}\n    r\n}}\n\
+             val bare = fn(a, b) {{\n    val r = if ({condition}) {{ 1 }}\n    r ?? 0\n}}\n\
+             val tail = fn(a, b) {{ if ({condition}) {{ 1 }} else {{ 0 }} }}\n\
+             val statement = fn(a, b) {{\n    var hit = 0\n    if ({condition}) {{ hit = 1 }}\n    hit\n}}\n\
+             val guard = fn(a, b) {{\n    match a {{\n        _ if {condition} => 1\n        _ => 0\n    }}\n}}\n\
+             val main = fn() {{ [{calls}] }}\n"
+        );
+        let program = compile("conditions.slug", &source)
+            .unwrap_or_else(|error| panic!("compile `{condition}`: {error:?}"));
+        let result = Vm::new()
+            .run_program(&program)
+            .unwrap_or_else(|error| panic!("run `{condition}`: {error:?}"))
+            .to_string();
+        let groups = result
+            .trim_start_matches("[[")
+            .trim_end_matches("]]")
+            .split("], [");
+        for ((a, b), group) in pairs.iter().zip(groups) {
+            let mut forms = group.split(", ");
+            let reference = forms.next().expect("reference form");
+            assert!(
+                forms.all(|form| form == reference),
+                "`{condition}` with a = {a}, b = {b}: {group}"
+            );
+        }
+    }
+}
+
+#[test]
+fn constant_operands_agree_with_local_operands() {
+    // Each operator with a constant right operand and a computed left one,
+    // beside the same operator reading the constant from a local, which
+    // does not fuse. The `if` jumps land on the fused instruction.
+    let cases = [
+        ("xs[0] + 1", "1"),
+        ("xs[1] - 1.5", "1.5"),
+        ("xs[0] * 3", "3"),
+        ("xs[1] / 4", "4"),
+        ("xs[0] % 4", "4"),
+        ("xs[0] == 7", "7"),
+        ("xs[2] == \"a\"", "\"a\""),
+        ("xs[2] + \"!\"", "\"!\""),
+        ("xs[0] < 8", "8"),
+        ("xs[1] > 2", "2"),
+        ("(if (xs[0] > 5) { xs[0] } else { xs[1] }) - 2", "2"),
+        ("xs[0] / 0", "0"),
+        ("xs[0] & 6", "6"),
+        ("xs[0] | 8", "8"),
+        ("xs[0] ^ 5", "5"),
+        ("xs[0] << 2", "2"),
+        ("xs[0] >> 1", "1"),
+        ("xs[0] << 64", "64"),
+        ("xs[1] & 1", "1"),
+        ("n & 6", "6"),
+        ("n << 3", "3"),
+        ("n >> 70", "70"),
+    ];
+    for (expression, constant) in cases {
+        let reference = expression.replacen(&format!(" {constant}"), " k", 1);
+        let source = format!(
+            "val fused = fn(xs) {{\n    val n = xs[0]\n    {expression}\n}}\n\
+             val reference = fn(xs) {{\n    val n = xs[0]\n    val k = {constant}\n    {reference}\n}}\n\
+             val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    [fused(xs), reference(xs)]\n}}\n"
+        );
+        let program = compile("constants.slug", &source)
+            .unwrap_or_else(|error| panic!("compile `{expression}`: {error:?}"));
+        match Vm::new().run_program(&program) {
+            Ok(result) => {
+                let result = result.to_string();
+                let (fused, reference) = result
+                    .trim_matches(['[', ']'])
+                    .split_once(", ")
+                    .expect("two results");
+                assert_eq!(fused, reference, "`{expression}`");
+            }
+            Err(error) => {
+                let source = format!(
+                    "val main = fn() {{\n    val xs = [7, 3.5, \"a\"]\n    val n = xs[0]\n    val k = {constant}\n    {reference}\n}}\n"
+                );
+                let reference = Vm::new()
+                    .run_program(&compile("reference.slug", &source).expect("reference compiles"))
+                    .expect_err("the reference fails too");
+                assert_eq!(
+                    (error.kind, error.message),
+                    (reference.kind, reference.message),
+                    "`{expression}`"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn module_function_calls_read_the_live_callee() {
+    // `pad` takes generic argument binding, and `swap` is rebound after
+    // `before` is read: each call reads the function the name holds then.
+    let source = "val inc = fn(x) { x + 1 }\n\
+                  val pad = fn(a, b = 10) { a + b }\n\
+                  var swap = fn(x) { x }\n\
+                  val twice = fn(x) { swap(x) }\n\
+                  val count = fn(n, acc) { if (n == 0) { acc } else { count(n - 1, acc + inc(n)) } }\n\
+                  val main = fn() {\n\
+                      val before = twice(1)\n\
+                      swap = fn(x) { x * 10 }\n\
+                      [inc(1), pad(1), pad(1, 2), before, twice(2), count(3, 0)]\n\
+                  }\n";
+    let program = compile("calls.slug", source).expect("calls compile");
+    let result = Vm::new().run_program(&program).expect("calls run");
+    assert_eq!(result.to_string(), "[2, 11, 3, 1, 20, 9]");
+}
+
+#[test]
+fn branching_conditions_agree_with_their_values() {
+    assert_conditions_agree(
+        &[
+            "a && b",
+            "a || b",
+            "!a",
+            "!!a",
+            "!(a && b)",
+            "!a || b",
+            "a && !b",
+            "!(a || !b)",
+            "(a && b) || (!a && !b)",
+            "a || (b && !a)",
+            "a != b",
+            "!(a != b)",
+        ],
+        &[
+            ("true", "true"),
+            ("true", "false"),
+            ("false", "true"),
+            ("false", "false"),
+            ("nil", "true"),
+            ("true", "nil"),
+            ("nil", "nil"),
+        ],
+    );
+    assert_conditions_agree(
+        &[
+            "a >= b",
+            "a <= b",
+            "!(a >= b)",
+            "a >= b && a <= b",
+            "a != b || a >= b",
+            "!(a <= b) || a == b",
+            "a > b || !(b <= a) && a != 2",
+        ],
+        &[("1", "2"), ("2", "1"), ("2", "2")],
+    );
 }

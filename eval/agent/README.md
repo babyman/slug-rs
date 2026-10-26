@@ -58,16 +58,23 @@ hold-outs, and replace a hold-out once it has driven a change.
 | `baseline` | text        | removed | blocked       | coding, review |
 | `json`     | JSON        | removed | blocked       | coding         |
 | `fixes`    | JSON        | kept    | blocked       | coding         |
+| `testing`  | JSON        | kept    | blocked       | projects       |
 | `report`   | text        | removed | available     | review         |
-| `python`   | -           | -       | -             | `tiny` project |
+| `python`   | -           | -       | -             | `tiny`, `crawl` |
+
+The `testing` arm is `fixes` plus `docs/language/testing.md`, a guide to
+testing a program's logic in one `slug` run, which its prompt points to.
 
 The `python` arm is a control: the agent implements the project in Python
 from `python/task.md`, which `make_cases.py` writes from `task.md` with only
 the interface changed, so both languages face the same definition. Its
-workspace holds only `spec.md`. The same checks, written as data to
+workspace holds only `spec.md`, and any files in `python/workspace`. The same checks, written as data to
 `checks.json`, are graded by `harness/projects.py` against `tiny.py`, one
 `python3` process per check with the same ids and time limits as the Slug
-cases, so results compare case by case. `python/reference/tiny.py`, a port of
+cases, so results compare case by case. A game project such as `crawl`
+instead ships `python/cases.json`, graded by `harness/python_game_grader.py`:
+the same cases, played through the module's functions, comparing every
+screen and the final snapshot. `python/reference/tiny.py`, a port of
 the Slug reference, passes all of them. Agents also run Python to edit files, so a
 record's `slug_runs` counts every command that runs Python and `program_runs`
 splits them into scripts, `-c`, `-m`, and standard input. For Codex they come
@@ -155,7 +162,10 @@ Results go to `eval/agent/results/<run>/`, which git ignores:
 A run that ends in an error after one or two turns, typically because access
 ran out, is marked `infra_error` and left out of summaries.
 
-`summarize` prints, per kind and arm, the pass rate, the mean project score, and mean turns, `slug`
-runs, failed runs, output tokens, cost, and wall time, followed by every
-diagnostic code seen and the tasks that failed. Agent output is noisy: compare
+`summarize` prints, per kind and arm, the pass rate, the mean project score, and mean turns, shell
+commands, input and output tokens, cost, and wall time; then, apart, the mean
+program runs (`slug_runs`) and failed runs; then every diagnostic code seen and
+the tasks that failed. Program runs stay out of the headline because they
+count processes: a test suite that starts one `slug` per check counts dozens
+where a Python suite run in one process counts one. Agent output is noisy: compare
 arms over several repeats, not single runs.

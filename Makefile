@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -76,13 +76,19 @@ test-filesystem-clutch:
 bench-vm:
 	cargo bench -p slug-frontend --bench vm --features metrics
 
+# Reports the profile-guided build, as released; set SLUG_BENCH_SLUG to
+# report another executable.
 bench-source:
-	cargo build --release -p slug --bin slug
-	cargo bench -p slug-frontend --bench source
+	python3 -I scripts/pgo-build.py
+	SLUG_BENCH_SLUG=$(or $(SLUG_BENCH_SLUG),$(CURDIR)/target/pgo/slug) cargo bench -p slug-frontend --bench source
 
 # Interleaved A/B timing; BASE defaults to master, CANDIDATE to the working tree.
 bench-ab:
 	python3 -I scripts/bench-ab.py $(or $(BASE),master) $(CANDIDATE) $(BENCH_AB_ARGS)
+
+# Release executables are profile-guided builds.
+release-pgo:
+	python3 -I scripts/pgo-build.py
 
 measure-vm-memory:
 	sh scripts/measure-vm-memory.sh

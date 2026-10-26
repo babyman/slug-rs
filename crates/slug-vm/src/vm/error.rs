@@ -17,6 +17,8 @@ pub enum RuntimeErrorKind {
     Name,
     Arity,
     DivideByZero,
+    /// An index past either end of a list, bytes, or string.
+    OutOfBounds,
     InvalidCall,
     Native,
     NativeContract,
@@ -246,6 +248,7 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Name => "name",
         RuntimeErrorKind::Arity => "arity",
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
+        RuntimeErrorKind::OutOfBounds => "out_of_bounds",
         RuntimeErrorKind::InvalidCall => "invalid_call",
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",

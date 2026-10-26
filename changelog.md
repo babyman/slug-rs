@@ -2,6 +2,132 @@
 
 ## Unreleased
 
+- Prepending to a list that nothing else holds shifts its own storage
+  instead of copying it into a new one.
+
+- List patterns bind plain names and skip `_` items without a recursive
+  match, and no longer copy the list they match. `[head, ...tail]` loops
+  such as `slug.std`'s `map` run about 0.97x as long.
+
+- A function whose body is a `match` on several parameters tests each
+  parameter where it is, instead of building a list of them on every call.
+  `slug.std`'s `map`, `filter`, and `reduce` are such functions:
+  programs that use them heavily run about 0.75x as long, and Crawl 0.90x.
+
+- On 64-bit targets a value's kind tag fills a word, so every value copies
+  as three whole words. Programs run about 0.92x as long: Space Invaders
+  and the HTTP reference server 0.92x, Crawl 0.94x. Values stay 24 bytes,
+  and 32-bit targets such as the ESP32-S3 keep their 16-byte layout.
+
+- The VM no longer records each instruction's source span as it runs, and
+  looks it up from the call frame only when an error needs it. Each
+  instruction also reports its result to the dispatch loop more cheaply.
+  Programs run about 0.98x as long: Space Invaders and Crawl 0.96x, the
+  HTTP reference server 0.98x.
+
+- The VM fetches each instruction without reloading its position through
+  the call frame, and reads ordinary locals directly. Programs run about
+  0.96x as long: the HTTP reference server 0.91x, Space Invaders 0.93x,
+  Crawl 0.94x.
+
+- Arithmetic, comparisons, and bitwise operators on two integers or two
+  floats compute without copying their operands. Space Invaders runs 0.88x
+  as long, the HTTP reference server 0.93x, Crawl 0.94x, and recursive
+  `fib` 0.82x.
+
+- `make bench-source` also reports each Slug / Python ratio with both
+  runtimes' startup time subtracted, from a new `startup` workload. The
+  benchmarking guide recommends a current CPython reference: against CPython
+  3.15 without startup, Slug runs the measurable workloads 3.4x as long.
+  Python twins that looped at module level now run inside a function, like
+  their Slug versions.
+
+- The `slug` executable uses the mimalloc allocator. Allocation-heavy
+  programs run faster: the HTTP reference server 0.87x as long, Crawl
+  0.90x, and the hold-out benchmarks 0.89x overall. `shared-append`, which
+  copies a growing list on every step, runs 1.24x as long.
+
+- Release executables are profile-guided builds (`make release-pgo`),
+  trained on the benchmark workloads. They run them 0.86x as long as the
+  ordinary release build, including the hold-out workloads they never
+  trained on. `make bench-source` and `make bench-ab` now measure
+  profile-guided builds; `BENCH_AB_ARGS=--no-pgo` compares ordinary ones.
+
+- Add the marketing favicon and Slug logo as reusable SVG assets in
+  `docs/assets/`.
+
+- The bitwise operators `&`, `|`, `^`, `<<`, and `>>` with a constant right
+  operand, such as `value & 0xFF`, also run as one instruction. Space
+  Invaders runs 0.96x as long.
+
+- An operator whose right operand is a constant, such as `buffer[i] == 10`
+  or `g.player.hp - 1`, runs as one instruction instead of two when its
+  left operand is computed. Programs gain broadly: the HTTP reference
+  server and Crawl run 0.96x as long, Space Invaders 0.98x.
+
+- A call to a function the module declares at its top level, such as a
+  recursive call, runs one instruction fewer: when its arguments cannot run
+  code, the call reads the function by name after evaluating them instead
+  of loading it first. `fib` runs 0.93x as long, `function-call` 0.91x,
+  `binary-trees` 0.95x, and `defer-errors` 0.93x.
+
+- `if` conditions and match guards branch directly instead of computing a
+  value first: `&&` and `||` become jumps, and `!`, `!=`, `>=`, and `<=` no
+  longer run a separate negation. Space Invaders and the HTTP reference
+  server run 0.98x as long.
+
+- Each `match` case runs one instruction to test its pattern instead of
+  four, and no longer copies the matched value first. Programs that match
+  heavily gain most: the Tiny interpreter and the `expression-evaluator`
+  benchmark run 0.93x as long, `binary-trees` and `higher-order` 0.95x.
+
+- A `val` declared inside a function binds its value directly instead of
+  running the general pattern matcher, which took four instructions for a
+  plain name. Space Invaders runs 0.95x as long, the Tiny interpreter 0.95x,
+  and `word-frequency` 0.92x.
+
+- Statements no longer push a `nil` only to discard it. A declaration or
+  `defer` in a block, and an `if` without `else` used as a statement, now
+  compile to fewer instructions: the HTTP reference server dispatches 10%
+  fewer and runs 0.96x as long.
+
+- Appending to a list in a loop no longer copies the whole list on every
+  iteration when the loop body also creates a closure. Ownership analysis
+  used to assume a closure might capture any local, so a read before the
+  closure always copied; it now uses the closure's actual captures. A
+  20,000-step loop of this shape went from 1.20 s to 0.02 s; other
+  benchmark workloads, none of which have this shape, are unchanged. A new
+  `closure-accumulate` workload covers it (0.11x).
+
+- A `slug` built with the `metrics` feature prints the VM's internal counters
+  after a program finishes when `SLUG_DUMP_METRICS` is set.
+
+- Reading a map field by name, as in `game.player.x`, is faster. Equal
+  string constants now share one allocation across a program, so equal keys
+  usually compare by pointer, and each such lookup remembers where it last
+  found its key and checks there first. An agent's Crawl solution, which
+  keeps its state in maps, runs 0.92x as long, and the Tiny interpreter
+  0.94x; other workloads are unchanged. A new `crawl-game` benchmark
+  workload plays that solution.
+
+- `slug.std` adds `range(end)`, `range(start, end)`, `times(n, f)`,
+  `contains(xs, v)`, `any(xs, f)`, and `all(xs, f)`; `slug.math` adds `abs`,
+  `min`, and `max`; `slug.string` adds `isDigit`, `isLetter`, and `isSpace`.
+  Agents' programs each wrote their own versions of these: counting loops in
+  24 of 115 eval runs, character tests in 38, list membership as
+  `find(...) != nil` in 16, and `min`/`max`/`abs` in every crawl run.
+
+- An index past either end of a list, `bytes`, or string is now an
+  `out_of_bounds` error, in diagnostics and in the value `defer onerror`
+  receives, instead of `type`, which it shared with real type errors. Agents
+  grouping failures by code counted their own bad test data as type errors.
+
+- Assigning a value that may be `nil` to a `var` that cannot hold it, such
+  as `letter = find(...)` after `var letter = ""`, now says so: the message
+  names a `??` default and the `var letter:str|nil` declaration, and a
+  suggestion inserts ` ?? ""` (or `0`, `false`, `[]`, `{}` by type, with
+  parentheses where `??` would bind wrongly).
+
 - Deeply nested source no longer crashes the compiler. A sum of about 1,050
   terms, a long `??` or `else if` chain, deeply nested `spawn`s, or a deep
   `list<list<...>>` annotation overflowed the stack, and a debug build

@@ -41,6 +41,7 @@ normative.
 | `networking.md` | TCP listeners and connections, reading, writing, and backpressure. |
 | `value-pinning-in-match-patterns.md` | Pinning existing values in match patterns. |
 | `variadic-functions-and-spread-syntax.md` | Variadic parameters and spread arguments. |
+| `testing.md` | Guide, not normative: testing a program's logic in one `slug` run with `slug.test`. |
 
 The package also includes focused supplemental notes for automatic semicolon
 insertion, errors, deferred work, maps, matching and destructuring, structs,

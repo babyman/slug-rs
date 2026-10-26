@@ -27,6 +27,9 @@ pub(super) struct Compiler {
     chunks: Vec<Chunk>,
     globals: HashMap<String, bool>,
     callable_globals: HashSet<String>,
+    /// The functions this module declares at its top level, which calls
+    /// read by name after their arguments (`CallGlobal`).
+    module_functions: HashSet<String>,
     declarations: Vec<ModuleDeclaration>,
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
@@ -67,12 +70,24 @@ impl Compiler {
         globals: HashMap<String, bool>,
         callable_globals: HashSet<String>,
     ) -> Self {
+        let module_functions = expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                ExprKind::Declare {
+                    pattern: Pattern::Binding(name),
+                    value,
+                    ..
+                } if matches!(value.kind, ExprKind::Function { .. }) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         Self {
             path: path.into(),
             expressions,
             chunks: Vec::new(),
             globals,
             callable_globals,
+            module_functions,
             declarations: Vec::new(),
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
@@ -313,9 +328,10 @@ impl Compiler {
         let expressions = self.expressions.clone();
         let mut state = State::root();
         for (index, expression) in expressions.iter().enumerate() {
-            self.expression(&mut state, expression)?;
             if index + 1 < expressions.len() {
-                state.emit(Op::Pop, &expression.span);
+                self.statement(&mut state, expression)?;
+            } else {
+                self.expression(&mut state, expression)?;
             }
         }
         if expressions.is_empty() {
@@ -378,6 +394,147 @@ impl Compiler {
             ));
         }
         Ok(entrypoint)
+    }
+
+    /// Compiles a block statement, whose value is discarded. An `if`
+    /// without `else` skips the `nil` its false branch would push only to
+    /// be popped.
+    fn statement(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
+        let ExprKind::If {
+            condition,
+            then_branch,
+            else_branch: None,
+        } = &expression.kind
+        else {
+            self.expression(state, expression)?;
+            state.emit(Op::Pop, &expression.span);
+            return Ok(());
+        };
+        self.compile_if(
+            state,
+            &expression.span,
+            condition,
+            then_branch,
+            None,
+            IfForm::Statement,
+        )
+        .map_err(|error: SourceError| error.claimed_by(expression))
+    }
+
+    /// Compiles an `if`. The branch that runs when control falls through the
+    /// condition comes first: the `then` branch, unless the condition is
+    /// negated (`!c`, `a != b`, `a >= b`, `a <= b`), when branching on the
+    /// condition without its negation reaches `then` by the jump instead.
+    fn compile_if(
+        &mut self,
+        state: &mut State,
+        span: &SourceSpan,
+        condition: &Expr,
+        then_branch: &Expr,
+        else_branch: Option<&Expr>,
+        form: IfForm,
+    ) -> Result<(), SourceError> {
+        super::stack::grow(|| {
+            let arm = |this: &mut Self, state: &mut State, arm: Option<&Expr>| match (arm, form) {
+                (Some(arm), IfForm::Tail) => this.tail_expression(state, arm),
+                (Some(arm), IfForm::Value) => this.expression(state, arm),
+                (Some(arm), IfForm::Statement) => {
+                    this.expression(state, arm)?;
+                    state.emit(Op::Pop, span);
+                    Ok(())
+                }
+                (None, IfForm::Statement) => Ok(()),
+                (None, _) => {
+                    state.emit(Op::Nil, span);
+                    Ok(())
+                }
+            };
+            // A statement without `else` has nothing to jump over, so it
+            // keeps `then` first and needs no jump past the other branch.
+            let swap = negated_condition(condition) && form != IfForm::Statement;
+            let jumps = self.branch(state, condition, swap)?;
+            let (first, second) = if swap {
+                (else_branch, Some(then_branch))
+            } else {
+                (Some(then_branch), else_branch)
+            };
+            arm(self, state, first)?;
+            if second.is_none() && form == IfForm::Statement {
+                for jump in jumps {
+                    state.patch(jump);
+                }
+                return Ok(());
+            }
+            let end = state.jump(span);
+            for jump in jumps {
+                state.patch(jump);
+            }
+            arm(self, state, second)?;
+            state.patch(end);
+            Ok(())
+        })
+    }
+
+    /// Compiles `condition` to jumps instead of a value. The returned jumps
+    /// are taken when its truthiness equals `when`; otherwise control falls
+    /// through. `&&`, `||`, and `!` become control flow, and a negated
+    /// comparison branches on the comparison itself.
+    fn branch(
+        &mut self,
+        state: &mut State,
+        condition: &Expr,
+        when: bool,
+    ) -> Result<Vec<usize>, SourceError> {
+        super::stack::grow(|| {
+            match &condition.kind {
+                ExprKind::Prefix { operators, value }
+                    if operators
+                        .iter()
+                        .all(|(operator, _)| matches!(operator, Prefix::Not)) =>
+                {
+                    return self.branch(state, value, when ^ (operators.len() % 2 == 1));
+                }
+                ExprKind::Binary {
+                    left,
+                    operator: operator @ (Binary::And | Binary::Or),
+                    right,
+                } => {
+                    // `&&` is decided by a falsy operand, `||` by a truthy one.
+                    let deciding = matches!(operator, Binary::Or);
+                    let short_circuit = self.branch(state, left, deciding)?;
+                    if when == deciding {
+                        let mut jumps = short_circuit;
+                        jumps.extend(self.branch(state, right, when)?);
+                        return Ok(jumps);
+                    }
+                    let jumps = self.branch(state, right, when)?;
+                    for jump in short_circuit {
+                        state.patch(jump);
+                    }
+                    return Ok(jumps);
+                }
+                ExprKind::Binary {
+                    left,
+                    operator:
+                        operator @ (Binary::NotEqual | Binary::GreaterEqual | Binary::LessEqual),
+                    right,
+                } => {
+                    self.expression(state, left)?;
+                    self.expression(state, right)?;
+                    let comparison = match operator {
+                        Binary::NotEqual => Op::Equal,
+                        Binary::GreaterEqual => self.less_op(left, right),
+                        _ => self.greater_op(left, right),
+                    };
+                    state.emit(comparison, &condition.span);
+                    return Ok(primitive_branch(state, !when, &condition.span));
+                }
+                _ => {}
+            }
+            self.expression(state, condition)?;
+            Ok(primitive_branch(state, when, &condition.span))
+        })
+        .map_err(|error: SourceError| error.claimed_by(condition))
     }
 
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
@@ -968,6 +1125,17 @@ impl Compiler {
                     if !import {
                         self.expression(state, callee)?;
                     }
+                    // A module function can be read after the arguments when
+                    // they cannot run code that would rebind it. Natives keep
+                    // `CallPositional`, which calls them without a detour.
+                    let global = (positional
+                        && matches!(&callee.kind, ExprKind::Name(name) if self.module_functions.contains(name))
+                        && !self.selected_calls.contains_key(&expression.span)
+                        && arguments.iter().all(|argument| {
+                            matches!(argument, CallArgument::Positional(argument) if runs_no_code(argument))
+                        }))
+                    .then(|| state.take_trailing_global())
+                    .flatten();
                     let mut kinds = Vec::with_capacity(arguments.len());
                     for argument in arguments {
                         let argument = match argument {
@@ -988,6 +1156,11 @@ impl Compiler {
                     }
                     let op = if import {
                         Op::Import(kinds)
+                    } else if let Some(name) = global {
+                        Op::CallGlobal {
+                            name,
+                            count: arguments.len(),
+                        }
                     } else if let Some(identity) = self.selected_identity(&expression.span) {
                         Op::CallSelected { kinds, identity }
                     } else if positional {
@@ -1156,9 +1329,10 @@ impl Compiler {
                         state.emit(Op::EnterScope, &expression.span);
                     }
                     for (index, value) in values.iter().enumerate() {
-                        self.expression(state, value)?;
                         if index + 1 < values.len() {
-                            state.emit(Op::Pop, &value.span);
+                            self.statement(state, value)?;
+                        } else {
+                            self.expression(state, value)?;
                         }
                     }
                     if values.is_empty() {
@@ -1173,19 +1347,14 @@ impl Compiler {
                     condition,
                     then_branch,
                     else_branch,
-                } => {
-                    self.expression(state, condition)?;
-                    let otherwise = state.jump_if_false_pop(&expression.span);
-                    self.expression(state, then_branch)?;
-                    let end = state.jump(&expression.span);
-                    state.patch(otherwise);
-                    if let Some(otherwise) = else_branch {
-                        self.expression(state, otherwise)?;
-                    } else {
-                        state.emit(Op::Nil, &expression.span);
-                    }
-                    state.patch(end);
-                }
+                } => self.compile_if(
+                    state,
+                    &expression.span,
+                    condition,
+                    then_branch,
+                    else_branch.as_deref(),
+                    IfForm::Value,
+                )?,
                 ExprKind::Function {
                     parameters, body, ..
                 } => {
@@ -1278,47 +1447,60 @@ impl Compiler {
         tail: bool,
     ) -> Result<(), SourceError> {
         super::stack::grow(|| {
-            self.expression(state, subject)?;
+            let lowered = cases
+                .iter()
+                .map(|case| {
+                    let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
+                        SourceError::semantic(
+                            SourceErrorCode::Internal,
+                            "missing resolved match constraints",
+                            case.span.clone(),
+                        )
+                        .with_end(case.end)
+                    })?;
+                    lower_case_patterns(&case.patterns, constraints, &case.span)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            // A match on a list of the first locals, such as a function's
+            // `match` body on its parameters, reads them where they are
+            // instead of building the list.
+            let locals = local_list_subject(state, subject).is_some_and(|count| {
+                lowered
+                    .iter()
+                    .all(|(pattern, ..)| local_list_pattern(pattern, count).is_some())
+            });
+            if !locals {
+                self.expression(state, subject)?;
+            }
             let mut ends = Vec::new();
-            for case in cases {
-                let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
-                    SourceError::semantic(
-                        SourceErrorCode::Internal,
-                        "missing resolved match constraints",
-                        case.span.clone(),
-                    )
-                    .with_end(case.end)
-                })?;
-                let (pattern, names, operands) =
-                    lower_case_patterns(&case.patterns, constraints, &case.span)?;
-                state.emit(Op::Duplicate, &case.span);
+            for (case, (pattern, names, operands)) in cases.iter().zip(lowered) {
                 for operand in &operands {
                     self.emit_pattern_operand(state, operand, &case.span)?;
                 }
-                state.emit(
-                    Op::TryMatch {
-                        pattern,
-                        bindings: names.len(),
-                        operands: operands.len(),
-                    },
-                    &case.span,
-                );
+                let next = if locals {
+                    let pattern = local_list_pattern(&pattern, usize::MAX)
+                        .expect("pattern was checked")
+                        .clone();
+                    state.match_locals(pattern, operands.len(), &case.span)
+                } else {
+                    state.match_case(pattern, operands.len(), &case.span)
+                };
                 state.enter_scope();
                 let slots = names
                     .into_iter()
                     .map(|name| state.declare(name, false, false))
                     .collect::<Vec<_>>();
-                let next = state.jump_if_false_pop(&case.span);
                 for slot in slots.iter().rev() {
                     state.emit(Op::SetLocal(*slot), &case.span);
                 }
                 let guard_next = if let Some(guard) = &case.guard {
-                    self.guard_expression(state, guard)?;
-                    Some(state.jump_if_false_pop(&case.span))
+                    Some(self.guard_branch(state, guard)?)
                 } else {
                     None
                 };
-                state.emit(Op::Pop, &case.span);
+                if !locals {
+                    state.emit(Op::Pop, &case.span);
+                }
                 if tail {
                     self.tail_expression(state, &case.value)?;
                 } else {
@@ -1327,14 +1509,13 @@ impl Compiler {
                 state.leave_scope();
                 ends.push(state.jump(&case.span));
                 state.patch(next);
-                for _ in slots {
-                    state.emit(Op::Pop, &case.span);
-                }
-                if let Some(guard_next) = guard_next {
-                    state.patch(guard_next);
+                for jump in guard_next.into_iter().flatten() {
+                    state.patch(jump);
                 }
             }
-            state.emit(Op::Pop, &subject.span);
+            if !locals {
+                state.emit(Op::Pop, &subject.span);
+            }
             state.emit(Op::Nil, &subject.span);
             for end in ends {
                 state.patch(end);
@@ -1343,14 +1524,15 @@ impl Compiler {
         })
     }
 
-    fn guard_expression(
+    /// Compiles a match guard to the jumps it takes when it fails.
+    fn guard_branch(
         &mut self,
         state: &mut State,
         expression: &Expr,
-    ) -> Result<(), SourceError> {
+    ) -> Result<Vec<usize>, SourceError> {
         super::stack::grow(|| {
             let previous = std::mem::replace(&mut self.guard_comparisons, true);
-            let result = self.expression(state, expression);
+            let result = self.branch(state, expression, false);
             self.guard_comparisons = previous;
             result
         })
@@ -1511,6 +1693,17 @@ impl Compiler {
                 return Ok(());
             }
             let names = pattern_bindings(pattern, span)?;
+            // A plain local name always matches, so it binds the value
+            // directly; `SetLocal` resolves a module binding as the match
+            // would. A top-level name keeps the match, because
+            // `DefineGlobal` stores a binding unresolved.
+            if let Pattern::Binding(name) = pattern
+                && !state.is_root()
+            {
+                let slot = state.declare(name.clone(), mutable, callable);
+                state.emit(Op::SetLocal(slot), span);
+                return Ok(());
+            }
             let mut operands = Vec::new();
             let pattern = lower_pattern(pattern, &mut operands);
             for operand in &operands {
@@ -1619,8 +1812,7 @@ impl Compiler {
                         if index + 1 == values.len() {
                             self.tail_expression(state, value)?;
                         } else {
-                            self.expression(state, value)?;
-                            state.emit(Op::Pop, &value.span);
+                            self.statement(state, value)?;
                         }
                     }
                     if values.is_empty() {
@@ -1635,19 +1827,14 @@ impl Compiler {
                     condition,
                     then_branch,
                     else_branch,
-                } => {
-                    self.expression(state, condition)?;
-                    let otherwise = state.jump_if_false_pop(&expression.span);
-                    self.tail_expression(state, then_branch)?;
-                    let end = state.jump(&expression.span);
-                    state.patch(otherwise);
-                    if let Some(otherwise) = else_branch {
-                        self.tail_expression(state, otherwise)?;
-                    } else {
-                        state.emit(Op::Nil, &expression.span);
-                    }
-                    state.patch(end);
-                }
+                } => self.compile_if(
+                    state,
+                    &expression.span,
+                    condition,
+                    then_branch,
+                    else_branch.as_deref(),
+                    IfForm::Tail,
+                )?,
                 ExprKind::Match { subject, cases } => {
                     let subject = subject.as_deref().ok_or_else(|| {
                         SourceError::semantic(
@@ -1699,8 +1886,7 @@ impl Compiler {
                 if index + 1 == values.len() {
                     self.tail_expression(state, value)?;
                 } else {
-                    self.expression(state, value)?;
-                    state.emit(Op::Pop, &value.span);
+                    self.statement(state, value)?;
                 }
             }
             if values.is_empty() {
@@ -1709,6 +1895,65 @@ impl Compiler {
             Ok(())
         })
     }
+}
+
+/// How an `if`'s branches are compiled: for their value, in tail position,
+/// or as a statement whose value is discarded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IfForm {
+    Value,
+    Tail,
+    Statement,
+}
+
+/// Whether `condition` is a negation that branching can absorb: `!c`, or a
+/// comparison compiled as the opposite comparison and `Not`.
+fn negated_condition(condition: &Expr) -> bool {
+    match &condition.kind {
+        ExprKind::Prefix { operators, .. } => {
+            operators
+                .iter()
+                .all(|(operator, _)| matches!(operator, Prefix::Not))
+                && operators.len() % 2 == 1
+        }
+        ExprKind::Binary { operator, .. } => matches!(
+            operator,
+            Binary::NotEqual | Binary::GreaterEqual | Binary::LessEqual
+        ),
+        _ => false,
+    }
+}
+
+/// Whether evaluating `expression` can run no user code: it reads names and
+/// literals and applies built-in operators, so it cannot rebind a module
+/// name.
+fn runs_no_code(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Value(_) | ExprKind::Name(_) | ExprKind::Interpolate(_) => true,
+        ExprKind::Prefix { value, .. } => runs_no_code(value),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => !matches!(operator, Binary::Pipeline) && runs_no_code(left) && runs_no_code(right),
+        ExprKind::Index { collection, index } => runs_no_code(collection) && runs_no_code(index),
+        ExprKind::List(values) => values.iter().all(|value| match value {
+            ListElement::Value(value) | ListElement::Spread(value) => runs_no_code(value),
+        }),
+        _ => false,
+    }
+}
+
+/// Branches on the value on the stack, jumping when its truthiness equals
+/// `when`. A jump on a truthy value is a `JumpIfFalsePop` over a `Jump`.
+fn primitive_branch(state: &mut State, when: bool, span: &SourceSpan) -> Vec<usize> {
+    let skip = state.jump_if_false_pop(span);
+    if !when {
+        return vec![skip];
+    }
+    let jump = state.jump(span);
+    state.patch(skip);
+    vec![jump]
 }
 
 /// Declares the slot of each function a block declares by name, so the
@@ -1832,6 +2077,48 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             MatchPattern::Enum(index)
         }
     })
+}
+
+/// The length of a list literal whose elements name locals `0, 1, ...` in
+/// order, which `MatchLocals` can read in place.
+fn local_list_subject(state: &State, subject: &Expr) -> Option<usize> {
+    let ExprKind::List(elements) = &subject.kind else {
+        return None;
+    };
+    elements
+        .iter()
+        .enumerate()
+        .all(|(index, element)| {
+            matches!(
+                element,
+                ListElement::Value(Expr { kind: ExprKind::Name(name), .. })
+                    if matches!(state.lookup_local(name), Some(slot) if slot == index)
+            )
+        })
+        .then_some(elements.len())
+}
+
+/// The list pattern a case applies to a `count`-element local list subject,
+/// when it is one `MatchLocals` can test item by item: a list pattern of a
+/// length that can match, without a rest binding, and constrained at most
+/// to being a list. A `count` of `usize::MAX` skips the length check.
+fn local_list_pattern(pattern: &MatchPattern, count: usize) -> Option<&MatchPattern> {
+    match pattern {
+        MatchPattern::Constrained {
+            pattern,
+            constraint,
+        } if matches!(constraint, MatchType::Any | MatchType::List(None))
+            || matches!(constraint, MatchType::List(Some(item)) if matches!(**item, MatchType::Any)) =>
+        {
+            local_list_pattern(pattern, count)
+        }
+        MatchPattern::List { items, rest } => match rest {
+            MatchRest::None if count == usize::MAX || items.len() == count => Some(pattern),
+            MatchRest::Discard if count == usize::MAX || items.len() <= count => Some(pattern),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn lower_case_patterns(
