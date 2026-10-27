@@ -99,9 +99,9 @@ session exactly, which is how the engine is tested.
 - Each monster goes for the nearest living player in its chunk, so a player
   can be hit, or die, on someone else's turn. A player who stops playing
   stays in the world, where monsters can still find them.
-- The cookie's id is not a secret: anyone who can reach the server can play
-  as anyone. Accounts, or at least unguessable ids, wait until there is a
-  source of randomness for them.
+- The cookie's id is 128 random bits from `slug.random.secure`, the
+  operating system's secure generator, so no one can guess another player's.
+  The world's seed comes from it too unless one is given.
 
 ### Pushing views
 

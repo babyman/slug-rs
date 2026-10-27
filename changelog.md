@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The `slug.random.secure` clutch gives unpredictable random numbers from
+  the operating system's secure generator (`arc4random_buf`, `getrandom`, or
+  `BCryptGenRandom`), through a small C library: `bytes(n)`, `token(size)`
+  (hex, 128 bits by default), and `seed()`. Crawl's player cookies are now
+  such tokens, so no one can guess another player's, and `play.slug`
+  without `--seed` starts a fresh world each time and prints its seed.
+
 - Crawl's chunks restock: one that no one has been in for 2000 ticks (about
   5 minutes; `play.slug --restock N`) gets fresh monsters and items, by the
   rules that first stocked it, when someone next enters it. Its rooms and

@@ -17,8 +17,9 @@
  * chunk stands still unless someone present is in it.
  *
  * A `crawl` cookie names each browser's player; a browser without one, or
- * with one this server does not know, joins as a new player. The ids are
- * not secret, so anyone who can reach the server can play as anyone.
+ * with one this server does not know, joins as a new player. Each id is 128
+ * random bits from `slug.random.secure`, so no one can guess another
+ * player's.
  *
  * The page shows what the terminal screen folds into 24 rows on its own: the
  * map, with squares out of sight dimmed; the player's stats; the pack, whose
@@ -42,7 +43,7 @@ val {map, filter, contains} = import("slug.std")
 val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
-val rng = import("slug.games.crawl.rng")
+val secure = import("slug.random.secure")
 val {split, trim, join} = import("slug.string")
 val {trySend} = import("slug.channel")
 
@@ -94,8 +95,7 @@ val HEARTBEAT = 60
 // move's messages can be told apart.
 var logs = {}
 
-// The world's seed, and how many players have joined, which numbers them.
-var seed = 1
+// How many players have joined, which numbers them.
 var joined = 0
 
 // The keys waiting for a tick, `{id, key, shift}` in the order they came.
@@ -138,7 +138,7 @@ val record = fn(id:str, messages:list) {
  */
 export val newPlayer = fn():str {
     joined = joined + 1
-    val id = "" + joined + "-" + rng.mix([seed, joined])
+    val id = secure.token()
     game.join(id, "Player " + joined)
     record(id, game.playerOf(id).messages)
     id
@@ -456,7 +456,6 @@ export val handler = fn():fn {
  */
 export val start = fn(worldSeed:num, options:map = {}) {
     game.newGame(worldSeed, options)
-    seed = worldSeed
     joined = 0
     logs = {}
     queue = []
@@ -466,14 +465,15 @@ export val start = fn(worldSeed:num, options:map = {}) {
 }
 
 /**
- * Starts a new world with `options.seed` (default 1) and serves it on
+ * Starts a new world with `options.seed` (default: a fresh one from
+ * `slug.random.secure`) and serves it on
  * `listener`, ticking every `options.tick` milliseconds (default 150), with
  * monsters acting every `options.pace` ticks (default 4) and chunks
  * restocked after `options.restock` ticks with no one in them (default
  * 2000), until the listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
-    start(options.seed ?? 1, {restockAfter: options.restock ?? 2000})
+    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000})
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150

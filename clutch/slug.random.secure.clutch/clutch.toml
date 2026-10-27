@@ -1,0 +1,25 @@
+# Unpredictable random bytes from the operating system's secure generator,
+# for tokens, ids, and fresh seeds; slug.random stays the seeded generator
+# for anything that must repeat.
+[modules]
+"slug.random.secure" = { source = "modules/secure.slug" }
+
+[tests]
+files = ["tests/secure.slug"]
+
+[native]
+profile = "core"
+headers = ["native/source/slug_random_secure.h"]
+sources = ["native/source/secure.c"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_random_secure.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_random_secure.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_random_secure.so"
+"windows-x86_64" = "native/windows-x86_64/slug_random_secure.dll"
+
+[native.link_args]
+"windows-x86_64" = ["-lbcrypt"]
+
+[native.functions."slug.random.secure"]
+bytesRaw = { symbol = "slug_random_secure_bytes", signature = "(i64 count, out bytes data) -> i32" }

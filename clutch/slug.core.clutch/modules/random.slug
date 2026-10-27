@@ -4,7 +4,8 @@
  * `generator(seed)` returns a generator, a map of functions sharing one
  * state. The same seed always gives the same sequence, on every platform, so a
  * game or a test can replay a run exactly. The numbers come from xorshift32;
- * they are not suitable for cryptography.
+ * they are not suitable for cryptography: for tokens, ids, and fresh seeds,
+ * use `slug.random.secure`.
  *
  * ```slug
  * val random = import("slug.random")

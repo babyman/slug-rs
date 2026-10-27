@@ -14,6 +14,7 @@
 "slug.fmt.json" = "slug.core.clutch"
 "slug.test" = "slug.core.clutch"
 "slug.random" = "slug.core.clutch"
+"slug.random.secure" = "slug.random.secure.clutch"
 "slug.gpio" = "slug.embedded.clutch"
 "slug.time" = "slug.embedded.clutch"
 "slug.arcade" = "slug.arcade.clutch"

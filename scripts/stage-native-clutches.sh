@@ -40,6 +40,9 @@ fi
 if selected slug.net.tcp.clutch "$@"; then
   stage slug.net.tcp.clutch slug_net_tcp
 fi
+if selected slug.random.secure.clutch "$@"; then
+  stage slug.random.secure.clutch slug_random_secure
+fi
 if selected slug.core.clutch "$@"; then
   stage slug.core.clutch slug_core
 fi

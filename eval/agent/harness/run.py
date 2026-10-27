@@ -121,6 +121,7 @@ LIBRARY_SOURCES = [
     ("clutch/slug.net.tcp.clutch/modules", "library/net"),
     ("clutch/slug.net.http.clutch/modules", "library/http"),
     ("clutch/slug.text.mustache.clutch/modules", "library/mustache"),
+    ("clutch/slug.random.secure.clutch/modules", "library/random-secure"),
     ("clutch/slug.arcade.clutch/modules", "library/arcade"),
 ]
 
