@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Crawl's chunks restock: one that no one has been in for 2000 ticks (about
+  5 minutes; `play.slug --restock N`) gets fresh monsters and items, by the
+  rules that first stocked it, when someone next enters it. Its rooms and
+  corridors stay, and so do items players dropped there. `newGame` takes
+  `{restockAfter}`.
+
 - Each item in Crawl's pack panel has its own buttons: the use that fits
   it (Eat, Quaff, Read, Wield, Wear, or Take off) and Drop, shown only when
   they would do something. `POST /use` takes `action=drop` to drop an item.

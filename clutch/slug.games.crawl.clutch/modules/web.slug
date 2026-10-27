@@ -451,10 +451,11 @@ export val handler = fn():fn {
 }
 
 /**
- * Starts a new world with `worldSeed`, with no one in it.
+ * Starts a new world with `worldSeed`, with no one in it; `options` go to
+ * the engine's `newGame`.
  */
-export val start = fn(worldSeed:num) {
-    game.newGame(worldSeed)
+export val start = fn(worldSeed:num, options:map = {}) {
+    game.newGame(worldSeed, options)
     seed = worldSeed
     joined = 0
     logs = {}
@@ -467,11 +468,12 @@ export val start = fn(worldSeed:num) {
 /**
  * Starts a new world with `options.seed` (default 1) and serves it on
  * `listener`, ticking every `options.tick` milliseconds (default 150), with
- * monsters acting every `options.pace` ticks (default 4), until the
- * listener closes.
+ * monsters acting every `options.pace` ticks (default 4) and chunks
+ * restocked after `options.restock` ticks with no one in them (default
+ * 2000), until the listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
-    start(options.seed ?? 1)
+    start(options.seed ?? 1, {restockAfter: options.restock ?? 2000})
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150

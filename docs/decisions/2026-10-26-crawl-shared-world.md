@@ -39,6 +39,11 @@ several people play at once.
 - A chunk is generated when someone first enters it and is then kept in
   memory with whatever players did to it. Storing only changes against the
   generated chunk is left until memory needs it.
+- A chunk that no one has been in for 2000 turns (about 5 minutes of ticks)
+  gets fresh monsters and items when someone next enters it, drawn by the
+  rules that first stocked it from a seed that counts its restockings.
+  Terrain stays, so players' maps stay right, and items players dropped
+  stay; a chunk with anyone in it, even someone away, is never restocked.
 - Below depth 8 monsters come from depth 8's table, until monster strength
   and item tables are made to scale with depth.
 - The Orb and winning are gone until the game has a new goal.

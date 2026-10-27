@@ -2,6 +2,7 @@ val game = import("slug.games.crawl")
 val level = import("slug.games.crawl.level")
 val rng = import("slug.games.crawl.rng")
 val {assertEqual, assertTrue} = import("slug.test")
+val {map, filter} = import("slug.std")
 
 val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP]
 
@@ -189,4 +190,62 @@ val chunksKeepWhatHappenedInThem = fn() {
     game.command(ME, "enter", false)
     assertEqual(game.current().levels[key].map, before.map)
     assertEqual(game.current().levels[key].items, before.items)
+}
+
+// Empties the chunk the player is in but for one dropped food ration at
+// (x, y), and returns its key.
+val emptyChunk = fn(x:num, y:num):str {
+    val p = game.playerOf(ME)
+    val key = game.chunkKey(p.cx, p.cy, p.depth)
+    val s = game.snapshot()
+    val dropped = {x: x, y: y, item: {kind: "food"}, dropped: true}
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] + {monsters: [], items: [dropped]}}})
+    key
+}
+
+// Leaves through the east opening, spends `turns` turns in the next chunk,
+// and comes back.
+val awayFor = fn(turns:num) {
+    val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
+    placePlayer(level.WIDTH - 1, row)
+    game.command(ME, "l", false)
+    val wait = fn(n:num) { if (n > 0) { game.command(ME, "space", false); recur(n - 1) } }
+    wait(turns)
+    game.command(ME, "h", false)
+}
+
+@test
+val chunksRestockAfterNoOneHasBeenThereAWhile = fn() {
+    game.newGame(4, {restockAfter: 10})
+    game.join(ME, "me")
+    val down = game.here(ME).down
+    val key = emptyChunk(down.x - 1, down.y)
+    awayFor(10)
+    val lv = game.current().levels[key]
+    assertEqual(lv.restocks, 1)
+    assertTrue(len(lv.items) > 1)
+    assertEqual(lv.items[0], {x: down.x - 1, y: down.y, item: {kind: "food"}, dropped: true})
+}
+
+@test
+val chunksStayAsTheyWereForAShortAbsence = fn() {
+    game.newGame(4, {restockAfter: 10})
+    game.join(ME, "me")
+    val down = game.here(ME).down
+    val key = emptyChunk(down.x - 1, down.y)
+    awayFor(5)
+    val lv = game.current().levels[key]
+    assertEqual(lv.restocks, nil)
+    assertEqual(lv.monsters, [])
+    assertEqual(len(lv.items), 1)
+}
+
+@test
+val restockingIsSeededByItsCount = fn() {
+    val lv = level.generate(2, 1, 1, 3)
+    val first = level.restock(2, 1, 1, 3, 1, lv, [], [])
+    assertEqual(level.restock(2, 1, 1, 3, 1, lv, [], []), first)
+    assertTrue(level.restock(2, 1, 1, 3, 2, lv, [], []) != first)
+    val spots = map(first.items + first.monsters, fn(t) { lv.map[t.y][t.x] })
+    assertEqual(filter(spots, fn(c) { c != level.FLOOR }), [])
 }

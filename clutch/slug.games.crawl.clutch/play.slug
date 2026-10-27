@@ -4,8 +4,10 @@
  *
  * Options: `--port N` (default 8080; 0 picks a free one), `--host H`
  * (default 127.0.0.1), `--seed N` (default 1), `--tick MS`, the
- * milliseconds between the world's ticks (default 150), and `--pace N`,
- * how many ticks pass for each move of the monsters (default 4).
+ * milliseconds between the world's ticks (default 150), `--pace N`, how
+ * many ticks pass for each move of the monsters (default 4), and
+ * `--restock N`, how many ticks a chunk stays as it was with no one in it
+ * before it gets fresh monsters and items (default 2000, 5 minutes).
  */
 val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
@@ -14,5 +16,5 @@ val main = fn() {
     val host = cfg("host", "127.0.0.1")
     val listener = tcp.listen(host, cfg("port", 8080))
     println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/")
-    web.serve(listener, {seed: cfg("seed", 1), tick: cfg("tick", 150), pace: cfg("pace", 4)})
+    web.serve(listener, {seed: cfg("seed", 1), tick: cfg("tick", 150), pace: cfg("pace", 4), restock: cfg("restock", 2000)})
 }

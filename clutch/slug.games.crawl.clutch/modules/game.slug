@@ -16,6 +16,7 @@ val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val string = import("slug.string")
 val math = import("slug.math")
+val {map, filter} = import("slug.std")
 
 export val DIRECTIONS = {
     h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0],
@@ -443,12 +444,36 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
 }
 
 // Puts the player in the chunk at (cx, cy) on `depth`, at the spot `place`
-// gives for that chunk, and looks around.
+// gives for that chunk, and looks around. A chunk no one has been in for
+// `world.restockAfter` turns is restocked first.
 val enter = fn(cx:num, cy:num, depth:num, place:fn) {
-    val spot = place(chunk(cx, cy, depth))
+    val lv = chunk(cx, cy, depth)
+    val spot = place(lv)
+    val key = chunkKey(cx, cy, depth)
+    val left = world.turn - (lv.seen ?? world.turn)
+    if (left >= world.restockAfter && len(companyIn(key)) == 0) { restock(cx, cy, depth, lv, spot) }
     player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
+    markSeen()
     see()
 }
+
+// Gives the chunk at (cx, cy) on `depth` fresh monsters and items, keeping
+// the items players dropped there and keeping clear of `spot` and of
+// anyone away who stands there.
+val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
+    val key = chunkKey(cx, cy, depth)
+    val n = (lv.restocks ?? 0) + 1
+    val standing = map(filter(keys(players), fn(id) {
+        val p = players[id]
+        chunkKey(p.cx, p.cy, p.depth) == key
+    }), fn(id) { {x: players[id].x, y: players[id].y} })
+    val keep = filter(lv.items, fn(i) { i.dropped == true })
+    val fresh = level.restock(world.seed, cx, cy, depth, n, lv, keep, standing :+ spot)
+    levels = levels + {[key]: lv + fresh + {restocks: n}}
+}
+
+// Notes that someone is in the acting player's chunk this turn.
+val markSeen = fn() { setHere(site() + {seen: world.turn}) }
 
 // A new character, at a random free spot in a chunk near the origin of
 // depth 1.
@@ -499,14 +524,21 @@ export val load = fn(saved:map) {
     acting = nil
 }
 
+// How many turns a chunk stays as it was with no one in it before it is
+// restocked, unless `newGame` is told otherwise.
+val RESTOCK_AFTER = 2000
+
 /**
- * Starts a new world with `seed`, with no one in it yet.
+ * Starts a new world with `seed`, with no one in it yet. A chunk that no one
+ * has been in for `options.restockAfter` turns or ticks (default 2000) gets
+ * fresh monsters and items when someone next enters it; items players
+ * dropped there stay.
  */
-export val newGame = fn(seed:num) {
+export val newGame = fn(seed:num, options:map = {}) {
     rng.seed(seed)
     val colours = rng.shuffle(data.colours)
     val titles = rng.shuffle(data.titles)
-    world = {seed: seed, turn: 0, colours: colours, titles: titles}
+    world = {seed: seed, turn: 0, colours: colours, titles: titles, restockAfter: options.restockAfter ?? RESTOCK_AFTER}
     levels = {}
     players = {}
     player = {}
@@ -841,6 +873,7 @@ val endTurn = fn() {
         monstersAct()
         if (!player.dead) { upkeep() }
         world = world copy {turn: world.turn + 1}
+        markSeen()
         see()
     }
 }
@@ -1154,7 +1187,7 @@ val useWith = fn(spec:struct<ItemCommand>, c:str, letter:str) {
                     say("There is no room to drop that here.")
                 } else {
                     takeOne(letter)
-                    setHere(site() copy {items: site().items :+ {x: p.x, y: p.y, item: e.item}})
+                    setHere(site() copy {items: site().items :+ {x: p.x, y: p.y, item: e.item, dropped: true}})
                     say("Dropped " + nameOf(e.item, 1) + ".")
                     endTurn()
                 }
@@ -1388,15 +1421,14 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     // The monsters of each chunk with a living present player, once each,
     // on their ticks.
     var chunks = []
-    if (world.turn % monsterEvery == 0) {
-        each(present, fn() {
-            val key = playerKey()
-            if (!player.dead && !contains(chunks, key)) {
-                chunks = chunks :+ key
-                monstersAct()
-            }
-        })
-    }
+    each(present, fn() {
+        val key = playerKey()
+        if (!player.dead && !contains(chunks, key)) {
+            chunks = chunks :+ key
+            markSeen()
+            if (world.turn % monsterEvery == 0) { monstersAct() }
+        }
+    })
     each(timed, fn() { if (!player.dead) { upkeep() } })
     world = world copy {turn: world.turn + 1}
     each(present, fn() { if (!player.dead) { see() } })

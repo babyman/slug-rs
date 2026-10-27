@@ -14,6 +14,7 @@
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
+val {filter} = import("slug.std")
 
 export val WIDTH = 80
 export val HEIGHT = 22
@@ -109,6 +110,78 @@ export val freeSpot = fn(lv:map):map {
     }
 }
 
+// The monster kinds that live at `depth`, by index.
+val kindsAt = fn(depth:num):list {
+    val d = math.min(depth, TABLE_DEPTH)
+    val go = fn(i:num, acc:list):list {
+        if (i == len(data.monsters)) { return acc }
+        val m = data.monsters[i]
+        recur(i + 1, if (m.depths[0] <= d && d <= m.depths[1]) { acc :+ i } else { acc })
+    }
+    go(0, [])
+}
+
+/**
+ * Fresh monsters and items for chunk `lv` at (cx, cy) on `depth`, its
+ * `n`-th restocking, by the rules that first stocked it: each room's gold
+ * and monster, then nine tries at an item. `keep` are items that stay, and
+ * nothing new is put on them or on the squares in `blocked`. Returns
+ * `{items, monsters}`, the kept items first.
+ */
+export val restock = fn(world:num, cx:num, cy:num, depth:num, n:num, lv:map, keep:list, blocked:list):map {
+    rng.within(rng.mix([world, cx, cy, depth, n]), fn() {
+        var items = keep
+        var monsters = []
+        val taken = fn(list:list, x:num, y:num):bool {
+            val go = fn(i:num):bool {
+                if (i == len(list)) { false } else if (list[i].x == x && list[i].y == y) { true } else { recur(i + 1) }
+            }
+            go(0)
+        }
+        val free = fn(x:num, y:num):bool {
+            lv.map[y][x] == FLOOR && !taken(items, x, y) && !taken(monsters, x, y) && !taken(blocked, x, y)
+        }
+        val spotIn = fn(room:map):map {
+            val x = room.x + 1 + rng.below(room.w - 2)
+            val y = room.y + 1 + rng.below(room.h - 2)
+            if (free(x, y)) { {x: x, y: y} } else { recur(room) }
+        }
+        val kinds = kindsAt(depth)
+        val rooms = filter(lv.rooms, fn(r) { !r.gone })
+        val stock = fn(i:num) {
+            if (i < len(rooms)) {
+                val room = rooms[i]
+                val gold = rng.below(2) == 0
+                if (gold) {
+                    val amount = rng.below(50 + 10 * depth) + 2
+                    val spot = spotIn(room)
+                    items = items :+ {x: spot.x, y: spot.y, item: {kind: "gold", amount: amount}}
+                }
+                if (rng.below(100) < (if (gold) { 80 } else { 25 })) {
+                    val spot = spotIn(room)
+                    val kind = kinds[rng.below(len(kinds))]
+                    val hp = rng.roll(data.monsters[kind].level, 8)
+                    monsters = monsters :+ {x: spot.x, y: spot.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
+                }
+                recur(i + 1)
+            }
+        }
+        stock(0)
+        val things = fn(i:num) {
+            if (i < 9) {
+                if (rng.below(100) < 36) {
+                    val item = newItem()
+                    val spot = spotIn(rooms[rng.below(len(rooms))])
+                    items = items :+ {x: spot.x, y: spot.y, item: item}
+                }
+                recur(i + 1)
+            }
+        }
+        things(0)
+        {items: items, monsters: monsters}
+    })
+}
+
 /**
  * Where the opening on an edge lies, seeded from the edge alone: for `kind`
  * "ew", the edge between chunks (cx, cy) and (cx + 1, cy), its row, from 1 to
@@ -193,16 +266,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
     val gone = chooseGone(rng.below(4), [])
 
     // 2. Rooms, cell by cell, each with its gold and monster.
-    val candidates = fn(i:num, acc:list):list {
-        if (i == len(data.monsters)) {
-            acc
-        } else {
-            val m = data.monsters[i]
-            val d = math.min(depth, TABLE_DEPTH)
-            recur(i + 1, if (m.depths[0] <= d && d <= m.depths[1]) { acc :+ i } else { acc })
-        }
-    }
-    val kinds = candidates(0, [])
+    val kinds = kindsAt(depth)
     // Cells on the left and top keep two squares clear of the border, so a
     // corridor always fits between them and an opening.
     val makeRoom = fn(cell:num) {
