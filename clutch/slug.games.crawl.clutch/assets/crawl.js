@@ -15,3 +15,10 @@ document.addEventListener("htmx:configRequest", e => {
     e.detail.parameters.shift = t.shiftKey;
   }
 });
+// The server pushes the game's HTML after each tick that changes it.
+const events = new EventSource("/events");
+events.addEventListener("game", e => {
+  const game = document.getElementById("game");
+  game.innerHTML = e.data;
+  htmx.process(game);
+});

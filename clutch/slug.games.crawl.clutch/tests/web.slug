@@ -1,6 +1,8 @@
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
 val {toBytes, fromBytes, split} = import("slug.string")
+val {recv} = import("slug.channel")
+val {map} = import("slug.std")
 val {assertEqual, assertTrue} = import("slug.test")
 
 // Whether `text` contains `part`.
@@ -57,36 +59,53 @@ val aNewBrowserJoinsAndKeepsItsPlayer = fn() {
 }
 
 @test
-val keysPlayCommands = fn() {
+val keysWaitForTheNextTick = fn() {
     web.start(1)
     val id = web.newPlayer()
     val before = game.playerOf(id)
-    val moved = post("/key", "key=h&shift=false", id)
-    assertEqual(moved.status, 200)
+    assertEqual(post("/key", "key=h&shift=false", id).status, 204)
+    assertEqual(game.playerOf(id), before)
+    web.tickOnce()
     assertTrue(game.playerOf(id).x != before.x || game.playerOf(id).messages != before.messages)
-    assertTrue(includes(moved.body, "class=\"you\""))
+    assertTrue(includes(web.gameHtml(id), "class=\"you\""))
 }
 
 @test
 val unknownKeysAreIgnored = fn() {
     web.start(1)
     val id = web.newPlayer()
-    val before = game.current()
+    val before = game.playerOf(id)
     assertEqual(post("/key", "key=i", id).status, 204)
     assertEqual(post("/key", "key=f1", id).status, 204)
     assertEqual(post("/key", "", id).status, 204)
-    assertEqual(game.current(), before)
+    web.tickOnce()
+    assertEqual(game.playerOf(id), before)
 }
+
+@test
+val aPlayerCanQueueOnlyAFewKeys = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    assertEqual(map4(fn() { web.press(id, "space", false) }), [true, true, true, true])
+    assertEqual(web.press(id, "space", false), false)
+    web.tickOnce()
+    assertEqual(web.press(id, "space", false), true)
+}
+
+val map4 = fn(body:fn):list { [body(), body(), body(), body()] }
 
 @test
 val itemPromptsOfferMatchingItems = fn() {
     web.start(1)
     val id = web.newPlayer()
-    val asked = post("/key", "key=e", id)
-    assertTrue(includes(asked.body, "Eat which item?"))
-    assertTrue(includes(asked.body, "hx-vals='{\"key\": \"c\"}'"))
-    assertTrue(includes(asked.body, "<button class=\"item\" disabled>"))
+    post("/key", "key=e", id)
+    web.tickOnce()
+    val asked = web.gameHtml(id)
+    assertTrue(includes(asked, "Eat which item?"))
+    assertTrue(includes(asked, "hx-vals='{\"key\": \"c\"}'"))
+    assertTrue(includes(asked, "<button class=\"item\" disabled>"))
     post("/key", "key=space", id)
+    web.tickOnce()
     assertEqual(game.playerOf(id).prompt, nil)
 }
 
@@ -95,9 +114,29 @@ val clickingAnItemUsesIt = fn() {
     web.start(1)
     val id = web.newPlayer()
     assertEqual(len(game.playerOf(id).pack), 3)
-    assertEqual(post("/use", "letter=c", id).status, 200)
+    assertEqual(post("/use", "letter=c", id).status, 204)
+    web.tickOnce()
+    web.tickOnce()
     assertEqual(len(game.playerOf(id).pack), 2)
     assertEqual(post("/use", "letter=z", id).status, 204)
+}
+
+@test
+val eventsStreamTheGameAfterEachChange = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    val events = get("/events", id)
+    assertEqual(events.headers["Content-Type"], "text/event-stream")
+    val first = recv(events.body, 1000)
+    assertTrue(includes(first, "event: game\ndata: "))
+    assertTrue(includes(first, "Welcome to the dungeon."))
+    web.press(id, "e", false)
+    web.tickOnce()
+    assertTrue(includes(recv(events.body, 1000), "Eat which item?"))
+    // A closed stream is dropped, and its player is away.
+    close(events.body)
+    web.tickOnce()
+    web.tickOnce()
 }
 
 @test
@@ -109,8 +148,11 @@ val deathOffersANewCharacterInTheSameWorld = fn() {
     game.load(alive copy {players: alive.players + {[id]: p copy {dead: true, gold: 99}}})
     assertTrue(includes(web.gameHtml(id), "You died."))
     post("/key", "key=enter", id)
+    web.tickOnce()
     val now = game.current()
-    assertEqual(now.world, alive.world)
+    assertEqual(now.world.seed, alive.world.seed)
+    val kept = keys(alive.levels)
+    assertEqual(map(kept, fn(k) { now.levels[k] }), map(kept, fn(k) { alive.levels[k] }))
     assertEqual(now.players[id].dead, false)
     assertEqual(now.players[id].depth, 1)
     assertEqual(now.players[id].gold, 0)
@@ -144,10 +186,25 @@ val randomPlayNeverLeavesMore = fn() {
         if (i == 800) { return nil }
         val next = (seed * 1103515245 + 12345) % 2147483648
         val id = ids[i % 2]
-        web.play(id, keys[next % len(keys)], next % 7 == 0)
+        web.press(id, keys[next % len(keys)], next % 7 == 0)
+        web.tickOnce()
         assertEqual(game.playerOf(id).more, [])
         assertTrue(len(web.gameHtml(id)) > 0)
         recur(i + 1, next)
     }
     go(0, 3)
+}
+
+@test
+val aPromptStaysAboveTheMapWhileTheWorldMoves = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    val events = get("/events", id)
+    web.press(id, "e", false)
+    web.tickOnce()
+    web.tickOnce()
+    web.tickOnce()
+    assertEqual(game.playerOf(id).messages, [])
+    assertTrue(includes(web.gameHtml(id), "Eat which item? (space to cancel)"))
+    close(events.body)
 }

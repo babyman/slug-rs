@@ -53,11 +53,20 @@ session exactly, which is how the engine is tested.
 
 ### A server tick
 
-- The world advances on a fixed tick. Each player queues actions; every tick
-  takes at most one queued action from each player, applies them in a fixed
-  order (by arrival), then moves the monsters.
-- Only active chunks (those with a player in them, or next to one) take
-  turns. The rest of the world is frozen until someone comes back.
+- The world advances on a fixed tick. Each player queues actions, at most
+  four ahead; every tick takes at most one queued action from each player,
+  applies them in a fixed order (by arrival), then moves the monsters.
+- Only active chunks, those with a present player in them, take turns. A
+  player is present while their page is open (has an event stream); one
+  whose page is closed is away, and stays in the world without keeping
+  their chunk running. The rest of the world is frozen until someone comes
+  back.
+- A player who sends no action in a tick does not spend a turn: monsters
+  still move, but the player does not get hungry or heal. A frozen player
+  loses a turn each tick until they thaw.
+- Keys that take no game time, such as opening an item prompt, still wait
+  for a tick; the prompt's question stays above the map while the world
+  moves.
 - Running (Shift with a direction) becomes one step per tick until something
   interrupts it, as it does now. Prompts that take no game time, such as
   choosing an item or `--More--`, are a player's own state and do not wait
@@ -65,8 +74,10 @@ session exactly, which is how the engine is tested.
 - One task owns the world and runs the tick loop; HTTP handlers only queue
   actions and read views. The engine can therefore keep its state in module
   globals, written by that one task.
-- The loop paces itself with `recv` timeouts on the action queue, so it needs
-  no wall clock.
+- The loop sleeps between ticks with `select { after ... }`, so it needs no
+  wall clock; ticks drift by however long each takes.
+- The engine keeps its turn-per-key `command` beside `tick`, for tests and
+  replay; with one player its games are byte for byte as before.
 
 ### Players
 
@@ -88,10 +99,11 @@ session exactly, which is how the engine is tested.
 
 Other players and monsters move without a key press, so the server pushes
 each player's game fragment after a tick that changed what they see, as
-server-sent events through htmx's SSE extension. This needs
-`slug.net.http` to send a response whose body arrives over time, such as a
-body given as a channel, with no `Content-Length` and the connection held
-open.
+server-sent events that a few lines of the page's script swap in. Key posts
+are answered `204`. `slug.net.http` sends a response whose body is a
+channel as it arrives, with no `Content-Length`, closing the connection when
+the channel closes; it closes the channel when the client goes away. A
+keep-alive comment every 60 ticks finds streams whose page has gone.
 
 ## Consequences
 
@@ -134,3 +146,4 @@ Each step leaves a playable game:
 3. Several players by cookie, each command still advancing the world at
    once. (Done.)
 4. Streaming responses in `slug.net.http`, the tick loop, and pushed views.
+   (Done.)

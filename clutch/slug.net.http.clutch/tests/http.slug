@@ -1,6 +1,6 @@
 val http = import("slug.net.http")
 val tcp = import("slug.net.tcp")
-val {await} = import("slug.channel")
+val {await, send} = import("slug.channel")
 val {fromBytes, toBytes} = import("slug.string")
 val {assertEqual} = import("slug.test")
 
@@ -96,4 +96,44 @@ val mediaTypesComeFromExtensions = fn() {
     assertEqual(http.mediaType("README"), "application/octet-stream")
     assertEqual(http.mediaType(".css"), "application/octet-stream")
     assertEqual(http.mediaType("dir.d/file"), "application/octet-stream")
+}
+
+@test
+val streamsAChannelBodyUntilItCloses = fn() {
+    val handler = fn(request) {
+        val body = chan(4)
+        spawn {
+            send(body, "data: one\n\n")
+            send(body, toBytes("data: two\n\n"))
+            close(body)
+        }
+        {status: 200, headers: {"Content-Type": "text/event-stream"}, body: body}
+    }
+    val answer = exchange(handler, "GET /events HTTP/1.1\r\nHost: test\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: one\n\ndata: two\n\n")
+}
+
+@test
+val closesAStreamWhoseClientLeaves = fn() {
+    val body = chan(1)
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, fn(request) { {status: 200, body: body} }, {idleTimeout: 1000}) }
+    val client = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(client, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
+    tcp.read(client, timeout = 5000)
+    tcp.close(client)
+    // Writes to a closed socket fail once the peer's reset arrives; keep
+    // sending until the server closes the channel.
+    val pump = fn(i:num):bool {
+        if (i == 200) { return false }
+        val sent = fn():bool {
+            defer onerror(_) { return false }
+            send(body, "tick\n")
+            true
+        }
+        if (sent()) { recur(i + 1) } else { true }
+    }
+    assertEqual(pump(0), true)
+    tcp.close(listener)
+    await(server)
 }

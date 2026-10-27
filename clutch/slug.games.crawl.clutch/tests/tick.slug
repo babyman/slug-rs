@@ -1,0 +1,135 @@
+val game = import("slug.games.crawl")
+val data = import("slug.games.crawl.data")
+val level = import("slug.games.crawl.level")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter} = import("slug.std")
+val math = import("slug.math")
+
+val kindNamed = fn(name:str):num {
+    val go = fn(i:num):num { if (data.monsters[i].name == name) { i } else { recur(i + 1) } }
+    go(0)
+}
+
+// Changes the player with `id` by `fields`.
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+// Changes the chunk the player with `id` is in by `fields`.
+val setChunk = fn(id:str, fields:map) {
+    val p = game.playerOf(id)
+    val key = game.chunkKey(p.cx, p.cy, p.depth)
+    val s = game.snapshot()
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] + fields}})
+}
+
+// A floor square in the chunk the player with `id` is in with `n` more floor
+// squares to its right.
+val floorRun = fn(id:str, n:num):map {
+    val rows = game.here(id).map
+    val go = fn(i:num):map {
+        val x = i % (level.WIDTH - n)
+        val y = int(i / (level.WIDTH - n))
+        if (rows[y][x:x + n + 1] == "." * (n + 1)) { {x: x, y: y} } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// Player "a" alone in an empty stretch of floor; "b" joined elsewhere.
+val setUp = fn(seed:num):map {
+    game.newGame(seed)
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    setChunk("a", {monsters: [], items: []})
+    val spot = floorRun("a", 4)
+    setPlayer("a", {x: spot.x, y: spot.y})
+    spot
+}
+
+val key = fn(id:str, k:str):map { {id: id, key: k, shift: false} }
+
+val kobold = fn(x:num, y:num):map {
+    {x: x, y: y, kind: kindNamed("kobold"), hp: 50, maxHp: 50, state: "awake"}
+}
+
+@test
+val monstersMoveEveryTickWhileSomeoneIsThere = fn() {
+    val spot = setUp(1)
+    setChunk("a", {monsters: [kobold(spot.x + 4, spot.y)]})
+    game.tick([], ["a"])
+    game.tick([], ["a"])
+    assertEqual(game.here("a").monsters[0].x, spot.x + 2)
+}
+
+@test
+val chunksWithNoOnePresentStayStill = fn() {
+    val spot = setUp(2)
+    setChunk("a", {monsters: [kobold(spot.x + 4, spot.y)]})
+    game.tick([], ["b"])
+    assertEqual(game.here("a").monsters[0].x, spot.x + 4)
+}
+
+@test
+val eachPlayerActsOnceATick = fn() {
+    val spot = setUp(3)
+    game.tick([key("a", "l"), key("a", "l"), key("a", "l")], ["a"])
+    assertEqual(game.playerOf("a").x, spot.x + 1)
+}
+
+@test
+val monstersActOnceATickHoweverManyAct = fn() {
+    val spot = setUp(4)
+    val a = game.playerOf("a")
+    setPlayer("b", {cx: a.cx, cy: a.cy, depth: a.depth, x: spot.x + 4, y: spot.y})
+    setChunk("a", {monsters: [kobold(spot.x + 3, spot.y)]})
+    game.tick([key("a", "space"), key("b", "space")], ["a", "b"])
+    val heard = filter(game.playerOf("b").messages, fn(m) { m == "The kobold hits you." || m == "The kobold misses." })
+    assertEqual(len(heard), 1)
+}
+
+@test
+val runningTakesOneStepATick = fn() {
+    val spot = setUp(5)
+    game.tick([{id: "a", key: "l", shift: true}], ["a"])
+    assertEqual(game.playerOf("a").x, spot.x + 1)
+    game.tick([], ["a"])
+    assertEqual(game.playerOf("a").x, spot.x + 2)
+    game.tick([key("a", "space")], ["a"])
+    game.tick([], ["a"])
+    assertEqual(game.playerOf("a").x, spot.x + 2)
+}
+
+@test
+val frozenPlayersLoseTheirTurns = fn() {
+    val spot = setUp(6)
+    setPlayer("a", {frozen: 2})
+    game.tick([key("a", "l")], ["a"])
+    assertEqual([game.playerOf("a").x, game.playerOf("a").frozen], [spot.x, 1])
+    game.tick([key("a", "l")], ["a"])
+    game.tick([key("a", "l")], ["a"])
+    assertEqual([game.playerOf("a").x, game.playerOf("a").frozen], [spot.x + 1, 0])
+}
+
+@test
+val onlyPlayersWhoSpendATurnGetHungry = fn() {
+    setUp(7)
+    val food = game.playerOf("a").food
+    val turn = game.current().world.turn
+    game.tick([], ["a"])
+    assertEqual(game.playerOf("a").food, food)
+    game.tick([key("a", "space")], ["a"])
+    assertEqual(game.playerOf("a").food, food - 1)
+    assertEqual(game.current().world.turn, turn + 2)
+}
+
+@test
+val messagesAreTheTicksOwn = fn() {
+    setUp(8)
+    game.tick([key("a", "e")], ["a"])
+    assertEqual(game.playerOf("a").messages, ["Eat which item? (space to cancel)"])
+    game.tick([key("a", "c")], ["a"])
+    assertEqual(game.playerOf("a").messages, ["Yum, that tasted good."])
+    game.tick([], ["a"])
+    assertEqual(game.playerOf("a").messages, [])
+}

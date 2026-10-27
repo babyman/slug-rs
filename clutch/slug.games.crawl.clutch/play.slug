@@ -3,7 +3,8 @@
  * address.
  *
  * Options: `--port N` (default 8080; 0 picks a free one), `--host H`
- * (default 127.0.0.1), and `--seed N` (default 1).
+ * (default 127.0.0.1), `--seed N` (default 1), and `--tick MS`, the
+ * milliseconds between the world's ticks (default 150).
  */
 val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
@@ -12,5 +13,5 @@ val main = fn() {
     val host = cfg("host", "127.0.0.1")
     val listener = tcp.listen(host, cfg("port", 8080))
     println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/")
-    web.serve(listener, {seed: cfg("seed", 1)})
+    web.serve(listener, {seed: cfg("seed", 1), tick: cfg("tick", 150)})
 }

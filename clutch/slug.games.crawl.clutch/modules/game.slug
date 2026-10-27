@@ -62,6 +62,11 @@ var players = {}
 var player = {}
 var acting:str|nil = nil
 
+// Whether a `tick` is running, and whether the action it is carrying out
+// spent the player's turn.
+var ticking = false
+var spent = false
+
 /**
  * The whole game: `world`, `levels` (the chunks generated so far, by
  * `chunkKey`), and `players` by id.
@@ -827,11 +832,17 @@ val upkeep = fn() {
 
 // Ends a turn: the player's action has happened; the monsters act, the
 // player's upkeep happens, the turn is counted, and the player looks around.
+// In a `tick`, the world's turn waits for the end of the tick, so this only
+// notes that the player spent theirs.
 val endTurn = fn() {
-    monstersAct()
-    if (!player.dead) { upkeep() }
-    world = world copy {turn: world.turn + 1}
-    see()
+    if (ticking) {
+        spent = true
+    } else {
+        monstersAct()
+        if (!player.dead) { upkeep() }
+        world = world copy {turn: world.turn + 1}
+        see()
+    }
 }
 
 // Turns that pass with the player frozen, until the player thaws or dies.
@@ -940,7 +951,21 @@ val run = fn(dx:num, dy:num) {
         val ground = terrain(q.x, q.y)
         val stop = ground == level.DOOR || ground == level.STAIRS || ground == level.UP || indexAt(site().items, q.x, q.y) >= 0
             || monsterVisible() || len(player.messages) > 0 || player.dead
-        if (!stop) { recur(dx, dy) }
+        if (!stop) {
+            // In a tick, running takes one step a tick; `keepRunning` goes on.
+            if (ticking) { player = player copy {running: [dx, dy]} } else { recur(dx, dy) }
+        }
+    }
+}
+
+// In a tick, another step of a run, unless a monster has come into view.
+val keepRunning = fn() {
+    match player.running {
+        [dx, dy] => {
+            player = player copy {running: nil}
+            if (!monsterVisible()) { run(dx, dy) }
+        }
+        _ => nil
     }
 }
 
@@ -951,10 +976,10 @@ val takeStairs = fn() {
     val ground = terrain(p.x, p.y)
     if (ground == level.STAIRS) {
         enter(p.cx, p.cy, p.depth + 1, fn(lv) { lv.up })
-        world = world copy {turn: world.turn + 1}
+        if (ticking) { spent = true } else { world = world copy {turn: world.turn + 1} }
     } else if (ground == level.UP) {
         enter(p.cx, p.cy, p.depth - 1, fn(lv) { lv.down })
-        world = world copy {turn: world.turn + 1}
+        if (ticking) { spent = true } else { world = world copy {turn: world.turn + 1} }
     } else {
         say("There are no stairs here.")
     }
@@ -1161,8 +1186,9 @@ val askWith = fn(spec:struct<ItemCommand>, c:str) {
     } else if (!any(0)) {
         say(spec.nothing)
     } else {
-        player = player copy {prompt: c}
-        say(spec.verb + " which item? (space to cancel)")
+        val question = spec.verb + " which item? (space to cancel)"
+        player = player copy {prompt: c, question: question}
+        say(question)
     }
 }
 
@@ -1193,8 +1219,18 @@ val showMessages = fn(messages:list) {
     }
 }
 
+// After a command: outside a tick, the turns the player spends frozen, and
+// the messages paged to fit the top line. A tick does neither.
+val finish = fn() {
+    if (!ticking) {
+        thaw()
+        showMessages(player.messages)
+    }
+}
+
 // Carries out one command key for the acting player; see `command`.
 val perform = fn(key:str, shift:bool) {
+    player = player copy {running: nil}
     if (len(player.more) > 0) {
         if (key == "space") { showMessages(player.more) }
     } else if (player.dead) {
@@ -1208,8 +1244,7 @@ val perform = fn(key:str, shift:bool) {
         } else if (len(key) == 1) {
             player = player copy {prompt: nil, messages: []}
             useItem(c, key)
-            thaw()
-            showMessages(player.messages)
+            finish()
         }
     } else {
         val direction = DIRECTIONS[key]
@@ -1240,8 +1275,7 @@ val perform = fn(key:str, shift:bool) {
             } else {
                 askItem(key)
             }
-            thaw()
-            showMessages(player.messages)
+            finish()
         }
     }
 }
@@ -1296,6 +1330,74 @@ val screen = fn():list {
  * starts a new character.
  */
 export val command = fn(id:str, key:str, shift:bool) { actAs(id, fn() { perform(key, shift) }) }
+
+/**
+ * Advances the world by one tick. Each of `actions`, `{id, key, shift}` in
+ * the order they arrived, at most one per player, is carried out as
+ * `command` would, except that a frozen player's is dropped, and a run
+ * takes one step a tick. Players in `present` (those playing now) with no
+ * action carry on running, or lose a turn while frozen. Then the monsters
+ * act once in each chunk with a living present player, everyone who spent a
+ * turn has their upkeep, the turn is counted, and everyone present looks
+ * around. Each present player's messages are this tick's; none are paged.
+ */
+export val tick = fn(actions:list, present:list) {
+    ticking = true
+    val each = fn(ids:list, body:fn) {
+        val go = fn(i:num) {
+            if (i < len(ids)) {
+                if (players[ids[i]] != nil) { actAs(ids[i], body) }
+                recur(i + 1)
+            }
+        }
+        go(0)
+    }
+    each(present, fn() { player = player copy {messages: [], more: []} })
+    var timed = []
+    var acted = []
+    val doActions = fn(i:num) {
+        if (i < len(actions)) {
+            val a = actions[i]
+            val free = players[a.id] != nil && !contains(acted, a.id)
+                && (players[a.id].frozen == 0 || players[a.id].dead)
+            if (free) {
+                acted = acted :+ a.id
+                actAs(a.id, fn() {
+                    spent = false
+                    perform(a.key, a.shift ?? false)
+                    if (spent) { timed = timed :+ a.id }
+                })
+            }
+            recur(i + 1)
+        }
+    }
+    doActions(0)
+    each(present, fn() {
+        if (!contains(acted, acting) && !player.dead) {
+            spent = false
+            if (player.frozen > 0) {
+                player = player copy {frozen: player.frozen - 1}
+                spent = true
+            } else {
+                keepRunning()
+            }
+            if (spent) { timed = timed :+ acting }
+        }
+    })
+    // The monsters of each chunk with a living present player, once each.
+    var chunks = []
+    each(present, fn() {
+        val key = playerKey()
+        if (!player.dead && !contains(chunks, key)) {
+            chunks = chunks :+ key
+            monstersAct()
+        }
+    })
+    each(timed, fn() { if (!player.dead) { upkeep() } })
+    world = world copy {turn: world.turn + 1}
+    each(present, fn() { if (!player.dead) { see() } })
+    ticking = false
+}
 
 /**
  * The screen's 24 text rows for the player with `id`: messages, the map as

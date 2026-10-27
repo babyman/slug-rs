@@ -24,7 +24,13 @@
  * response is a string, sent as a `200` text body, or a map of `status`, and
  * optionally `headers` and `body` (a string or bytes). The server adds
  * `Content-Length`, a default `Content-Type`, and `Connection: close` when it
- * closes the connection. A handler that throws, or returns something that is
+ * closes the connection.
+ *
+ * A body can also be a channel of strings or bytes, for a response that
+ * arrives over time, such as server-sent events: the server writes each
+ * value as it is received, and ends the response and closes the connection
+ * when the channel is closed. When the client goes away, the server closes
+ * the channel, so the next send to it fails. A handler that throws, or returns something that is
  * not a response, is answered with `500`, except that an `http.reject` error,
  * such as `form`'s for a body that does not decode, is answered with its
  * status.
@@ -38,7 +44,7 @@
 
 val tcp = import("slug.net.tcp")
 val {split, trim, lower, join, chars, ord, toInt, toBytes, fromBytes} = import("slug.string")
-val {send} = import("slug.channel")
+val {send, recv} = import("slug.channel")
 
 // --- Protocol errors ---------------------------------------------------------
 
@@ -420,13 +426,41 @@ val normalize = fn(response):map {
         nil => result
         _:str => result
         _:bytes => result
+        _:chan => result
         _ => {status: 500}
     }
 }
 
-// Writes `response`; `head` sends no body, as for `HEAD`.
-val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool) {
+// Writes each value received from `channel` until it is closed, then
+// returns; when a write fails because the client went away, closes the
+// channel first.
+val stream = fn(connection:tcp.Connection, channel:chan) {
+    defer onerror(_) {
+        close(channel)
+        return nil
+    }
+    val next = fn() {
+        match recv(channel) {
+            nil => nil
+            text:str => { tcp.write(connection, text); recur() }
+            data:bytes => { tcp.write(connection, data); recur() }
+            _ => recur()
+        }
+    }
+    next()
+}
+
+// Writes `response`; `head` sends no body, as for `HEAD`. Returns whether
+// the connection must close: when `closing`, or after a streamed body.
+val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool):bool {
     val result = normalize(response)
+    match result.body {
+        channel:chan => {
+            streamed(connection, result, channel, head)
+            return true
+        }
+        _ => nil
+    }
     val status = result.status
     val body = result.body ?? ""
     val data = match body {
@@ -464,6 +498,27 @@ val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool) {
     if (closing && !contains(seen, "connection")) { text = text + "Connection: close\r\n" }
     tcp.write(connection, text + "\r\n")
     if (!head && !bodiless && len(data) > 0) { tcp.write(connection, data) }
+    closing
+}
+
+// Writes a response whose body is `channel`: its head, with no length, so
+// the body runs until the connection closes, then the stream.
+val streamed = fn(connection:tcp.Connection, result:map, channel:chan, head:bool) {
+    val headers = result.headers ?? {}
+    val keysGiven = keys(headers)
+    val writeHeaders = fn(i:num, out:str):str {
+        if (i == len(keysGiven)) { return out }
+        val given = keysGiven[i]
+        val name = "$given"
+        val key = lower(name)
+        if (key == "content-length" || key == "connection" || key == "transfer-encoding") { return recur(i + 1, out) }
+        val value = headers[given]
+        recur(i + 1, out + name + ": " + "$value" + "\r\n")
+    }
+    val status = result.status
+    val top = writeHeaders(0, "HTTP/1.1 $status " + reason(status) + "\r\n")
+    tcp.write(connection, top + "Connection: close\r\n\r\n")
+    if (head) { close(channel) } else { stream(connection, channel) }
 }
 
 // Calls `handler`; an `http.reject` throw is answered with its status, and
@@ -503,8 +558,8 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
     }
     input.awaitRequest()
     val [request, closing] = readRequest(connection, input, options)
-    respond(connection, invoke(handler, request), request.method == "HEAD", closing)
-    if (closing) { "closed" } else { "open" }
+    val closed = respond(connection, invoke(handler, request), request.method == "HEAD", closing)
+    if (closed) { "closed" } else { "open" }
 }
 
 /**

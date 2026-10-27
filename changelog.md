@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- `slug.net.http` streams a response whose `body` is a channel of strings or
+  bytes, such as server-sent events: it writes each value as it arrives and
+  ends the response, and the connection, when the channel closes. When the
+  client goes away, the server closes the channel, so the next send to it
+  fails.
+
+- Crawl's world runs on a tick (150 milliseconds by default; `play.slug
+  --tick MS`). Keys queue for the next tick, at most four ahead per player,
+  and each tick carries out one per player; monsters move every tick whether
+  anyone pressed a key or not, in each chunk where someone is playing. Open
+  pages receive their game's HTML over server-sent events (`/events`) after
+  each tick that changed it. A player whose page is closed is away, and their
+  chunk stands still unless someone present is in it. The engine adds
+  `tick(actions, present)`; `command` still plays one turn per key.
+
 - Several people can play Crawl's world at once: a `crawl` cookie names
   each browser's player, and a browser without one joins as a new player.
   Each command still advances the world at once. Players see each other as

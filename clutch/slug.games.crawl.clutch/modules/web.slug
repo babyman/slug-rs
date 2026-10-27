@@ -2,12 +2,18 @@
  * slug.games.crawl.web — Crawl in a web browser
  *
  * Serves one world of Crawl over `slug.net.http` to everyone who opens the
- * page, drawn as HTML that HTMX swaps in after each command, from the
- * Mustache templates in the clutch's assets (`page.mustache`,
- * `game.mustache`, and `pack-item.mustache`), with its style and script
- * beside them. The engine is `slug.games.crawl`: the page posts each key the
- * game knows to `/key`, the server runs it with `command` for that browser's
- * player, and answers with the game's new HTML.
+ * page, drawn as HTML from the Mustache templates in the clutch's assets
+ * (`page.mustache`, `game.mustache`, and `pack-item.mustache`), with its
+ * style and script beside them. The engine is `slug.games.crawl`.
+ *
+ * The world runs on a tick (150 milliseconds by default). The page posts
+ * each key the game knows to `/key`, which queues it for that browser's
+ * player; each tick carries out at most one queued key per player with the
+ * engine's `tick`, and the world moves on whether anyone pressed a key or
+ * not. Each open page listens on `/events`, a stream of server-sent events,
+ * and the server pushes it the game's HTML after each tick that changed it.
+ * A player whose page is closed is away: they stay in the world, but their
+ * chunk stands still unless someone present is in it.
  *
  * A `crawl` cookie names each browser's player; a browser without one, or
  * with one this server does not know, joins as a new player. The ids are
@@ -36,7 +42,8 @@ val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
 val rng = import("slug.games.crawl.rng")
-val {split, trim} = import("slug.string")
+val {split, trim, join} = import("slug.string")
+val {trySend} = import("slug.channel")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
 // place of the map, which the page does not need.
@@ -63,6 +70,13 @@ val CLASSES = {
 // How many messages the log keeps.
 val LOG_SIZE = 60
 
+// How many keys a player can queue ahead of the ticks.
+val QUEUE_SIZE = 4
+
+// How many ticks pass between keep-alive comments on each stream, which
+// find streams whose page has gone.
+val HEARTBEAT = 60
+
 // Each player's log, by id: `log` holds [move, message] pairs, oldest
 // first, and `moves` counts the commands that did something, so the latest
 // move's messages can be told apart.
@@ -71,6 +85,18 @@ var logs = {}
 // The world's seed, and how many players have joined, which numbers them.
 var seed = 1
 var joined = 0
+
+// The keys waiting for a tick, `{id, key, shift}` in the order they came.
+var queue = []
+
+// The open event streams by player id, each a list of channels, the HTML
+// each player was last sent, and how many ticks have run.
+var streams = {}
+var shown = {}
+var ticks = 0
+
+// Whether `serve` is serving, which keeps its ticks going.
+var serving = false
 
 val percent = fn(part:num, whole:num):num {
     if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
@@ -105,24 +131,85 @@ export val newPlayer = fn():str {
 }
 
 /**
- * Runs one command `key` for the player with `id`, with `shift` held or
- * not, then pages through any `--More--`, logging what the move said. A
- * prompt's question is shown by the page rather than logged.
+ * Queues command `key` for the player with `id`, with `shift` held or not,
+ * for a coming tick; returns whether it was queued, which it is not when
+ * they already have QUEUE_SIZE keys waiting.
  */
-export val play = fn(id:str, key:str, shift:bool) {
-    val was = game.playerOf(id)
-    val before = game.here(id)
-    game.command(id, key, shift)
-    val now = game.playerOf(id)
-    if (now == was && game.here(id) == before) { return nil }
-    if (was.dead && !now.dead) { logs = logs - id }
-    if (now.prompt != nil) { return nil }
-    val page = fn(out:list):list {
-        if (len(game.playerOf(id).more) == 0) { return out }
-        game.command(id, "space", false)
-        recur(out + game.playerOf(id).messages)
+export val press = fn(id:str, key:str, shift:bool):bool {
+    if (len(filter(queue, fn(a) { a.id == id })) >= QUEUE_SIZE) { return false }
+    queue = queue :+ {id: id, key: key, shift: shift}
+    true
+}
+
+/**
+ * Runs one tick: carries out the first queued key of each player, moves the
+ * world on, logs what each player was told, and pushes each open page its
+ * game's HTML when it changed.
+ */
+export val tickOnce = fn() {
+    // The first queued key of each player; the rest wait.
+    val firsts = fn(i:num, now:list, later:list, seen:list):list {
+        if (i == len(queue)) { return [now, later] }
+        val a = queue[i]
+        if (contains(seen, a.id)) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen :+ a.id) }
     }
-    record(id, page(now.messages))
+    val [actions, rest] = firsts(0, [], [], [])
+    queue = rest
+    val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
+    val wasDead = filter(map(actions, fn(a) { a.id }), fn(id) { game.playerOf(id).dead })
+    game.tick(actions, present)
+    ticks = ticks + 1
+    // Log what each present player, or each who acted, was told.
+    val actors = map(actions, fn(a) { a.id })
+    val told = actors + filter(present, fn(id) { !contains(actors, id) })
+    val log = fn(i:num) {
+        if (i < len(told)) {
+            val id = told[i]
+            val p = game.playerOf(id)
+            if (contains(wasDead, id) && !p.dead) { logs = logs - id }
+            // A prompt's question is shown above the map, not logged.
+            val said = filter(p.messages, fn(m) { p.prompt == nil || m != p.question })
+            if (contains(actors, id) || len(said) > 0) { record(id, said) }
+            recur(i + 1)
+        }
+    }
+    log(0)
+    push(present)
+}
+
+// Sends each present player's page their game's HTML when it changed, and
+// a keep-alive comment every HEARTBEAT ticks; drops streams that are closed.
+val push = fn(present:list) {
+    val each = fn(i:num) {
+        if (i < len(present)) {
+            val id = present[i]
+            val html = gameHtml(id)
+            if (html != shown[id]) {
+                shown = shown + {[id]: html}
+                broadcast(id, event(html))
+            } else if (ticks % HEARTBEAT == 0) {
+                broadcast(id, ": alive\n\n")
+            }
+            recur(i + 1)
+        }
+    }
+    each(0)
+}
+
+// One server-sent event of type `game` carrying `html`.
+val event = fn(html:str):str {
+    "event: game\n" + join(map(split(html, "\n"), fn(line) { "data: " + line }), "\n") + "\n\n"
+}
+
+// Sends `text` to each of the player's streams, dropping closed ones; a
+// stream whose page is too slow to keep up misses this one.
+val broadcast = fn(id:str, text:str) {
+    val open = filter(streams[id] ?? [], fn(channel) {
+        defer onerror(_) { return false }
+        trySend(channel, text)
+        true
+    })
+    streams = streams + {[id]: open}
 }
 
 // --- The view ----------------------------------------------------------------
@@ -239,7 +326,7 @@ val view = fn(id:str):map {
     val l = logOf(id)
     {
         prompt: prompt,
-        top: if (prompt) { p.messages } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
+        top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
         rows: mapRows(id, p, game.text(id)),
         over: overView(p),
         log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] }),
@@ -297,9 +384,8 @@ val onKey = fn(request:map):map {
     asPlayer(request, fn(id) {
         val fields = http.form(request)
         val key = fields.key ?? ""
-        if (!contains(KEYS, key)) { return {status: 204} }
-        play(id, key, fields.shift == "true")
-        html(gameHtml(id))
+        if (contains(KEYS, key)) { press(id, key, fields.shift == "true") }
+        {status: 204}
     })
 }
 
@@ -311,10 +397,21 @@ val onUse = fn(request:map):map {
         val held = filter(p.pack, fn(e) { e.letter == letter })
         if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
         val use = USES[held[0].item.kind]
-        if (use == nil) { return {status: 204} }
-        play(id, use[0], false)
-        if (game.playerOf(id).prompt != nil) { play(id, letter, false) }
-        html(gameHtml(id))
+        if (use != nil && press(id, use[0], false)) { press(id, letter, false) }
+        {status: 204}
+    })
+}
+
+// A stream of the player's game as server-sent events, starting with how it
+// is now.
+val onEvents = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val channel = chan(8)
+        val html = gameHtml(id)
+        trySend(channel, event(html))
+        streams = streams + {[id]: (streams[id] ?? []) :+ channel}
+        shown = shown + {[id]: html}
+        {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
     })
 }
 
@@ -331,6 +428,7 @@ export val handler = fn():fn {
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
         ["POST", "/key", onKey],
         ["POST", "/use", onUse],
+        ["GET", "/events", onEvents],
     ])
 }
 
@@ -342,13 +440,31 @@ export val start = fn(worldSeed:num) {
     seed = worldSeed
     joined = 0
     logs = {}
+    queue = []
+    streams = {}
+    shown = {}
+    ticks = 0
 }
 
 /**
  * Starts a new world with `options.seed` (default 1) and serves it on
- * `listener` until the listener closes.
+ * `listener`, ticking every `options.tick` milliseconds (default 150), until
+ * the listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
     start(options.seed ?? 1)
+    serving = true
+    val every = options.tick ?? 150
+    spawn {
+        val loop = fn() {
+            if (serving) {
+                select { after every /> fn(_) { nil } }
+                tickOnce()
+                recur()
+            }
+        }
+        loop()
+    }
     http.serve(listener, handler())
+    serving = false
 }
