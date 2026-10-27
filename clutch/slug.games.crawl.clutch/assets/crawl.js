@@ -13,7 +13,24 @@ document.addEventListener("htmx:configRequest", e => {
   if (t && t.type === "keydown") {
     e.detail.parameters.key = gameKey(t);
     e.detail.parameters.shift = t.shiftKey;
+  } else if (e.detail.elt.hasAttribute("data-direction") && running()) {
+    // Run makes the next direction run, then turns itself off.
+    e.detail.parameters.shift = true;
+    setRunning(false);
   }
+});
+
+// The touch controls' Run button.
+function running() {
+  const run = document.querySelector(".touch .run");
+  return run !== null && run.getAttribute("aria-pressed") === "true";
+}
+function setRunning(on) {
+  const run = document.querySelector(".touch .run");
+  if (run) run.setAttribute("aria-pressed", on ? "true" : "false");
+}
+document.addEventListener("click", e => {
+  if (e.target.closest(".touch .run")) setRunning(!running());
 });
 // How many map columns and rows fit the page: as wide as the space beside
 // the panels (or the page, when they go below), leaving room for the log.
@@ -32,7 +49,12 @@ function mapSize() {
   probe.remove();
   const cw = box.width / 10, lh = box.height;
   const cols = Math.floor((room - 30) / cw);
-  const rows = Math.floor((window.innerHeight - 330) / lh);
+  // Beside the panels, leave room below the map for the log; with the
+  // panels below, only for the touch controls, if they show.
+  const touch = document.querySelector(".touch");
+  const bar = touch && getComputedStyle(touch).display !== "none" ? touch.offsetHeight : 0;
+  const reserve = style.flexDirection === "row" ? 330 : 150 + bar;
+  const rows = Math.floor((window.innerHeight - reserve) / lh);
   return { cols: Math.max(20, Math.min(80, cols)), rows: Math.max(8, Math.min(22, rows)) };
 }
 

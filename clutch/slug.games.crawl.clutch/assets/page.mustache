@@ -16,6 +16,27 @@
   <main id="game">
     {{>game}}
   </main>
+  {{! On a touch screen, a bar of controls stays at the bottom: a pad of the
+      eight directions with Wait in the middle, and Run, which makes the next
+      direction run, Stairs, and Wait. }}
+  <nav class="touch" aria-label="Controls">
+    <div class="side">
+      <button type="button" class="run" aria-pressed="false">Run</button>
+      <button hx-post="/key" hx-vals='{"key": "enter"}'>Stairs</button>
+      <button hx-post="/key" hx-vals='{"key": "space"}'>Wait</button>
+    </div>
+    <div class="pad">
+      <button data-direction hx-post="/key" hx-vals='{"key": "y"}' aria-label="Up and left">↖</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "k"}' aria-label="Up">↑</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "u"}' aria-label="Up and right">↗</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "h"}' aria-label="Left">←</button>
+      <button hx-post="/key" hx-vals='{"key": "space"}' aria-label="Wait">·</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "l"}' aria-label="Right">→</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "b"}' aria-label="Down and left">↙</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "j"}' aria-label="Down">↓</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "n"}' aria-label="Down and right">↘</button>
+    </div>
+  </nav>
   <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
   Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
   <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·

@@ -38,6 +38,11 @@ val servesThePageAndHtmx = fn() {
     assertEqual(page.status, 200)
     assertTrue(includes(page.body, "<script src=\"/htmx.js\"></script>"))
     assertTrue(includes(page.body, "Welcome to the dungeon."))
+    // The touch controls: a pad of the eight directions, and Run.
+    assertTrue(includes(page.body, "<nav class=\"touch\""))
+    assertTrue(includes(page.body, "<button type=\"button\" class=\"run\""))
+    val pads = split(page.body, "data-direction hx-post=\"/key\"")
+    assertEqual(len(pads), 9)
     val script = get("/htmx.js")
     assertEqual(script.headers["Content-Type"], "text/javascript; charset=utf-8")
     assertTrue(includes(fromBytes(script.body), "var htmx="))

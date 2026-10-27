@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Crawl has touch controls: on a touch screen a bar stays at the bottom of
+  the page, with a pad of the eight directions (Wait in the middle) and
+  Run, which makes the next direction run, Stairs, and Wait.
+
 - Crawl's map is a window that follows the player: centred on them at
   first, it scrolls only when they come within a quarter of its width or
   height of an edge, and it is stitched from the chunk they are in and the

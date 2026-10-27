@@ -63,6 +63,24 @@ button.primary { background: var(--accent); color: #111; font-weight: 600; paddi
 .end h1 { margin: 0 0 6px; color: var(--accent); }
 .help { padding: 0 20px 20px; color: var(--muted); font-size: 12px; }
 .help kbd { margin: 0 2px; }
+/* The touch controls show only where the pointer is a finger. */
+.touch { display: none; }
+@media (pointer: coarse) {
+  .touch {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    justify-content: space-between; align-items: flex-end; gap: 12px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(13, 15, 20, .94); border-top: 1px solid var(--line);
+  }
+  body { padding-bottom: 200px; }
+  .help { display: none; }
+  .touch button { touch-action: manipulation; user-select: none; border-color: var(--line); background: var(--panel); }
+  .touch .side { display: flex; flex-direction: column; gap: 8px; }
+  .touch .side button { min-width: 92px; min-height: 44px; }
+  .touch .run[aria-pressed="true"] { background: var(--accent); color: #111; font-weight: 600; }
+  .touch .pad { display: grid; grid-template-columns: repeat(3, 54px); grid-auto-rows: 54px; gap: 6px; }
+  .touch .pad button { font-size: 22px; }
+}
 /* On a narrow screen the panels go below the map. */
 @media (max-width: 760px) {
   #game { flex-direction: column; align-items: stretch; padding: 10px; }
