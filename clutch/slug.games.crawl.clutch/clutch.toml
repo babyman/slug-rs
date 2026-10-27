@@ -11,4 +11,4 @@
 "slug.games.crawl.web" = { source = "modules/web.slug" }
 
 [tests]
-files = ["tests/web.slug", "tests/world.slug"]
+files = ["tests/web.slug", "tests/world.slug", "tests/players.slug"]

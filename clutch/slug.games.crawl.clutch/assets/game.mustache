@@ -24,13 +24,14 @@
     {{#hasFoes}}
     <ul>
       {{#foes}}
-      <li><i class="monster">{{letter}}</i><span>{{name}}{{#asleep}} <em>asleep</em>{{/asleep}}</span><div class="bar foe"><div style="width:{{health}}%"></div></div></li>
+      <li><i class="{{cls}}">{{letter}}</i><span>{{name}}{{#asleep}} <em>asleep</em>{{/asleep}}</span><div class="bar {{bar}}"><div style="width:{{health}}%"></div></div></li>
       {{/foes}}
     </ul>
     {{/hasFoes}}
   </section>
   {{#stats}}
   <section class="stats">
+    <div class="name">{{name}}</div>
     <div class="hp"><span>Health</span><b>{{hp}} / {{maxHp}}</b></div>
     <div class="bar {{band}}"><div style="width:{{health}}%"></div></div>
     <div class="grid">

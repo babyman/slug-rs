@@ -1,12 +1,17 @@
 /**
  * slug.games.crawl.web — Crawl in a web browser
  *
- * Serves one game of Crawl over `slug.net.http`, drawn as HTML that HTMX
- * swaps in after each command, from the Mustache templates in the clutch's
- * assets (`page.mustache`, `game.mustache`, and `pack-item.mustache`), with
- * its style and script beside them. The engine is `slug.games.crawl`: the
- * page posts each key the game knows to `/key`, the server runs it with
- * `command`, and answers with the game's new HTML.
+ * Serves one world of Crawl over `slug.net.http` to everyone who opens the
+ * page, drawn as HTML that HTMX swaps in after each command, from the
+ * Mustache templates in the clutch's assets (`page.mustache`,
+ * `game.mustache`, and `pack-item.mustache`), with its style and script
+ * beside them. The engine is `slug.games.crawl`: the page posts each key the
+ * game knows to `/key`, the server runs it with `command` for that browser's
+ * player, and answers with the game's new HTML.
+ *
+ * A `crawl` cookie names each browser's player; a browser without one, or
+ * with one this server does not know, joins as a new player. The ids are
+ * not secret, so anyone who can reach the server can play as anyone.
  *
  * The page shows what the terminal screen folds into 24 rows on its own: the
  * map, with squares out of sight dimmed; the player's stats; the pack, whose
@@ -30,6 +35,8 @@ val {map, filter, contains} = import("slug.std")
 val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
+val rng = import("slug.games.crawl.rng")
+val {split, trim} = import("slug.string")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
 // place of the map, which the page does not need.
@@ -48,7 +55,7 @@ val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armou
 
 // The class of each map character; capital letters are monsters.
 val CLASSES = {
-    "@": "you", ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
+    ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
     "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
     ")": "weapon", "]": "armour",
 }
@@ -56,45 +63,66 @@ val CLASSES = {
 // How many messages the log keeps.
 val LOG_SIZE = 60
 
-// The log: [move, message] pairs, oldest first. `moves` counts the commands
-// that did something, so the latest move's messages can be told apart.
-var log = []
-var moves = 0
+// Each player's log, by id: `log` holds [move, message] pairs, oldest
+// first, and `moves` counts the commands that did something, so the latest
+// move's messages can be told apart.
+var logs = {}
+
+// The world's seed, and how many players have joined, which numbers them.
+var seed = 1
+var joined = 0
 
 val percent = fn(part:num, whole:num):num {
     if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
 }
 
+// The colour band of a player's health bar.
+val band = fn(hp:num, maxHp:num):str {
+    if (hp * 3 <= maxHp) { "low" } else if (hp * 3 <= maxHp * 2) { "mid" } else { "high" }
+}
+
 // --- Playing -----------------------------------------------------------------
 
+val logOf = fn(id:str):map { logs[id] ?? {log: [], moves: 0} }
+
 // Records the messages of a move that did something.
-val record = fn(messages:list) {
-    moves = moves + 1
-    val entries = map(messages, fn(message) { [moves, message] })
-    val all = log + entries
-    log = if (len(all) > LOG_SIZE) { all[len(all) - LOG_SIZE:] } else { all }
+val record = fn(id:str, messages:list) {
+    val l = logOf(id)
+    val moves = l.moves + 1
+    val all = l.log + map(messages, fn(message) { [moves, message] })
+    logs = logs + {[id]: {log: if (len(all) > LOG_SIZE) { all[len(all) - LOG_SIZE:] } else { all }, moves: moves}}
 }
 
 /**
- * Runs one command `key`, with `shift` held or not, then pages through any
- * `--More--`, logging what the move said. A prompt's question is shown by
- * the page rather than logged.
+ * Adds a new player to the world and returns their id.
  */
-export val play = fn(key:str, shift:bool) {
-    val before = game.current()
-    game.command(key, shift)
-    val after = game.current()
-    if (after == before) { return nil }
-    val was = before.player
-    val now = after.player
-    if (was.dead && !now.dead) { log = [] }
+export val newPlayer = fn():str {
+    joined = joined + 1
+    val id = "" + joined + "-" + rng.mix([seed, joined])
+    game.join(id, "Player " + joined)
+    record(id, game.playerOf(id).messages)
+    id
+}
+
+/**
+ * Runs one command `key` for the player with `id`, with `shift` held or
+ * not, then pages through any `--More--`, logging what the move said. A
+ * prompt's question is shown by the page rather than logged.
+ */
+export val play = fn(id:str, key:str, shift:bool) {
+    val was = game.playerOf(id)
+    val before = game.here(id)
+    game.command(id, key, shift)
+    val now = game.playerOf(id)
+    if (now == was && game.here(id) == before) { return nil }
+    if (was.dead && !now.dead) { logs = logs - id }
     if (now.prompt != nil) { return nil }
     val page = fn(out:list):list {
-        if (len(game.current().player.more) == 0) { return out }
-        game.command("space", false)
-        recur(out + game.current().player.messages)
+        if (len(game.playerOf(id).more) == 0) { return out }
+        game.command(id, "space", false)
+        recur(out + game.playerOf(id).messages)
     }
-    record(page(now.messages))
+    record(id, page(now.messages))
 }
 
 // --- The view ----------------------------------------------------------------
@@ -107,9 +135,15 @@ val PAGE = mustache.parse(fromBytes(asset("page.mustache")))
 val GAME = mustache.parse(GAME_TEXT)
 val PARTIALS = {game: GAME_TEXT, "pack-item": fromBytes(asset("pack-item.mustache"))}
 
-// How the map draws `c` at (x, y): its class, dimmed when the square is out of
-// sight, and for a monster its name; nil for a blank square.
-val cell = fn(c:str, x:num, y:num):map {
+// How the map draws `c` at (x, y) for the player with `id` at `p`: its
+// class, dimmed when the square is out of sight, and for a monster or
+// another player their name; nil for a blank square.
+val cell = fn(id:str, p:map, c:str, x:num, y:num):map {
+    if (c == "@") {
+        if (x == p.x && y == p.y) { return {cls: "you", title: nil} }
+        val there = filter(game.others(id), fn(o) { o[1].x == x && o[1].y == y })
+        return {cls: "ally", title: if (len(there) > 0) { there[0][1].name } else { nil }}
+    }
     if (c >= "A" && c <= "Z") {
         val named = filter(data.monsters, fn(m) { m.letter == c })
         return {cls: "monster", title: if (len(named) > 0) { named[0].name } else { "monster" }}
@@ -117,7 +151,7 @@ val cell = fn(c:str, x:num, y:num):map {
     val kind = CLASSES[c]
     if (kind == nil) {
         {cls: nil, title: nil}
-    } else if (kind != "you" && !game.visible(x, y)) {
+    } else if (!game.visible(id, x, y)) {
         {cls: kind + " seen", title: nil}
     } else {
         {cls: kind, title: nil}
@@ -125,30 +159,30 @@ val cell = fn(c:str, x:num, y:num):map {
 }
 
 // One row of the map as runs of characters that look alike.
-val mapRow = fn(row:str, y:num, end:str):map {
+val mapRow = fn(id:str, p:map, row:str, y:num, end:str):map {
     val go = fn(x:num, start:num, look:map, out:list):list {
         if (x == len(row)) { return out :+ (look + {text: row[start:x]}) }
-        val next = cell(row[x], x, y)
+        val next = cell(id, p, row[x], x, y)
         if (next == look) { recur(x + 1, start, look, out) } else { recur(x + 1, x, next, out :+ (look + {text: row[start:x]})) }
     }
-    {runs: go(1, 0, cell(row[0], 0, y), []), end: end}
+    {runs: go(1, 0, cell(id, p, row[0], 0, y), []), end: end}
 }
 
-val mapRows = fn(rows:list):list {
+val mapRows = fn(id:str, p:map, rows:list):list {
     val go = fn(y:num, out:list):list {
         if (y == level.HEIGHT) { return out }
-        recur(y + 1, out :+ mapRow(rows[y + 1], y, if (y < level.HEIGHT - 1) { "\n" } else { "" }))
+        recur(y + 1, out :+ mapRow(id, p, rows[y + 1], y, if (y < level.HEIGHT - 1) { "\n" } else { "" }))
     }
     go(0, [])
 }
 
-val statsView = fn(p:map):map {
+val statsView = fn(id:str, p:map):map {
     val hunger = if (p.food <= 0) { "Faint" } else if (p.food <= 50) { "Weak" } else if (p.food <= 150) { "Hungry" } else { "" }
     {
         hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
-        band: if (p.hp * 3 <= p.maxHp) { "low" } else if (p.hp * 3 <= p.maxHp * 2) { "mid" } else { "high" },
+        band: band(p.hp, p.maxHp),
         depth: p.depth, area: "" + p.cx + ", " + p.cy, gold: p.gold, str: p.str, maxStr: p.maxStr,
-        armour: game.armourValue(), level: p.level, xp: p.xp,
+        armour: game.armourValue(id), level: p.level, xp: p.xp,
         conditions: filter([
             hunger,
             if (p.confused > 0) { "Confused" } else { "" },
@@ -161,14 +195,14 @@ val statsView = fn(p:map):map {
 
 // The pack: while a prompt asks for an item, the items it accepts can be
 // chosen and the rest are disabled; otherwise clicking an item uses it.
-val packView = fn(p:map):map {
+val packView = fn(id:str, p:map):map {
     val asking = p.prompt != nil
     val wanted = if (asking) { PROMPT_KINDS[p.prompt] } else { nil }
     val item = fn(e:map):map {
         val kind = e.item.kind
         val fits = wanted == nil || kind == wanted
         {
-            letter: e.letter, kind: kind, glyph: GLYPHS[kind] ?? "?", name: game.itemName(e.item, e.count),
+            letter: e.letter, kind: kind, glyph: GLYPHS[kind] ?? "?", name: game.itemName(id, e.item, e.count),
             tag: if (e.letter == p.weapon) { "in hand" } else if (e.letter == p.armour) { "worn" } else { nil },
             choose: asking && fits, disabled: asking && !fits,
             use: if (asking) { nil } else { {title: (USES[kind] ?? [nil, nil])[1]} },
@@ -177,12 +211,15 @@ val packView = fn(p:map):map {
     {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
 }
 
-val foesView = fn(p:map):list {
-    val seen = filter(game.here().monsters, fn(m) { p.sense || game.visible(m.x, m.y) })
-    map(seen, fn(m) {
-        val kind = data.monsters[m.kind]
-        {letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}
-    })
+// Who is in view: other players the player sees, then monsters.
+val foesView = fn(id:str, p:map):list {
+    val people = filter(game.others(id), fn(o) { game.visible(id, o[1].x, o[1].y) })
+    val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
+    map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+        + map(seen, fn(m) {
+            val kind = data.monsters[m.kind]
+            {cls: "monster", bar: "foe", letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}
+        })
 }
 
 val overView = fn(p:map) {
@@ -195,27 +232,30 @@ val overView = fn(p:map) {
 
 // The data the game template draws: above the map, the prompt's question or
 // what the latest move said; below it, the older messages.
-val view = fn():map {
-    val p = game.current().player
+val view = fn(id:str):map {
+    val p = game.playerOf(id)
     val prompt = p.prompt != nil
-    val foes = foesView(p)
+    val foes = foesView(id, p)
+    val l = logOf(id)
     {
         prompt: prompt,
-        top: if (prompt) { p.messages } else { map(filter(log, fn(entry) { entry[0] == moves }), fn(entry) { entry[1] }) },
-        rows: mapRows(game.text()),
+        top: if (prompt) { p.messages } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
+        rows: mapRows(id, p, game.text(id)),
         over: overView(p),
-        log: map(filter(log, fn(entry) { entry[0] != moves }), fn(entry) { entry[1] }),
+        log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] }),
         foes: foes,
         hasFoes: len(foes) > 0,
-        stats: statsView(p),
-        pack: packView(p),
+        name: p.name,
+        stats: statsView(id, p),
+        pack: packView(id, p),
     }
 }
 
 /**
- * The game's HTML, which the page's `#game` element holds.
+ * The game's HTML for the player with `id`, which the page's `#game`
+ * element holds.
  */
-export val gameHtml = fn():str { mustache.render(GAME, view(), PARTIALS) }
+export val gameHtml = fn(id:str):str { mustache.render(GAME, view(id), PARTIALS) }
 
 // --- Serving -----------------------------------------------------------------
 
@@ -228,25 +268,54 @@ val file = fn(name:str, body:bytes):map {
     {status: 200, headers: {"Content-Type": http.mediaType(name), "Cache-Control": "no-cache"}, body: body}
 }
 
+// The id in the request's `crawl` cookie, or nil.
+val cookieId = fn(request:map):str|nil {
+    val pairs = map(split(request.headers.cookie ?? "", ";"), fn(part) { split(trim(part), "=") })
+    val ours = filter(pairs, fn(pair) { len(pair) == 2 && pair[0] == "crawl" })
+    if (len(ours) == 0) { nil } else { ours[0][1] }
+}
+
+// Answers `request` with `respond(id)` for the browser's player: the one its
+// cookie names, or a new player, whose cookie the response sets.
+val asPlayer = fn(request:map, respond:fn):map {
+    val known = match cookieId(request) {
+        id: str => if (game.playing(id)) { id } else { nil }
+        _ => nil
+    }
+    match known {
+        id: str => respond(id)
+        _ => {
+            val id = newPlayer()
+            val response = respond(id)
+            val cookie = "crawl=" + id + "; Path=/; HttpOnly; SameSite=Strict"
+            response copy {headers: (response.headers ?? {}) + {"Set-Cookie": cookie}}
+        }
+    }
+}
+
 val onKey = fn(request:map):map {
-    val fields = http.form(request)
-    val key = fields.key ?? ""
-    if (!contains(KEYS, key)) { return {status: 204} }
-    play(key, fields.shift == "true")
-    html(gameHtml())
+    asPlayer(request, fn(id) {
+        val fields = http.form(request)
+        val key = fields.key ?? ""
+        if (!contains(KEYS, key)) { return {status: 204} }
+        play(id, key, fields.shift == "true")
+        html(gameHtml(id))
+    })
 }
 
 // Uses a pack item the way its kind is used: eats food, wields a weapon.
 val onUse = fn(request:map):map {
-    val letter = http.form(request).letter ?? ""
-    val p = game.current().player
-    val held = filter(p.pack, fn(e) { e.letter == letter })
-    if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
-    val use = USES[held[0].item.kind]
-    if (use == nil) { return {status: 204} }
-    play(use[0], false)
-    if (game.current().player.prompt != nil) { play(letter, false) }
-    html(gameHtml())
+    asPlayer(request, fn(id) {
+        val letter = http.form(request).letter ?? ""
+        val p = game.playerOf(id)
+        val held = filter(p.pack, fn(e) { e.letter == letter })
+        if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
+        val use = USES[held[0].item.kind]
+        if (use == nil) { return {status: 204} }
+        play(id, use[0], false)
+        if (game.playerOf(id).prompt != nil) { play(id, letter, false) }
+        html(gameHtml(id))
+    })
 }
 
 /**
@@ -256,7 +325,7 @@ val onUse = fn(request:map):map {
  */
 export val handler = fn():fn {
     http.router([
-        ["GET", "/", fn(request) { html(mustache.render(PAGE, view(), PARTIALS)) }],
+        ["GET", "/", fn(request) { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }],
         ["GET", "/htmx.js", fn(request) { file("htmx.js", asset("htmx.js")) }],
         ["GET", "/crawl.css", fn(request) { file("crawl.css", asset("crawl.css")) }],
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
@@ -266,17 +335,17 @@ export val handler = fn():fn {
 }
 
 /**
- * Starts a new game with `seed`, with an empty log.
+ * Starts a new world with `worldSeed`, with no one in it.
  */
-export val start = fn(seed:num) {
-    game.newGame(seed)
-    log = []
-    moves = 0
-    record(game.current().player.messages)
+export val start = fn(worldSeed:num) {
+    game.newGame(worldSeed)
+    seed = worldSeed
+    joined = 0
+    logs = {}
 }
 
 /**
- * Starts a new game with `options.seed` (default 1) and serves it on
+ * Starts a new world with `options.seed` (default 1) and serves it on
  * `listener` until the listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {

@@ -1,0 +1,152 @@
+val game = import("slug.games.crawl")
+val data = import("slug.games.crawl.data")
+val level = import("slug.games.crawl.level")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, reduce} = import("slug.std")
+val math = import("slug.math")
+
+val kindNamed = fn(name:str):num {
+    val go = fn(i:num):num { if (data.monsters[i].name == name) { i } else { recur(i + 1) } }
+    go(0)
+}
+
+// Changes the player with `id` by `fields`.
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+// Replaces the monsters of the chunk the player with `id` is in.
+val setMonsters = fn(id:str, monsters:list) {
+    val p = game.playerOf(id)
+    val key = game.chunkKey(p.cx, p.cy, p.depth)
+    val s = game.snapshot()
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] copy {monsters: monsters}}})
+}
+
+// Two floor squares side by side in the chunk the player with `id` is in,
+// at least three squares from them.
+val floorPair = fn(id:str):list {
+    val p = game.playerOf(id)
+    val rows = game.here(id).map
+    val go = fn(i:num):list {
+        val x = i % (level.WIDTH - 1)
+        val y = int(i / (level.WIDTH - 1))
+        val far = math.max(math.abs(x - p.x), math.abs(y - p.y)) >= 3
+        if (far && rows[y][x] == "." && rows[y][x + 1] == ".") { [{x: x, y: y}, {x: x + 1, y: y}] } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// Two players, "a" and "b", with b moved into a's chunk.
+val twoTogether = fn(seed:num):list {
+    game.newGame(seed)
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    val a = game.playerOf("a")
+    val pair = floorPair("a")
+    setPlayer("b", {cx: a.cx, cy: a.cy, depth: a.depth, x: pair[0].x, y: pair[0].y})
+    pair
+}
+
+@test
+val joiningTwiceKeepsTheSamePlayer = fn() {
+    game.newGame(1)
+    game.join("a", "Ann")
+    val first = game.playerOf("a")
+    game.join("a", "Someone else")
+    assertEqual(game.playerOf("a"), first)
+    assertTrue(game.playing("a"))
+    assertTrue(!game.playing("b"))
+    assertEqual(assertThrowsType(fn() { game.playerOf("b") }), "crawl.player")
+}
+
+val assertThrowsType = fn(body:fn):str {
+    val {assertThrows} = import("slug.test")
+    assertThrows(body).type
+}
+
+@test
+val newPlayersNeverStartOnEachOther = fn() {
+    game.newGame(2)
+    val join = fn(i:num) {
+        if (i < 40) {
+            game.join("p" + i, "P" + i)
+            recur(i + 1)
+        }
+    }
+    join(0)
+    val players = game.current().players
+    val spots = map(keys(players), fn(id) {
+        val p = players[id]
+        game.chunkKey(p.cx, p.cy, p.depth) + ":" + p.x + "," + p.y
+    })
+    val unique = keys(reduce(spots, {}, fn(acc, s) { acc + {[s]: true} }))
+    assertEqual(len(unique), 40)
+}
+
+@test
+val playersBlockEachOther = fn() {
+    val pair = twoTogether(3)
+    setPlayer("a", {x: pair[1].x, y: pair[1].y})
+    val turn = game.current().world.turn
+    game.command("a", "h", false)
+    assertEqual([game.playerOf("a").x, game.playerOf("a").y], [pair[1].x, pair[1].y])
+    assertEqual(game.current().world.turn, turn)
+}
+
+@test
+val monstersGoForTheNearestPlayer = fn() {
+    val pair = twoTogether(4)
+    setMonsters("a", [{x: pair[1].x, y: pair[1].y, kind: kindNamed("kobold"), hp: 50, maxHp: 50, state: "awake"}])
+    val go = fn(i:num) {
+        if (i < 5) {
+            game.command("a", "space", false)
+            recur(i + 1)
+        }
+    }
+    go(0)
+    val heard = filter(game.playerOf("b").messages, fn(m) { m == "The kobold hits you." || m == "The kobold misses." })
+    assertTrue(len(heard) > 0)
+    assertEqual(filter(game.playerOf("a").messages, fn(m) { m == "The kobold hits you." || m == "The kobold misses." }), [])
+}
+
+@test
+val aPlayerCanDieOnSomeoneElsesTurn = fn() {
+    val pair = twoTogether(5)
+    setPlayer("b", {hp: 1})
+    setMonsters("a", [{x: pair[1].x, y: pair[1].y, kind: kindNamed("troll"), hp: 50, maxHp: 50, state: "awake"}])
+    val go = fn(i:num) {
+        if (i < 40 && !game.playerOf("b").dead) {
+            game.command("a", "space", false)
+            recur(i + 1)
+        }
+    }
+    go(0)
+    assertTrue(game.playerOf("b").dead)
+    assertTrue(!game.playerOf("a").dead)
+    game.command("b", "space", false)
+    game.command("b", "enter", false)
+    val b = game.playerOf("b")
+    assertEqual([b.dead, b.depth, b.name], [false, 1, "Bo"])
+}
+
+@test
+val playersSeeEachOtherOnTheirScreens = fn() {
+    val pair = twoTogether(6)
+    setPlayer("a", {x: pair[1].x, y: pair[1].y})
+    assertEqual(game.text("a")[1 + pair[0].y][pair[0].x], "@")
+    assertEqual(game.text("b")[1 + pair[1].y][pair[1].x], "@")
+    assertEqual(len(game.others("a")), 1)
+    assertEqual(game.others("a")[0][0], "b")
+}
+
+@test
+val snapshotsHoldEveryPlayer = fn() {
+    twoTogether(7)
+    game.command("a", "space", false)
+    val saved = game.snapshot()
+    game.command("b", "space", false)
+    game.load(saved)
+    assertEqual(game.snapshot(), saved)
+}

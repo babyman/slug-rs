@@ -126,61 +126,67 @@ val deepChunksHaveMonstersFromTheDeepestTable = fn() {
     assertTrue(len(lv.map) == level.HEIGHT)
 }
 
+val ME = "me"
+
 // Moves the player to (x, y) in the chunk they are in.
 val placePlayer = fn(x:num, y:num) {
     val s = game.snapshot()
-    game.load(s copy {player: s.player copy {x: x, y: y}})
+    game.load(s copy {players: s.players + {[ME]: s.players[ME] copy {x: x, y: y}}})
 }
 
 @test
 val walkingOffAnOpeningEntersTheNextChunk = fn() {
     game.newGame(4)
-    val before = game.current().player
-    val row = openOnColumn(game.here(), level.WIDTH - 1)[0]
+    game.join(ME, "me")
+    val before = game.playerOf(ME)
+    val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
     placePlayer(level.WIDTH - 1, row)
-    game.command("l", false)
-    val after = game.current().player
+    game.command(ME, "l", false)
+    val after = game.playerOf(ME)
     assertEqual([after.cx, after.cy, after.depth, after.x, after.y], [before.cx + 1, before.cy, 1, 0, row])
-    game.command("h", false)
-    val back = game.current().player
+    game.command(ME, "h", false)
+    val back = game.playerOf(ME)
     assertEqual([back.cx, back.x, back.y], [before.cx, level.WIDTH - 1, row])
 }
 
 @test
 val wallsAtTheEdgeDoNotLeadAnywhere = fn() {
     game.newGame(4)
-    val row = openOnColumn(game.here(), level.WIDTH - 1)[0]
+    game.join(ME, "me")
+    val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
     placePlayer(level.WIDTH - 1, row)
     val before = game.current()
-    game.command("u", false)
-    game.command("n", false)
-    assertEqual(game.current().player.cx, before.player.cx)
+    game.command(ME, "u", false)
+    game.command(ME, "n", false)
+    assertEqual(game.playerOf(ME).cx, before.players[ME].cx)
 }
 
 @test
 val stairsLeadDownAndBackUp = fn() {
     game.newGame(6)
-    val top = game.current().player
-    val down = game.here().down
+    game.join(ME, "me")
+    val top = game.playerOf(ME)
+    val down = game.here(ME).down
     placePlayer(down.x, down.y)
-    game.command("enter", false)
-    val below = game.current().player
+    game.command(ME, "enter", false)
+    val below = game.playerOf(ME)
     assertEqual([below.cx, below.cy, below.depth], [top.cx, top.cy, 2])
-    assertEqual({x: below.x, y: below.y}, game.here().up)
-    game.command("enter", false)
-    val again = game.current().player
+    assertEqual({x: below.x, y: below.y}, game.here(ME).up)
+    game.command(ME, "enter", false)
+    val again = game.playerOf(ME)
     assertEqual([again.cx, again.cy, again.depth, again.x, again.y], [top.cx, top.cy, 1, down.x, down.y])
 }
 
 @test
 val chunksKeepWhatHappenedInThem = fn() {
     game.newGame(6)
-    val key = game.chunkKey(game.current().player.cx, game.current().player.cy, 1)
-    val down = game.here().down
+    game.join(ME, "me")
+    val key = game.chunkKey(game.playerOf(ME).cx, game.playerOf(ME).cy, 1)
+    val down = game.here(ME).down
     placePlayer(down.x, down.y)
     val before = game.current().levels[key]
-    game.command("enter", false)
-    game.command("enter", false)
+    game.command(ME, "enter", false)
+    game.command(ME, "enter", false)
     assertEqual(game.current().levels[key].map, before.map)
     assertEqual(game.current().levels[key].items, before.items)
 }

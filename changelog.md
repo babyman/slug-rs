@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Several people can play Crawl's world at once: a `crawl` cookie names
+  each browser's player, and a browser without one joins as a new player.
+  Each command still advances the world at once. Players see each other as
+  `@` in their own colour and in the In View panel, block each other, and
+  each keeps their own log; each monster goes for the nearest player in its
+  chunk. The engine's functions take a player id (`join`, `command`,
+  `text`, `here`, `playerOf`, `others`, and the rest), and `newGame` starts
+  an empty world.
+
 - Crawl's world is endless: chunks of one map each, at (x, y) on every
   depth, generated from the world's seed when first entered. Walking off a
   map through the opening on its edge enters the next chunk, and stairs lead

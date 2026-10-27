@@ -15,6 +15,7 @@ val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val string = import("slug.string")
+val math = import("slug.math")
 
 export val DIRECTIONS = {
     h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0],
@@ -55,13 +56,35 @@ val ITEM_COMMANDS = {
 
 var world = {}
 var levels = {}
+var players = {}
+
+// The player acting now, loaded from `players` by `actAs`, and their id.
 var player = {}
+var acting:str|nil = nil
 
 /**
  * The whole game: `world`, `levels` (the chunks generated so far, by
- * `chunkKey`), and `player`.
+ * `chunkKey`), and `players` by id.
  */
-export val current = fn():map { {world: world, levels: levels, player: player} }
+export val current = fn():map {
+    val all = if (acting == nil) { players } else { players + {[acting]: player} }
+    {world: world, levels: levels, players: all}
+}
+
+// Runs `body` as the player with `id`: the engine's rules all act on
+// `player`, which holds them meanwhile and is saved back after. Nests, as
+// when a monster attacks another player during someone's turn.
+val actAs = fn(id:str, body:fn) {
+    val outer = acting
+    if (outer != nil) { players = players + {[outer]: player} }
+    acting = id
+    player = players[id]
+    val result = body()
+    players = players + {[id]: player}
+    acting = outer
+    if (outer != nil) { player = players[outer] }
+    result
+}
 
 /**
  * The key of the chunk at (cx, cy) on `depth`, such as "0,-1,2".
@@ -70,21 +93,48 @@ export val chunkKey = fn(cx:num, cy:num, depth:num):str { "" + cx + "," + cy + "
 
 val playerKey = fn():str { chunkKey(player.cx, player.cy, player.depth) }
 
-/**
- * The chunk the player is in.
- */
-export val here = fn():map { levels[playerKey()] }
+// The chunk the acting player is in.
+val site = fn():map { levels[playerKey()] }
 
 val setHere = fn(lv:map) {
     levels = levels + {[playerKey()]: lv}
 }
 
+// A chunk no one remembers anything of.
+val BLANK_ROWS = (fn(i:num, rows:list):list {
+    if (i == level.HEIGHT) { rows } else { recur(i + 1, rows :+ (level.BLANK * level.WIDTH)) }
+})(0, [])
+
 // What the player remembers of the chunk they are in, as its rows.
-val memory = fn():list { player.memory[playerKey()] }
+val memory = fn():list { player.memory[playerKey()] ?? BLANK_ROWS }
 
 val setMemory = fn(rows:list) {
     player = player copy {memory: player.memory + {[playerKey()]: rows}}
 }
+
+// The living players in the chunk with `key`, the acting player among them,
+// as [id, player] pairs in id order.
+val companyIn = fn(key:str):list {
+    val ids = string.sort(keys(players))
+    val go = fn(i:num, acc:list):list {
+        if (i == len(ids)) { return acc }
+        val id = ids[i]
+        val p = if (id == acting) { player } else { players[id] }
+        recur(i + 1, if (!p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { acc :+ [id, p] } else { acc })
+    }
+    go(0, [])
+}
+
+// Whether a living player stands at (x, y) in the chunk with `key`.
+val playerIn = fn(key:str, x:num, y:num):bool {
+    val company = companyIn(key)
+    val go = fn(i:num):bool {
+        if (i == len(company)) { false } else if (company[i][1].x == x && company[i][1].y == y) { true } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+val playerAt = fn(x:num, y:num):bool { playerIn(playerKey(), x, y) }
 
 val contains = fn(xs:list, v):bool {
     val go = fn(i:num):bool {
@@ -103,7 +153,7 @@ val inBounds = fn(x:num, y:num):bool {
 }
 
 val terrain = fn(x:num, y:num):str {
-    if (inBounds(x, y)) { here().map[y][x] } else { level.BLANK }
+    if (inBounds(x, y)) { site().map[y][x] } else { level.BLANK }
 }
 
 val passable = fn(x:num, y:num):bool { contains(PASSABLE, terrain(x, y)) }
@@ -147,10 +197,8 @@ val identified = fn(item:map):bool {
     }
 }
 
-/**
- * The name of `count` of `item`, as messages and the inventory show it.
- */
-export val itemName = fn(item:map, count:num):str {
+// The name of `count` of `item`, as messages and the inventory show it.
+val nameOf = fn(item:map, count:num):str {
     val many = count > 1
     val n = "" + count + " "
     match item.kind {
@@ -203,7 +251,7 @@ val packLine = fn(e:map):str {
     } else {
         ""
     }
-    e.letter + ") " + itemName(e.item, e.count) + suffix
+    e.letter + ") " + nameOf(e.item, e.count) + suffix
 }
 
 val stacks = fn(a:map, b:map):bool {
@@ -272,7 +320,7 @@ val setEntry = fn(letter:str, e:map) {
 }
 
 // The player's armour: the worn armour's value plus its bonus, or 0.
-export val armourValue = fn():num {
+val armourTotal = fn():num {
     val i = packIndex(player.armour)
     if (i < 0) {
         0
@@ -285,17 +333,17 @@ export val armourValue = fn():num {
 // Picks up whatever is on the player's square.
 val pickUp = fn() {
     val p = player
-    val i = indexAt(here().items, p.x, p.y)
+    val i = indexAt(site().items, p.x, p.y)
     if (i >= 0) {
-        val item = here().items[i].item
+        val item = site().items[i].item
         if (item.kind == "gold") {
-            setHere(here() copy {items: here().items[:i] + here().items[i + 1:]})
+            setHere(site() copy {items: site().items[:i] + site().items[i + 1:]})
             setPlayer(player copy {gold: player.gold + item.amount})
             say("You found " + item.amount + " gold pieces.")
         } else {
             match addToPack(item) {
                 letter: str => {
-                    setHere(here() copy {items: here().items[:i] + here().items[i + 1:]})
+                    setHere(site() copy {items: site().items[:i] + site().items[i + 1:]})
                     say(packLine(player.pack[packIndex(letter)]))
                 }
                 _ => say("Your pack is full.")
@@ -307,27 +355,21 @@ val pickUp = fn() {
 // ---------------------------------------------------------------------------
 // Seeing.
 
-/**
- * The room whose rectangle, walls included, holds (x, y), or nil.
- */
-export val roomAt = fn(x:num, y:num):map|nil {
+// The room whose rectangle, walls included, holds (x, y), or nil.
+val roomAt = fn(x:num, y:num):map|nil {
     val go = fn(i:num):map|nil {
-        if (i == len(here().rooms)) {
+        if (i == len(site().rooms)) {
             nil
         } else {
-            val r = here().rooms[i]
+            val r = site().rooms[i]
             if (!r.gone && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) { r } else { recur(i + 1) }
         }
     }
     go(0)
 }
 
-/**
- * Whether the player can see (x, y): never while blind; otherwise when it is
- * the player's square or one of its eight neighbours, or the player is in a
- * lit room whose rectangle holds it.
- */
-export val visible = fn(x:num, y:num):bool {
+// Whether the acting player can see (x, y); see `visible`.
+val canSee = fn(x:num, y:num):bool {
     val p = player
     val dx = x - p.x
     val dy = y - p.y
@@ -343,8 +385,8 @@ export val visible = fn(x:num, y:num):bool {
 
 // What the player remembers at (x, y): the item there, or the terrain.
 val sight = fn(x:num, y:num):str {
-    val i = indexAt(here().items, x, y)
-    if (i >= 0) { GLYPHS[here().items[i].item.kind] } else { terrain(x, y) }
+    val i = indexAt(site().items, x, y)
+    if (i >= 0) { GLYPHS[site().items[i].item.kind] } else { terrain(x, y) }
 }
 
 // Records every visible square in the player's memory.
@@ -399,22 +441,16 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
 // gives for that chunk, and looks around.
 val enter = fn(cx:num, cy:num, depth:num, place:fn) {
     val spot = place(chunk(cx, cy, depth))
-    val key = chunkKey(cx, cy, depth)
-    val blank = fn(i:num, rows:list):list {
-        if (i == level.HEIGHT) { rows } else { recur(i + 1, rows :+ (level.BLANK * level.WIDTH)) }
-    }
-    player = player copy {
-        cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y,
-        memory: if (player.memory[key] == nil) { player.memory + {[key]: blank(0, [])} } else { player.memory },
-        sense: false,
-    }
+    player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
     see()
 }
 
 // A new character, at a random free spot in a chunk near the origin of
 // depth 1.
 val newCharacter = fn() {
+    val name = player.name ?? "someone"
     player = {
+        name: name,
         cx: 0, cy: 0, depth: 1, x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0,
         weapon: "a", armour: "b", food: FOOD_START, regen: 0, frozen: 0, confused: 0, blind: 0,
         pack: [
@@ -433,7 +469,12 @@ val newCharacter = fn() {
     }
     val cx = rng.below(2 * SPAWN + 1) - SPAWN
     val cy = rng.below(2 * SPAWN + 1) - SPAWN
-    enter(cx, cy, 1, fn(lv) { level.freeSpot(lv) })
+    val key = chunkKey(cx, cy, 1)
+    val free = fn(lv:map):map {
+        val spot = level.freeSpot(lv)
+        if (playerIn(key, spot.x, spot.y)) { recur(lv) } else { spot }
+    }
+    enter(cx, cy, 1, free)
 }
 
 /**
@@ -448,11 +489,13 @@ export val load = fn(saved:map) {
     rng.setState(saved.rng)
     world = saved.world
     levels = saved.levels
-    player = saved.player
+    players = saved.players
+    player = {}
+    acting = nil
 }
 
 /**
- * Starts a new world with `seed`, and a player in it.
+ * Starts a new world with `seed`, with no one in it yet.
  */
 export val newGame = fn(seed:num) {
     rng.seed(seed)
@@ -460,7 +503,36 @@ export val newGame = fn(seed:num) {
     val titles = rng.shuffle(data.titles)
     world = {seed: seed, turn: 0, colours: colours, titles: titles}
     levels = {}
-    newCharacter()
+    players = {}
+    player = {}
+    acting = nil
+}
+
+/**
+ * Adds a player with `id`, called `name`, as a new character on depth 1;
+ * does nothing when `id` is already playing.
+ */
+export val join = fn(id:str, name:str) {
+    if (players[id] == nil) {
+        players = players + {[id]: {name: name}}
+        actAs(id, newCharacter)
+    }
+}
+
+/**
+ * Whether a player with `id` has joined.
+ */
+export val playing = fn(id:str):bool { current().players[id] != nil }
+
+/**
+ * The player with `id`; throws an `Error` of type `crawl.player` when no
+ * such player has joined.
+ */
+export val playerOf = fn(id:str):map {
+    match current().players[id] {
+        p: map => p
+        _ => throw Error {type: "crawl.player", msg: "no player " + id}
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -478,11 +550,11 @@ val kindOf = fn(m:map) { data.monsters[m.kind] }
 val hasFlag = fn(m:map, flag:str):bool { contains(kindOf(m).flags, flag) }
 
 val setMonster = fn(i:num, m:map) {
-    setHere(here() copy {monsters: here().monsters[:i] + [m] + here().monsters[i + 1:]})
+    setHere(site() copy {monsters: site().monsters[:i] + [m] + site().monsters[i + 1:]})
 }
 
 val removeMonster = fn(i:num) {
-    setHere(here() copy {monsters: here().monsters[:i] + here().monsters[i + 1:]})
+    setHere(site() copy {monsters: site().monsters[:i] + site().monsters[i + 1:]})
 }
 
 // An attack roll: hits when below(20) + 1 + level + bonus >= 10 + armour.
@@ -571,7 +643,7 @@ val near = fn(x:num, y:num):bool {
 // Whether (x, y) is free for a monster to step to: no monster and not the
 // player.
 val openFor = fn(x:num, y:num):bool {
-    indexAt(here().monsters, x, y) < 0 && !(x == player.x && y == player.y)
+    indexAt(site().monsters, x, y) < 0 && !playerAt(x, y)
 }
 
 // The pack entries a nymph can steal: everything not wielded or worn.
@@ -590,10 +662,10 @@ val stealable = fn():list {
 
 // Monster i attacks the player. Returns whether it is still on the level.
 val monsterAttack = fn(i:num):bool {
-    val m = here().monsters[i]
+    val m = site().monsters[i]
     val kind = kindOf(m)
     val p = player
-    if (hits(kind.level, 0, armourValue())) {
+    if (hits(kind.level, 0, armourTotal())) {
         val damage = rng.roll(kind.damage[0], kind.damage[1])
         setPlayer(p copy {hp: p.hp - damage})
         say("The " + kind.name + " hits you.")
@@ -612,7 +684,7 @@ val monsterAttack = fn(i:num):bool {
             val e = loot[rng.below(len(loot))]
             removeEntry(e.letter)
             removeMonster(i)
-            say("The " + kind.name + " stole " + itemName(e.item, e.count) + "!")
+            say("The " + kind.name + " stole " + nameOf(e.item, e.count) + "!")
             false
         } else {
             true
@@ -626,7 +698,7 @@ val monsterAttack = fn(i:num):bool {
 // Monster i's action. `dist` gives the distances when already computed.
 // Returns [still on the level, distances or nil].
 val monsterAct = fn(i:num, dist:map|nil):list {
-    val m0 = here().monsters[i]
+    val m0 = site().monsters[i]
     val m = if (hasFlag(m0, "regenerates") && m0.hp < m0.maxHp) { m0 copy {hp: m0.hp + 1} } else { m0 }
     setMonster(i, m)
     val p = player
@@ -677,16 +749,38 @@ val monsterAct = fn(i:num, dist:map|nil):list {
 }
 
 // Every monster acts, in list order, until the player dies.
+// The id of the living player nearest monster `m` in the acting player's
+// chunk, counting diagonal steps as one, the first by id on a tie; nil when
+// none is left.
+val nearest = fn(m:map):str|nil {
+    val company = companyIn(playerKey())
+    val go = fn(i:num, best:str|nil, bestD:num):str|nil {
+        if (i == len(company)) { return best }
+        val p = company[i][1]
+        val d = math.max(math.abs(p.x - m.x), math.abs(p.y - m.y))
+        if (d < bestD) { recur(i + 1, company[i][0], d) } else { recur(i + 1, best, bestD) }
+    }
+    go(0, nil, 1000000)
+}
+
+// Every monster in the acting player's chunk acts, in list order, against
+// the nearest living player, as that player; until no one there is alive.
+// Distances are kept per player.
 val monstersAct = fn() {
-    val go = fn(i:num, dist:map|nil) {
-        if (i < len(here().monsters) && !player.dead) {
-            match monsterAct(i, dist) {
-                [true, ds] => recur(i + 1, ds)
-                [_, ds] => recur(i, ds)
+    val go = fn(i:num, dists:map) {
+        if (i < len(site().monsters)) {
+            match nearest(site().monsters[i]) {
+                id: str => {
+                    match actAs(id, fn() { monsterAct(i, dists[id]) }) {
+                        [true, ds] => recur(i + 1, dists + {[id]: ds})
+                        [_, ds] => recur(i, dists + {[id]: ds})
+                    }
+                }
+                _ => nil
             }
         }
     }
-    go(0, nil)
+    go(0, {})
 }
 
 // ---------------------------------------------------------------------------
@@ -752,7 +846,7 @@ val thaw = fn() {
 
 // The player attacks monster i.
 val attack = fn(i:num) {
-    val m = here().monsters[i] copy {state: "awake"}
+    val m = site().monsters[i] copy {state: "awake"}
     setMonster(i, m)
     val kind = kindOf(m)
     val p = player
@@ -773,7 +867,7 @@ val attack = fn(i:num) {
     } else {
         say("You miss the " + kind.name + ".")
     }
-    if (hasFlag(m, "paralyses") && p.blind == 0 && indexAt(here().monsters, m.x, m.y) >= 0) {
+    if (hasFlag(m, "paralyses") && p.blind == 0 && indexAt(site().monsters, m.x, m.y) >= 0) {
         say("You are frozen by the " + kind.name + "'s gaze!")
         setPlayer(player copy {frozen: player.frozen + rng.below(4) + 2})
     }
@@ -785,10 +879,10 @@ val step = fn(dx:num, dy:num):bool {
     val p = player
     if (!inBounds(p.x + dx, p.y + dy)) {
         cross(dx, dy)
-    } else if (!stepOk(p.x, p.y, dx, dy)) {
+    } else if (!stepOk(p.x, p.y, dx, dy) || playerAt(p.x + dx, p.y + dy)) {
         false
     } else {
-        val i = indexAt(here().monsters, p.x + dx, p.y + dy)
+        val i = indexAt(site().monsters, p.x + dx, p.y + dy)
         if (i >= 0) {
             attack(i)
             endTurn()
@@ -803,7 +897,7 @@ val step = fn(dx:num, dy:num):bool {
 }
 
 // Steps off the map's edge into the next chunk: only straight across, from
-// an opening to the matching one, and only when no monster stands there.
+// an opening to the matching one, and only when no one stands there.
 // Returns whether the player moved.
 val cross = fn(dx:num, dy:num):bool {
     val p = player
@@ -815,7 +909,8 @@ val cross = fn(dx:num, dy:num):bool {
     val ny = (y + level.HEIGHT) % level.HEIGHT
     if (dx != 0 && dy != 0) { return false }
     val next = chunk(cx, cy, p.depth)
-    if (!contains(PASSABLE, next.map[ny][nx]) || indexAt(next.monsters, nx, ny) >= 0) { return false }
+    val blocked = indexAt(next.monsters, nx, ny) >= 0 || playerIn(chunkKey(cx, cy, p.depth), nx, ny)
+    if (!contains(PASSABLE, next.map[ny][nx]) || blocked) { return false }
     enter(cx, cy, p.depth, fn(lv) { {x: nx, y: ny} })
     pickUp()
     endTurn()
@@ -824,9 +919,9 @@ val cross = fn(dx:num, dy:num):bool {
 
 val monsterVisible = fn():bool {
     val go = fn(i:num):bool {
-        if (i == len(here().monsters)) {
+        if (i == len(site().monsters)) {
             false
-        } else if (visible(here().monsters[i].x, here().monsters[i].y)) {
+        } else if (canSee(site().monsters[i].x, site().monsters[i].y)) {
             true
         } else {
             recur(i + 1)
@@ -840,10 +935,10 @@ val monsterVisible = fn():bool {
 // message, or is dead. Running never attacks.
 val run = fn(dx:num, dy:num) {
     val p = player
-    if (indexAt(here().monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)) {
+    if (indexAt(site().monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)) {
         val q = player
         val ground = terrain(q.x, q.y)
-        val stop = ground == level.DOOR || ground == level.STAIRS || ground == level.UP || indexAt(here().items, q.x, q.y) >= 0
+        val stop = ground == level.DOOR || ground == level.STAIRS || ground == level.UP || indexAt(site().items, q.x, q.y) >= 0
             || monsterVisible() || len(player.messages) > 0 || player.dead
         if (!stop) { recur(dx, dy) }
     }
@@ -888,7 +983,7 @@ val quaff = fn(type:num) {
     } else if (name == "gain strength") {
         setPlayer(p copy {str: p.str + 1, maxStr: if (p.str + 1 > p.maxStr) { p.str + 1 } else { p.maxStr }})
         say("You feel stronger.")
-    } else if (len(here().monsters) > 0) {
+    } else if (len(site().monsters) > 0) {
         player = player copy {sense: true}
         say("You sense the presence of monsters.")
     } else {
@@ -925,7 +1020,7 @@ val read = fn(type:num) {
             say(packLine(player.pack[i]))
         }
     } else if (name == "teleportation") {
-        val spot = level.freeSpot(here())
+        val spot = level.freeSpot(site())
         setPlayer(p copy {x: spot.x, y: spot.y})
         say("You are somewhere else.")
     } else if (name == "magic mapping") {
@@ -937,7 +1032,7 @@ val read = fn(type:num) {
                     if (x == level.WIDTH) {
                         acc
                     } else {
-                        val c = if (memory()[y][x] == level.BLANK) { here().map[y][x] } else { memory()[y][x] }
+                        val c = if (memory()[y][x] == level.BLANK) { site().map[y][x] } else { memory()[y][x] }
                         recur(x + 1, acc + c)
                     }
                 }
@@ -1010,32 +1105,32 @@ val useWith = fn(spec:struct<ItemCommand>, c:str, letter:str) {
                     say("You are already wielding that.")
                 } else {
                     setPlayer(p copy {weapon: letter})
-                    say("You are now wielding " + itemName(e.item, 1) + ".")
+                    say("You are now wielding " + nameOf(e.item, 1) + ".")
                     endTurn()
                 }
             }
             "a" => {
                 if (p.armour == letter) {
                     setPlayer(p copy {armour: nil})
-                    say("You took off " + itemName(e.item, 1) + ".")
+                    say("You took off " + nameOf(e.item, 1) + ".")
                     endTurn()
                 } else if (p.armour != nil) {
                     say("You are already wearing armour.")
                 } else {
                     setPlayer(p copy {armour: letter})
-                    say("You are now wearing " + itemName(e.item, 1) + ".")
+                    say("You are now wearing " + nameOf(e.item, 1) + ".")
                     endTurn()
                 }
             }
             _ => {
                 if (p.armour == letter) {
                     say("You can't drop armour you are wearing.")
-                } else if (indexAt(here().items, p.x, p.y) >= 0 || terrain(p.x, p.y) == level.STAIRS || terrain(p.x, p.y) == level.UP) {
+                } else if (indexAt(site().items, p.x, p.y) >= 0 || terrain(p.x, p.y) == level.STAIRS || terrain(p.x, p.y) == level.UP) {
                     say("There is no room to drop that here.")
                 } else {
                     takeOne(letter)
-                    setHere(here() copy {items: here().items :+ {x: p.x, y: p.y, item: e.item}})
-                    say("Dropped " + itemName(e.item, 1) + ".")
+                    setHere(site() copy {items: site().items :+ {x: p.x, y: p.y, item: e.item}})
+                    say("Dropped " + nameOf(e.item, 1) + ".")
                     endTurn()
                 }
             }
@@ -1098,12 +1193,8 @@ val showMessages = fn(messages:list) {
     }
 }
 
-/**
- * Carries out one command key: a letter, "space", or "enter", with `shift`
- * held or not, as the eval's task.md describes, except that `enter` takes
- * stairs up as well as down, and after death starts a new character.
- */
-export val command = fn(key:str, shift:bool) {
+// Carries out one command key for the acting player; see `command`.
+val perform = fn(key:str, shift:bool) {
     if (len(player.more) > 0) {
         if (key == "space") { showMessages(player.more) }
     } else if (player.dead) {
@@ -1155,11 +1246,8 @@ export val command = fn(key:str, shift:bool) {
     }
 }
 
-/**
- * The screen's 24 text rows: messages, the map as the player knows it (or
- * the pack), and the status line.
- */
-export val text = fn():list {
+// The acting player's screen; see `text`.
+val screen = fn():list {
     val p = player
     val map = if (player.showingPack) {
         val lines = fn(i:num, rows:list):list {
@@ -1172,19 +1260,83 @@ export val text = fn():list {
         lines(0, [])
     } else {
         val monsters = fn(i:num, rows:list):list {
-            if (i == len(here().monsters)) {
+            if (i == len(site().monsters)) {
                 rows
             } else {
-                val m = here().monsters[i]
-                val shown = player.sense || visible(m.x, m.y)
+                val m = site().monsters[i]
+                val shown = player.sense || canSee(m.x, m.y)
                 recur(i + 1, if (shown) { write(rows, m.x, m.y, data.monsters[m.kind].letter) } else { rows })
             }
         }
-        write(monsters(0, memory()), p.x, p.y, "@")
+        val company = companyIn(playerKey())
+        val others = fn(i:num, rows:list):list {
+            if (i == len(company)) {
+                rows
+            } else {
+                val o = company[i][1]
+                recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
+            }
+        }
+        write(others(0, monsters(0, memory())), p.x, p.y, "@")
     }
     val hunger = if (p.food <= 0) { "  Faint" } else if (p.food <= 50) { "  Weak" } else if (p.food <= 150) { "  Hungry" } else { "" }
     val status = "Depth:" + player.depth + "  Gold:" + p.gold + "  Hp:" + p.hp + "(" + p.maxHp + ")  Str:" + p.str
-        + "(" + p.maxStr + ")  Arm:" + armourValue() + "  Exp:" + p.level + "/" + p.xp + hunger
+        + "(" + p.maxStr + ")  Arm:" + armourTotal() + "  Exp:" + p.level + "/" + p.xp + hunger
     val more = if (len(player.more) > 0) { " --More--" } else { "" }
     [string.join(player.messages, "  ") + more] + map + [status]
+}
+
+// ---------------------------------------------------------------------------
+// Players by id.
+
+/**
+ * Carries out one command key for the player with `id`: a letter, "space",
+ * or "enter", with `shift` held or not, as the eval's task.md describes,
+ * except that `enter` takes stairs up as well as down, and after death
+ * starts a new character.
+ */
+export val command = fn(id:str, key:str, shift:bool) { actAs(id, fn() { perform(key, shift) }) }
+
+/**
+ * The screen's 24 text rows for the player with `id`: messages, the map as
+ * they know it (or their pack), and their status line. Other players they
+ * can see are drawn as `@` too.
+ */
+export val text = fn(id:str):list { actAs(id, screen) }
+
+/**
+ * The chunk the player with `id` is in.
+ */
+export val here = fn(id:str):map { actAs(id, site) }
+
+/**
+ * Whether the player with `id` can see (x, y) in their chunk: never while
+ * blind; otherwise when it is their square or one of its eight
+ * neighbours, or they are in a lit room whose rectangle holds it.
+ */
+export val visible = fn(id:str, x:num, y:num):bool { actAs(id, fn() { canSee(x, y) }) }
+
+/**
+ * The armour of the player with `id`: the worn armour's value plus its
+ * bonus, or 0.
+ */
+export val armourValue = fn(id:str):num { actAs(id, armourTotal) }
+
+/**
+ * The name of `count` of `item`, as the player with `id` knows it.
+ */
+export val itemName = fn(id:str, item:map, count:num):str { actAs(id, fn() { nameOf(item, count) }) }
+
+/**
+ * The living players in the chunk the player with `id` is in, other than
+ * them, as [id, player] pairs in id order.
+ */
+export val others = fn(id:str):list {
+    actAs(id, fn() {
+        val company = companyIn(playerKey())
+        val go = fn(i:num, acc:list):list {
+            if (i == len(company)) { acc } else { recur(i + 1, if (company[i][0] == id) { acc } else { acc :+ company[i] }) }
+        }
+        go(0, [])
+    })
 }

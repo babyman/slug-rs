@@ -75,6 +75,14 @@ session exactly, which is how the engine is tested.
   they have seen in each chunk; the world holds terrain, items, and monsters.
 - Each player sees their own field of view. Other players are drawn as
   `@` in a different colour, with their names in the In View panel.
+- Players block each other and monsters, and a new character never starts
+  on another player.
+- Each monster goes for the nearest living player in its chunk, so a player
+  can be hit, or die, on someone else's turn. A player who stops playing
+  stays in the world, where monsters can still find them.
+- The cookie's id is not a secret: anyone who can reach the server can play
+  as anyone. Accounts, or at least unguessable ids, wait until there is a
+  source of randomness for them.
 
 ### Pushing views
 
@@ -124,5 +132,5 @@ Each step leaves a playable game:
 2. Chunked, endless generation with constrained edges and two-way stairs.
    (Done.)
 3. Several players by cookie, each command still advancing the world at
-   once.
+   once. (Done.)
 4. Streaming responses in `slug.net.http`, the tick loop, and pushed views.

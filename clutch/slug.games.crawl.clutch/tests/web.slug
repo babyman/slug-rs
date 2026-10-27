@@ -1,6 +1,6 @@
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
-val {toBytes, fromBytes} = import("slug.string")
+val {toBytes, fromBytes, split} = import("slug.string")
 val {assertEqual, assertTrue} = import("slug.test")
 
 // Whether `text` contains `part`.
@@ -11,13 +11,22 @@ val includes = fn(text:str, part:str):bool {
     go(0)
 }
 
-val get = fn(path:str):map {
-    web.handler()({method: "GET", path: path, query: {}, headers: {}, body: 0x"", params: {}})
+val headersFor = fn(id:str|nil):map {
+    if (id == nil) { {} } else { {cookie: "theme=dark; crawl=" + id} }
 }
 
-val post = fn(path:str, body:str):map {
-    val headers = {"content-type": "application/x-www-form-urlencoded"}
+val get = fn(path:str, id:str|nil = nil):map {
+    web.handler()({method: "GET", path: path, query: {}, headers: headersFor(id), body: 0x"", params: {}})
+}
+
+val post = fn(path:str, body:str, id:str|nil = nil):map {
+    val headers = headersFor(id) + {"content-type": "application/x-www-form-urlencoded"}
     web.handler()({method: "POST", path: path, query: {}, headers: headers, body: toBytes(body), params: {}})
+}
+
+// The id a response's cookie gives.
+val cookieOf = fn(response:map):str {
+    split(split(response.headers["Set-Cookie"], ";")[0], "=")[1]
 }
 
 @test
@@ -33,73 +42,112 @@ val servesThePageAndHtmx = fn() {
 }
 
 @test
+val aNewBrowserJoinsAndKeepsItsPlayer = fn() {
+    web.start(1)
+    val first = get("/")
+    val id = cookieOf(first)
+    assertTrue(includes(first.headers["Set-Cookie"], "HttpOnly"))
+    assertTrue(game.playing(id))
+    val again = get("/", id)
+    assertEqual(again.headers["Set-Cookie"], nil)
+    assertEqual(len(game.current().players), 1)
+    val stranger = get("/", "unknown")
+    assertTrue(cookieOf(stranger) != id)
+    assertEqual(len(game.current().players), 2)
+}
+
+@test
 val keysPlayCommands = fn() {
     web.start(1)
-    val before = game.current().player
-    val moved = post("/key", "key=h&shift=false")
+    val id = web.newPlayer()
+    val before = game.playerOf(id)
+    val moved = post("/key", "key=h&shift=false", id)
     assertEqual(moved.status, 200)
-    assertEqual(game.current().player.x, before.x - 1)
+    assertTrue(game.playerOf(id).x != before.x || game.playerOf(id).messages != before.messages)
     assertTrue(includes(moved.body, "class=\"you\""))
 }
 
 @test
 val unknownKeysAreIgnored = fn() {
     web.start(1)
+    val id = web.newPlayer()
     val before = game.current()
-    assertEqual(post("/key", "key=i").status, 204)
-    assertEqual(post("/key", "key=f1").status, 204)
-    assertEqual(post("/key", "").status, 204)
+    assertEqual(post("/key", "key=i", id).status, 204)
+    assertEqual(post("/key", "key=f1", id).status, 204)
+    assertEqual(post("/key", "", id).status, 204)
     assertEqual(game.current(), before)
 }
 
 @test
 val itemPromptsOfferMatchingItems = fn() {
     web.start(1)
-    val asked = post("/key", "key=e")
+    val id = web.newPlayer()
+    val asked = post("/key", "key=e", id)
     assertTrue(includes(asked.body, "Eat which item?"))
     assertTrue(includes(asked.body, "hx-vals='{\"key\": \"c\"}'"))
     assertTrue(includes(asked.body, "<button class=\"item\" disabled>"))
-    post("/key", "key=space")
-    assertEqual(game.current().player.prompt, nil)
+    post("/key", "key=space", id)
+    assertEqual(game.playerOf(id).prompt, nil)
 }
 
 @test
 val clickingAnItemUsesIt = fn() {
     web.start(1)
-    assertEqual(len(game.current().player.pack), 3)
-    assertEqual(post("/use", "letter=c").status, 200)
-    assertEqual(len(game.current().player.pack), 2)
-    assertEqual(post("/use", "letter=z").status, 204)
+    val id = web.newPlayer()
+    assertEqual(len(game.playerOf(id).pack), 3)
+    assertEqual(post("/use", "letter=c", id).status, 200)
+    assertEqual(len(game.playerOf(id).pack), 2)
+    assertEqual(post("/use", "letter=z", id).status, 204)
 }
 
 @test
 val deathOffersANewCharacterInTheSameWorld = fn() {
     web.start(1)
+    val id = web.newPlayer()
     val alive = game.snapshot()
-    game.load(alive copy {player: alive.player copy {dead: true, gold: 99}})
-    assertTrue(includes(web.gameHtml(), "You died."))
-    post("/key", "key=enter")
+    val p = alive.players[id]
+    game.load(alive copy {players: alive.players + {[id]: p copy {dead: true, gold: 99}}})
+    assertTrue(includes(web.gameHtml(id), "You died."))
+    post("/key", "key=enter", id)
     val now = game.current()
     assertEqual(now.world, alive.world)
-    assertEqual(now.player.dead, false)
-    assertEqual(now.player.depth, 1)
-    assertEqual(now.player.gold, 0)
+    assertEqual(now.players[id].dead, false)
+    assertEqual(now.players[id].depth, 1)
+    assertEqual(now.players[id].gold, 0)
+    assertEqual(now.players[id].name, p.name)
 }
 
-// Plays many seeded games with pseudo-random keys: every move renders, and
-// none leaves a --More-- waiting.
+@test
+val playersSeeEachOther = fn() {
+    web.start(1)
+    val a = web.newPlayer()
+    val b = web.newPlayer()
+    // Put b next to a.
+    val s = game.snapshot()
+    val pa = s.players[a]
+    val spot = if (game.here(a).map[pa.y][pa.x + 1] == ".") { pa.x + 1 } else { pa.x - 1 }
+    game.load(s copy {players: s.players + {[b]: s.players[b] copy {cx: pa.cx, cy: pa.cy, depth: 1, x: spot, y: pa.y}}})
+    val html = web.gameHtml(a)
+    assertTrue(includes(html, "class=\"ally\" title=\"Player 2\""))
+    assertTrue(includes(html, "<i class=\"ally\">@</i>"))
+    assertTrue(includes(web.gameHtml(b), "title=\"Player 1\""))
+}
+
+// Plays many seeded games with pseudo-random keys for two players: every
+// move renders, and none leaves a --More-- waiting.
 @test
 val randomPlayNeverLeavesMore = fn() {
     val keys = ["h", "j", "k", "l", "y", "u", "b", "n", "space", "enter", "e", "q", "r", "w", "a", "d", "c", "f"]
+    web.start(3)
+    val ids = [web.newPlayer(), web.newPlayer()]
     val go = fn(i:num, seed:num) {
         if (i == 800) { return nil }
         val next = (seed * 1103515245 + 12345) % 2147483648
-        val key = keys[next % len(keys)]
-        web.play(key, next % 7 == 0)
-        assertEqual(game.current().player.more, [])
-        assertTrue(len(web.gameHtml()) > 0)
+        val id = ids[i % 2]
+        web.play(id, keys[next % len(keys)], next % 7 == 0)
+        assertEqual(game.playerOf(id).more, [])
+        assertTrue(len(web.gameHtml(id)) > 0)
         recur(i + 1, next)
     }
-    web.start(3)
     go(0, 3)
 }

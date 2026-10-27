@@ -19,6 +19,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px sol
 .map .door { color: #c8904c; } .map .stairs { color: #f2d36b; font-weight: 700; }
 .map .you { color: #fff; font-weight: 700; text-shadow: 0 0 6px #8fb8ff; }
 .map .monster { color: var(--red); font-weight: 700; cursor: help; }
+.map .ally { color: #8fb8ff; font-weight: 700; cursor: help; }
 .map .seen { opacity: .4; }
 .gold { color: #ffd447; } .potion { color: #c58cff; } .scroll { color: #efe6cc; } .food { color: #8bd17c; }
 .weapon { color: #7fb7ff; } .armour { color: #7fd4d4; } .orb { color: #ff9de2; text-shadow: 0 0 6px #ff9de2; }
@@ -47,7 +48,9 @@ button.cancel, button.primary { margin-top: 8px; border-color: var(--line); }
 button.primary { background: var(--accent); color: #111; font-weight: 600; padding: 6px 14px; }
 .foes li { display: grid; grid-template-columns: 1.4ch 1fr 70px; gap: 8px; align-items: center; }
 .foes i { font: 700 14px ui-monospace, Menlo, monospace; font-style: normal; color: var(--red); }
+.foes i.ally { color: #8fb8ff; }
 .foes .bar { margin: 0; }
+.stats .name { margin-bottom: 6px; color: var(--accent); font-weight: 600; }
 .foes .none { margin: 0; color: var(--muted); font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .actions button { border-color: var(--line); }
