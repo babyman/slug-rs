@@ -1,51 +1,32 @@
 /**
- * Crawl's random numbers, exactly as the spec defines them: xorshift32 with
- * one 32-bit state, which snapshots save and restore.
+ * Crawl's random numbers: one slug.random generator, whose state snapshots
+ * save and restore, and the game's own draws on top of it. slug.random is
+ * the xorshift32 the spec defines, so games play exactly as the spec says.
  */
+val random = import("slug.random")
 
-val MASK = 0xFFFFFFFF
-val RANGE = 4294967296
-val ZERO_SEED = 0x9E3779B9
-
-var state = ZERO_SEED
+var gen = random.generator(0)
 
 /**
  * Starts the sequence for a game's seed; seeds equal modulo 2^32 are the
- * same, and a zero seed starts at ZERO_SEED (xorshift32 never leaves 0).
+ * same.
  */
 export val seed = fn(s:num):nil {
-    state = if ((s & MASK) == 0) { ZERO_SEED } else { s & MASK }
+    gen = random.generator(s)
     nil
 }
 
-export val getState = fn():num { state }
+export val getState = fn():num { gen.state() }
 
 export val setState = fn(s:num):nil {
-    state = s
+    gen = random.generator(s)
     nil
-}
-
-export val next = fn():num {
-    var x = state
-    x = x ^ ((x << 13) & MASK)
-    x = x ^ (x >> 17)
-    x = x ^ ((x << 5) & MASK)
-    state = x
-    x
 }
 
 /**
- * An integer from 0 to n - 1: draws until a number falls below the largest
- * multiple of n, so every result is equally likely.
+ * An integer from 0 to n - 1, each equally likely.
  */
-export val below = fn(n:num):num {
-    val limit = RANGE - RANGE % n
-    val draw = fn():num {
-        val x = next()
-        if (x < limit) { x % n } else { recur() }
-    }
-    draw()
-}
+export val below = fn(n:num):num { gen.below(n) }
 
 /**
  * The sum of `dice` draws of `below(sides) + 1`; zero dice draw nothing.
@@ -77,17 +58,4 @@ export val pick = fn(entries:list):num {
  * A shuffled copy: for i from len - 1 down to 1, swap entry i with entry
  * below(i + 1).
  */
-export val shuffle = fn(items:list):list {
-    val go = fn(i:num, xs:list):list {
-        if (i < 1) {
-            xs
-        } else {
-            val j = below(i + 1)
-            val a = xs[i]
-            val b = xs[j]
-            val swapped = (xs[:j] + [a] + xs[j + 1:])
-            recur(i - 1, swapped[:i] + [b] + swapped[i + 1:])
-        }
-    }
-    go(len(items) - 1, items)
-}
+export val shuffle = fn(items:list):list { gen.shuffle(items) }

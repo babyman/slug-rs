@@ -1,6 +1,6 @@
 # Crawl, the roguelike from eval/agent/projects/crawl, as a library: its
-# engine (game, level, rng, data, copied from the eval's reference with
-# imports renamed) and a web front end over slug.net.http and HTMX, which
+# engine (game, level, data, copied from the eval's reference with imports
+# renamed, and rng, which draws from slug.random) and a web front end over slug.net.http and HTMX, which
 # ships unchanged as assets/htmx.js (htmx 2.0.4, Zero-Clause BSD).
 [modules]
 "slug.games.crawl" = { source = "modules/game.slug" }

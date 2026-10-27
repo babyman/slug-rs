@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `slug.random` generators have `state()`, where the sequence has reached;
+  `generator(state)` continues from there, so a saved game can resume its
+  random numbers exactly. Crawl's engine now draws from `slug.random` in place
+  of its own copy of the generator, and plays exactly as before.
+
 - Crawl's web front end draws the game from Mustache templates in its
   clutch's assets (`page.mustache`, `game.mustache`, `pack-item.mustache`)
   with `slug.text.mustache`, and serves its style and script as asset files.

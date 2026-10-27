@@ -27,6 +27,9 @@ val RANGE = 4294967296
  * - `float()`: a number at least 0 and below 1.
  * - `pick(items)`: one element of a non-empty list.
  * - `shuffle(items)`: a new list with the elements in random order.
+ * - `state()`: where the sequence has reached, an integer from 1 to
+ *   2^32 - 1. `generator(state)` continues the sequence from there, so a
+ *   saved game can store it and pick up exactly where it left off.
  *
  * `below`, `between`, and `pick` throw an `Error` of type `random.range` for
  * an empty range.
@@ -91,5 +94,7 @@ export val generator = fn(seed:num):map {
         go(len(items) - 1, items)
     }
 
-    {next: next, below: below, between: between, float: float, pick: pick, shuffle: shuffle}
+    val current = fn():num { state }
+
+    {next: next, below: below, between: between, float: float, pick: pick, shuffle: shuffle, state: current}
 }
