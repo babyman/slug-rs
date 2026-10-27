@@ -50,10 +50,21 @@ val {trySend} = import("slug.channel")
 // place of the map, which the page does not need.
 val KEYS = chars("abcdefghjklmnopqrstuvwxyz") + ["left", "down", "up", "right", "space", "enter"]
 
-// The command that uses each kind of item, with its button label.
-val USES = {
-    food: ["e", "Eat"], potion: ["q", "Quaff"], scroll: ["r", "Read"],
-    weapon: ["w", "Wield"], armour: ["a", "Wear"],
+// The command that uses each kind of item.
+val USES = {food: "e", potion: "q", scroll: "r", weapon: "w", armour: "a"}
+
+// The use button's label for pack entry `e` of player `p`, or nil when using
+// it would do nothing: the weapon in hand, or armour while other armour is
+// worn.
+val useLabel = fn(p:map, e:map):str|nil {
+    match e.item.kind {
+        "food" => "Eat"
+        "potion" => "Quaff"
+        "scroll" => "Read"
+        "weapon" => if (e.letter == p.weapon) { nil } else { "Wield" }
+        "armour" => if (e.letter == p.armour) { "Take off" } else if (p.armour == nil) { "Wear" } else { nil }
+        _ => nil
+    }
 }
 
 // The item kind each item command's prompt asks for; nil for any.
@@ -284,7 +295,8 @@ val statsView = fn(id:str, p:map):map {
 }
 
 // The pack: while a prompt asks for an item, the items it accepts can be
-// chosen and the rest are disabled; otherwise clicking an item uses it.
+// chosen and the rest are disabled; otherwise each item has a button to use
+// it as its kind is used, and one to drop it unless it is worn.
 val packView = fn(id:str, p:map):map {
     val asking = p.prompt != nil
     val wanted = if (asking) { PROMPT_KINDS[p.prompt] } else { nil }
@@ -295,7 +307,7 @@ val packView = fn(id:str, p:map):map {
             letter: e.letter, kind: kind, glyph: GLYPHS[kind] ?? "?", name: game.itemName(id, e.item, e.count),
             tag: if (e.letter == p.weapon) { "in hand" } else if (e.letter == p.armour) { "worn" } else { nil },
             choose: asking && fits, disabled: asking && !fits,
-            use: if (asking) { nil } else { {title: (USES[kind] ?? [nil, nil])[1]} },
+            use: if (asking) { nil } else { {verb: useLabel(p, e), drop: e.letter != p.armour} },
         }
     }
     {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
@@ -392,15 +404,18 @@ val onKey = fn(request:map):map {
     })
 }
 
-// Uses a pack item the way its kind is used: eats food, wields a weapon.
+// Uses a pack item the way its kind is used, eating food or wielding a
+// weapon, or with `action` "drop", drops it: queues the command's key, then
+// the item's letter for the prompt it asks.
 val onUse = fn(request:map):map {
     asPlayer(request, fn(id) {
-        val letter = http.form(request).letter ?? ""
+        val fields = http.form(request)
+        val letter = fields.letter ?? ""
         val p = game.playerOf(id)
         val held = filter(p.pack, fn(e) { e.letter == letter })
         if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
-        val use = USES[held[0].item.kind]
-        if (use != nil && press(id, use[0], false)) { press(id, letter, false) }
+        val command = if (fields.action == "drop") { "d" } else { USES[held[0].item.kind] }
+        if (command != nil && press(id, command, false)) { press(id, letter, false) }
         {status: 204}
     })
 }

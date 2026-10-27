@@ -54,7 +54,12 @@
       <li>
         {{#choose}}<button class="item choose" hx-post="/key" hx-vals='{"key": "{{letter}}"}'>{{>pack-item}}</button>{{/choose}}
         {{#disabled}}<button class="item" disabled>{{>pack-item}}</button>{{/disabled}}
-        {{#use}}<button class="item"{{#title}} title="{{title}}"{{/title}} hx-post="/use" hx-vals='{"letter": "{{letter}}"}'>{{>pack-item}}</button>{{/use}}
+        {{#use}}
+        <div class="item">{{>pack-item}}<span class="acts">
+          {{#verb}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "use"}'>{{verb}}</button>{{/verb}}
+          {{#drop}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "drop"}'>Drop</button>{{/drop}}
+        </span></div>
+        {{/use}}
       </li>
       {{/items}}
     </ul>

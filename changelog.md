@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Each item in Crawl's pack panel has its own buttons: the use that fits
+  it (Eat, Quaff, Read, Wield, Wear, or Take off) and Drop, shown only when
+  they would do something. `POST /use` takes `action=drop` to drop an item.
+
 - `slug.net.http` streams a response whose `body` is a channel of strings or
   bytes, such as server-sent events: it writes each value as it arrives and
   ends the response, and the connection, when the channel closes. When the

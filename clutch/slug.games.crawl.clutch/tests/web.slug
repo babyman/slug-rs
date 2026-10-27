@@ -2,7 +2,7 @@ val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
 val {toBytes, fromBytes, split} = import("slug.string")
 val {recv} = import("slug.channel")
-val {map} = import("slug.std")
+val {map, filter} = import("slug.std")
 val {assertEqual, assertTrue} = import("slug.test")
 
 // Whether `text` contains `part`.
@@ -114,11 +114,42 @@ val clickingAnItemUsesIt = fn() {
     web.start(1)
     val id = web.newPlayer()
     assertEqual(len(game.playerOf(id).pack), 3)
-    assertEqual(post("/use", "letter=c", id).status, 204)
+    assertEqual(post("/use", "letter=c&action=use", id).status, 204)
     web.tickOnce()
     web.tickOnce()
     assertEqual(len(game.playerOf(id).pack), 2)
+    assertEqual(game.playerOf(id).messages, ["Yum, that tasted good."])
     assertEqual(post("/use", "letter=z", id).status, 204)
+}
+
+@test
+val eachItemHasTheButtonsThatDoSomething = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    val html = web.gameHtml(id)
+    val button = fn(letter:str, action:str, label:str):str {
+        "hx-vals='{\"letter\": \"" + letter + "\", \"action\": \"" + action + "\"}'>" + label + "</button>"
+    }
+    // a: the mace in hand; b: the ring mail worn; c: food.
+    assertTrue(!includes(html, button("a", "use", "Wield")))
+    assertTrue(includes(html, button("a", "drop", "Drop")))
+    assertTrue(includes(html, button("b", "use", "Take off")))
+    assertTrue(!includes(html, button("b", "drop", "Drop")))
+    assertTrue(includes(html, button("c", "use", "Eat")))
+    assertTrue(includes(html, button("c", "drop", "Drop")))
+}
+
+@test
+val dropButtonsDropTheItem = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    assertEqual(post("/use", "letter=c&action=drop", id).status, 204)
+    web.tickOnce()
+    web.tickOnce()
+    val p = game.playerOf(id)
+    assertEqual(len(p.pack), 2)
+    assertEqual(p.messages, ["Dropped a food ration."])
+    assertEqual(len(filter(game.here(id).items, fn(i) { i.x == p.x && i.y == p.y })), 1)
 }
 
 @test

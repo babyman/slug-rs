@@ -42,6 +42,9 @@ ul, ol { list-style: none; margin: 0; padding: 0; }
 .item em, .foes em { color: var(--muted); font-size: 12px; }
 .item.choose { border-color: var(--accent); }
 .item:disabled { opacity: .35; cursor: default; }
+div.item { padding: 3px 6px; }
+.item .acts { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+.item .acts button { border-color: var(--line); font-size: 12px; padding: 1px 6px; }
 button { font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
 button:hover:not(:disabled) { background: #1e2430; border-color: var(--line); }
 button.cancel, button.primary { margin-top: 8px; border-color: var(--line); }
