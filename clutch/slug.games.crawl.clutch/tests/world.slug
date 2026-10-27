@@ -249,3 +249,27 @@ val restockingIsSeededByItsCount = fn() {
     val spots = map(first.items + first.monsters, fn(t) { lv.map[t.y][t.x] })
     assertEqual(filter(spots, fn(c) { c != level.FLOOR }), [])
 }
+
+@test
+val theViewStitchesChunksTogether = fn() {
+    game.newGame(4)
+    game.join(ME, "me")
+    val p = game.playerOf(ME)
+    val ox = p.cx * level.WIDTH
+    val oy = p.cy * level.HEIGHT
+    // The whole chunk the player is in is the text's map.
+    assertEqual(game.view(ME, ox, oy, level.WIDTH, level.HEIGHT), game.text(ME)[1:level.HEIGHT + 1])
+    // A window across the east edge: the chunk's last ten columns, then
+    // nothing of a chunk the player has never seen.
+    val across = game.view(ME, ox + level.WIDTH - 10, oy, 20, level.HEIGHT)
+    assertEqual(across[3][:10], game.text(ME)[4][level.WIDTH - 10:])
+    assertEqual(across[3][10:], " " * 10)
+    // After walking through, the view from the next chunk shows the one
+    // remembered behind it.
+    val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
+    placePlayer(level.WIDTH - 1, row)
+    game.command(ME, "space", false)
+    game.command(ME, "l", false)
+    val back = game.view(ME, ox + level.WIDTH - 1, oy + row, 2, 1)[0]
+    assertEqual(back, "#@")
+}

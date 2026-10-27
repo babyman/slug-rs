@@ -1442,6 +1442,49 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
  */
 export val text = fn(id:str):list { actAs(id, screen) }
 
+// `a` divided by `b` > 0, rounded down, as chunk coordinates need.
+val floorDiv = fn(a:num, b:num):num {
+    if (a >= 0) { math.div(a, b) } else { -math.div(-a - 1, b) - 1 }
+}
+
+/**
+ * The map rows the player with `id` sees through a window `cols` wide and
+ * `rows` tall whose top left corner is at (left, top) in world coordinates
+ * on their depth, where a square's world x is its chunk's x times WIDTH
+ * plus its x in the chunk, and likewise y. The chunk they are in is drawn
+ * as `text` draws it, with the monsters and players they can see; other
+ * chunks as they remember them, blank where they have never been.
+ */
+export val view = fn(id:str, left:num, top:num, cols:num, rows:num):list {
+    actAs(id, fn() {
+        val current = screen()
+        val rowOf = fn(cx:num, cy:num, ly:num):str {
+            if (cx == player.cx && cy == player.cy) {
+                current[1 + ly]
+            } else {
+                (player.memory[chunkKey(cx, cy, player.depth)] ?? BLANK_ROWS)[ly]
+            }
+        }
+        // One window row, a piece from each chunk it crosses.
+        val line = fn(wy:num):str {
+            val cy = floorDiv(wy, level.HEIGHT)
+            val ly = wy - cy * level.HEIGHT
+            val go = fn(wx:num, out:str):str {
+                if (wx >= left + cols) { return out }
+                val cx = floorDiv(wx, level.WIDTH)
+                val lx = wx - cx * level.WIDTH
+                val end = math.min(left + cols, (cx + 1) * level.WIDTH)
+                recur(end, out + rowOf(cx, cy, ly)[lx:lx + end - wx])
+            }
+            go(left, "")
+        }
+        val go = fn(wy:num, out:list):list {
+            if (wy == top + rows) { out } else { recur(wy + 1, out :+ line(wy)) }
+        }
+        go(top, [])
+    })
+}
+
 /**
  * The chunk the player with `id` is in.
  */

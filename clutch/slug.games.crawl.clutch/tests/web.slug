@@ -17,8 +17,8 @@ val headersFor = fn(id:str|nil):map {
     if (id == nil) { {} } else { {cookie: "theme=dark; crawl=" + id} }
 }
 
-val get = fn(path:str, id:str|nil = nil):map {
-    web.handler()({method: "GET", path: path, query: {}, headers: headersFor(id), body: 0x"", params: {}})
+val get = fn(path:str, id:str|nil = nil, query:map = {}):map {
+    web.handler()({method: "GET", path: path, query: query, headers: headersFor(id), body: 0x"", params: {}})
 }
 
 val post = fn(path:str, body:str, id:str|nil = nil):map {
@@ -237,5 +237,51 @@ val aPromptStaysAboveTheMapWhileTheWorldMoves = fn() {
     web.tickOnce()
     assertEqual(game.playerOf(id).messages, [])
     assertTrue(includes(web.gameHtml(id), "Eat which item? (space to cancel)"))
+    close(events.body)
+}
+
+// The text of the map in `html`, row by row, without its markup.
+val mapText = fn(html:str):list {
+    val start = split(html, "<pre class=\"map\">")[1]
+    val inside = split(start, "</pre>")[0]
+    val strip = fn(text:str, i:num, out:str, tag:bool):str {
+        if (i == len(text)) { return out }
+        val c = text[i]
+        if (c == "<") { recur(text, i + 1, out, true) } else if (c == ">") { recur(text, i + 1, out, false) } else if (tag) { recur(text, i + 1, out, true) } else { recur(text, i + 1, out + c, false) }
+    }
+    split(strip(inside, 0, "", false), "\n")
+}
+
+// The column of the player's @ in a map row.
+val youAt = fn(row:str):num {
+    val go = fn(i:num):num { if (row[i] == "@") { i } else { recur(i + 1) } }
+    go(0)
+}
+
+@test
+val theMapScrollsOnlyNearItsEdges = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    // Put the player at the start of a run of floor eight squares long.
+    val rows = game.here(id).map
+    val find = fn(i:num):map {
+        val x = i % 70
+        val y = int(i / 70)
+        if (rows[y][x:x + 8] == "........") { {x: x, y: y} } else { recur(i + 1) }
+    }
+    val spot = find(0)
+    val s = game.snapshot()
+    game.load(s copy {levels: s.levels + {[game.chunkKey(s.players[id].cx, s.players[id].cy, 1)]: game.here(id) + {monsters: []}}})
+    val t = game.snapshot()
+    game.load(t copy {players: t.players + {[id]: t.players[id] + {x: spot.x, y: spot.y}}})
+    val events = get("/events", id, {cols: "20", rows: "8"})
+    val first = mapText(web.gameHtml(id))
+    assertEqual(len(first), 8)
+    assertEqual(len(first[0]), 20)
+    assertEqual(youAt(first[4]), 10)
+    // Within the middle the player moves across the window; within five
+    // columns of its edge the window moves instead.
+    val step = fn() { web.press(id, "l", false); web.tickOnce(); youAt(mapText(web.gameHtml(id))[4]) }
+    assertEqual([step(), step(), step(), step(), step(), step()], [11, 12, 13, 14, 14, 14])
     close(events.body)
 }

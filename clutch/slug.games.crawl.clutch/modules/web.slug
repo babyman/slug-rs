@@ -16,6 +16,12 @@
  * A player whose page is closed is away: they stay in the world, but their
  * chunk stands still unless someone present is in it.
  *
+ * The map is a window onto the world, as big as the page asks for when it
+ * opens `/events` (`cols` and `rows`, at most 80 by 22), stitched from the
+ * chunk the player is in and the ones they remember around it. It starts
+ * centred on the player and scrolls only when they come within a quarter
+ * of its width or height of an edge.
+ *
  * A `crawl` cookie names each browser's player; a browser without one, or
  * with one this server does not know, joins as a new player. Each id is 128
  * random bits from `slug.random.secure`, so no one can guess another
@@ -44,7 +50,7 @@ val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
 val secure = import("slug.random.secure")
-val {split, trim, join} = import("slug.string")
+val {split, trim, join, toInt} = import("slug.string")
 val {trySend} = import("slug.channel")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
@@ -106,6 +112,12 @@ var queue = []
 var streams = {}
 var shown = {}
 var ticks = 0
+
+// Each player's window size, `{cols, rows}`, as their page asked, and
+// where their window is, `{left, top, depth, cols, rows}` in world
+// coordinates.
+var sizes = {}
+var cameras = {}
 
 // Whether `serve` is serving, which keeps its ticks going, and on every how
 // many ticks monsters act.
@@ -236,10 +248,39 @@ val PAGE = mustache.parse(fromBytes(asset("page.mustache")))
 val GAME = mustache.parse(GAME_TEXT)
 val PARTIALS = {game: GAME_TEXT, "pack-item": fromBytes(asset("pack-item.mustache"))}
 
-// How the map draws `c` at (x, y) for the player with `id` at `p`: its
-// class, dimmed when the square is out of sight, and for a monster or
-// another player their name; nil for a blank square.
-val cell = fn(id:str, p:map, c:str, x:num, y:num):map {
+// The window of the player with `id` at `p`: where it was, unless it is new,
+// on another depth, another size, or no longer holds them, in which case
+// it is centred on them; then moved just enough to keep them a quarter of
+// its size from each edge.
+val camera = fn(id:str, p:map):map {
+    val size = sizes[id] ?? {cols: level.WIDTH, rows: level.HEIGHT}
+    val px = p.cx * level.WIDTH + p.x
+    val py = p.cy * level.HEIGHT + p.y
+    val mx = math.div(size.cols, 4)
+    val my = math.div(size.rows, 4)
+    val was = cameras[id]
+    val fresh = was == nil || was.depth != p.depth || was.cols != size.cols || was.rows != size.rows
+        || px < was.left || px >= was.left + size.cols || py < was.top || py >= was.top + size.rows
+    val left0 = if (fresh) { px - math.div(size.cols, 2) } else { was.left }
+    val top0 = if (fresh) { py - math.div(size.rows, 2) } else { was.top }
+    val keep = fn(at:num, start:num, length:num, margin:num):num {
+        if (at < start + margin) { at - margin } else if (at > start + length - 1 - margin) { at - (length - 1 - margin) } else { start }
+    }
+    val cam = {
+        left: keep(px, left0, size.cols, mx), top: keep(py, top0, size.rows, my),
+        depth: p.depth, cols: size.cols, rows: size.rows,
+    }
+    cameras = cameras + {[id]: cam}
+    cam
+}
+
+// How the map draws `c` at (wx, wy) in world coordinates for the player with
+// `id` at `p`: its class, dimmed when the square is out of their sight, as
+// every square outside their chunk is, and for a monster or another player
+// their name; nil for a blank square.
+val cell = fn(id:str, p:map, c:str, wx:num, wy:num):map {
+    val x = wx - p.cx * level.WIDTH
+    val y = wy - p.cy * level.HEIGHT
     if (c == "@") {
         if (x == p.x && y == p.y) { return {cls: "you", title: nil} }
         val there = filter(game.others(id), fn(o) { o[1].x == x && o[1].y == y })
@@ -252,7 +293,7 @@ val cell = fn(id:str, p:map, c:str, x:num, y:num):map {
     val kind = CLASSES[c]
     if (kind == nil) {
         {cls: nil, title: nil}
-    } else if (!game.visible(id, x, y)) {
+    } else if (x < 0 || x >= level.WIDTH || y < 0 || y >= level.HEIGHT || !game.visible(id, x, y)) {
         {cls: kind + " seen", title: nil}
     } else {
         {cls: kind, title: nil}
@@ -260,19 +301,23 @@ val cell = fn(id:str, p:map, c:str, x:num, y:num):map {
 }
 
 // One row of the map as runs of characters that look alike.
-val mapRow = fn(id:str, p:map, row:str, y:num, end:str):map {
+val mapRow = fn(id:str, p:map, cam:map, row:str, y:num, end:str):map {
+    val wy = cam.top + y
     val go = fn(x:num, start:num, look:map, out:list):list {
         if (x == len(row)) { return out :+ (look + {text: row[start:x]}) }
-        val next = cell(id, p, row[x], x, y)
+        val next = cell(id, p, row[x], cam.left + x, wy)
         if (next == look) { recur(x + 1, start, look, out) } else { recur(x + 1, x, next, out :+ (look + {text: row[start:x]})) }
     }
-    {runs: go(1, 0, cell(id, p, row[0], 0, y), []), end: end}
+    {runs: go(1, 0, cell(id, p, row[0], cam.left, wy), []), end: end}
 }
 
-val mapRows = fn(id:str, p:map, rows:list):list {
+// The player's window onto the map, row by row.
+val mapRows = fn(id:str, p:map):list {
+    val cam = camera(id, p)
+    val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
     val go = fn(y:num, out:list):list {
-        if (y == level.HEIGHT) { return out }
-        recur(y + 1, out :+ mapRow(id, p, rows[y + 1], y, if (y < level.HEIGHT - 1) { "\n" } else { "" }))
+        if (y == cam.rows) { return out }
+        recur(y + 1, out :+ mapRow(id, p, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
     }
     go(0, [])
 }
@@ -342,7 +387,7 @@ val view = fn(id:str):map {
     {
         prompt: prompt,
         top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
-        rows: mapRows(id, p, game.text(id)),
+        rows: mapRows(id, p),
         over: overView(p),
         log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] }),
         foes: foes,
@@ -420,10 +465,21 @@ val onUse = fn(request:map):map {
     })
 }
 
+// A number from the query, held between `low` and `high`, or `fallback`.
+val bounded = fn(text, low:num, high:num, fallback:num):num {
+    match toInt(text ?? "") {
+        n: num => math.max(low, math.min(high, n))
+        _ => fallback
+    }
+}
+
 // A stream of the player's game as server-sent events, starting with how it
-// is now.
+// is now, drawn through a window `cols` by `rows` from the query.
 val onEvents = fn(request:map):map {
     asPlayer(request, fn(id) {
+        val cols = bounded(request.query.cols, 20, level.WIDTH, level.WIDTH)
+        val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
+        sizes = sizes + {[id]: {cols: cols, rows: rows}}
         val channel = chan(8)
         val html = gameHtml(id)
         trySend(channel, event(html))
@@ -461,6 +517,8 @@ export val start = fn(worldSeed:num, options:map = {}) {
     queue = []
     streams = {}
     shown = {}
+    sizes = {}
+    cameras = {}
     ticks = 0
 }
 

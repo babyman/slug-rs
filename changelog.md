@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Crawl's map is a window that follows the player: centred on them at
+  first, it scrolls only when they come within a quarter of its width or
+  height of an edge, and it is stitched from the chunk they are in and the
+  chunks they remember around it, so walking through an opening scrolls on
+  instead of jumping to a new map. The page sizes the window to fit (at most
+  80 by 22) and asks for it on `/events?cols=&rows=`; on a narrow screen the
+  panels go below the map. The engine adds `view(id, left, top, cols, rows)`.
+
 - The `slug.random.secure` clutch gives unpredictable random numbers from
   the operating system's secure generator (`arc4random_buf`, `getrandom`, or
   `BCryptGenRandom`), through a small C library: `bytes(n)`, `token(size)`
