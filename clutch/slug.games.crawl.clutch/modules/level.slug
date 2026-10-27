@@ -254,7 +254,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
         }
     }
 
-    // 1. Gone cells: below(4) of them, each drawn until not already gone.
+    // 1. Gone cells: below(2) of them, each drawn until not already gone.
     val chooseGone = fn(n:num, gone:list):list {
         if (n == 0) {
             gone
@@ -263,7 +263,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
             if (contains(gone, c)) { recur(n, gone) } else { recur(n - 1, gone :+ c) }
         }
     }
-    val gone = chooseGone(rng.below(4), [])
+    val gone = chooseGone(rng.below(2), [])
 
     // 2. Rooms, cell by cell, each with its gold and monster.
     val kinds = kindsAt(depth)
@@ -282,7 +282,10 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
             val dark = rng.below(10) < depth - 1
             val w = 4 + rng.below(CELL_W - 4 - mx)
             val h = 4 + rng.below(CELL_H - 4 - my)
-            val x = left + mx + rng.below(CELL_W - w - mx)
+            // Within the middle half of the room the cell has to spare, so
+            // the corridors between neighbours stay short.
+            val slack = CELL_W - w - mx
+            val x = left + mx + math.div(slack, 4) + rng.below(math.div(slack, 2) + 1)
             val y = top + my + rng.below(CELL_H - h - my)
             val room = {x: x, y: y, w: w, h: h, gone: false, dark: dark}
             rooms = rooms :+ room
@@ -414,7 +417,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
     }
     val start = rng.below(CELLS)
     span(start, [start])
-    // Extra corridors: below(5) times, from a random cell to a random
+    // Extra corridors: below(3) times, from a random cell to a random
     // adjacent cell it is not yet joined to, if any.
     val extra = fn(n:num) {
         if (n > 0) {
@@ -426,7 +429,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
             recur(n - 1)
         }
     }
-    extra(rng.below(5))
+    extra(rng.below(3))
 
     // 4. Items: nine tries, each making an item with chance 36 in 100.
     val things = fn(n:num) {

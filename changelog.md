@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Crawl's chunks have shorter corridors, with rooms as varied in size as
+  before: rooms sit nearer the middle of their cells, at most one cell in a
+  chunk is gone, and there are at most two extra corridors. Over 200 chunks,
+  corridor squares fell from about 150 to 125 a chunk, and the longest
+  straight corridor from 24 squares to 19.
+
 - Crawl has touch controls: on a touch screen a bar stays at the bottom of
   the page, with a pad of the eight directions (Wait in the middle) and
   Run, which makes the next direction run, Stairs, and Wait.
