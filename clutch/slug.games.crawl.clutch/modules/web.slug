@@ -10,7 +10,8 @@
  * each key the game knows to `/key`, which queues it for that browser's
  * player; each tick carries out at most one queued key per player with the
  * engine's `tick`, and the world moves on whether anyone pressed a key or
- * not. Each open page listens on `/events`, a stream of server-sent events,
+ * not: monsters act every fourth tick by default, so a player can move a
+ * few times for each move of theirs. Each open page listens on `/events`, a stream of server-sent events,
  * and the server pushes it the game's HTML after each tick that changed it.
  * A player whose page is closed is away: they stay in the world, but their
  * chunk stands still unless someone present is in it.
@@ -95,8 +96,10 @@ var streams = {}
 var shown = {}
 var ticks = 0
 
-// Whether `serve` is serving, which keeps its ticks going.
+// Whether `serve` is serving, which keeps its ticks going, and on every how
+// many ticks monsters act.
 var serving = false
+var monsterEvery = 4
 
 val percent = fn(part:num, whole:num):num {
     if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
@@ -157,7 +160,7 @@ export val tickOnce = fn() {
     queue = rest
     val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
     val wasDead = filter(map(actions, fn(a) { a.id }), fn(id) { game.playerOf(id).dead })
-    game.tick(actions, present)
+    game.tick(actions, present, monsterEvery)
     ticks = ticks + 1
     // Log what each present player, or each who acted, was told.
     val actors = map(actions, fn(a) { a.id })
@@ -448,11 +451,13 @@ export val start = fn(worldSeed:num) {
 
 /**
  * Starts a new world with `options.seed` (default 1) and serves it on
- * `listener`, ticking every `options.tick` milliseconds (default 150), until
- * the listener closes.
+ * `listener`, ticking every `options.tick` milliseconds (default 150), with
+ * monsters acting every `options.pace` ticks (default 4), until the
+ * listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
     start(options.seed ?? 1)
+    monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150
     spawn {

@@ -1336,12 +1336,13 @@ export val command = fn(id:str, key:str, shift:bool) { actAs(id, fn() { perform(
  * the order they arrived, at most one per player, is carried out as
  * `command` would, except that a frozen player's is dropped, and a run
  * takes one step a tick. Players in `present` (those playing now) with no
- * action carry on running, or lose a turn while frozen. Then the monsters
- * act once in each chunk with a living present player, everyone who spent a
- * turn has their upkeep, the turn is counted, and everyone present looks
- * around. Each present player's messages are this tick's; none are paged.
+ * action carry on running, or lose a turn while frozen. Then, on every
+ * `monsterEvery`-th tick, the monsters act once in each chunk with a living
+ * present player; everyone who spent a turn has their upkeep, the turn is
+ * counted, and everyone present looks around. Each present player's
+ * messages are this tick's; none are paged.
  */
-export val tick = fn(actions:list, present:list) {
+export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     ticking = true
     val each = fn(ids:list, body:fn) {
         val go = fn(i:num) {
@@ -1384,15 +1385,18 @@ export val tick = fn(actions:list, present:list) {
             if (spent) { timed = timed :+ acting }
         }
     })
-    // The monsters of each chunk with a living present player, once each.
+    // The monsters of each chunk with a living present player, once each,
+    // on their ticks.
     var chunks = []
-    each(present, fn() {
-        val key = playerKey()
-        if (!player.dead && !contains(chunks, key)) {
-            chunks = chunks :+ key
-            monstersAct()
-        }
-    })
+    if (world.turn % monsterEvery == 0) {
+        each(present, fn() {
+            val key = playerKey()
+            if (!player.dead && !contains(chunks, key)) {
+                chunks = chunks :+ key
+                monstersAct()
+            }
+        })
+    }
     each(timed, fn() { if (!player.dead) { upkeep() } })
     world = world copy {turn: world.turn + 1}
     each(present, fn() { if (!player.dead) { see() } })

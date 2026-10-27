@@ -1,6 +1,6 @@
 # Crawl: An Endless, Shared World
 
-Status: Accepted; the goal and tick length are open
+Status: Accepted; the goal is open
 
 ## Context
 
@@ -53,9 +53,12 @@ session exactly, which is how the engine is tested.
 
 ### A server tick
 
-- The world advances on a fixed tick. Each player queues actions, at most
-  four ahead; every tick takes at most one queued action from each player,
-  applies them in a fixed order (by arrival), then moves the monsters.
+- The world advances on a fixed tick, 150 milliseconds by default. Each
+  player queues actions, at most four ahead; every tick takes at most one
+  queued action from each player and applies them in a fixed order (by
+  arrival). Monsters move on every fourth tick, so a player can move about
+  four times for each move of theirs: with monsters moving every tick, a
+  player who stopped to think was dead in seconds.
 - Only active chunks, those with a present player in them, take turns. A
   player is present while their page is open (has an event stream); one
   whose page is closed is away, and stays in the world without keeping
@@ -133,7 +136,6 @@ updates can use.
 - What a game is for once the Orb on depth 8 is gone. The direction is a
   goal that is random or that emerges from the world, rather than a fixed
   depth.
-- The tick length, and whether a player with no queued action simply waits.
 
 ## Plan
 

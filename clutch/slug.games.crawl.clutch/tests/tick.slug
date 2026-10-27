@@ -47,6 +47,9 @@ val setUp = fn(seed:num):map {
     spot
 }
 
+// A tick in which monsters act, as every tick of these tests does.
+val tick1 = fn(actions:list, present:list) { game.tick(actions, present, 1) }
+
 val key = fn(id:str, k:str):map { {id: id, key: k, shift: false} }
 
 val kobold = fn(x:num, y:num):map {
@@ -57,8 +60,8 @@ val kobold = fn(x:num, y:num):map {
 val monstersMoveEveryTickWhileSomeoneIsThere = fn() {
     val spot = setUp(1)
     setChunk("a", {monsters: [kobold(spot.x + 4, spot.y)]})
-    game.tick([], ["a"])
-    game.tick([], ["a"])
+    tick1([], ["a"])
+    tick1([], ["a"])
     assertEqual(game.here("a").monsters[0].x, spot.x + 2)
 }
 
@@ -66,14 +69,14 @@ val monstersMoveEveryTickWhileSomeoneIsThere = fn() {
 val chunksWithNoOnePresentStayStill = fn() {
     val spot = setUp(2)
     setChunk("a", {monsters: [kobold(spot.x + 4, spot.y)]})
-    game.tick([], ["b"])
+    tick1([], ["b"])
     assertEqual(game.here("a").monsters[0].x, spot.x + 4)
 }
 
 @test
 val eachPlayerActsOnceATick = fn() {
     val spot = setUp(3)
-    game.tick([key("a", "l"), key("a", "l"), key("a", "l")], ["a"])
+    tick1([key("a", "l"), key("a", "l"), key("a", "l")], ["a"])
     assertEqual(game.playerOf("a").x, spot.x + 1)
 }
 
@@ -83,7 +86,7 @@ val monstersActOnceATickHoweverManyAct = fn() {
     val a = game.playerOf("a")
     setPlayer("b", {cx: a.cx, cy: a.cy, depth: a.depth, x: spot.x + 4, y: spot.y})
     setChunk("a", {monsters: [kobold(spot.x + 3, spot.y)]})
-    game.tick([key("a", "space"), key("b", "space")], ["a", "b"])
+    tick1([key("a", "space"), key("b", "space")], ["a", "b"])
     val heard = filter(game.playerOf("b").messages, fn(m) { m == "The kobold hits you." || m == "The kobold misses." })
     assertEqual(len(heard), 1)
 }
@@ -91,12 +94,12 @@ val monstersActOnceATickHoweverManyAct = fn() {
 @test
 val runningTakesOneStepATick = fn() {
     val spot = setUp(5)
-    game.tick([{id: "a", key: "l", shift: true}], ["a"])
+    tick1([{id: "a", key: "l", shift: true}], ["a"])
     assertEqual(game.playerOf("a").x, spot.x + 1)
-    game.tick([], ["a"])
+    tick1([], ["a"])
     assertEqual(game.playerOf("a").x, spot.x + 2)
-    game.tick([key("a", "space")], ["a"])
-    game.tick([], ["a"])
+    tick1([key("a", "space")], ["a"])
+    tick1([], ["a"])
     assertEqual(game.playerOf("a").x, spot.x + 2)
 }
 
@@ -104,10 +107,10 @@ val runningTakesOneStepATick = fn() {
 val frozenPlayersLoseTheirTurns = fn() {
     val spot = setUp(6)
     setPlayer("a", {frozen: 2})
-    game.tick([key("a", "l")], ["a"])
+    tick1([key("a", "l")], ["a"])
     assertEqual([game.playerOf("a").x, game.playerOf("a").frozen], [spot.x, 1])
-    game.tick([key("a", "l")], ["a"])
-    game.tick([key("a", "l")], ["a"])
+    tick1([key("a", "l")], ["a"])
+    tick1([key("a", "l")], ["a"])
     assertEqual([game.playerOf("a").x, game.playerOf("a").frozen], [spot.x + 1, 0])
 }
 
@@ -116,9 +119,9 @@ val onlyPlayersWhoSpendATurnGetHungry = fn() {
     setUp(7)
     val food = game.playerOf("a").food
     val turn = game.current().world.turn
-    game.tick([], ["a"])
+    tick1([], ["a"])
     assertEqual(game.playerOf("a").food, food)
-    game.tick([key("a", "space")], ["a"])
+    tick1([key("a", "space")], ["a"])
     assertEqual(game.playerOf("a").food, food - 1)
     assertEqual(game.current().world.turn, turn + 2)
 }
@@ -126,10 +129,22 @@ val onlyPlayersWhoSpendATurnGetHungry = fn() {
 @test
 val messagesAreTheTicksOwn = fn() {
     setUp(8)
-    game.tick([key("a", "e")], ["a"])
+    tick1([key("a", "e")], ["a"])
     assertEqual(game.playerOf("a").messages, ["Eat which item? (space to cancel)"])
-    game.tick([key("a", "c")], ["a"])
+    tick1([key("a", "c")], ["a"])
     assertEqual(game.playerOf("a").messages, ["Yum, that tasted good."])
-    game.tick([], ["a"])
+    tick1([], ["a"])
     assertEqual(game.playerOf("a").messages, [])
+}
+
+@test
+val monstersActEveryFewTicks = fn() {
+    val spot = setUp(9)
+    setChunk("a", {monsters: [kobold(spot.x + 4, spot.y)]})
+    val turn = game.current().world.turn
+    val ticks = fn(n:num) { if (n > 0) { game.tick([], ["a"], 4); recur(n - 1) } }
+    ticks(8)
+    // Two of the eight ticks are the monsters'.
+    assertEqual(game.here("a").monsters[0].x, spot.x + 2)
+    assertEqual(game.current().world.turn, turn + 8)
 }
