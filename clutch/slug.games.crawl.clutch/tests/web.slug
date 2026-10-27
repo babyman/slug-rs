@@ -60,27 +60,29 @@ val itemPromptsOfferMatchingItems = fn() {
     assertTrue(includes(asked.body, "hx-vals='{\"key\": \"c\"}'"))
     assertTrue(includes(asked.body, "<button class=\"item\" disabled>"))
     post("/key", "key=space")
-    assertEqual(game.current().prompt, nil)
+    assertEqual(game.current().player.prompt, nil)
 }
 
 @test
 val clickingAnItemUsesIt = fn() {
     web.start(1)
-    assertEqual(len(game.current().pack), 3)
+    assertEqual(len(game.current().player.pack), 3)
     assertEqual(post("/use", "letter=c").status, 200)
-    assertEqual(len(game.current().pack), 2)
+    assertEqual(len(game.current().player.pack), 2)
     assertEqual(post("/use", "letter=z").status, 204)
 }
 
 @test
 val endScreensOfferANewGame = fn() {
     web.start(1)
-    game.load(game.snapshot() + {dead: true})
+    val alive = game.snapshot()
+    game.load(alive copy {player: alive.player copy {dead: true}})
     assertTrue(includes(web.gameHtml(), "You died."))
     post("/key", "key=enter")
-    assertEqual(game.current().seed, 2)
-    assertEqual(game.current().dead, false)
-    game.load(game.snapshot() + {won: true})
+    assertEqual(game.current().world.seed, 2)
+    assertEqual(game.current().player.dead, false)
+    val again = game.snapshot()
+    game.load(again copy {player: again.player copy {won: true}})
     assertTrue(includes(web.gameHtml(), "You escaped with the Orb!"))
 }
 
@@ -94,7 +96,7 @@ val randomPlayNeverLeavesMore = fn() {
         val next = (seed * 1103515245 + 12345) % 2147483648
         val key = keys[next % len(keys)]
         web.play(key, next % 7 == 0)
-        assertEqual(game.current().more, [])
+        assertEqual(game.current().player.more, [])
         assertTrue(len(web.gameHtml()) > 0)
         recur(i + 1, next)
     }

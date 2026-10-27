@@ -112,7 +112,7 @@ updates can use.
 Each step leaves a playable game:
 
 1. Split the engine's state into a world and one player, still single
-   player and still turn per key.
+   player and still turn per key. (Done.)
 2. Chunked, endless generation with constrained edges and two-way stairs.
 3. Several players by cookie, each command still advancing the world at
    once.

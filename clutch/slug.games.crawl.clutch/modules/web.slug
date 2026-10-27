@@ -4,8 +4,8 @@
  * Serves one game of Crawl over `slug.net.http`, drawn as HTML that HTMX
  * swaps in after each command, from the Mustache templates in the clutch's
  * assets (`page.mustache`, `game.mustache`, and `pack-item.mustache`), with
- * its style and script beside them. The engine is `slug.games.crawl`, unchanged:
- * the page posts each key the game knows to `/key`, the server runs it with
+ * its style and script beside them. The engine is `slug.games.crawl`: the
+ * page posts each key the game knows to `/key`, the server runs it with
  * `command`, and answers with the game's new HTML.
  *
  * The page shows what the terminal screen folds into 24 rows on its own: the
@@ -85,14 +85,16 @@ export val play = fn(key:str, shift:bool) {
     game.command(key, shift)
     val after = game.current()
     if (after == before) { return nil }
-    if ((before.dead || before.won) && !after.dead) { log = [] }
-    if (after.prompt != nil) { return nil }
+    val was = before.player
+    val now = after.player
+    if ((was.dead || was.won) && !now.dead) { log = [] }
+    if (now.prompt != nil) { return nil }
     val page = fn(out:list):list {
-        if (len(game.current().more) == 0) { return out }
+        if (len(game.current().player.more) == 0) { return out }
         game.command("space", false)
-        recur(out + game.current().messages)
+        recur(out + game.current().player.messages)
     }
-    record(page(after.messages))
+    record(page(now.messages))
 }
 
 // --- The view ----------------------------------------------------------------
@@ -140,30 +142,28 @@ val mapRows = fn(rows:list):list {
     go(0, [])
 }
 
-val statsView = fn(state:map):map {
-    val p = state.player
+val statsView = fn(p:map):map {
     val hunger = if (p.food <= 0) { "Faint" } else if (p.food <= 50) { "Weak" } else if (p.food <= 150) { "Hungry" } else { "" }
     {
         hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
         band: if (p.hp * 3 <= p.maxHp) { "low" } else if (p.hp * 3 <= p.maxHp * 2) { "mid" } else { "high" },
-        depth: state.depth, deepest: level.DEEPEST, gold: p.gold, str: p.str, maxStr: p.maxStr,
+        depth: p.depth, deepest: level.DEEPEST, gold: p.gold, str: p.str, maxStr: p.maxStr,
         armour: game.armourValue(), level: p.level, xp: p.xp,
         conditions: filter([
             hunger,
             if (p.confused > 0) { "Confused" } else { "" },
             if (p.blind > 0) { "Blind" } else { "" },
             if (p.frozen > 0) { "Frozen" } else { "" },
-            if (state.sense) { "Sensing" } else { "" },
+            if (p.sense) { "Sensing" } else { "" },
         ], fn(c) { c != "" }),
     }
 }
 
 // The pack: while a prompt asks for an item, the items it accepts can be
 // chosen and the rest are disabled; otherwise clicking an item uses it.
-val packView = fn(state:map):map {
-    val p = state.player
-    val asking = state.prompt != nil
-    val wanted = if (asking) { PROMPT_KINDS[state.prompt] } else { nil }
+val packView = fn(p:map):map {
+    val asking = p.prompt != nil
+    val wanted = if (asking) { PROMPT_KINDS[p.prompt] } else { nil }
     val item = fn(e:map):map {
         val kind = e.item.kind
         val fits = wanted == nil || kind == wanted
@@ -174,23 +174,22 @@ val packView = fn(state:map):map {
             use: if (asking) { nil } else { {title: (USES[kind] ?? [nil, nil])[1]} },
         }
     }
-    {asking: asking, count: len(state.pack), size: 22, items: map(state.pack, item)}
+    {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
 }
 
-val foesView = fn(state:map):list {
-    val seen = filter(state.monsters, fn(m) { state.sense || game.visible(m.x, m.y) })
+val foesView = fn(p:map):list {
+    val seen = filter(game.here().monsters, fn(m) { p.sense || game.visible(m.x, m.y) })
     map(seen, fn(m) {
         val kind = data.monsters[m.kind]
         {letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}
     })
 }
 
-val overView = fn(state:map) {
-    val p = state.player
-    if (state.won) {
+val overView = fn(p:map) {
+    if (p.won) {
         {title: "You escaped with the Orb!", detail: "With " + p.gold + " gold, at experience level " + p.level + "."}
-    } else if (state.dead) {
-        {title: "You died.", detail: "On depth " + state.depth + ", with " + p.gold + " gold, at experience level " + p.level + "."}
+    } else if (p.dead) {
+        {title: "You died.", detail: "On depth " + p.depth + ", with " + p.gold + " gold, at experience level " + p.level + "."}
     } else {
         nil
     }
@@ -199,19 +198,19 @@ val overView = fn(state:map) {
 // The data the game template draws: above the map, the prompt's question or
 // what the latest move said; below it, the older messages.
 val view = fn():map {
-    val state = game.current()
-    val prompt = state.prompt != nil
-    val foes = foesView(state)
+    val p = game.current().player
+    val prompt = p.prompt != nil
+    val foes = foesView(p)
     {
         prompt: prompt,
-        top: if (prompt) { state.messages } else { map(filter(log, fn(entry) { entry[0] == moves }), fn(entry) { entry[1] }) },
+        top: if (prompt) { p.messages } else { map(filter(log, fn(entry) { entry[0] == moves }), fn(entry) { entry[1] }) },
         rows: mapRows(game.text()),
-        over: overView(state),
+        over: overView(p),
         log: map(filter(log, fn(entry) { entry[0] != moves }), fn(entry) { entry[1] }),
         foes: foes,
         hasFoes: len(foes) > 0,
-        stats: statsView(state),
-        pack: packView(state),
+        stats: statsView(p),
+        pack: packView(p),
     }
 }
 
@@ -242,13 +241,13 @@ val onKey = fn(request:map):map {
 // Uses a pack item the way its kind is used: eats food, wields a weapon.
 val onUse = fn(request:map):map {
     val letter = http.form(request).letter ?? ""
-    val state = game.current()
-    val held = filter(state.pack, fn(e) { e.letter == letter })
-    if (len(held) == 0 || state.prompt != nil || state.dead || state.won || len(state.more) > 0) { return {status: 204} }
+    val p = game.current().player
+    val held = filter(p.pack, fn(e) { e.letter == letter })
+    if (len(held) == 0 || p.prompt != nil || p.dead || p.won || len(p.more) > 0) { return {status: 204} }
     val use = USES[held[0].item.kind]
     if (use == nil) { return {status: 204} }
     play(use[0], false)
-    if (game.current().prompt != nil) { play(letter, false) }
+    if (game.current().player.prompt != nil) { play(letter, false) }
     html(gameHtml())
 }
 
@@ -275,7 +274,7 @@ export val start = fn(seed:num) {
     game.newGame(seed)
     log = []
     moves = 0
-    record(game.current().messages)
+    record(game.current().player.messages)
 }
 
 /**

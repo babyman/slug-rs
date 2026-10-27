@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Crawl's engine keeps its state as a world (seed, turn, item appearances,
+  and levels by depth) and a player (position, depth, stats, pack, what they
+  have identified and remember, and their messages), the first step towards
+  an endless world that several people play. `current()` returns `world`,
+  `levels`, and `player`, `here()` the player's level, and snapshots hold
+  the same. Games play exactly as before.
+
 - `slug.random` generators have `state()`, where the sequence has reached;
   `generator(state)` continues from there, so a saved game can resume its
   random numbers exactly. Crawl's engine now draws from `slug.random` in place
