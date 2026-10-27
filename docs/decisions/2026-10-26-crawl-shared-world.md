@@ -21,19 +21,27 @@ several people play at once.
   chunk at the matching position on its opposite edge; there is no separate
   overworld.
 - Stairs join a chunk to the one below it at the same `(x, y)`. Each chunk
-  has stairs down and stairs up, so players who part can meet again.
+  has stairs down (`%`), and below depth 1 stairs up (`<`), so players who
+  part can meet again. Going down arrives on the lower chunk's stairs up,
+  and going up on the upper chunk's stairs down, so each chunk places its
+  own stairs.
 - A chunk is generated from its own generator, seeded by mixing the world
   seed with its coordinate, so the same world seed always gives the same
   chunk however and whenever it is reached.
-- Whatever two chunks share is decided by the link, not by either chunk:
-  each opening on a shared edge, and each staircase pair, is seeded from the
-  link's own coordinate. Generation takes these openings as fixed and joins
-  them to the chunk's rooms with corridors, so both sides always agree.
-- A chunk is generated when someone first comes near it and is then kept in
+- What two chunks share is decided by the edge between them, not by either
+  chunk: each edge has one opening, a corridor square on both borders, at a
+  row or column seeded from the edge's own coordinate. Generation takes the
+  four openings as fixed and joins each to the room in the cell beside it,
+  so both sides always agree. Rooms in the left and top cells keep two
+  squares clear of the border so that corridor always fits.
+- Walking off the map is allowed only straight across, from an opening into
+  the matching one, and not onto a monster.
+- A chunk is generated when someone first enters it and is then kept in
   memory with whatever players did to it. Storing only changes against the
   generated chunk is left until memory needs it.
-- Monster strength and item tables scale with depth instead of stopping at
-  depth 8.
+- Below depth 8 monsters come from depth 8's table, until monster strength
+  and item tables are made to scale with depth.
+- The Orb and winning are gone until the game has a new goal.
 
 ### Two kinds of randomness
 
@@ -114,6 +122,7 @@ Each step leaves a playable game:
 1. Split the engine's state into a world and one player, still single
    player and still turn per key. (Done.)
 2. Chunked, endless generation with constrained edges and two-way stairs.
+   (Done.)
 3. Several players by cookie, each command still advancing the world at
    once.
 4. Streaming responses in `slug.net.http`, the tick loop, and pushed views.

@@ -44,13 +44,13 @@ val USES = {
 // The item kind each item command's prompt asks for; nil for any.
 val PROMPT_KINDS = {e: "food", q: "potion", r: "scroll", w: "weapon", a: "armour", d: nil}
 
-val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]", orb: ","}
+val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
 
 // The class of each map character; capital letters are monsters.
 val CLASSES = {
     "@": "you", ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
-    "%": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
-    ")": "weapon", "]": "armour", ",": "orb",
+    "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
+    ")": "weapon", "]": "armour",
 }
 
 // How many messages the log keeps.
@@ -87,7 +87,7 @@ export val play = fn(key:str, shift:bool) {
     if (after == before) { return nil }
     val was = before.player
     val now = after.player
-    if ((was.dead || was.won) && !now.dead) { log = [] }
+    if (was.dead && !now.dead) { log = [] }
     if (now.prompt != nil) { return nil }
     val page = fn(out:list):list {
         if (len(game.current().player.more) == 0) { return out }
@@ -147,7 +147,7 @@ val statsView = fn(p:map):map {
     {
         hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
         band: if (p.hp * 3 <= p.maxHp) { "low" } else if (p.hp * 3 <= p.maxHp * 2) { "mid" } else { "high" },
-        depth: p.depth, deepest: level.DEEPEST, gold: p.gold, str: p.str, maxStr: p.maxStr,
+        depth: p.depth, area: "" + p.cx + ", " + p.cy, gold: p.gold, str: p.str, maxStr: p.maxStr,
         armour: game.armourValue(), level: p.level, xp: p.xp,
         conditions: filter([
             hunger,
@@ -186,9 +186,7 @@ val foesView = fn(p:map):list {
 }
 
 val overView = fn(p:map) {
-    if (p.won) {
-        {title: "You escaped with the Orb!", detail: "With " + p.gold + " gold, at experience level " + p.level + "."}
-    } else if (p.dead) {
+    if (p.dead) {
         {title: "You died.", detail: "On depth " + p.depth + ", with " + p.gold + " gold, at experience level " + p.level + "."}
     } else {
         nil
@@ -243,7 +241,7 @@ val onUse = fn(request:map):map {
     val letter = http.form(request).letter ?? ""
     val p = game.current().player
     val held = filter(p.pack, fn(e) { e.letter == letter })
-    if (len(held) == 0 || p.prompt != nil || p.dead || p.won || len(p.more) > 0) { return {status: 204} }
+    if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
     val use = USES[held[0].item.kind]
     if (use == nil) { return {status: 204} }
     play(use[0], false)

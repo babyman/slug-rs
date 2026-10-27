@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Crawl's world is endless: chunks of one map each, at (x, y) on every
+  depth, generated from the world's seed when first entered. Walking off a
+  map through the opening on its edge enters the next chunk, and stairs lead
+  down and back up (`enter` takes either). A player who dies starts again
+  as a new character on depth 1, in the same world. The Orb and its win are
+  gone until the game has a new goal, and below depth 8 monsters come from
+  depth 8's table.
+
 - Crawl's engine keeps its state as a world (seed, turn, item appearances,
   and levels by depth) and a player (position, depth, stats, pack, what they
   have identified and remember, and their messages), the first step towards

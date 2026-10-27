@@ -1,7 +1,15 @@
 /**
- * Level generation: nine rooms in a 3x3 grid of cells, some of them gone,
- * joined by corridors, then items, stairs, and the player's position. Every
- * random draw happens in the order the spec lists.
+ * Level generation. The world is endless chunks, each one map at (cx, cy) on
+ * a depth: nine rooms in a 3x3 grid of cells, some of them gone, joined by
+ * corridors, then items, stairs, and a starting spot. A chunk draws from its
+ * own generator, seeded from the world's seed and its coordinates, so it is
+ * the same whenever it is generated.
+ *
+ * Each edge between two chunks on a depth has one opening, a corridor square
+ * on the border whose position is seeded from that edge alone, so both
+ * chunks agree on it; walking off a map through an opening enters the next
+ * chunk. Every chunk has stairs down, and below depth 1 stairs up, which
+ * lead to the chunk at the same (cx, cy) one depth down or up.
  */
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
@@ -9,7 +17,8 @@ val math = import("slug.math")
 
 export val WIDTH = 80
 export val HEIGHT = 22
-export val DEEPEST = 8
+// Monsters come from the table for this depth at most.
+val TABLE_DEPTH = 8
 val CELL_W = 26
 val CELL_H = 7
 val CELLS = 9
@@ -22,6 +31,7 @@ export val DOOR = "+"
 export val HWALL = "-"
 export val VWALL = "|"
 export val STAIRS = "%"
+export val UP = "<"
 
 val contains = fn(xs:list, v):bool {
     val go = fn(i:num):bool {
@@ -100,11 +110,30 @@ export val freeSpot = fn(lv:map):map {
 }
 
 /**
- * Generates the level at `depth` (1 to DEEPEST). The result has `map` (HEIGHT
- * strings of WIDTH terrain characters), `rooms` (one per cell, in cell
- * order), `items` and `monsters` (in creation order), and `player`.
+ * Where the opening on an edge lies, seeded from the edge alone: for `kind`
+ * "ew", the edge between chunks (cx, cy) and (cx + 1, cy), its row, from 1 to
+ * HEIGHT - 3; for "ns", the edge between (cx, cy) and (cx, cy + 1), its
+ * column, from 1 to WIDTH - 3.
  */
-export val generate = fn(depth:num):map {
+export val opening = fn(world:num, kind:str, cx:num, cy:num, depth:num):num {
+    val seed = rng.mix([world, if (kind == "ew") { 1 } else { 2 }, cx, cy, depth])
+    rng.within(seed, fn() {
+        if (kind == "ew") { 1 + rng.below(HEIGHT - 3) } else { 1 + rng.below(WIDTH - 3) }
+    })
+}
+
+/**
+ * Generates the chunk at (cx, cy) on `depth` (1 or more) of the world with
+ * seed `world`. The result has `map` (HEIGHT strings of WIDTH terrain
+ * characters), `rooms` (one per cell, in cell order), `items` and `monsters`
+ * (in creation order), `down` and `up` (where its stairs are; `up` is nil on
+ * depth 1), and `start`, a free spot.
+ */
+export val generate = fn(world:num, cx:num, cy:num, depth:num):map {
+    rng.within(rng.mix([world, cx, cy, depth]), fn() { build(world, cx, cy, depth) })
+}
+
+val build = fn(world:num, cx:num, cy:num, depth:num):map {
     var rows = []
     val blank = fn(i:num) {
         if (i < HEIGHT) {
@@ -169,23 +198,28 @@ export val generate = fn(depth:num):map {
             acc
         } else {
             val m = data.monsters[i]
-            recur(i + 1, if (m.depths[0] <= depth && depth <= m.depths[1]) { acc :+ i } else { acc })
+            val d = math.min(depth, TABLE_DEPTH)
+            recur(i + 1, if (m.depths[0] <= d && d <= m.depths[1]) { acc :+ i } else { acc })
         }
     }
     val kinds = candidates(0, [])
+    // Cells on the left and top keep two squares clear of the border, so a
+    // corridor always fits between them and an opening.
     val makeRoom = fn(cell:num) {
         val left = (cell % 3) * CELL_W
         val top = math.div(cell, 3) * CELL_H
+        val mx = if (cell % 3 == 0) { 2 } else { 0 }
+        val my = if (cell < 3) { 2 } else { 0 }
         if (contains(gone, cell)) {
-            val x = left + 1 + rng.below(CELL_W - 3)
-            val y = top + 1 + rng.below(CELL_H - 3)
+            val x = left + math.max(1, mx) + rng.below(CELL_W - 2 - math.max(1, mx))
+            val y = top + math.max(1, my) + rng.below(CELL_H - 2 - math.max(1, my))
             rooms = rooms :+ {x: x, y: y, w: 1, h: 1, gone: true, dark: false}
         } else {
             val dark = rng.below(10) < depth - 1
-            val w = 4 + rng.below(CELL_W - 4)
-            val h = 4 + rng.below(CELL_H - 4)
-            val x = left + rng.below(CELL_W - w)
-            val y = top + rng.below(CELL_H - h)
+            val w = 4 + rng.below(CELL_W - 4 - mx)
+            val h = 4 + rng.below(CELL_H - 4 - my)
+            val x = left + mx + rng.below(CELL_W - w - mx)
+            val y = top + my + rng.below(CELL_H - h - my)
             val room = {x: x, y: y, w: w, h: h, gone: false, dark: dark}
             rooms = rooms :+ room
             rows = write(rows, x, y, HWALL * w)
@@ -228,16 +262,11 @@ export val generate = fn(depth:num):map {
         rows = write(rows, x, y, if (room.gone) { CORRIDOR } else { DOOR })
         {x: x, y: y}
     }
-    // Joins cell a to cell b = a + 1 (side by side) or a + 3 (one above the
-    // other). Draws: a's door, b's door, then the turn.
-    val connect = fn(a:num, b:num) {
-        val from = rooms[a]
-        val to = rooms[b]
-        if (b == a + 1) {
-            val s = if (from.gone) { from } else { {x: from.x + from.w - 1, y: from.y + 1 + rng.below(from.h - 2)} }
-            val e = if (to.gone) { to } else { {x: to.x, y: to.y + 1 + rng.below(to.h - 2)} }
-            door(from, s.x, s.y)
-            door(to, e.x, e.y)
+    // Digs a corridor from s to e, not including either: across from s to a
+    // turn, then along to e's line, then across to e when `horizontal`, or
+    // the same down the map when not. Draws the turn.
+    val route = fn(s:map, e:map, horizontal:bool) {
+        if (horizontal) {
             val turn = s.x + 1 + rng.below(e.x - s.x - 1)
             val first = fn(x:num) { if (x <= turn) { dig(x, s.y); recur(x + 1) } }
             first(s.x + 1)
@@ -247,10 +276,6 @@ export val generate = fn(depth:num):map {
             val last = fn(x:num) { if (x < e.x) { dig(x, e.y); recur(x + 1) } }
             last(turn + 1)
         } else {
-            val s = if (from.gone) { from } else { {x: from.x + 1 + rng.below(from.w - 2), y: from.y + from.h - 1} }
-            val e = if (to.gone) { to } else { {x: to.x + 1 + rng.below(to.w - 2), y: to.y} }
-            door(from, s.x, s.y)
-            door(to, e.x, e.y)
             val turn = s.y + 1 + rng.below(e.y - s.y - 1)
             val first = fn(y:num) { if (y <= turn) { dig(s.x, y); recur(y + 1) } }
             first(s.y + 1)
@@ -259,6 +284,28 @@ export val generate = fn(depth:num):map {
             across(s.x)
             val last = fn(y:num) { if (y < e.y) { dig(e.x, y); recur(y + 1) } }
             last(turn + 1)
+        }
+    }
+    // Where a corridor leaves `room` on its `side`: a door on that wall, or
+    // the point of a gone cell. Draws the door's place along the wall.
+    val exit = fn(room:map, side:str):map {
+        if (room.gone) { return door(room, room.x, room.y) }
+        match side {
+            "east" => door(room, room.x + room.w - 1, room.y + 1 + rng.below(room.h - 2))
+            "west" => door(room, room.x, room.y + 1 + rng.below(room.h - 2))
+            "north" => door(room, room.x + 1 + rng.below(room.w - 2), room.y)
+            _ => door(room, room.x + 1 + rng.below(room.w - 2), room.y + room.h - 1)
+        }
+    }
+    // Joins cell a to cell b = a + 1 (side by side) or a + 3 (one above the
+    // other). Draws: a's door, b's door, then the turn.
+    val connect = fn(a:num, b:num) {
+        if (b == a + 1) {
+            val s = exit(rooms[a], "east")
+            route(s, exit(rooms[b], "west"), true)
+        } else {
+            val s = exit(rooms[a], "south")
+            route(s, exit(rooms[b], "north"), false)
         }
     }
     var joined = []
@@ -329,15 +376,36 @@ export val generate = fn(depth:num):map {
         }
     }
     things(0)
-    if (depth == DEEPEST) {
-        val spot = anySpot()
-        items = items :+ {x: spot.x, y: spot.y, item: {kind: "orb"}}
+
+    // 5. Openings: east, west, north, then south, each joined to the cell
+    // beside it on that side, from the row or column band it lies in.
+    val band = fn(at:num, size:num):num { math.min(2, math.div(at, size)) }
+    val opened = fn(x:num, y:num):map {
+        rows = write(rows, x, y, CORRIDOR)
+        {x: x, y: y}
     }
+    val east = opening(world, "ew", cx, cy, depth)
+    route(exit(rooms[band(east, CELL_H) * 3 + 2], "east"), opened(WIDTH - 1, east), true)
+    val west = opening(world, "ew", cx - 1, cy, depth)
+    val w = opened(0, west)
+    route(w, exit(rooms[band(west, CELL_H) * 3], "west"), true)
+    val north = opening(world, "ns", cx, cy - 1, depth)
+    val n = opened(north, 0)
+    route(n, exit(rooms[band(north, CELL_W)], "north"), false)
+    val south = opening(world, "ns", cx, cy, depth)
+    route(exit(rooms[6 + band(south, CELL_W)], "south"), opened(south, HEIGHT - 1), false)
 
-    // 5. Stairs, then the player.
-    val stairs = anySpot()
-    rows = write(rows, stairs.x, stairs.y, STAIRS)
-    val player = anySpot()
+    // 6. Stairs down, stairs up below depth 1, then a starting spot.
+    val down = anySpot()
+    rows = write(rows, down.x, down.y, STAIRS)
+    val up = if (depth > 1) {
+        val spot = anySpot()
+        rows = write(rows, spot.x, spot.y, UP)
+        spot
+    } else {
+        nil
+    }
+    val start = anySpot()
 
-    {map: rows, rooms: rooms, items: items, monsters: monsters, player: player}
+    {map: rows, rooms: rooms, items: items, monsters: monsters, down: down, up: up, start: start}
 }

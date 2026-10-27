@@ -33,6 +33,7 @@ h2 small { float: right; letter-spacing: 0; }
 .bar.high div { background: var(--green); } .bar.mid div { background: var(--accent); } .bar.low div, .bar.foe div { background: var(--red); }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
 .stat { display: flex; justify-content: space-between; } .stat span { color: var(--muted); }
+.stat small { color: var(--muted); font-weight: normal; }
 .conditions span { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 9px; background: #3a2a12; color: var(--accent); font-size: 12px; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
 .item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }

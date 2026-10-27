@@ -2,11 +2,14 @@
  * The game: its state, the player's commands, and the text the screen shows.
  *
  * The state is a world and a player. The world is what every player would
- * share: its seed, the turn, item appearances, and its levels by depth, each
- * with its map, rooms, items, and monsters. The player is everything that is
- * one person's own: position and depth, stats, pack, what they have
- * identified, what they remember of each level, and their messages, prompt,
- * and fate.
+ * share: its seed, the turn, item appearances, and the chunks generated so
+ * far, each with its map, rooms, items, monsters, and stairs. The player is
+ * everything that is one person's own: the chunk they are in and their
+ * place in it, stats, pack, what they have identified, what they remember
+ * of each chunk, and their messages, prompt, and whether they are dead.
+ *
+ * A player starts, and after dying starts again as a new character, at a
+ * random spot on depth 1 near the world's origin; the world carries on.
  */
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
@@ -22,9 +25,12 @@ export val DIRECTIONS = {
 // The eight directions in the order the rules try them.
 val ORDER = [[-1, 0], [0, 1], [0, -1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]
 
-val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]", orb: ","}
+val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
 
-val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS]
+val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP]
+
+// Players start in a chunk from -SPAWN to SPAWN on each axis of depth 1.
+val SPAWN = 2
 
 val LETTERS = "abcdefghijklmnopqrstuvwxyz"
 val PACK_SIZE = 22
@@ -52,24 +58,32 @@ var levels = {}
 var player = {}
 
 /**
- * The whole game: `world`, `levels` by depth, and `player`.
+ * The whole game: `world`, `levels` (the chunks generated so far, by
+ * `chunkKey`), and `player`.
  */
 export val current = fn():map { {world: world, levels: levels, player: player} }
 
 /**
- * The level the player is on.
+ * The key of the chunk at (cx, cy) on `depth`, such as "0,-1,2".
  */
-export val here = fn():map { levels[player.depth] }
+export val chunkKey = fn(cx:num, cy:num, depth:num):str { "" + cx + "," + cy + "," + depth }
+
+val playerKey = fn():str { chunkKey(player.cx, player.cy, player.depth) }
+
+/**
+ * The chunk the player is in.
+ */
+export val here = fn():map { levels[playerKey()] }
 
 val setHere = fn(lv:map) {
-    levels = levels + {[player.depth]: lv}
+    levels = levels + {[playerKey()]: lv}
 }
 
-// What the player remembers of the level they are on, as its rows.
-val memory = fn():list { player.memory[player.depth] }
+// What the player remembers of the chunk they are in, as its rows.
+val memory = fn():list { player.memory[playerKey()] }
 
 val setMemory = fn(rows:list) {
-    player = player copy {memory: player.memory + {[player.depth]: rows}}
+    player = player copy {memory: player.memory + {[playerKey()]: rows}}
 }
 
 val contains = fn(xs:list, v):bool {
@@ -161,7 +175,7 @@ export val itemName = fn(item:map, count:num):str {
                 if (many) { n + "scrolls titled " + title } else { "a scroll titled " + title }
             }
         }
-        _ => "the Orb"
+        _ => item.kind
     }
 }
 
@@ -368,20 +382,58 @@ val see = fn() {
     setMemory(seen)
 }
 
-val enterLevel = fn(depth:num) {
-    val lv = level.generate(depth)
+// The chunk at (cx, cy) on `depth`, generated the first time it is needed.
+val chunk = fn(cx:num, cy:num, depth:num):map {
+    val key = chunkKey(cx, cy, depth)
+    match levels[key] {
+        lv: map => lv
+        _ => {
+            val lv = level.generate(world.seed, cx, cy, depth)
+            levels = levels + {[key]: lv}
+            lv
+        }
+    }
+}
+
+// Puts the player in the chunk at (cx, cy) on `depth`, at the spot `place`
+// gives for that chunk, and looks around.
+val enter = fn(cx:num, cy:num, depth:num, place:fn) {
+    val spot = place(chunk(cx, cy, depth))
+    val key = chunkKey(cx, cy, depth)
     val blank = fn(i:num, rows:list):list {
         if (i == level.HEIGHT) { rows } else { recur(i + 1, rows :+ (level.BLANK * level.WIDTH)) }
     }
-    levels = levels + {[depth]: {map: lv.map, rooms: lv.rooms, items: lv.items, monsters: lv.monsters}}
     player = player copy {
-        depth: depth,
-        x: lv.player.x,
-        y: lv.player.y,
-        memory: player.memory + {[depth]: blank(0, [])},
+        cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y,
+        memory: if (player.memory[key] == nil) { player.memory + {[key]: blank(0, [])} } else { player.memory },
         sense: false,
     }
     see()
+}
+
+// A new character, at a random free spot in a chunk near the origin of
+// depth 1.
+val newCharacter = fn() {
+    player = {
+        cx: 0, cy: 0, depth: 1, x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0,
+        weapon: "a", armour: "b", food: FOOD_START, regen: 0, frozen: 0, confused: 0, blind: 0,
+        pack: [
+            {letter: "a", item: {kind: "weapon", type: 0, bonus: 1}, count: 1},
+            {letter: "b", item: {kind: "armour", type: 1, bonus: 1}, count: 1},
+            {letter: "c", item: {kind: "food"}, count: 1},
+        ],
+        known: {potions: [], scrolls: []},
+        memory: {},
+        messages: ["Welcome to the dungeon."],
+        more: [],
+        prompt: nil,
+        showingPack: false,
+        dead: false,
+        sense: false,
+    }
+    val cx = rng.below(2 * SPAWN + 1) - SPAWN
+    val cy = rng.below(2 * SPAWN + 1) - SPAWN
+    enter(cx, cy, 1, fn(lv) { level.freeSpot(lv) })
 }
 
 /**
@@ -400,7 +452,7 @@ export val load = fn(saved:map) {
 }
 
 /**
- * Starts a new game with `seed`.
+ * Starts a new world with `seed`, and a player in it.
  */
 export val newGame = fn(seed:num) {
     rng.seed(seed)
@@ -408,25 +460,7 @@ export val newGame = fn(seed:num) {
     val titles = rng.shuffle(data.titles)
     world = {seed: seed, turn: 0, colours: colours, titles: titles}
     levels = {}
-    player = {
-        depth: 1, x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0,
-        weapon: "a", armour: "b", food: FOOD_START, regen: 0, frozen: 0, confused: 0, blind: 0,
-        pack: [
-            {letter: "a", item: {kind: "weapon", type: 0, bonus: 1}, count: 1},
-            {letter: "b", item: {kind: "armour", type: 1, bonus: 1}, count: 1},
-            {letter: "c", item: {kind: "food"}, count: 1},
-        ],
-        known: {potions: [], scrolls: []},
-        memory: {},
-        messages: ["Welcome to the dungeon. Find the Orb on depth 8."],
-        more: [],
-        prompt: nil,
-        showingPack: false,
-        dead: false,
-        won: false,
-        sense: false,
-    }
-    enterLevel(1)
+    newCharacter()
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +502,7 @@ val die = fn(cause:str) {
     player = player copy {dead: true}
     say("You die.")
     say(cause + " on depth " + player.depth + ".")
-    say("Press enter to play again.")
+    say("Press enter to start again.")
 }
 
 // Experience: each level from 2 needs 10, 20, 40, ... points; each level
@@ -749,7 +783,9 @@ val attack = fn(i:num) {
 // Returns whether the player moved.
 val step = fn(dx:num, dy:num):bool {
     val p = player
-    if (!stepOk(p.x, p.y, dx, dy)) {
+    if (!inBounds(p.x + dx, p.y + dy)) {
+        cross(dx, dy)
+    } else if (!stepOk(p.x, p.y, dx, dy)) {
         false
     } else {
         val i = indexAt(here().monsters, p.x + dx, p.y + dy)
@@ -764,6 +800,26 @@ val step = fn(dx:num, dy:num):bool {
             true
         }
     }
+}
+
+// Steps off the map's edge into the next chunk: only straight across, from
+// an opening to the matching one, and only when no monster stands there.
+// Returns whether the player moved.
+val cross = fn(dx:num, dy:num):bool {
+    val p = player
+    val x = p.x + dx
+    val y = p.y + dy
+    val cx = p.cx + if (x < 0) { -1 } else if (x >= level.WIDTH) { 1 } else { 0 }
+    val cy = p.cy + if (y < 0) { -1 } else if (y >= level.HEIGHT) { 1 } else { 0 }
+    val nx = (x + level.WIDTH) % level.WIDTH
+    val ny = (y + level.HEIGHT) % level.HEIGHT
+    if (dx != 0 && dy != 0) { return false }
+    val next = chunk(cx, cy, p.depth)
+    if (!contains(PASSABLE, next.map[ny][nx]) || indexAt(next.monsters, nx, ny) >= 0) { return false }
+    enter(cx, cy, p.depth, fn(lv) { {x: nx, y: ny} })
+    pickUp()
+    endTurn()
+    true
 }
 
 val monsterVisible = fn():bool {
@@ -787,38 +843,25 @@ val run = fn(dx:num, dy:num) {
     if (indexAt(here().monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)) {
         val q = player
         val ground = terrain(q.x, q.y)
-        val stop = ground == level.DOOR || ground == level.STAIRS || indexAt(here().items, q.x, q.y) >= 0
+        val stop = ground == level.DOOR || ground == level.STAIRS || ground == level.UP || indexAt(here().items, q.x, q.y) >= 0
             || monsterVisible() || len(player.messages) > 0 || player.dead
         if (!stop) { recur(dx, dy) }
     }
 }
 
-val hasOrb = fn():bool {
-    val go = fn(i:num):bool {
-        if (i == len(player.pack)) {
-            false
-        } else if (player.pack[i].item.kind == "orb") {
-            true
-        } else {
-            recur(i + 1)
-        }
-    }
-    go(0)
-}
-
-val descend = fn() {
+// Takes the stairs the player stands on: down to the chunk below, arriving
+// on its stairs up, or up to the chunk above, arriving on its stairs down.
+val takeStairs = fn() {
     val p = player
-    if (terrain(p.x, p.y) != level.STAIRS) {
-        say("I see no way down.")
-    } else if (player.depth < level.DEEPEST) {
-        enterLevel(player.depth + 1)
+    val ground = terrain(p.x, p.y)
+    if (ground == level.STAIRS) {
+        enter(p.cx, p.cy, p.depth + 1, fn(lv) { lv.up })
         world = world copy {turn: world.turn + 1}
-    } else if (hasOrb()) {
-        player = player copy {won: true}
-        say("You escape with the Orb and " + p.gold + " gold.")
-        say("Press enter to play again.")
+    } else if (ground == level.UP) {
+        enter(p.cx, p.cy, p.depth - 1, fn(lv) { lv.down })
+        world = world copy {turn: world.turn + 1}
     } else {
-        say("You need the Orb to leave.")
+        say("There are no stairs here.")
     }
 }
 
@@ -987,7 +1030,7 @@ val useWith = fn(spec:struct<ItemCommand>, c:str, letter:str) {
             _ => {
                 if (p.armour == letter) {
                     say("You can't drop armour you are wearing.")
-                } else if (indexAt(here().items, p.x, p.y) >= 0 || terrain(p.x, p.y) == level.STAIRS) {
+                } else if (indexAt(here().items, p.x, p.y) >= 0 || terrain(p.x, p.y) == level.STAIRS || terrain(p.x, p.y) == level.UP) {
                     say("There is no room to drop that here.")
                 } else {
                     takeOne(letter)
@@ -1057,13 +1100,14 @@ val showMessages = fn(messages:list) {
 
 /**
  * Carries out one command key: a letter, "space", or "enter", with `shift`
- * held or not. See task.md's Commands section.
+ * held or not, as the eval's task.md describes, except that `enter` takes
+ * stairs up as well as down, and after death starts a new character.
  */
 export val command = fn(key:str, shift:bool) {
     if (len(player.more) > 0) {
         if (key == "space") { showMessages(player.more) }
-    } else if (player.dead || player.won) {
-        if (key == "enter") { newGame(world.seed + 1) }
+    } else if (player.dead) {
+        if (key == "enter") { newCharacter() }
     } else if (player.showingPack) {
         if (key == "space") { player = player copy {showingPack: false, messages: []} }
     } else if (player.prompt != nil) {
@@ -1084,7 +1128,7 @@ export val command = fn(key:str, shift:bool) {
             if (key == "space") {
                 endTurn()
             } else if (key == "enter") {
-                descend()
+                takeStairs()
             } else if (key == "i") {
                 if (len(player.pack) == 0) {
                     say("You are empty-handed.")

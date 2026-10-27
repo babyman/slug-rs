@@ -73,17 +73,17 @@ val clickingAnItemUsesIt = fn() {
 }
 
 @test
-val endScreensOfferANewGame = fn() {
+val deathOffersANewCharacterInTheSameWorld = fn() {
     web.start(1)
     val alive = game.snapshot()
-    game.load(alive copy {player: alive.player copy {dead: true}})
+    game.load(alive copy {player: alive.player copy {dead: true, gold: 99}})
     assertTrue(includes(web.gameHtml(), "You died."))
     post("/key", "key=enter")
-    assertEqual(game.current().world.seed, 2)
-    assertEqual(game.current().player.dead, false)
-    val again = game.snapshot()
-    game.load(again copy {player: again.player copy {won: true}})
-    assertTrue(includes(web.gameHtml(), "You escaped with the Orb!"))
+    val now = game.current()
+    assertEqual(now.world, alive.world)
+    assertEqual(now.player.dead, false)
+    assertEqual(now.player.depth, 1)
+    assertEqual(now.player.gold, 0)
 }
 
 // Plays many seeded games with pseudo-random keys: every move renders, and

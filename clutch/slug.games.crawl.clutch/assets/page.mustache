@@ -12,13 +12,13 @@
     Requests run one at a time, in order, so fast typing is never reordered. }}
 <body hx-target="#game" hx-sync="#keys:queue all">
   <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
-  <header><h1>CRAWL</h1><p>Find the Orb on depth 8 and live.</p></header>
+  <header><h1>CRAWL</h1><p>An endless dungeon, out and down.</p></header>
   <main id="game">
     {{>game}}
   </main>
   <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
   Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
   <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
-  click an item to use it. Find the Orb on depth 8.</p>
+  click an item to use it. Walk off the map through an opening to go further.</p>
 </body>
 </html>

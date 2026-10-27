@@ -1,9 +1,12 @@
 /**
  * Crawl's random numbers: one slug.random generator, whose state snapshots
- * save and restore, and the game's own draws on top of it. slug.random is
- * the xorshift32 the spec defines, so games play exactly as the spec says.
+ * save and restore, and the game's own draws on top of it. `within` runs
+ * code on a generator of its own, which is how each chunk of the world is
+ * generated from its own seed, and `mix` makes such seeds.
  */
 val random = import("slug.random")
+
+val MASK = 0xFFFFFFFF
 
 var gen = random.generator(0)
 
@@ -21,6 +24,42 @@ export val getState = fn():num { gen.state() }
 export val setState = fn(s:num):nil {
     gen = random.generator(s)
     nil
+}
+
+/**
+ * Runs `body` with every draw from a generator seeded with `s`, then
+ * carries on the sequence from before; returns what `body` returns.
+ */
+export val within = fn(s:num, body:fn) {
+    val saved = gen
+    gen = random.generator(s)
+    val result = body()
+    gen = saved
+    result
+}
+
+// a * b modulo 2^32, multiplied in pieces small enough not to overflow.
+val mul32 = fn(a:num, b:num):num {
+    (a * (b & 0xFFFF) + (((a * (b >> 16)) & 0xFFFF) << 16)) & MASK
+}
+
+// MurmurHash3's finaliser: every input bit affects every output bit.
+val fmix = fn(h:num):num {
+    val a = mul32(h ^ (h >> 16), 0x85EBCA6B)
+    val b = mul32(a ^ (a >> 13), 0xC2B2AE35)
+    b ^ (b >> 16)
+}
+
+/**
+ * A seed from a list of integers, such as a world seed and a chunk's
+ * coordinates; negative integers count modulo 2^32. Lists that differ give
+ * unrelated seeds, even when they differ by one.
+ */
+export val mix = fn(values:list):num {
+    val go = fn(i:num, h:num):num {
+        if (i == len(values)) { h } else { recur(i + 1, fmix(h ^ fmix(values[i] & MASK))) }
+    }
+    go(0, 0x9E3779B9)
 }
 
 /**

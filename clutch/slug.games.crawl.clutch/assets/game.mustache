@@ -8,7 +8,7 @@
     <div class="end"><div>
       <h1>{{title}}</h1>
       <p>{{detail}}</p>
-      <button class="primary" hx-post="/key" hx-vals='{"key": "enter"}'>Play again <kbd>enter</kbd></button>
+      <button class="primary" hx-post="/key" hx-vals='{"key": "enter"}'>Start again <kbd>enter</kbd></button>
     </div></div>
     {{/over}}
   </div>
@@ -34,7 +34,7 @@
     <div class="hp"><span>Health</span><b>{{hp}} / {{maxHp}}</b></div>
     <div class="bar {{band}}"><div style="width:{{health}}%"></div></div>
     <div class="grid">
-      <div class="stat"><span>Depth</span><b>{{depth}} / {{deepest}}</b></div>
+      <div class="stat"><span>Depth</span><b>{{depth}} <small title="Where on this depth">at {{area}}</small></b></div>
       <div class="stat"><span>Gold</span><b>{{gold}}</b></div>
       <div class="stat"><span>Str</span><b>{{str}} / {{maxStr}}</b></div>
       <div class="stat"><span>Armour</span><b>{{armour}}</b></div>
@@ -62,7 +62,7 @@
   {{/pack}}
   <section class="actions">
     <button hx-post="/key" hx-vals='{"key": "space"}'>Wait <kbd>space</kbd></button>
-    <button hx-post="/key" hx-vals='{"key": "enter"}'>Descend <kbd>enter</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "enter"}'>Stairs <kbd>enter</kbd></button>
     <button hx-post="/key" hx-vals='{"key": "e"}'>Eat <kbd>e</kbd></button>
     <button hx-post="/key" hx-vals='{"key": "q"}'>Quaff <kbd>q</kbd></button>
     <button hx-post="/key" hx-vals='{"key": "r"}'>Read <kbd>r</kbd></button>
