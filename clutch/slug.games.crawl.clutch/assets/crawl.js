@@ -14,9 +14,8 @@ document.addEventListener("htmx:configRequest", e => {
     e.detail.parameters.key = gameKey(t);
     e.detail.parameters.shift = t.shiftKey;
   } else if (e.detail.elt.hasAttribute("data-direction") && running()) {
-    // Run makes the next direction run, then turns itself off.
+    // While Run is on, every direction runs.
     e.detail.parameters.shift = true;
-    setRunning(false);
   }
 });
 
