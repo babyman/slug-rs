@@ -237,6 +237,7 @@ Each step leaves a playable game:
    edges, stairs down from the surface, new characters on the surface.
    (Done.)
 2. Saving the world in SQLite, resuming it on start, `--new` for a new one.
+   (Done.)
 3. Characters and interaction menus, used first for players meeting each
    other (talk, trade).
 4. Towns and forts as walkable chunks with fixed people: a market with fixed

@@ -22,6 +22,10 @@
  * centred on the player and scrolls only when they come within a quarter
  * of its width or height of an edge.
  *
+ * Given a database, `serve` saves the world in it every few seconds with
+ * `slug.games.crawl.store`, and carries on the world it holds when it
+ * starts, so a restart loses at most the last few seconds.
+ *
  * A `crawl` cookie names each browser's player; a browser without one, or
  * with one this server does not know, joins as a new player. Each id is 128
  * random bits from `slug.random.secure`, so no one can guess another
@@ -43,6 +47,8 @@
 val http = import("slug.net.http")
 val tcp = import("slug.net.tcp")
 val game = import("slug.games.crawl")
+val store = import("slug.games.crawl.store")
+val sqlite = import("slug.db.sqlite")
 val data = import("slug.games.crawl.data")
 val level = import("slug.games.crawl.level")
 val {map, filter, contains} = import("slug.std")
@@ -509,13 +515,10 @@ export val handler = fn():fn {
     ])
 }
 
-/**
- * Starts a new world with `worldSeed`, with no one in it; `options` go to
- * the engine's `newGame`.
- */
-export val start = fn(worldSeed:num, options:map = {}) {
-    game.newGame(worldSeed, options)
-    joined = 0
+// Forgets everything about the players but the world, which numbers new
+// players from `players` + 1.
+val reset = fn(players:num) {
+    joined = players
     logs = {}
     queue = []
     streams = {}
@@ -526,16 +529,54 @@ export val start = fn(worldSeed:num, options:map = {}) {
 }
 
 /**
- * Starts a new world with `options.seed` (default: a fresh one from
- * `slug.random.secure`) and serves it on
- * `listener`, ticking every `options.tick` milliseconds (default 150), with
- * monsters acting every `options.pace` ticks (default 4) and chunks
- * restocked after `options.restock` ticks with no one in them (default
- * 2000), in a world `options.size` chunks across and down (default 32),
- * until the listener closes.
+ * Starts a new world with `worldSeed`, with no one in it; `options` go to
+ * the engine's `newGame`.
+ */
+export val start = fn(worldSeed:num, options:map = {}) {
+    game.newGame(worldSeed, options)
+    reset(0)
+}
+
+/**
+ * Carries on the world a snapshot holds, such as `slug.games.crawl.store`'s
+ * `read` gives; its players keep playing when their browsers come back.
+ */
+export val resume = fn(saved:map) {
+    game.load(saved)
+    reset(len(keys(saved.players)))
+}
+
+// Starts a new world as `serve`'s options say.
+val fresh = fn(options:map) {
+    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000, size: options.size ?? 32})
+}
+
+/**
+ * Serves a world on `listener` until the listener closes, ticking every
+ * `options.tick` milliseconds (default 150), with monsters acting every
+ * `options.pace` ticks (default 4).
+ *
+ * With `options.db`, a database `slug.games.crawl.store` opened, the world
+ * is saved there every `options.save` ticks (default 20, 3 seconds), and
+ * the world it already holds carries on unless `options.new` is true.
+ * Otherwise, or with no world saved yet, a new world starts with
+ * `options.seed` (default: a fresh one from `slug.random.secure`), its
+ * chunks restocked after `options.restock` ticks with no one in them
+ * (default 2000), `options.size` chunks across and down (default 32).
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
-    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000, size: options.size ?? 32})
+    val db = options.db
+    match db {
+        d: sqlite.Database => if (!(options.new ?? false) && store.has(d)) {
+            resume(store.read(d))
+        } else {
+            store.clear(d)
+            fresh(options)
+            store.write(d, game.changes())
+        }
+        _ => fresh(options)
+    }
+    val saveEvery = options.save ?? 20
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150
@@ -544,6 +585,10 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
             if (serving) {
                 select { after every /> fn(_) { nil } }
                 tickOnce()
+                match db {
+                    d: sqlite.Database => if (ticks % saveEvery == 0) { store.write(d, game.changes()) }
+                    _ => nil
+                }
                 recur()
             }
         }
@@ -551,4 +596,8 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
     }
     http.serve(listener, handler())
     serving = false
+    match db {
+        d: sqlite.Database => store.write(d, game.changes())
+        _ => nil
+    }
 }

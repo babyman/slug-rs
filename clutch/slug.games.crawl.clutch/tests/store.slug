@@ -1,0 +1,125 @@
+val game = import("slug.games.crawl")
+val web = import("slug.games.crawl.web")
+val store = import("slug.games.crawl.store")
+val {assertEqual, assertTrue} = import("slug.test")
+val {map} = import("slug.std")
+
+val KEYS = ["h", "j", "k", "l", "y", "u", "b", "n", "enter", ",", "s"]
+
+// The key player `who` presses on tick `i`: a fixed walk that wanders,
+// runs, and takes stairs.
+val keyFor = fn(i:num, who:num):map {
+    {key: KEYS[(i * 7 + who * 3 + int(i / 5)) % len(KEYS)], shift: (i + who) % 3 == 0}
+}
+
+// Runs `n` ticks from tick `from` with players `ids` all present, writing
+// the changes to `db` every `every` ticks when there is one.
+val play = fn(ids:list, from:num, n:num, db = nil, every:num = 10) {
+    val go = fn(i:num) {
+        if (i < from + n) {
+            val actions = map([0, 1], fn(w) { keyFor(i, w) + {id: ids[w]} })
+            game.tick(actions, ids)
+            if (db != nil && i % every == 0) { store.write(db, game.changes()) }
+            recur(i + 1)
+        }
+    }
+    go(from)
+}
+
+val twoPlaying = fn(seed:num):list {
+    game.newGame(seed, {size: 8})
+    game.join("a", "Al")
+    game.join("b", "Bo")
+    ["a", "b"]
+}
+
+@test
+val aSavedWorldReadsBackAsItWas = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    assertTrue(!store.has(db))
+    val ids = twoPlaying(3)
+    play(ids, 0, 300, db)
+    store.write(db, game.changes())
+    assertTrue(store.has(db))
+    assertEqual(store.seed(db), 3)
+    val saved = store.read(db)
+    val now = game.snapshot()
+    assertTrue(len(keys(now.levels)) > 1)
+    assertEqual(saved.world, now.world)
+    assertEqual(saved.rng, now.rng)
+    assertEqual(saved.levels, now.levels)
+    assertEqual(saved.players, now.players)
+}
+
+@test
+val aResumedWorldGoesOnAsIfItNeverStopped = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    val ids = twoPlaying(4)
+    play(ids, 0, 100, db)
+    store.write(db, game.changes())
+    play(ids, 100, 150)
+    val unbroken = game.snapshot()
+    game.load(store.read(db))
+    play(ids, 100, 150)
+    assertEqual(game.snapshot(), unbroken)
+}
+
+@test
+val onlyWhatChangedIsWrittenAgain = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    val ids = twoPlaying(5)
+    play(ids, 0, 50, db)
+    store.write(db, game.changes())
+    val quiet = game.changes()
+    assertEqual([quiet.levels, quiet.players, quiet.memories, quiet.forgotten], [{}, {}, [], []])
+    game.tick([], ["a"])
+    val p = game.playerOf("a")
+    assertEqual(keys(game.changes().levels), [game.chunkKey(p.cx, p.cy, p.depth)])
+}
+
+@test
+val aNewCharacterRemembersNothingOfTheOldOne = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    val ids = twoPlaying(6)
+    play(ids, 0, 200, db)
+    // A chunk far from where new characters start, remembered.
+    store.write(db, game.changes() copy {memories: [{id: "a", key: "0,0,9", rows: ["#"]}]})
+    assertEqual(store.read(db).players.a.memory["0,0,9"], ["#"])
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {a: s.players.a copy {dead: true}}})
+    game.tick([{id: "a", key: "enter"}], ids)
+    store.write(db, game.changes())
+    val memory = game.playerOf("a").memory
+    val stored = store.read(db).players.a.memory
+    assertEqual(stored, memory)
+    assertEqual(stored["0,0,9"], nil)
+}
+
+@test
+val clearingForgetsTheWorld = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    twoPlaying(7)
+    store.write(db, game.changes())
+    store.clear(db)
+    assertTrue(!store.has(db))
+    assertEqual(store.seed(db), nil)
+}
+
+@test
+val playersWhoJoinAResumedWorldAreNumberedOn = fn() {
+    val db = store.open(":memory:")
+    defer store.close(db)
+    web.start(8)
+    val first = web.newPlayer()
+    web.newPlayer()
+    store.write(db, game.changes())
+    web.start(9)
+    web.resume(store.read(db))
+    assertEqual(game.playerOf(first).name, "Player 1")
+    assertEqual(game.playerOf(web.newPlayer()).name, "Player 3")
+}

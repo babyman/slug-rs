@@ -2,24 +2,41 @@
  * Plays Crawl in a web browser: serves slug.games.crawl.web and prints its
  * address.
  *
- * Options: `--port N` (default 8080; 0 picks a free one), `--host H`
- * (default 127.0.0.1), `--seed N` (default: a fresh world each time; the
- * seed is printed, so a world can be played again), `--tick MS`, the
- * milliseconds between the world's ticks (default 150), `--pace N`, how
- * many ticks pass for each move of the monsters (default 4), and
- * `--restock N`, how many ticks a chunk stays as it was with no one in it
- * before it gets fresh monsters and items (default 2000, 5 minutes), and
- * `--size N`, how many chunks across and down the world is (default 32).
+ * The world is saved in a SQLite database, `--db=PATH` (default crawl.db),
+ * every few seconds, and a server started on a database that holds a world
+ * carries that world on. `--new` starts a new world in it instead, and
+ * replaces the one it held.
+ *
+ * Options for a new world: `--seed=N` (default: a fresh world each time;
+ * the seed is printed, so a world can be played again), `--restock=N`, how
+ * many ticks a chunk stays as it was with no one in it before it gets fresh
+ * monsters and items (default 2000, 5 minutes), and `--size=N`, how many
+ * chunks across and down the world is (default 32).
+ *
+ * Options for the server: `--port=N` (default 8080; 0 picks a free one),
+ * `--host=H` (default 127.0.0.1), `--tick=MS`, the milliseconds between the
+ * world's ticks (default 150), `--pace=N`, how many ticks pass for each
+ * move of the monsters (default 4), and `--save=N`, how many ticks pass
+ * between saves (default 20, 3 seconds).
  */
 val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
+val store = import("slug.games.crawl.store")
 val secure = import("slug.random.secure")
 
 val main = fn() {
     val host = cfg("host", "127.0.0.1")
     val listener = tcp.listen(host, cfg("port", 8080))
+    val path = cfg("db", "crawl.db")
+    val db = store.open(path)
+    defer store.close(db)
+    val fresh = cfg("new", false) || !store.has(db)
     val seed = cfg("seed", -1)
-    val world = if (seed < 0) { secure.seed() } else { seed }
-    println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/ (world seed " + world + ")")
-    web.serve(listener, {seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4), restock: cfg("restock", 2000), size: cfg("size", 32)})
+    val world = if (!fresh) { store.seed(db) } else if (seed < 0) { secure.seed() } else { seed }
+    val how = if (fresh) { "new world" } else { "world" }
+    println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/ (" + how + " " + world + ", saved in " + path + ")")
+    web.serve(listener, {
+        db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
+        restock: cfg("restock", 2000), size: cfg("size", 32), save: cfg("save", 20),
+    })
 }

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Crawl's world is saved in SQLite, through `slug.db.sqlite`, and outlives
+  the server: `play.slug` keeps it in `crawl.db` (`--db=PATH`), writes what
+  changed every 20 ticks (`--save=N`), about a millisecond a player, and
+  on start carries on the world the database holds, with every player's
+  character waiting for their browser. `--new` starts a new world in its
+  place. The new module `slug.games.crawl.store` keeps each chunk, player
+  and remembered chunk as a row of JSON; the engine's `changes()` says
+  what changed since it was last asked, and `web.resume` carries on a
+  saved world.
+
 - Crawl's world has a surface and bounds. Depth 0 is open country (ground,
   scrub, woods, lakes and rocky hills) drawn from smooth noise over the
   whole world, so it runs on across chunk edges and any open square of an

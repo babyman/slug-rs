@@ -17,7 +17,7 @@ val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val string = import("slug.string")
 val math = import("slug.math")
-val {map, filter} = import("slug.std")
+val {map, filter, reduce, remove} = import("slug.std")
 
 export val DIRECTIONS = {
     h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0],
@@ -77,6 +77,13 @@ var acting:str|nil = nil
 var ticking = false
 var spent = false
 
+// What has changed since `changes` was last asked, for saving: chunk keys,
+// player ids, and remembered chunks as [id, chunk key] by "id chunk key",
+// each as a set, and the players whose memories were wiped.
+var dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+
+val touchLevel = fn(key:str) { dirty = dirty copy {levels: dirty.levels + {[key]: true}} }
+
 /**
  * The whole game: `world`, `levels` (the chunks generated so far, by
  * `chunkKey`), and `players` by id.
@@ -94,6 +101,7 @@ val actAs = fn(id:str, body:fn) {
     if (outer != nil) { players = players + {[outer]: player} }
     acting = id
     player = players[id]
+    dirty = dirty copy {players: dirty.players + {[id]: true}}
     val result = body()
     players = players + {[id]: player}
     acting = outer
@@ -118,6 +126,7 @@ val site = fn():map { levels[playerKey()] }
 
 val setHere = fn(lv:map) {
     levels = levels + {[playerKey()]: lv}
+    touchLevel(playerKey())
 }
 
 // A chunk no one remembers anything of.
@@ -125,12 +134,18 @@ val BLANK_ROWS = (fn(i:num, rows:list):list {
     if (i == level.HEIGHT) { rows } else { recur(i + 1, rows :+ (level.BLANK * level.WIDTH)) }
 })(0, [])
 
+// Sets what the acting player remembers of the chunk with `key`.
+val remember = fn(key:str, rows:list) {
+    if (player.memory[key] != rows) {
+        player = player copy {memory: player.memory + {[key]: rows}}
+        dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
+    }
+}
+
 // What the player remembers of the chunk they are in, as its rows.
 val memory = fn():list { player.memory[playerKey()] ?? BLANK_ROWS }
 
-val setMemory = fn(rows:list) {
-    player = player copy {memory: player.memory + {[playerKey()]: rows}}
-}
+val setMemory = fn(rows:list) { remember(playerKey(), rows) }
 
 // The living players in the chunk with `key`, the acting player among them,
 // as [id, player] pairs in id order.
@@ -617,8 +632,7 @@ val seeOutdoors = fn() {
             val row = rows[y]
             recur(y + 1, acc :+ (row[:left] + line(y, left, "") + row[right + 1:]))
         }
-        val next = rows[:top] + go(top, []) + rows[bottom + 1:]
-        player = player copy {memory: player.memory + {[key]: next}}
+        remember(key, rows[:top] + go(top, []) + rows[bottom + 1:])
     }
     val ox0 = floorDiv(box.left, level.WIDTH)
     val oy0 = floorDiv(box.top, level.HEIGHT)
@@ -646,6 +660,7 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
         _ => {
             val lv = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
             levels = levels + {[key]: lv}
+            touchLevel(key)
             lv
         }
     }
@@ -678,6 +693,7 @@ val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
     val keep = filter(lv.items, fn(i) { i.dropped == true })
     val fresh = level.restock(world.seed, cx, cy, depth, n, lv, keep, standing :+ spot)
     levels = levels + {[key]: lv + fresh + {restocks: n}}
+    touchLevel(key)
 }
 
 // Notes that someone is in the acting player's chunk this turn.
@@ -687,6 +703,12 @@ val markSeen = fn() { setHere(site() + {seen: world.turn}) }
 // the middle of the world.
 val newCharacter = fn() {
     val name = player.name ?? "someone"
+    val id = acting ?? ""
+    val kept = filter(keys(dirty.memories), fn(k) { dirty.memories[k][0] != id })
+    dirty = dirty copy {
+        forgotten: dirty.forgotten + {[id]: true},
+        memories: reduce(kept, {}, fn(acc, k) { acc + {[k]: dirty.memories[k]} }),
+    }
     player = {
         name: name,
         cx: 0, cy: 0, depth: 1, x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0,
@@ -732,6 +754,7 @@ export val load = fn(saved:map) {
     sights = {}
     player = {}
     acting = nil
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
 }
 
 // How many turns a chunk stays as it was with no one in it before it is
@@ -758,6 +781,33 @@ export val newGame = fn(seed:num, options:map = {}) {
     player = {}
     acting = nil
     sights = {}
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+}
+
+/**
+ * What has changed since the game started, was loaded, or this was last
+ * called, for saving it: the `world` and the generator's state `rng` as
+ * they are now; the chunks that changed in `levels`, by key; the players
+ * who did in `players`, by id and without their memories; what they
+ * remember of the chunks whose memory changed in `memories`, as `{id, key,
+ * rows}`; and in `forgotten` the ids of players whose memories were wiped
+ * first, by dying.
+ */
+export val changes = fn():map {
+    val all = current()
+    val result = {
+        world: world,
+        rng: rng.getState(),
+        levels: reduce(keys(dirty.levels), {}, fn(acc, k) { acc + {[k]: levels[k]} }),
+        players: reduce(keys(dirty.players), {}, fn(acc, id) { acc + {[id]: remove(all.players[id], "memory")} }),
+        memories: map(keys(dirty.memories), fn(k) {
+            val [id, key] = dirty.memories[k]
+            {id: id, key: key, rows: all.players[id].memory[key]}
+        }),
+        forgotten: keys(dirty.forgotten),
+    }
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+    result
 }
 
 /**
