@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New core module `slug.os.signal`: `notify(["int", "term"])` returns a
+  channel that receives `"int"` for Ctrl-C (SIGINT) and `"term"` for
+  SIGTERM (Ctrl-Break on Windows) instead of the program ending, so it can
+  stop the way it chooses, running its `defer`s. A second signal of the
+  same kind ends the program at once. Crawl's `play.slug` uses it to save
+  the world when it stops, and its web server ends open pages' streams
+  when its listener closes, so the program can finish.
+
 - Crawl's world is saved in SQLite, through `slug.db.sqlite`, and outlives
   the server: `play.slug` keeps it in `crawl.db` (`--db=PATH`), writes what
   changed every 20 ticks (`--save=N`), about a millisecond a player, and

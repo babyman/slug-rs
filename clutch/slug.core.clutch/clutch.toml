@@ -1,6 +1,7 @@
 [modules]
 "slug.std" = { source = "modules/std.slug" }
 "slug.io.stdin" = { source = "modules/stdin.slug" }
+"slug.os.signal" = { source = "modules/signal.slug" }
 "slug.math" = { source = "modules/math.slug" }
 "slug.string" = { source = "modules/string.slug" }
 "slug.fmt.toml" = { source = "modules/toml.slug" }
@@ -24,6 +25,9 @@ sources = ["native/source/core.c"]
 
 [native.functions."slug.io.stdin"]
 startReaderRaw = { symbol = "slug_core_start_reader", signature = "(producer lines) -> i32" }
+
+[native.functions."slug.os.signal"]
+notifyRaw = { symbol = "slug_core_notify_signals", signature = "(i64 kinds, producer events) -> i32" }
 
 [native.functions."slug.math"]
 addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }

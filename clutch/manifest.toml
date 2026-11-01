@@ -2,6 +2,7 @@
 "slug.std" = "slug.core.clutch"
 "slug.io.fs" = "slug.io.fs.clutch"
 "slug.io.stdin" = "slug.core.clutch"
+"slug.os.signal" = "slug.core.clutch"
 "slug.net.tcp" = "slug.net.tcp.clutch"
 "slug.net.http" = "slug.net.http.clutch"
 "slug.text.mustache" = "slug.text.mustache.clutch"

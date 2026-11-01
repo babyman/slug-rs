@@ -156,6 +156,8 @@ boundary. A conforming host MUST provide:
 - standard output and standard error streams;
 - a process standard-input stream for `slug.io.stdin` when that module is
   available;
+- delivery of interrupt and terminate requests for `slug.os.signal` when that
+  module is available;
 - filesystem access for `slug.io.fs` when that module is available;
 - monotonic timer support for `after` select cases;
 - a configurable default nursery limit;

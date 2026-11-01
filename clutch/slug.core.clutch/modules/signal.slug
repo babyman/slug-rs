@@ -1,0 +1,50 @@
+/**
+ * slug.os.signal — the operating system's requests to stop
+ *
+ * `notify` turns an interrupt (Ctrl-C) or a request to terminate into a
+ * message on a channel instead of an immediate end, so a program can stop
+ * the way it chooses: close what it is serving, save its work, and return
+ * from `main`, running its `defer`s as usual.
+ *
+ * ```slug
+ * val signal = import("slug.os.signal")
+ *
+ * val stop = signal.notify(["int", "term"])
+ * spawn { select { recv stop }; tcp.close(listener) }
+ * ```
+ *
+ * A program that never calls `notify` ends on these signals as it always
+ * has, and so does one whose channels have all gone. After a signal is
+ * delivered, the next one of its kind ends the program at once, however
+ * busy it is, so a stuck shutdown can always be cut short; calling
+ * `notify` again for that kind asks for the next one too.
+ */
+
+// Typed native binding, declared in this clutch's manifest: sends the name
+// of each signal in `kinds`, as bits, through `events`.
+foreign notifyRaw = fn(kinds:num, events:chan<str>):num
+
+val KINDS = {int: 1, term: 2}
+
+/**
+ * Returns a channel that receives `"int"` for each interrupt, SIGINT or
+ * Ctrl-C, and `"term"` for each request to terminate, SIGTERM or on Windows
+ * Ctrl-Break, of the kinds in `names`, in place of their default action.
+ * Throws an `Error` of type `signal.name` for a name it does not know, and
+ * of type `signal.error` when the system will not let it watch.
+ */
+export val notify = fn(names:list):chan<str> {
+    val kinds = (fn(i:num, bits:num):num {
+        if (i == len(names)) { return bits }
+        match KINDS[names[i]] {
+            bit: num => recur(i + 1, bits | bit)
+            _ => throw Error {type: "signal.name", msg: "no signal called " + names[i] + "; there are int and term"}
+        }
+    })(0, 0)
+    if (kinds == 0) { throw Error {type: "signal.name", msg: "notify needs at least one signal"} }
+    val events:chan<str> = chan(4)
+    if (notifyRaw(kinds, events) != 0) {
+        throw Error {type: "signal.error", msg: "cannot watch for signals"}
+    }
+    events
+}

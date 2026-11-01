@@ -554,7 +554,8 @@ val fresh = fn(options:map) {
 /**
  * Serves a world on `listener` until the listener closes, ticking every
  * `options.tick` milliseconds (default 150), with monsters acting every
- * `options.pace` ticks (default 4).
+ * `options.pace` ticks (default 4). When it closes, every open page's
+ * stream ends, and with a database the world is saved.
  *
  * With `options.db`, a database `slug.games.crawl.store` opened, the world
  * is saved there every `options.save` ticks (default 20, 3 seconds), and
@@ -596,6 +597,10 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
     }
     http.serve(listener, handler())
     serving = false
+    // Ends every open page's stream, so their connections finish and the
+    // program can end.
+    map(keys(streams), fn(id) { map(streams[id], fn(c) { close(c) }) })
+    streams = {}
     match db {
         d: sqlite.Database => store.write(d, game.changes())
         _ => nil

@@ -18,6 +18,20 @@
  * immediately. A second call returns SLUG_CORE_READER_RUNNING. */
 int32_t slug_core_start_reader(slug_producer *lines);
 
+/* slug_core_notify_signals kinds, as bits, and results. */
+#define SLUG_CORE_SIGNAL_INT 1
+#define SLUG_CORE_SIGNAL_TERM 2
+#define SLUG_CORE_SIGNALS_WATCHING 0
+#define SLUG_CORE_SIGNALS_FAILED 1
+
+/* Sends "int" through `events` for each interrupt (SIGINT, or Ctrl-C on
+ * Windows) and "term" for each request to terminate (SIGTERM, or Ctrl-Break
+ * on Windows), as `kinds` asks, instead of their default action. After one
+ * is delivered, the next of its kind takes the default action, until a new
+ * call asks for that kind again; so does one that reaches no open channel.
+ * Takes ownership of `events`, which is released once its channel goes. */
+int32_t slug_core_notify_signals(int64_t kinds, slug_producer *events);
+
 /* Writes `left + right` to `sum` and returns true, or returns false when the
  * sum does not fit in an int64_t. */
 bool slug_core_add(int64_t left, int64_t right, int64_t *sum);

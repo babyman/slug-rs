@@ -3,8 +3,9 @@
  * address.
  *
  * The world is saved in a SQLite database, `--db=PATH` (default crawl.db),
- * every few seconds, and a server started on a database that holds a world
- * carries that world on. `--new` starts a new world in it instead, and
+ * every few seconds and when the server stops on Ctrl-C or SIGTERM (a
+ * second one stops it at once, unsaved), and a server started on a database
+ * that holds a world carries that world on. `--new` starts a new world in it instead, and
  * replaces the one it held.
  *
  * Options for a new world: `--seed=N` (default: a fresh world each time;
@@ -23,6 +24,7 @@ val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
 val store = import("slug.games.crawl.store")
 val secure = import("slug.random.secure")
+val signal = import("slug.os.signal")
 
 val main = fn() {
     val host = cfg("host", "127.0.0.1")
@@ -35,8 +37,16 @@ val main = fn() {
     val world = if (!fresh) { store.seed(db) } else if (seed < 0) { secure.seed() } else { seed }
     val how = if (fresh) { "new world" } else { "world" }
     println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/ (" + how + " " + world + ", saved in " + path + ")")
+    // Stopping closes the listener, so `serve` saves the world and returns.
+    val stop = signal.notify(["int", "term"])
+    spawn {
+        select { recv stop }
+        println("Saving the world and stopping…")
+        tcp.close(listener)
+    }
     web.serve(listener, {
         db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
         restock: cfg("restock", 2000), size: cfg("size", 32), save: cfg("save", 20),
     })
+    println("Saved.")
 }
