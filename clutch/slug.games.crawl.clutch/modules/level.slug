@@ -8,13 +8,18 @@
  * Each edge between two chunks on a depth has one opening, a corridor square
  * on the border whose position is seeded from that edge alone, so both
  * chunks agree on it; walking off a map through an opening enters the next
- * chunk. Every chunk has stairs down, and below depth 1 stairs up, which
- * lead to the chunk at the same (cx, cy) one depth down or up.
+ * chunk. Every chunk has stairs down and stairs up, which lead to the chunk
+ * at the same (cx, cy) one depth down or up.
+ *
+ * Above depth 1 lies the surface, depth 0: open country drawn from noise
+ * over the whole world, so it runs on across chunk edges, with one way down
+ * into the dungeon in each chunk. A world can be bounded, a square of
+ * chunks; its surface ends in sea, and its dungeon edges have no openings.
  */
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
-val {filter} = import("slug.std")
+val {map, filter} = import("slug.std")
 
 export val WIDTH = 80
 export val HEIGHT = 22
@@ -84,6 +89,7 @@ export val newItem = fn():map {
  * if that square is not floor without an item or monster, start again.
  */
 export val freeSpot = fn(lv:map):map {
+    if (lv.outdoor == true) { return outdoorSpot(lv) }
     val occupied = fn(list:list, x:num, y:num):bool {
         val go = fn(i:num):bool {
             if (i == len(list)) {
@@ -130,6 +136,7 @@ val kindsAt = fn(depth:num):list {
  */
 export val restock = fn(world:num, cx:num, cy:num, depth:num, n:num, lv:map, keep:list, blocked:list):map {
     rng.within(rng.mix([world, cx, cy, depth, n]), fn() {
+        if (lv.outdoor == true) { return stockSurface(lv, keep, blocked, n) }
         var items = keep
         var monsters = []
         val taken = fn(list:list, x:num, y:num):bool {
@@ -196,17 +203,282 @@ export val opening = fn(world:num, kind:str, cx:num, cy:num, depth:num):num {
 }
 
 /**
- * Generates the chunk at (cx, cy) on `depth` (1 or more) of the world with
- * seed `world`. The result has `map` (HEIGHT strings of WIDTH terrain
- * characters), `rooms` (one per cell, in cell order), `items` and `monsters`
- * (in creation order), `down` and `up` (where its stairs are; `up` is nil on
- * depth 1), and `start`, a free spot.
+ * Whether chunk (cx, cy) lies in a world `size` chunks across and down,
+ * from 0 to size - 1 on each axis; every chunk does when `size` is 0, an
+ * unbounded world.
  */
-export val generate = fn(world:num, cx:num, cy:num, depth:num):map {
-    rng.within(rng.mix([world, cx, cy, depth]), fn() { build(world, cx, cy, depth) })
+export val inWorld = fn(size:num, cx:num, cy:num):bool {
+    size == 0 || (cx >= 0 && cx < size && cy >= 0 && cy < size)
 }
 
-val build = fn(world:num, cx:num, cy:num, depth:num):map {
+/**
+ * Generates the chunk at (cx, cy) on `depth` of the world with seed `world`,
+ * `size` chunks across and down (0 for no bound). Depth 0 is the surface
+ * (see `surface`); below it the result has `map` (HEIGHT strings of WIDTH
+ * terrain characters), `rooms` (one per cell, in cell order), `items` and
+ * `monsters` (in creation order), `down` and `up` (where its stairs are; on
+ * depth 1 stairs up lead to the surface), and `start`, a free spot. Edges
+ * at the world's bounds have no opening.
+ */
+export val generate = fn(world:num, cx:num, cy:num, depth:num, size:num = 0):map {
+    rng.within(rng.mix([world, cx, cy, depth]), fn() {
+        if (depth == 0) { surface(world, cx, cy, size) } else { build(world, cx, cy, depth, size) }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The surface.
+
+// Outdoor terrain characters: open ground is FLOOR.
+export val SCRUB = ","
+export val TREE = "&"
+export val WATER = "~"
+export val ROCK = "^"
+
+// Squares on the surface that block sight.
+export val OPAQUE = [TREE, ROCK]
+
+// The wild kinds that live on the surface, by name.
+val SURFACE_KINDS = ["jackal", "snake", "bat"]
+
+// `a` divided by `b` > 0, rounded down.
+val floorDiv = fn(a:num, b:num):num {
+    if (a >= 0) { math.div(a, b) } else { -math.div(-a - 1, b) - 1 }
+}
+
+// Smooth noise from 0 to 999 over world squares: values seeded from the
+// world, `layer`, and a lattice point every `sx` columns and `sy` rows,
+// blended between the four points around each square. `grid(x0, y0)`
+// returns a function of world (x, y) for squares of the chunk whose top left
+// is (x0, y0); it draws the chunk's lattice points once.
+val noise = fn(world:num, layer:num, sx:num, sy:num):fn {
+    fn(x0:num, y0:num):fn {
+        val ix0 = floorDiv(x0, sx)
+        val iy0 = floorDiv(y0, sy)
+        val nx = floorDiv(x0 + WIDTH - 1, sx) - ix0 + 2
+        val ny = floorDiv(y0 + HEIGHT - 1, sy) - iy0 + 2
+        val point = fn(i:num):num { rng.mix([world, 7, layer, ix0 + i % nx, iy0 + math.div(i, nx)]) % 1000 }
+        val points = fn(i:num, acc:list):list { if (i == nx * ny) { acc } else { recur(i + 1, acc :+ point(i)) } }
+        val lattice = points(0, [])
+        fn(x:num, y:num):num {
+            val ix = floorDiv(x, sx)
+            val iy = floorDiv(y, sy)
+            val fx = x - ix * sx
+            val fy = y - iy * sy
+            val i = (iy - iy0) * nx + ix - ix0
+            val a = lattice[i] * (sx - fx) + lattice[i + 1] * fx
+            val b = lattice[i + nx] * (sx - fx) + lattice[i + nx + 1] * fx
+            math.div(a * (sy - fy) + b * fy, sx * sy)
+        }
+    }
+}
+
+// The squares (as y * WIDTH + x) of each group of passable squares joined
+// by the step rule, largest first.
+val regions = fn(rows:list, passable:fn):list {
+    val ok = fn(x:num, y:num):bool { x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && passable(rows[y][x]) }
+    val steps = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]
+    var seen = {}
+    val fill = fn(queue:list, head:num):list {
+        if (head == len(queue)) { return queue }
+        val c = queue[head]
+        val x = c % WIDTH
+        val y = math.div(c, WIDTH)
+        val each = fn(i:num, q:list):list {
+            if (i == 8) { return q }
+            val dx = steps[i][0]
+            val dy = steps[i][1]
+            val k = (y + dy) * WIDTH + x + dx
+            if (ok(x + dx, y + dy) && seen[k] == nil && (dx == 0 || dy == 0 || (ok(x + dx, y) && ok(x, y + dy)))) {
+                seen = seen + {[k]: true}
+                recur(i + 1, q :+ k)
+            } else {
+                recur(i + 1, q)
+            }
+        }
+        recur(each(0, queue), head + 1)
+    }
+    val go = fn(c:num, found:list):list {
+        if (c == WIDTH * HEIGHT) { return found }
+        val x = c % WIDTH
+        val y = math.div(c, WIDTH)
+        if (ok(x, y) && seen[c] == nil) {
+            seen = seen + {[c]: true}
+            recur(c + 1, found :+ fill([c], 0))
+        } else {
+            recur(c + 1, found)
+        }
+    }
+    val groups = go(0, [])
+    val largest = fn(i:num, best:num):num {
+        if (i == len(groups)) { best } else { recur(i + 1, if (len(groups[i]) > len(groups[best])) { i } else { best }) }
+    }
+    if (len(groups) == 0) { return [] }
+    val b = largest(1, 0)
+    [groups[b]] + groups[:b] + groups[b + 1:]
+}
+
+// Pockets smaller than this, cut off from the rest of a surface chunk, are
+// filled in.
+val POCKET = 120
+
+/**
+ * The surface chunk at (cx, cy): open ground, scrub, woods, lakes and rocky
+ * hills, from smooth noise over world squares so that terrain runs on across
+ * chunk edges, and any square of an edge can be walked across. At the
+ * world's bounds the land gives way to sea. Small pockets cut off by water or
+ * rock are filled in. The result has `map`, `rooms` (none), `items`,
+ * `monsters`, `down` (the way into the dungeon), `up` (nil), `start`, and
+ * `outdoor` (true).
+ */
+val surface = fn(world:num, cx:num, cy:num, size:num):map {
+    val x0 = cx * WIDTH
+    val y0 = cy * HEIGHT
+    val broad = noise(world, 1, 24, 10)(x0, y0)
+    val fine = noise(world, 2, 8, 4)(x0, y0)
+    val woods = noise(world, 3, 16, 7)(x0, y0)
+    // How far a square is from the world's edge, rows counting double as
+    // they are about twice as tall as columns are wide.
+    val coast = fn(x:num, y:num):num {
+        if (size == 0) { return 1000 }
+        math.min(math.min(x, size * WIDTH - 1 - x), 2 * math.min(y, size * HEIGHT - 1 - y))
+    }
+    val square = fn(x:num, y:num):str {
+        val h = math.div(broad(x, y) * 2 + fine(x, y), 3)
+        val w = woods(x, y)
+        val scatter = rng.mix([world, 9, x, y]) % 100
+        if (coast(x, y) < 3 + math.div(fine(x, y), 250)) {
+            WATER
+        } else if (h < 280) {
+            WATER
+        } else if (h > 700) {
+            ROCK
+        } else if (w > 600 && scatter < 40 + math.div(w - 600, 5)) {
+            TREE
+        } else if (w > 440 && scatter < 25) {
+            SCRUB
+        } else {
+            FLOOR
+        }
+    }
+    val row = fn(y:num, x:num, out:str):str {
+        if (x == WIDTH) { out } else { recur(y, x + 1, out + square(x0 + x, y0 + y)) }
+    }
+    val makeRows = fn(y:num, acc:list):list {
+        if (y == HEIGHT) { acc } else { recur(y + 1, acc :+ row(y, 0, "")) }
+    }
+    var rows = makeRows(0, [])
+    val walkable = fn(c:str):bool { c == FLOOR || c == SCRUB || c == TREE }
+    val groups = regions(rows, walkable)
+    // Fill small pockets with whatever cuts them off.
+    val fillIn = fn(i:num) {
+        if (i < len(groups)) {
+            if (len(groups[i]) < POCKET) {
+                val each = fn(j:num) {
+                    if (j < len(groups[i])) {
+                        val c = groups[i][j]
+                        val x = c % WIDTH
+                        val y = math.div(c, WIDTH)
+                        val wet = (x > 0 && rows[y][x - 1] == WATER) || (x < WIDTH - 1 && rows[y][x + 1] == WATER)
+                            || (y > 0 && rows[y - 1][x] == WATER) || (y < HEIGHT - 1 && rows[y + 1][x] == WATER)
+                        rows = write(rows, x, y, if (wet) { WATER } else { ROCK })
+                        recur(j + 1)
+                    }
+                }
+                each(0)
+            }
+            recur(i + 1)
+        }
+    }
+    fillIn(1)
+    val main = if (len(groups) == 0) { [] } else { groups[0] }
+    // A free square of open ground in the largest group.
+    val ground = fn(taken:list):map {
+        val c = main[rng.below(len(main))]
+        val x = c % WIDTH
+        val y = math.div(c, WIDTH)
+        if (rows[y][x] == FLOOR && !contains(taken, [x, y])) { {x: x, y: y} } else { recur(taken) }
+    }
+    val lv = {map: rows, rooms: [], items: [], monsters: [], up: nil, outdoor: true}
+    val down = ground([])
+    rows = write(rows, down.x, down.y, STAIRS)
+    val stocked = stockSurface(lv + {map: rows}, [], [], 0)
+    val taken = map(stocked.items + stocked.monsters, fn(t) { [t.x, t.y] }) :+ [down.x, down.y]
+    lv + {map: rows, down: down, start: ground(taken)} + stocked
+}
+
+// Monsters and items for surface chunk `lv`: a few wild beasts and a few
+// things lying about, on free open ground, from the same generator as the
+// chunk or a restocking. `keep` are items that stay; nothing new is put on
+// them or on the squares in `blocked`.
+val stockSurface = fn(lv:map, keep:list, blocked:list, n:num):map {
+    var items = keep
+    var monsters = []
+    val taken = fn(list:list, x:num, y:num):bool {
+        val go = fn(i:num):bool {
+            if (i == len(list)) { false } else if (list[i].x == x && list[i].y == y) { true } else { recur(i + 1) }
+        }
+        go(0)
+    }
+    val spot = fn():map {
+        val x = rng.below(WIDTH)
+        val y = rng.below(HEIGHT)
+        if (lv.map[y][x] == FLOOR && !taken(items, x, y) && !taken(monsters, x, y) && !taken(blocked, x, y)) {
+            {x: x, y: y}
+        } else {
+            recur()
+        }
+    }
+    val kinds = filter(map(SURFACE_KINDS, fn(name) { indexNamed(name) }), fn(i) { i >= 0 })
+    val beasts = fn(k:num) {
+        if (k > 0) {
+            val at = spot()
+            val kind = kinds[rng.below(len(kinds))]
+            val hp = rng.roll(data.monsters[kind].level, 8)
+            monsters = monsters :+ {x: at.x, y: at.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
+            recur(k - 1)
+        }
+    }
+    beasts(rng.below(3))
+    val things = fn(k:num) {
+        if (k > 0) {
+            val item = newItem()
+            val at = spot()
+            items = items :+ {x: at.x, y: at.y, item: item}
+            recur(k - 1)
+        }
+    }
+    things(rng.below(3))
+    {items: items, monsters: monsters}
+}
+
+// The index of the monster kind called `name`, or -1.
+val indexNamed = fn(name:str):num {
+    val go = fn(i:num):num {
+        if (i == len(data.monsters)) { -1 } else if (data.monsters[i].name == name) { i } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+/**
+ * A free square of open ground anywhere on surface chunk `lv`.
+ */
+val outdoorSpot = fn(lv:map):map {
+    val occupied = fn(list:list, x:num, y:num):bool {
+        val go = fn(i:num):bool {
+            if (i == len(list)) { false } else if (list[i].x == x && list[i].y == y) { true } else { recur(i + 1) }
+        }
+        go(0)
+    }
+    val x = rng.below(WIDTH)
+    val y = rng.below(HEIGHT)
+    if (lv.map[y][x] == FLOOR && !occupied(lv.items, x, y) && !occupied(lv.monsters, x, y)) { {x: x, y: y} } else { recur(lv) }
+}
+
+// ---------------------------------------------------------------------------
+// The dungeon.
+
+val build = fn(world:num, cx:num, cy:num, depth:num, size:num):map {
     var rows = []
     val blank = fn(i:num) {
         if (i < HEIGHT) {
@@ -451,27 +723,32 @@ val build = fn(world:num, cx:num, cy:num, depth:num):map {
         rows = write(rows, x, y, CORRIDOR)
         {x: x, y: y}
     }
-    val east = opening(world, "ew", cx, cy, depth)
-    route(exit(rooms[band(east, CELL_H) * 3 + 2], "east"), opened(WIDTH - 1, east), true)
-    val west = opening(world, "ew", cx - 1, cy, depth)
-    val w = opened(0, west)
-    route(w, exit(rooms[band(west, CELL_H) * 3], "west"), true)
-    val north = opening(world, "ns", cx, cy - 1, depth)
-    val n = opened(north, 0)
-    route(n, exit(rooms[band(north, CELL_W)], "north"), false)
-    val south = opening(world, "ns", cx, cy, depth)
-    route(exit(rooms[6 + band(south, CELL_W)], "south"), opened(south, HEIGHT - 1), false)
+    // An edge at the world's bounds has none.
+    if (inWorld(size, cx + 1, cy)) {
+        val east = opening(world, "ew", cx, cy, depth)
+        route(exit(rooms[band(east, CELL_H) * 3 + 2], "east"), opened(WIDTH - 1, east), true)
+    }
+    if (inWorld(size, cx - 1, cy)) {
+        val west = opening(world, "ew", cx - 1, cy, depth)
+        val w = opened(0, west)
+        route(w, exit(rooms[band(west, CELL_H) * 3], "west"), true)
+    }
+    if (inWorld(size, cx, cy - 1)) {
+        val north = opening(world, "ns", cx, cy - 1, depth)
+        val n = opened(north, 0)
+        route(n, exit(rooms[band(north, CELL_W)], "north"), false)
+    }
+    if (inWorld(size, cx, cy + 1)) {
+        val south = opening(world, "ns", cx, cy, depth)
+        route(exit(rooms[6 + band(south, CELL_W)], "south"), opened(south, HEIGHT - 1), false)
+    }
 
-    // 6. Stairs down, stairs up below depth 1, then a starting spot.
+    // 6. Stairs down, stairs up (to the surface from depth 1), then a
+    // starting spot.
     val down = anySpot()
     rows = write(rows, down.x, down.y, STAIRS)
-    val up = if (depth > 1) {
-        val spot = anySpot()
-        rows = write(rows, spot.x, spot.y, UP)
-        spot
-    } else {
-        nil
-    }
+    val up = anySpot()
+    rows = write(rows, up.x, up.y, UP)
     val start = anySpot()
 
     {map: rows, rooms: rooms, items: items, monsters: monsters, down: down, up: up, start: start}

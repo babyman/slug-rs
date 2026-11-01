@@ -17,6 +17,8 @@ kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px sol
 .map { margin: 0; font: 15px/1.12 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #2a2f3a; }
 .map .floor { color: #4a5263; } .map .corridor { color: #5e6676; } .map .wall { color: #9aa3b5; }
 .map .door { color: #c8904c; } .map .stairs { color: #f2d36b; font-weight: 700; }
+.map .ground { color: #3f5a34; } .map .scrub { color: #6f8a3c; } .map .tree { color: #2f8a46; font-weight: 700; }
+.map .water { color: #3b78c4; } .map .rock { color: #8a7f72; }
 .map .you { color: #fff; font-weight: 700; text-shadow: 0 0 6px #8fb8ff; }
 .map .monster { color: var(--red); font-weight: 700; cursor: help; }
 .map .ally { color: #8fb8ff; font-weight: 700; cursor: help; }
@@ -34,7 +36,7 @@ h2 small { float: right; letter-spacing: 0; }
 .bar.high div { background: var(--green); } .bar.mid div { background: var(--accent); } .bar.low div, .bar.foe div { background: var(--red); }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
 .stat { display: flex; justify-content: space-between; } .stat span { color: var(--muted); }
-.stat small { color: var(--muted); font-weight: normal; }
+.stat small { color: var(--muted); font-weight: normal; } .stat.wide { grid-column: 1 / -1; }
 .conditions span { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 9px; background: #3a2a12; color: var(--accent); font-size: 12px; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
 .item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }

@@ -128,7 +128,7 @@ val aPlayerCanDieOnSomeoneElsesTurn = fn() {
     game.command("b", "space", false)
     game.command("b", "enter", false)
     val b = game.playerOf("b")
-    assertEqual([b.dead, b.depth, b.name], [false, 1, "Bo"])
+    assertEqual([b.dead, b.depth, b.name], [false, 0, "Bo"])
 }
 
 @test

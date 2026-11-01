@@ -2,9 +2,9 @@ val game = import("slug.games.crawl")
 val level = import("slug.games.crawl.level")
 val rng = import("slug.games.crawl.rng")
 val {assertEqual, assertTrue} = import("slug.test")
-val {map, filter} = import("slug.std")
+val {map, filter, range} = import("slug.std")
 
-val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP]
+val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP, level.SCRUB, level.TREE]
 
 val contains = fn(xs:list, v):bool {
     val go = fn(i:num):bool {
@@ -105,7 +105,7 @@ val everythingInAChunkIsReachable = fn() {
         val lv = level.generate(9, cx, cy, depth)
         val seen = reach(lv, lv.start)
         assertTrue(reached(seen, lv.down.x, lv.down.y))
-        if (depth == 1) { assertEqual(lv.up, nil) } else { assertTrue(reached(seen, lv.up.x, lv.up.y)) }
+        assertTrue(reached(seen, lv.up.x, lv.up.y))
         assertTrue(reached(seen, level.WIDTH - 1, openOnColumn(lv, level.WIDTH - 1)[0]))
         assertTrue(reached(seen, 0, openOnColumn(lv, 0)[0]))
         assertTrue(reached(seen, openOnRow(lv, 0)[0], 0))
@@ -135,10 +135,19 @@ val placePlayer = fn(x:num, y:num) {
     game.load(s copy {players: s.players + {[ME]: s.players[ME] copy {x: x, y: y}}})
 }
 
+// Starts a world with `seed` and `options`, joins it, and takes the stairs
+// from the surface down to depth 1.
+val intoTheDungeon = fn(seed:num, options:map = {}) {
+    game.newGame(seed, options)
+    game.join(ME, "me")
+    val down = game.here(ME).down
+    placePlayer(down.x, down.y)
+    game.command(ME, "enter", false)
+}
+
 @test
 val walkingOffAnOpeningEntersTheNextChunk = fn() {
-    game.newGame(4)
-    game.join(ME, "me")
+    intoTheDungeon(4)
     val before = game.playerOf(ME)
     val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
     placePlayer(level.WIDTH - 1, row)
@@ -152,8 +161,7 @@ val walkingOffAnOpeningEntersTheNextChunk = fn() {
 
 @test
 val wallsAtTheEdgeDoNotLeadAnywhere = fn() {
-    game.newGame(4)
-    game.join(ME, "me")
+    intoTheDungeon(4)
     val row = openOnColumn(game.here(ME), level.WIDTH - 1)[0]
     placePlayer(level.WIDTH - 1, row)
     val before = game.current()
@@ -164,8 +172,7 @@ val wallsAtTheEdgeDoNotLeadAnywhere = fn() {
 
 @test
 val stairsLeadDownAndBackUp = fn() {
-    game.newGame(6)
-    game.join(ME, "me")
+    intoTheDungeon(6)
     val top = game.playerOf(ME)
     val down = game.here(ME).down
     placePlayer(down.x, down.y)
@@ -176,13 +183,20 @@ val stairsLeadDownAndBackUp = fn() {
     game.command(ME, "enter", false)
     val again = game.playerOf(ME)
     assertEqual([again.cx, again.cy, again.depth, again.x, again.y], [top.cx, top.cy, 1, down.x, down.y])
+    // From depth 1 the stairs up lead to the surface.
+    val up = game.here(ME).up
+    placePlayer(up.x, up.y)
+    game.command(ME, "enter", false)
+    val out = game.playerOf(ME)
+    assertEqual([out.cx, out.cy, out.depth], [top.cx, top.cy, 0])
+    assertEqual({x: out.x, y: out.y}, game.here(ME).down)
 }
 
 @test
 val chunksKeepWhatHappenedInThem = fn() {
-    game.newGame(6)
-    game.join(ME, "me")
+    intoTheDungeon(6)
     val key = game.chunkKey(game.playerOf(ME).cx, game.playerOf(ME).cy, 1)
+    assertEqual(game.playerOf(ME).depth, 1)
     val down = game.here(ME).down
     placePlayer(down.x, down.y)
     val before = game.current().levels[key]
@@ -216,8 +230,7 @@ val awayFor = fn(turns:num) {
 
 @test
 val chunksRestockAfterNoOneHasBeenThereAWhile = fn() {
-    game.newGame(4, {restockAfter: 10})
-    game.join(ME, "me")
+    intoTheDungeon(4, {restockAfter: 10})
     val down = game.here(ME).down
     val key = emptyChunk(down.x - 1, down.y)
     awayFor(10)
@@ -229,8 +242,7 @@ val chunksRestockAfterNoOneHasBeenThereAWhile = fn() {
 
 @test
 val chunksStayAsTheyWereForAShortAbsence = fn() {
-    game.newGame(4, {restockAfter: 10})
-    game.join(ME, "me")
+    intoTheDungeon(4, {restockAfter: 10})
     val down = game.here(ME).down
     val key = emptyChunk(down.x - 1, down.y)
     awayFor(5)
@@ -252,8 +264,7 @@ val restockingIsSeededByItsCount = fn() {
 
 @test
 val theViewStitchesChunksTogether = fn() {
-    game.newGame(4)
-    game.join(ME, "me")
+    intoTheDungeon(4)
     val p = game.playerOf(ME)
     val ox = p.cx * level.WIDTH
     val oy = p.cy * level.HEIGHT
@@ -272,4 +283,131 @@ val theViewStitchesChunksTogether = fn() {
     game.command(ME, "l", false)
     val back = game.view(ME, ox + level.WIDTH - 1, oy + row, 2, 1)[0]
     assertEqual(back, "#@")
+}
+
+// The surface.
+
+@test
+val newCharactersStartOnTheSurfaceNearTheMiddle = fn() {
+    game.newGame(3)
+    game.join(ME, "me")
+    val p = game.playerOf(ME)
+    assertEqual(p.depth, 0)
+    assertTrue(p.cx >= 14 && p.cx <= 18 && p.cy >= 14 && p.cy <= 18)
+    assertEqual(game.here(ME).outdoor, true)
+}
+
+@test
+val theSurfaceIsOpenCountryWithAWayDown = fn() {
+    val each = fn(i:num) {
+        if (i < 9) {
+            val lv = level.generate(5, 10 + i % 3, 10 + int(i / 3), 0, 32)
+            assertEqual(lv.map, level.generate(5, 10 + i % 3, 10 + int(i / 3), 0, 32).map)
+            assertEqual(lv.map[lv.down.y][lv.down.x], level.STAIRS)
+            assertEqual(lv.up, nil)
+            assertTrue(reached(reach(lv, lv.start), lv.down.x, lv.down.y))
+            val spots = map(lv.items + lv.monsters, fn(t) { lv.map[t.y][t.x] })
+            assertEqual(filter(spots, fn(c) { c != level.FLOOR }), [])
+            recur(i + 1)
+        }
+    }
+    each(0)
+}
+
+@test
+val theSurfaceEndsInSeaAtTheWorldsBounds = fn() {
+    val corner = level.generate(5, 0, 0, 0, 32)
+    assertEqual(corner.map[0], level.WATER * level.WIDTH)
+    assertEqual(filter(map(corner.map, fn(row) { row[0] }), fn(c) { c != level.WATER }), [])
+    val far = level.generate(5, 31, 31, 0, 32)
+    assertEqual(far.map[level.HEIGHT - 1], level.WATER * level.WIDTH)
+    assertEqual(filter(map(far.map, fn(row) { row[level.WIDTH - 1] }), fn(c) { c != level.WATER }), [])
+}
+
+@test
+val dungeonEdgesAtTheWorldsBoundsHaveNoOpening = fn() {
+    val lv = level.generate(5, 0, 0, 1, 32)
+    assertEqual(openOnColumn(lv, 0), [])
+    assertEqual(openOnRow(lv, 0), [])
+    assertEqual(len(openOnColumn(lv, level.WIDTH - 1)), 1)
+    assertEqual(len(openOnRow(lv, level.HEIGHT - 1)), 1)
+}
+
+@test
+val anyOpenSquareOfASurfaceEdgeLeadsAcross = fn() {
+    game.newGame(4)
+    game.join(ME, "me")
+    val p = game.playerOf(ME)
+    val here = game.here(ME)
+    val next = level.generate(4, p.cx + 1, p.cy, 0, 32)
+    val clear = fn(lv:map, x:num, y:num):bool {
+        passable(lv, x, y) && len(filter(lv.monsters, fn(m) { m.x == x && m.y == y })) == 0
+    }
+    val rows = filter(openOnColumn(here, level.WIDTH - 1), fn(y) { clear(next, 0, y) })
+    assertTrue(len(rows) > 1)
+    val row = rows[len(rows) - 1]
+    placePlayer(level.WIDTH - 1, row)
+    game.command(ME, "l", false)
+    val after = game.playerOf(ME)
+    assertEqual([after.cx, after.cy, after.depth, after.x, after.y], [p.cx + 1, p.cy, 0, 0, row])
+}
+
+@test
+val noOneWalksOffTheWorld = fn() {
+    game.newGame(4)
+    game.join(ME, "me")
+    val s = game.snapshot()
+    val key = game.chunkKey(0, 16, 0)
+    val edge = level.generate(4, 0, 16, 0, 32)
+    val moved = s.players[ME] copy {cx: 0, cy: 16, depth: 0, x: 0, y: 10}
+    game.load(s copy {levels: s.levels + {[key]: edge}, players: s.players + {[ME]: moved}})
+    game.command(ME, "h", false)
+    assertEqual([game.playerOf(ME).cx, game.playerOf(ME).x], [0, 0])
+}
+
+@test
+val outdoorsPlayersSeeFarButNotThroughTrees = fn() {
+    game.newGame(4)
+    game.join(ME, "me")
+    val s = game.snapshot()
+    val p = s.players[ME]
+    val key = game.chunkKey(p.cx, p.cy, 0)
+    val open = map(range(level.HEIGHT), fn(y) {
+        if (y == 11) { "." * 45 + level.TREE + "." * 34 } else { "." * level.WIDTH }
+    })
+    val lv = s.levels[key] + {map: open, items: [], monsters: []}
+    game.load(s copy {levels: s.levels + {[key]: lv}, players: s.players + {[ME]: p copy {x: 40, y: 11}}})
+    assertTrue(game.visible(ME, 45, 11))
+    assertTrue(!game.visible(ME, 50, 11))
+    assertTrue(game.visible(ME, 40, 3))
+    assertTrue(game.visible(ME, 56, 7))
+    assertTrue(!game.visible(ME, 59, 7))
+    assertTrue(!game.visible(ME, 40, 1))
+}
+
+// Whether `inView` says what `visible` says of every square of the chunk
+// the player is in.
+val inViewAgrees = fn():bool {
+    val sight = game.inView(ME)
+    val differ = filter(range(level.WIDTH * level.HEIGHT), fn(c) {
+        val x = c % level.WIDTH
+        val y = int(c / level.WIDTH)
+        (sight[game.viewKey(x, y)] == true) != game.visible(ME, x, y)
+    })
+    len(differ) == 0
+}
+
+@test
+val theSquaresInViewAreTheVisibleOnes = fn() {
+    game.newGame(4)
+    game.join(ME, "me")
+    assertTrue(inViewAgrees())
+    val down = game.here(ME).down
+    placePlayer(down.x, down.y)
+    game.command(ME, "enter", false)
+    assertEqual(game.playerOf(ME).depth, 1)
+    assertTrue(inViewAgrees())
+    val room = filter(game.here(ME).rooms, fn(r) { !r.gone })[0]
+    placePlayer(room.x + 1, room.y + 1)
+    assertTrue(inViewAgrees())
 }

@@ -84,6 +84,7 @@ val CLASSES = {
     ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
     "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
     ")": "weapon", "]": "armour",
+    ",": "scrub", "&": "tree", "~": "water", "^": "rock",
 }
 
 // How many messages the log keeps.
@@ -275,10 +276,10 @@ val camera = fn(id:str, p:map):map {
 }
 
 // How the map draws `c` at (wx, wy) in world coordinates for the player with
-// `id` at `p`: its class, dimmed when the square is out of their sight, as
-// every square outside their chunk is, and for a monster or another player
-// their name; nil for a blank square.
-val cell = fn(id:str, p:map, c:str, wx:num, wy:num):map {
+// `id` at `p`: its class, dimmed when the square is out of their sight (not
+// in `sight`, from `game.inView`), and for a monster or another player their
+// name; nil for a blank square.
+val cell = fn(id:str, p:map, sight:map, c:str, wx:num, wy:num):map {
     val x = wx - p.cx * level.WIDTH
     val y = wy - p.cy * level.HEIGHT
     if (c == "@") {
@@ -290,10 +291,11 @@ val cell = fn(id:str, p:map, c:str, wx:num, wy:num):map {
         val named = filter(data.monsters, fn(m) { m.letter == c })
         return {cls: "monster", title: if (len(named) > 0) { named[0].name } else { "monster" }}
     }
-    val kind = CLASSES[c]
+    // Open ground on the surface is drawn as grass, not a room's floor.
+    val kind = if (c == "." && p.depth == 0) { "ground" } else { CLASSES[c] }
     if (kind == nil) {
         {cls: nil, title: nil}
-    } else if (x < 0 || x >= level.WIDTH || y < 0 || y >= level.HEIGHT || !game.visible(id, x, y)) {
+    } else if (sight[game.viewKey(x, y)] != true) {
         {cls: kind + " seen", title: nil}
     } else {
         {cls: kind, title: nil}
@@ -301,23 +303,24 @@ val cell = fn(id:str, p:map, c:str, wx:num, wy:num):map {
 }
 
 // One row of the map as runs of characters that look alike.
-val mapRow = fn(id:str, p:map, cam:map, row:str, y:num, end:str):map {
+val mapRow = fn(id:str, p:map, sight:map, cam:map, row:str, y:num, end:str):map {
     val wy = cam.top + y
     val go = fn(x:num, start:num, look:map, out:list):list {
         if (x == len(row)) { return out :+ (look + {text: row[start:x]}) }
-        val next = cell(id, p, row[x], cam.left + x, wy)
+        val next = cell(id, p, sight, row[x], cam.left + x, wy)
         if (next == look) { recur(x + 1, start, look, out) } else { recur(x + 1, x, next, out :+ (look + {text: row[start:x]})) }
     }
-    {runs: go(1, 0, cell(id, p, row[0], cam.left, wy), []), end: end}
+    {runs: go(1, 0, cell(id, p, sight, row[0], cam.left, wy), []), end: end}
 }
 
 // The player's window onto the map, row by row.
 val mapRows = fn(id:str, p:map):list {
     val cam = camera(id, p)
     val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
+    val sight = game.inView(id)
     val go = fn(y:num, out:list):list {
         if (y == cam.rows) { return out }
-        recur(y + 1, out :+ mapRow(id, p, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
+        recur(y + 1, out :+ mapRow(id, p, sight, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
     }
     go(0, [])
 }
@@ -327,7 +330,7 @@ val statsView = fn(id:str, p:map):map {
     {
         hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
         band: band(p.hp, p.maxHp),
-        depth: p.depth, area: "" + p.cx + ", " + p.cy, gold: p.gold, str: p.str, maxStr: p.maxStr,
+        depth: if (p.depth == 0) { "Surface" } else { p.depth }, area: "" + p.cx + ", " + p.cy, gold: p.gold, str: p.str, maxStr: p.maxStr,
         armour: game.armourValue(id), level: p.level, xp: p.xp,
         conditions: filter([
             hunger,
@@ -371,7 +374,7 @@ val foesView = fn(id:str, p:map):list {
 
 val overView = fn(p:map) {
     if (p.dead) {
-        {title: "You died.", detail: "On depth " + p.depth + ", with " + p.gold + " gold, at experience level " + p.level + "."}
+        {title: "You died.", detail: (if (p.depth == 0) { "On the surface" } else { "On depth " + p.depth }) + ", with " + p.gold + " gold, at experience level " + p.level + "."}
     } else {
         nil
     }
@@ -528,10 +531,11 @@ export val start = fn(worldSeed:num, options:map = {}) {
  * `listener`, ticking every `options.tick` milliseconds (default 150), with
  * monsters acting every `options.pace` ticks (default 4) and chunks
  * restocked after `options.restock` ticks with no one in them (default
- * 2000), until the listener closes.
+ * 2000), in a world `options.size` chunks across and down (default 32),
+ * until the listener closes.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
-    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000})
+    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000, size: options.size ?? 32})
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150

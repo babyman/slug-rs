@@ -8,7 +8,8 @@
  * milliseconds between the world's ticks (default 150), `--pace N`, how
  * many ticks pass for each move of the monsters (default 4), and
  * `--restock N`, how many ticks a chunk stays as it was with no one in it
- * before it gets fresh monsters and items (default 2000, 5 minutes).
+ * before it gets fresh monsters and items (default 2000, 5 minutes), and
+ * `--size N`, how many chunks across and down the world is (default 32).
  */
 val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
@@ -20,5 +21,5 @@ val main = fn() {
     val seed = cfg("seed", -1)
     val world = if (seed < 0) { secure.seed() } else { seed }
     println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/ (world seed " + world + ")")
-    web.serve(listener, {seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4), restock: cfg("restock", 2000)})
+    web.serve(listener, {seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4), restock: cfg("restock", 2000), size: cfg("size", 32)})
 }

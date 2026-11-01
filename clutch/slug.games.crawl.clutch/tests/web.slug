@@ -37,7 +37,7 @@ val servesThePageAndHtmx = fn() {
     val page = get("/")
     assertEqual(page.status, 200)
     assertTrue(includes(page.body, "<script src=\"/htmx.js\"></script>"))
-    assertTrue(includes(page.body, "Welcome to the dungeon."))
+    assertTrue(includes(page.body, "Welcome! The dungeon lies below."))
     // The touch controls: a pad of the eight directions, and Run.
     assertTrue(includes(page.body, "<nav class=\"touch\""))
     assertTrue(includes(page.body, "<button type=\"button\" class=\"run\""))
@@ -165,7 +165,7 @@ val eventsStreamTheGameAfterEachChange = fn() {
     assertEqual(events.headers["Content-Type"], "text/event-stream")
     val first = recv(events.body, 1000)
     assertTrue(includes(first, "event: game\ndata: "))
-    assertTrue(includes(first, "Welcome to the dungeon."))
+    assertTrue(includes(first, "Welcome! The dungeon lies below."))
     web.press(id, "e", false)
     web.tickOnce()
     assertTrue(includes(recv(events.body, 1000), "Eat which item?"))
@@ -190,7 +190,7 @@ val deathOffersANewCharacterInTheSameWorld = fn() {
     val kept = keys(alive.levels)
     assertEqual(map(kept, fn(k) { now.levels[k] }), map(kept, fn(k) { alive.levels[k] }))
     assertEqual(now.players[id].dead, false)
-    assertEqual(now.players[id].depth, 1)
+    assertEqual(now.players[id].depth, 0)
     assertEqual(now.players[id].gold, 0)
     assertEqual(now.players[id].name, p.name)
 }
@@ -204,7 +204,7 @@ val playersSeeEachOther = fn() {
     val s = game.snapshot()
     val pa = s.players[a]
     val spot = if (game.here(a).map[pa.y][pa.x + 1] == ".") { pa.x + 1 } else { pa.x - 1 }
-    game.load(s copy {players: s.players + {[b]: s.players[b] copy {cx: pa.cx, cy: pa.cy, depth: 1, x: spot, y: pa.y}}})
+    game.load(s copy {players: s.players + {[b]: s.players[b] copy {cx: pa.cx, cy: pa.cy, depth: pa.depth, x: spot, y: pa.y}}})
     val html = web.gameHtml(a)
     assertTrue(includes(html, "class=\"ally\" title=\"Player 2\""))
     assertTrue(includes(html, "<i class=\"ally\">@</i>"))
@@ -276,7 +276,7 @@ val theMapScrollsOnlyNearItsEdges = fn() {
     }
     val spot = find(0)
     val s = game.snapshot()
-    game.load(s copy {levels: s.levels + {[game.chunkKey(s.players[id].cx, s.players[id].cy, 1)]: game.here(id) + {monsters: []}}})
+    game.load(s copy {levels: s.levels + {[game.chunkKey(s.players[id].cx, s.players[id].cy, s.players[id].depth)]: game.here(id) + {monsters: []}}})
     val t = game.snapshot()
     game.load(t copy {players: t.players + {[id]: t.players[id] + {x: spot.x, y: spot.y}}})
     val events = get("/events", id, {cols: "20", rows: "8"})

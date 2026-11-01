@@ -9,7 +9,8 @@
  * of each chunk, and their messages, prompt, and whether they are dead.
  *
  * A player starts, and after dying starts again as a new character, at a
- * random spot on depth 1 near the world's origin; the world carries on.
+ * random spot on the surface, depth 0, near the middle of the world; the
+ * world carries on.
  */
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
@@ -29,10 +30,18 @@ val ORDER = [[-1, 0], [0, 1], [0, -1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1
 
 val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
 
-val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP]
+val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP, level.SCRUB, level.TREE]
 
-// Players start in a chunk from -SPAWN to SPAWN on each axis of depth 1.
+// Players start on the surface in a chunk within SPAWN of the middle of the
+// world on each axis.
 val SPAWN = 2
+
+// How many chunks across and down a world is, unless `newGame` is told.
+val SIZE = 32
+
+// How far a player sees outdoors in daylight: SIGHT columns across, and
+// half as many rows, as rows are about twice as tall.
+val SIGHT = 18
 
 val LETTERS = "abcdefghijklmnopqrstuvwxyz"
 val PACK_SIZE = 22
@@ -98,6 +107,11 @@ val actAs = fn(id:str, body:fn) {
 export val chunkKey = fn(cx:num, cy:num, depth:num):str { "" + cx + "," + cy + "," + depth }
 
 val playerKey = fn():str { chunkKey(player.cx, player.cy, player.depth) }
+
+// `a` divided by `b` > 0, rounded down, as chunk coordinates need.
+val floorDiv = fn(a:num, b:num):num {
+    if (a >= 0) { math.div(a, b) } else { -math.div(-a - 1, b) - 1 }
+}
 
 // The chunk the acting player is in.
 val site = fn():map { levels[playerKey()] }
@@ -383,10 +397,92 @@ val canSee = fn(x:num, y:num):bool {
         false
     } else if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
         true
+    } else if (site().outdoor == true) {
+        outdoorSight()[viewKey(x, y)] == true
     } else {
         val room = roomAt(p.x, p.y)
         room != nil && !room.dark && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h
     }
+}
+
+// Whether a square (dx, dy) from the player is near enough to see outdoors.
+val inSight = fn(dx:num, dy:num):bool { dx * dx + 4 * dy * dy <= SIGHT * SIGHT }
+
+// The terrain around player `p` outdoors, as a function of (x, y) in their
+// chunk's coordinates, which run on into the chunks beside it: those chunks
+// are generated if need be, and beyond the world's bounds is blank.
+val around = fn(p:map):fn {
+    val box = sightBox(p)
+    val ox0 = floorDiv(box.left, level.WIDTH)
+    val oy0 = floorDiv(box.top, level.HEIGHT)
+    val nx = floorDiv(box.right, level.WIDTH) - ox0 + 1
+    val ny = floorDiv(box.bottom, level.HEIGHT) - oy0 + 1
+    val fetch = fn(i:num, acc:list):list {
+        if (i == nx * ny) { return acc }
+        val cx = p.cx + ox0 + i % nx
+        val cy = p.cy + oy0 + math.div(i, nx)
+        recur(i + 1, acc :+ (if (inWorld(cx, cy)) { chunk(cx, cy, p.depth).map } else { BLANK_ROWS }))
+    }
+    val maps = fetch(0, [])
+    fn(x:num, y:num):str {
+        val ox = floorDiv(x, level.WIDTH)
+        val oy = floorDiv(y, level.HEIGHT)
+        maps[(oy - oy0) * nx + ox - ox0][y - oy * level.HEIGHT][x - ox * level.WIDTH]
+    }
+}
+
+// What each player saw outdoors when last asked, by id: `at`, where they
+// stood, and `found`, what they saw from there. Outdoor terrain never
+// changes, so sight depends only on where a player stands.
+var sights = {}
+
+// The squares the acting player sees outdoors, blind or not, as a map from
+// `viewKey` to true: rays from the player to each square on the edge of
+// their sight box, each going as far as they can see, through the squares
+// next to them, and up to and including the first tree or rock.
+val outdoorSight = fn():map {
+    val p = player
+    val stand = playerKey() + ":" + p.x + "," + p.y
+    val id = acting ?? ""
+    match sights[id] {
+        last: map => if (last.at == stand) { return last.found }
+        _ => nil
+    }
+    val at = around(p)
+    var found = {}
+    val ray = fn(x1:num, y1:num) {
+        val dx = math.abs(x1 - p.x)
+        val dy = -math.abs(y1 - p.y)
+        val sx = if (p.x < x1) { 1 } else { -1 }
+        val sy = if (p.y < y1) { 1 } else { -1 }
+        val go = fn(x:num, y:num, err:num) {
+            if (x == x1 && y == y1) { return nil }
+            val e2 = 2 * err
+            val nx = if (e2 >= dy) { x + sx } else { x }
+            val ny = if (e2 <= dx) { y + sy } else { y }
+            val near = nx - p.x >= -1 && nx - p.x <= 1 && ny - p.y >= -1 && ny - p.y <= 1
+            if (near || inSight(nx - p.x, ny - p.y)) {
+                found = found + {[viewKey(nx, ny)]: true}
+                val c = at(nx, ny)
+                if (!contains(level.OPAQUE, c)) {
+                    recur(nx, ny, err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 }))
+                }
+            }
+        }
+        go(p.x, p.y, dx + dy)
+    }
+    val box = sightBox(p)
+    val across = fn(x:num) {
+        if (x <= box.right) { ray(x, box.top); ray(x, box.bottom); recur(x + 1) }
+    }
+    across(box.left)
+    val down = fn(y:num) {
+        if (y <= box.bottom) { ray(box.left, y); ray(box.right, y); recur(y + 1) }
+    }
+    down(box.top)
+    found = found + {[viewKey(p.x, p.y)]: true}
+    sights = sights + {[id]: {at: stand, found: found}}
+    found
 }
 
 // What the player remembers at (x, y): the item there, or the terrain.
@@ -397,6 +493,7 @@ val sight = fn(x:num, y:num):str {
 
 // Records every visible square in the player's memory.
 val see = fn() {
+    if (site().outdoor == true) { return seeOutdoors() }
     var seen = memory()
     val look = fn(x:num, y:num) {
         if (inBounds(x, y)) { seen = write(seen, x, y, sight(x, y)) }
@@ -430,13 +527,124 @@ val see = fn() {
     setMemory(seen)
 }
 
+// The box of squares (inclusive) that might be in sight outdoors, in the
+// coordinates of player `p`'s chunk; it can reach into the chunks beside it.
+val sightBox = fn(p:map):map {
+    val half = math.div(SIGHT, 2)
+    {top: p.y - half, bottom: p.y + half, left: p.x - SIGHT, right: p.x + SIGHT}
+}
+
+/**
+ * The key `inView` gives square (x, y) in the coordinates of a player's
+ * chunk, from one chunk before it to one chunk past it on each axis.
+ */
+export val viewKey = fn(x:num, y:num):num { (y + level.HEIGHT) * 3 * level.WIDTH + x + level.WIDTH }
+
+// The squares the acting player can see, as a map from `viewKey` to true:
+// what `canSee` says of each in their chunk, worked out at once, and
+// outdoors the squares they see in the chunks beside it.
+val inSightNow = fn():map {
+    val p = player
+    if (p.blind > 0) { return {} }
+    if (site().outdoor == true) { return outdoorSight() }
+    val alone = {top: p.y, bottom: p.y, left: p.x, right: p.x}
+    val box = match roomAt(p.x, p.y) {
+        room: map => if (room.dark) { alone } else {
+            {top: room.y, bottom: room.y + room.h - 1, left: room.x, right: room.x + room.w - 1}
+        }
+        _ => alone
+    }
+    var found = {}
+    val rows = fn(y:num) {
+        if (y <= box.bottom) {
+            val cols = fn(x:num) {
+                if (x <= box.right) {
+                    found = found + {[viewKey(x, y)]: true}
+                    recur(x + 1)
+                }
+            }
+            cols(box.left)
+            recur(y + 1)
+        }
+    }
+    rows(box.top)
+    val next = fn(i:num) {
+        if (i < 9) {
+            val x = p.x + i % 3 - 1
+            val y = p.y + int(i / 3) - 1
+            if (inBounds(x, y)) { found = found + {[viewKey(x, y)]: true} }
+            recur(i + 1)
+        }
+    }
+    next(0)
+    found
+}
+
+// Records every square the player can see outdoors in their memory, in
+// their chunk and in the chunks beside it.
+val seeOutdoors = fn() {
+    val p = player
+    if (p.blind > 0) { return nil }
+    val box = sightBox(p)
+    val visible = inSightNow()
+    // The part of the box in the chunk (ox, oy) chunks from the player's.
+    val record = fn(ox:num, oy:num) {
+        val cx = p.cx + ox
+        val cy = p.cy + oy
+        if (!inWorld(cx, cy)) { return nil }
+        val key = chunkKey(cx, cy, p.depth)
+        val lv = chunk(cx, cy, p.depth)
+        val rows = player.memory[key] ?? BLANK_ROWS
+        val x0 = ox * level.WIDTH
+        val y0 = oy * level.HEIGHT
+        val top = math.max(box.top - y0, 0)
+        val bottom = math.min(box.bottom - y0, level.HEIGHT - 1)
+        val left = math.max(box.left - x0, 0)
+        val right = math.min(box.right - x0, level.WIDTH - 1)
+        val shown = fn(x:num, y:num):str {
+            if (visible[viewKey(x0 + x, y0 + y)] == true) {
+                val i = indexAt(lv.items, x, y)
+                if (i >= 0) { GLYPHS[lv.items[i].item.kind] } else { lv.map[y][x] }
+            } else {
+                rows[y][x]
+            }
+        }
+        val line = fn(y:num, x:num, out:str):str {
+            if (x > right) { out } else { recur(y, x + 1, out + shown(x, y)) }
+        }
+        val go = fn(y:num, acc:list):list {
+            if (y > bottom) { return acc }
+            val row = rows[y]
+            recur(y + 1, acc :+ (row[:left] + line(y, left, "") + row[right + 1:]))
+        }
+        val next = rows[:top] + go(top, []) + rows[bottom + 1:]
+        player = player copy {memory: player.memory + {[key]: next}}
+    }
+    val ox0 = floorDiv(box.left, level.WIDTH)
+    val oy0 = floorDiv(box.top, level.HEIGHT)
+    val each = fn(oy:num, ox:num) {
+        if (oy <= floorDiv(box.bottom, level.HEIGHT)) {
+            if (ox > floorDiv(box.right, level.WIDTH)) {
+                recur(oy + 1, ox0)
+            } else {
+                record(ox, oy)
+                recur(oy, ox + 1)
+            }
+        }
+    }
+    each(oy0, ox0)
+}
+
+// Whether chunk (cx, cy) is inside the world's bounds.
+val inWorld = fn(cx:num, cy:num):bool { level.inWorld(world.size ?? 0, cx, cy) }
+
 // The chunk at (cx, cy) on `depth`, generated the first time it is needed.
 val chunk = fn(cx:num, cy:num, depth:num):map {
     val key = chunkKey(cx, cy, depth)
     match levels[key] {
         lv: map => lv
         _ => {
-            val lv = level.generate(world.seed, cx, cy, depth)
+            val lv = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
             levels = levels + {[key]: lv}
             lv
         }
@@ -475,8 +683,8 @@ val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
 // Notes that someone is in the acting player's chunk this turn.
 val markSeen = fn() { setHere(site() + {seen: world.turn}) }
 
-// A new character, at a random free spot in a chunk near the origin of
-// depth 1.
+// A new character, at a random free spot on the surface in a chunk near
+// the middle of the world.
 val newCharacter = fn() {
     val name = player.name ?? "someone"
     player = {
@@ -490,21 +698,22 @@ val newCharacter = fn() {
         ],
         known: {potions: [], scrolls: []},
         memory: {},
-        messages: ["Welcome to the dungeon."],
+        messages: ["Welcome! The dungeon lies below."],
         more: [],
         prompt: nil,
         showingPack: false,
         dead: false,
         sense: false,
     }
-    val cx = rng.below(2 * SPAWN + 1) - SPAWN
-    val cy = rng.below(2 * SPAWN + 1) - SPAWN
-    val key = chunkKey(cx, cy, 1)
+    val middle = math.div(world.size ?? 0, 2)
+    val cx = middle + rng.below(2 * SPAWN + 1) - SPAWN
+    val cy = middle + rng.below(2 * SPAWN + 1) - SPAWN
+    val key = chunkKey(cx, cy, 0)
     val free = fn(lv:map):map {
         val spot = level.freeSpot(lv)
         if (playerIn(key, spot.x, spot.y)) { recur(lv) } else { spot }
     }
-    enter(cx, cy, 1, free)
+    enter(cx, cy, 0, free)
 }
 
 /**
@@ -520,6 +729,7 @@ export val load = fn(saved:map) {
     world = saved.world
     levels = saved.levels
     players = saved.players
+    sights = {}
     player = {}
     acting = nil
 }
@@ -532,21 +742,26 @@ val RESTOCK_AFTER = 2000
  * Starts a new world with `seed`, with no one in it yet. A chunk that no one
  * has been in for `options.restockAfter` turns or ticks (default 2000) gets
  * fresh monsters and items when someone next enters it; items players
- * dropped there stay.
+ * dropped there stay. The world is `options.size` chunks across and down
+ * (default 32), and new characters start on its surface near the middle.
  */
 export val newGame = fn(seed:num, options:map = {}) {
     rng.seed(seed)
     val colours = rng.shuffle(data.colours)
     val titles = rng.shuffle(data.titles)
-    world = {seed: seed, turn: 0, colours: colours, titles: titles, restockAfter: options.restockAfter ?? RESTOCK_AFTER}
+    world = {
+        seed: seed, turn: 0, colours: colours, titles: titles,
+        restockAfter: options.restockAfter ?? RESTOCK_AFTER, size: options.size ?? SIZE,
+    }
     levels = {}
     players = {}
     player = {}
     acting = nil
+    sights = {}
 }
 
 /**
- * Adds a player with `id`, called `name`, as a new character on depth 1;
+ * Adds a player with `id`, called `name`, as a new character on the surface;
  * does nothing when `id` is already playing.
  */
 export val join = fn(id:str, name:str) {
@@ -669,9 +884,14 @@ val distances = fn():map {
 }
 
 // Whether a monster at (x, y) is near the player: next to them, or in the
-// room the player is in.
+// room the player is in, or outdoors in their line of sight.
 val near = fn(x:num, y:num):bool {
     val p = player
+    if (site().outdoor == true) {
+        val dx = x - p.x
+        val dy = y - p.y
+        return (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) || outdoorSight()[viewKey(x, y)] == true
+    }
     val room = roomAt(p.x, p.y)
     (x - p.x >= -1 && x - p.x <= 1 && y - p.y >= -1 && y - p.y <= 1)
         || (room != nil && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h)
@@ -951,7 +1171,7 @@ val cross = fn(dx:num, dy:num):bool {
     val cy = p.cy + if (y < 0) { -1 } else if (y >= level.HEIGHT) { 1 } else { 0 }
     val nx = (x + level.WIDTH) % level.WIDTH
     val ny = (y + level.HEIGHT) % level.HEIGHT
-    if (dx != 0 && dy != 0) { return false }
+    if ((dx != 0 && dy != 0) || !inWorld(cx, cy)) { return false }
     val next = chunk(cx, cy, p.depth)
     val blocked = indexAt(next.monsters, nx, ny) >= 0 || playerIn(chunkKey(cx, cy, p.depth), nx, ny)
     if (!contains(PASSABLE, next.map[ny][nx]) || blocked) { return false }
@@ -1443,9 +1663,6 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
 export val text = fn(id:str):list { actAs(id, screen) }
 
 // `a` divided by `b` > 0, rounded down, as chunk coordinates need.
-val floorDiv = fn(a:num, b:num):num {
-    if (a >= 0) { math.div(a, b) } else { -math.div(-a - 1, b) - 1 }
-}
 
 /**
  * The map rows the player with `id` sees through a window `cols` wide and
@@ -1496,6 +1713,13 @@ export val here = fn(id:str):map { actAs(id, site) }
  * neighbours, or they are in a lit room whose rectangle holds it.
  */
 export val visible = fn(id:str, x:num, y:num):bool { actAs(id, fn() { canSee(x, y) }) }
+
+/**
+ * Every square the player with `id` can see, as a map from `viewKey(x, y)`
+ * to true: in their chunk what `visible` says of each square, and outdoors
+ * also the squares they see in the chunks beside it.
+ */
+export val inView = fn(id:str):map { actAs(id, inSightNow) }
 
 /**
  * The armour of the player with `id`: the worn armour's value plus its

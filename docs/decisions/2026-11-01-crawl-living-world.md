@@ -235,6 +235,7 @@ Each step leaves a playable game:
 
 1. A bounded world with a surface: depth 0 terrain chunks, closed outer
    edges, stairs down from the surface, new characters on the surface.
+   (Done.)
 2. Saving the world in SQLite, resuming it on start, `--new` for a new one.
 3. Characters and interaction menus, used first for players meeting each
    other (talk, trade).

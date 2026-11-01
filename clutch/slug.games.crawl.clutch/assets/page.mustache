@@ -12,7 +12,7 @@
     Requests run one at a time, in order, so fast typing is never reordered. }}
 <body hx-target="#game" hx-sync="#keys:queue all">
   <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
-  <header><h1>CRAWL</h1><p>An endless dungeon, out and down.</p></header>
+  <header><h1>CRAWL</h1><p>A world above, a dungeon below.</p></header>
   <main id="game">
     {{>game}}
   </main>
@@ -40,6 +40,6 @@
   <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
   Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
   <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
-  or use the buttons beside each item in your pack. Walk off the map through an opening to go further.</p>
+  or use the buttons beside each item in your pack. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
 </body>
 </html>

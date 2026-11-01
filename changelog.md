@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Crawl's world has a surface and bounds. Depth 0 is open country (ground,
+  scrub, woods, lakes and rocky hills) drawn from smooth noise over the
+  whole world, so it runs on across chunk edges and any open square of an
+  edge leads across; each surface chunk has a way down (`%`), and depth 1's
+  stairs up (`<`) lead back to it. Outdoors players see in daylight about 18
+  columns across and 9 rows up and down, not through trees or rock, and on
+  into the chunks beside theirs. The world is 32 by 32 chunks (`--size N`):
+  the surface ends in sea, and dungeon edges at the bounds have no opening.
+  New characters start on the surface near the middle. The engine adds
+  `inView(id)` and `viewKey(x, y)`, so a page works out what a player sees
+  once per render.
+
 - Crawl's chunks have shorter corridors, with rooms as varied in size as
   before: rooms sit nearer the middle of their cells, at most one cell in a
   chunk is gone, and there are at most two extra corridors. Over 200 chunks,
