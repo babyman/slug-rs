@@ -56,6 +56,7 @@ val game = import("slug.games.crawl")
 val store = import("slug.games.crawl.store")
 val sqlite = import("slug.db.sqlite")
 val data = import("slug.games.crawl.data")
+val bestiary = import("slug.games.crawl.bestiary")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
 val {map, filter, contains} = import("slug.std")
@@ -306,7 +307,7 @@ val cell = fn(id:str, p:map, sight:map, c:str, wx:num, wy:num):map {
         return {cls: "ally", title: nil}
     }
     if (c >= "A" && c <= "Z") {
-        val named = filter(data.monsters, fn(m) { m.letter == c })
+        val named = filter(bestiary.monsters, fn(m) { m.letter == c })
         return {cls: "monster", title: if (len(named) > 0) { named[0].name } else { "monster" }}
     }
     // Open ground on the surface is drawn as grass, not a room's floor.
@@ -392,7 +393,7 @@ val foesView = fn(id:str, p:map):list {
     map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
         + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
         + map(seen, fn(m) {
-            val kind = data.monsters[m.kind]
+            val kind = bestiary.monsters[m.kind]
             {cls: "monster", bar: "foe", letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}
         })
 }

@@ -13,6 +13,7 @@
  * tested alone.
  */
 val data = import("slug.games.crawl.data")
+val bestiary = import("slug.games.crawl.bestiary")
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
 val {filter, reduce} = import("slug.std")
@@ -41,7 +42,7 @@ export val capacity = fn(depth:num):num {
  */
 export val tally = fn(monsters:list):map {
     reduce(monsters, {}, fn(acc, m) {
-        val name = data.monsters[m.kind].name
+        val name = bestiary.monsters[m.kind].name
         acc + {[name]: (acc[name] ?? 0) + 1}
     })
 }
@@ -52,8 +53,13 @@ export val tally = fn(monsters:list):map {
 export val total = fn(counts:map):num { reduce(keys(counts), 0, fn(sum, k) { sum + counts[k] }) }
 
 val levelOf = fn(name:str):num {
-    val found = filter(data.monsters, fn(m) { m.name == name })
+    val found = filter(bestiary.monsters, fn(m) { m.name == name })
     if (len(found) == 0) { 0 } else { found[0].level }
+}
+
+// Whether the kind called `name` lives alone, and so never breeds.
+val solitary = fn(name:str):bool {
+    len(filter(bestiary.monsters, fn(m) { m.name == name && len(filter(m.flags, fn(f) { f == "solitary" })) > 0 })) > 0
 }
 
 val set = fn(counts:map, name:str, n:num):map {
@@ -91,7 +97,7 @@ export val visit = fn(counts:map, habitat:list, cap:num):map {
         val dies = if (home(name)) { rng.below(100) < DIE_EACH * n } else { rng.below(100) < DIE_ASTRAY }
         val afterDeath = if (dies) { set(now, name, n - 1) } else { now }
         val m = afterDeath[name] ?? 0
-        val born = m > 0 && home(name) && total(afterDeath) < cap && rng.below(100) < BREED
+        val born = m > 0 && home(name) && !solitary(name) && total(afterDeath) < cap && rng.below(100) < BREED
         recur(names, i + 1, if (born) { set(afterDeath, name, m + 1) } else { afterDeath })
     }
     val lived = each(string.sort(keys(counts)), 0, counts)

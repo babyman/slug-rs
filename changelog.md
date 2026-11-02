@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Crawl has eight more monsters, for nineteen: giant rats and wolves on the
+  surface and in the shallows, goblins (with the orcs), giant ants,
+  skeletons and wraiths (with the undead; a wraith's blows can sap
+  strength), ogres (with the trolls), and, from depth 10, dragons, rare and
+  alone, which never breed. The eval's eleven kinds keep their places and
+  now live on below depth 8, to depth 12 and every depth beyond. The new
+  module `slug.games.crawl.bestiary` is the table the game uses, with the
+  flags `rare`, `solitary` and `weakens`; `slug.games.crawl.data` stays as
+  the eval generates it. Forts post bounties on the new kinds of the
+  peoples below.
+
 - Crawl's players can name their characters: the page's header shows "You
   are" and the name, which is a box to type a new one in (`POST /name`).
   The new name, tidied to one line of at most 20 characters, takes on the

@@ -103,10 +103,22 @@ its character waiting.
   plus its bonus, more for strength 17 and up.
 - Monsters start asleep and wake when you come near: mean kinds always, the
   rest a third of the time. Awake, they come for the nearest player.
-- Eleven kinds live at different depths, from kobolds and jackals near the
-  top to trolls from depth 6. Bats flit at random; a floating eye never moves
-  but can freeze you when you strike it; leprechauns steal gold and nymphs an
-  item, and both vanish; trolls heal as they fight.
+- Nineteen kinds live at different depths, each kind over a range of them;
+  the deepest kinds live at every depth below 12.
+
+  | Depths | Kinds |
+  |---|---|
+  | Surface | jackal, snake, bat, giant rat, wolf |
+  | 1 to 3 | those, and kobolds, goblins, hobgoblins, giant ants, floating eyes, orcs, leprechauns, skeletons |
+  | 4 to 6 | nymphs, zombies, ogres and trolls join; the wild kinds and kobolds thin out |
+  | 7 to 9 | orcs, floating eyes, leprechauns, nymphs, zombies, trolls, skeletons, ogres, wraiths |
+  | 10 and below | dragons join, rarely |
+
+  Bats flit at random; a floating eye never moves but can freeze you when
+  you strike it; leprechauns steal gold and nymphs an item, and both vanish;
+  trolls heal as they fight; a wraith's blows can sap your strength; a
+  dragon is rare, lives alone and never breeds, and is the strongest thing
+  in the world.
 - Potions: healing, poison, confusion, blindness, gain strength, and see
   monsters. Scrolls: identify, teleportation, magic mapping, enchant weapon,
   and enchant armour. Unknown potions and scrolls go by colours and strange
@@ -159,9 +171,10 @@ what survived. Towns and forts never get monsters.
 
 **The empire layer** is the peoples and their factions:
 
-- Humans and dwarfs live above, kobolds, orcs, trolls and the undead below.
-  Jackals, bats, snakes, floating eyes, leprechauns and nymphs belong to no
-  one.
+- Humans and dwarfs live above, kobolds, orcs (with hobgoblins and
+  goblins), trolls (with ogres) and the undead (zombies, skeletons and
+  wraiths) below. Jackals, bats, snakes, giant rats, wolves, giant ants,
+  floating eyes, leprechauns, nymphs and dragons belong to no one.
 - Eight factions hold the land, a region of four by four chunks at one band
   of depths: the surface, depths 1 to 3, 4 to 6, or 7 and below. Each has a
   name in its people's style and four traits, bold, aggressive, orderly and

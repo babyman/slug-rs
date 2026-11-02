@@ -60,9 +60,9 @@ export val PEOPLES = {
     humans: {side: "above", home: 0, kinds: []},
     dwarfs: {side: "above", home: 1, kinds: []},
     kobolds: {side: "below", home: 1, kinds: ["kobold"]},
-    orcs: {side: "below", home: 2, kinds: ["orc", "hobgoblin"]},
-    trolls: {side: "below", home: 3, kinds: ["troll"]},
-    undead: {side: "below", home: 3, kinds: ["zombie"]},
+    orcs: {side: "below", home: 2, kinds: ["orc", "hobgoblin", "goblin"]},
+    trolls: {side: "below", home: 3, kinds: ["troll", "ogre"]},
+    undead: {side: "below", home: 3, kinds: ["zombie", "skeleton", "wraith"]},
 }
 
 // The people called `name`, which must be one.
@@ -437,9 +437,12 @@ export val habitatAt = fn(empire:map, key:str, base:list):list {
         _ => nil
     }
     val wild = filter(base, fn(k) { peopleOf(k) == nil })
-    val theirs = if (owner == nil) { filter(base, fn(k) { peopleOf(k) != nil }) } else { people(owner).kinds }
+    // A holder's kinds count three times over, as common kinds do in `base`.
+    val theirs = if (owner == nil) { filter(base, fn(k) { peopleOf(k) != nil }) } else {
+        reduce(people(owner).kinds, [], fn(acc, k) { acc + [k, k, k] })
+    }
     // Land no one holds keeps its kinds; held land has only its holder's.
-    wild + filter(theirs, fn(k) { !any(wild, fn(w) { w == k }) })
+    wild + theirs
 }
 
 /**
@@ -454,7 +457,7 @@ export val priceFactor = fn(empire:map, key:str):num {
 }
 
 // What a bounty pays a head for each kind, before the faction's nature.
-val HEADS = {kobold: 5, hobgoblin: 8, orc: 10, zombie: 10, troll: 40}
+val HEADS = {kobold: 5, goblin: 4, hobgoblin: 8, orc: 10, zombie: 10, skeleton: 8, wraith: 50, ogre: 30, troll: 40}
 
 /**
  * The bounties posted for the region (rx, ry): a price a head for the kinds

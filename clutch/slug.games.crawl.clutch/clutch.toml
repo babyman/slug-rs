@@ -17,6 +17,7 @@
 "slug.games.crawl.town" = { source = "modules/town.slug" }
 "slug.games.crawl.region" = { source = "modules/region.slug" }
 "slug.games.crawl.empire" = { source = "modules/empire.slug" }
+"slug.games.crawl.bestiary" = { source = "modules/bestiary.slug" }
 
 [tests]
-files = ["tests/web.slug", "tests/world.slug", "tests/players.slug", "tests/tick.slug", "tests/store.slug", "tests/meeting.slug", "tests/towns.slug", "tests/regions.slug", "tests/empire.slug", "tests/history.slug"]
+files = ["tests/web.slug", "tests/world.slug", "tests/players.slug", "tests/tick.slug", "tests/store.slug", "tests/meeting.slug", "tests/towns.slug", "tests/regions.slug", "tests/empire.slug", "tests/history.slug", "tests/bestiary.slug"]

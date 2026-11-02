@@ -81,7 +81,7 @@ val fortsPostBountiesOnThePeoplesBelowThem = fn() {
     val e = created(5) copy {holds: {"2,3,0": 0, "2,3,1": 3, "2,3,2": 4}}
     val generous = e copy {factions: e.factions[:0] + [e.factions[0] copy {traits: e.factions[0].traits copy {greedy: -2}}] + e.factions[1:]}
     val greedy = e copy {factions: e.factions[:0] + [e.factions[0] copy {traits: e.factions[0].traits copy {greedy: 2}}] + e.factions[1:]}
-    assertEqual(map(empire.bounties(generous, 2, 3), fn(b) { b.kind }), ["kobold", "orc", "hobgoblin"])
+    assertEqual(map(empire.bounties(generous, 2, 3), fn(b) { b.kind }), ["kobold", "orc", "hobgoblin", "goblin"])
     assertTrue(empire.bounties(generous, 2, 3)[1].price > empire.bounties(greedy, 2, 3)[1].price)
     assertEqual(empire.bounties(e, 0, 0), [])
 }

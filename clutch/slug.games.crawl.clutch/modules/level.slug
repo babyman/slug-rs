@@ -17,6 +17,7 @@
  * chunks; its surface ends in sea, and its dungeon edges have no openings.
  */
 val data = import("slug.games.crawl.data")
+val bestiary = import("slug.games.crawl.bestiary")
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
 val {map, filter} = import("slug.std")
@@ -24,7 +25,6 @@ val {map, filter} = import("slug.std")
 export val WIDTH = 80
 export val HEIGHT = 22
 // Monsters come from the table for this depth at most.
-val TABLE_DEPTH = 8
 val CELL_W = 26
 val CELL_H = 7
 val CELLS = 9
@@ -116,24 +116,27 @@ export val freeSpot = fn(lv:map):map {
     }
 }
 
-// The monster kinds that live at `depth`, by index.
+// The monster kinds that live at `depth`, by index, each common kind three
+// times and each rare one once, so that a draw from the list weighs them.
 val kindsAt = fn(depth:num):list {
-    val d = math.min(depth, TABLE_DEPTH)
+    val d = math.min(depth, bestiary.DEEPEST)
     val go = fn(i:num, acc:list):list {
-        if (i == len(data.monsters)) { return acc }
-        val m = data.monsters[i]
-        recur(i + 1, if (m.depths[0] <= d && d <= m.depths[1]) { acc :+ i } else { acc })
+        if (i == len(bestiary.monsters)) { return acc }
+        val m = bestiary.monsters[i]
+        val times = if (contains(m.flags, "rare")) { [i] } else { [i, i, i] }
+        recur(i + 1, if (m.depths[0] <= d && d <= m.depths[1]) { acc + times } else { acc })
     }
     go(0, [])
 }
 
 /**
  * The names of the monster kinds that live on `depth`: the wild kinds on
- * the surface, and below it the kinds whose depths include it (depth 8's
- * below depth 8).
+ * the surface, and below it the kinds whose depths include it (the
+ * deepest's below the deepest), a rare kind once and the rest three times
+ * each, so that a draw from the list weighs them.
  */
 export val habitat = fn(depth:num):list {
-    if (depth == 0) { SURFACE_KINDS } else { map(kindsAt(depth), fn(i) { data.monsters[i].name }) }
+    if (depth == 0) { SURFACE_KINDS } else { map(kindsAt(depth), fn(i) { bestiary.monsters[i].name }) }
 }
 
 /**
@@ -143,7 +146,7 @@ export val habitat = fn(depth:num):list {
 export val monsterIn = fn(lv:map, name:str):map {
     val spot = freeSpot(lv)
     val kind = indexNamed(name)
-    val hp = rng.roll(data.monsters[kind].level, 8)
+    val hp = rng.roll(bestiary.monsters[kind].level, 8)
     {x: spot.x, y: spot.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
 }
 
@@ -208,7 +211,7 @@ export val ROAD = "="
 export val OPAQUE = [TREE, ROCK, HWALL, VWALL]
 
 // The wild kinds that live on the surface, by name.
-val SURFACE_KINDS = ["jackal", "snake", "bat"]
+val SURFACE_KINDS = bestiary.SURFACE
 
 // `a` divided by `b` > 0, rounded down.
 val floorDiv = fn(a:num, b:num):num {
@@ -430,7 +433,7 @@ val stockSurface = fn(lv:map, keep:list, blocked:list, n:num):map {
         if (k > 0) {
             val at = spot()
             val kind = kinds[rng.below(len(kinds))]
-            val hp = rng.roll(data.monsters[kind].level, 8)
+            val hp = rng.roll(bestiary.monsters[kind].level, 8)
             monsters = monsters :+ {x: at.x, y: at.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
             recur(k - 1)
         }
@@ -451,7 +454,7 @@ val stockSurface = fn(lv:map, keep:list, blocked:list, n:num):map {
 // The index of the monster kind called `name`, or -1.
 val indexNamed = fn(name:str):num {
     val go = fn(i:num):num {
-        if (i == len(data.monsters)) { -1 } else if (data.monsters[i].name == name) { i } else { recur(i + 1) }
+        if (i == len(bestiary.monsters)) { -1 } else if (bestiary.monsters[i].name == name) { i } else { recur(i + 1) }
     }
     go(0)
 }
@@ -575,7 +578,7 @@ val build = fn(world:num, cx:num, cy:num, depth:num, size:num):map {
             if (rng.below(100) < (if (gold) { 80 } else { 25 })) {
                 val spot = spotIn(room)
                 val kind = kinds[rng.below(len(kinds))]
-                val hp = rng.roll(data.monsters[kind].level, 8)
+                val hp = rng.roll(bestiary.monsters[kind].level, 8)
                 monsters = monsters :+ {x: spot.x, y: spot.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
             }
         }

@@ -34,6 +34,7 @@
  * on.
  */
 val data = import("slug.games.crawl.data")
+val bestiary = import("slug.games.crawl.bestiary")
 val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
@@ -751,7 +752,7 @@ val withCounts = fn(lv:map, counts:map):map {
         }
         val removed = fn(k:num, l:map):map {
             if (k <= 0) { return l }
-            val ofKind = filter(range(len(l.monsters)), fn(j) { data.monsters[l.monsters[j].kind].name == name })
+            val ofKind = filter(range(len(l.monsters)), fn(j) { bestiary.monsters[l.monsters[j].kind].name == name })
             val asleep = filter(ofKind, fn(j) { l.monsters[j].state == "asleep" })
             val pool = if (len(asleep) > 0) { asleep } else { ofKind }
             val j = pool[rng.below(len(pool))]
@@ -1122,7 +1123,7 @@ val stepOk = fn(x:num, y:num, dx:num, dy:num):bool {
     passable(x + dx, y + dy) && (dx == 0 || dy == 0 || (passable(x + dx, y) && passable(x, y + dy)))
 }
 
-val kindOf = fn(m:map) { data.monsters[m.kind] }
+val kindOf = fn(m:map) { bestiary.monsters[m.kind] }
 
 val hasFlag = fn(m:map, flag:str):bool { contains(kindOf(m).flags, flag) }
 
@@ -1268,6 +1269,10 @@ val monsterAttack = fn(i:num):bool {
         val loot = stealable()
         if (player.hp <= 0) {
             die("Killed by the " + kind.name)
+            true
+        } else if (hasFlag(m, "weakens") && player.str > 3 && rng.below(3) == 0) {
+            setPlayer(player copy {str: player.str - 1})
+            say("You feel weaker.")
             true
         } else if (hasFlag(m, "stealsGold") && player.gold > 0) {
             val take = rng.below(50 + 10 * player.depth) + 2
@@ -2294,7 +2299,7 @@ val mapRows = fn():list {
         } else {
             val m = site().monsters[i]
             val shown = player.sense || canSee(m.x, m.y)
-            recur(i + 1, if (shown) { write(rows, m.x, m.y, data.monsters[m.kind].letter) } else { rows })
+            recur(i + 1, if (shown) { write(rows, m.x, m.y, bestiary.monsters[m.kind].letter) } else { rows })
         }
     }
     val company = companyIn(playerKey())
