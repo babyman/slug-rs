@@ -1,0 +1,184 @@
+val game = import("slug.games.crawl")
+val empire = import("slug.games.crawl.empire")
+val town = import("slug.games.crawl.town")
+val rng = import("slug.games.crawl.rng")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, reduce, all, any} = import("slug.std")
+
+val created = fn(seed:num):map {
+    rng.within(rng.mix([seed, 60]), fn() { empire.create(seed, 32, town.place(seed, 32)) })
+}
+
+// `n` steps of `e` for the world with seed `seed`.
+val steps = fn(e:map, seed:num, n:num):map {
+    if (n == 0) { return e }
+    recur(rng.within(rng.mix([seed, 61, e.step]), fn() { empire.step(e, seed) }), seed, n - 1)
+}
+
+val heldBy = fn(e:map, i:num):list { filter(keys(e.holds), fn(k) { e.holds[k] == i }) }
+
+@test
+val territoriesAreRegionsAtABandOfDepths = fn() {
+    assertEqual(map([0, 1, 3, 4, 6, 7, 30], fn(d) { empire.bandOf(d) }), [0, 1, 1, 2, 2, 3, 3])
+    assertEqual(empire.territoryOf(5, 9, 4), "1,2,2")
+    assertEqual(empire.territoryOf(-1, 0, 0), "-1,0,0")
+    assertEqual(map(["orc", "hobgoblin", "kobold", "bat", "nymph"], fn(k) { empire.peopleOf(k) }), ["orcs", "orcs", "kobolds", nil, nil])
+}
+
+@test
+val aNewWorldHasEightFactionsAndTheHumansHoldTheSettlements = fn() {
+    val e = created(1)
+    assertEqual(map(e.factions, fn(f) { f.people }), ["humans", "humans", "dwarfs", "kobolds", "orcs", "orcs", "trolls", "undead"])
+    assertEqual(len(filter(e.factions, fn(f) { len(filter(e.factions, fn(g) { g.name == f.name })) == 1 })), 8)
+    assertTrue(all(range(2, 8), fn(i) { len(heldBy(e, i)) > 0 && all(heldBy(e, i), fn(k) { string.toInt(string.split(k, ",")[2]) == e.factions[i].home }) }))
+    val places = town.place(1, 32)
+    assertTrue(all(places, fn(s) {
+        val k = empire.territoryOf(s.cx, s.cy, 0)
+        e.fixed[k] == true && e.factions[e.holds[k]].people == "humans"
+    }))
+    assertEqual(created(1), e)
+}
+
+@test
+val factionsGrowFightAndKeepTheirSettlements = fn() {
+    val e0 = created(2)
+    val e = steps(e0, 2, 150)
+    assertEqual(e.step, 150)
+    assertTrue(len(keys(e.holds)) > len(keys(e0.holds)))
+    assertTrue(all(keys(e0.fixed), fn(k) { e.holds[k] == e0.holds[k] }))
+    assertTrue(len(e.chronicle) > 0 && len(e.chronicle) <= 40)
+    assertTrue(any(e.chronicle, fn(c) { contains(c.text, " took the land ") || contains(c.text, " threw back ") }))
+    assertTrue(all(e.factions, fn(f) { all([f.traits.bold, f.traits.aggressive, f.traits.orderly, f.traits.greedy], fn(t) { t >= -2 && t <= 2 }) }))
+    assertEqual(steps(e0, 2, 150), e)
+}
+
+@test
+val playersKillsWeakenTheFactionHoldingTheLand = fn() {
+    val e = created(3)
+    val orcs = 4
+    val key = heldBy(e, orcs)[0]
+    val hit = reduce(range(10), e, fn(acc, _) { empire.killed(acc, key, "orc") })
+    assertEqual(hit.kills[key + "|orc"], 10)
+    val calm = rng.within(9, fn() { empire.step(e, 3) })
+    val bled = rng.within(9, fn() { empire.step(hit, 3) })
+    assertEqual(bled.kills, {})
+    assertTrue(bled.factions[orcs].strength < calm.factions[orcs].strength)
+}
+
+@test
+val theHolderDecidesWhichPeoplesKindsThrive = fn() {
+    val e = created(4) copy {holds: {"1,1,2": 4, "2,2,1": 0}}
+    val base = ["kobold", "jackal", "bat", "snake", "hobgoblin", "floating eye", "orc"]
+    val orcLand = empire.habitatAt(e, "1,1,2", base)
+    assertTrue(contains(orcLand, "orc") && contains(orcLand, "hobgoblin") && contains(orcLand, "bat"))
+    assertTrue(!contains(orcLand, "kobold"))
+    assertEqual(empire.habitatAt(e, "2,2,1", base), ["jackal", "bat", "snake", "floating eye"])
+    assertEqual(empire.habitatAt(e, "3,3,1", base), ["jackal", "bat", "snake", "floating eye", "kobold", "hobgoblin", "orc"])
+}
+
+@test
+val fortsPostBountiesOnThePeoplesBelowThem = fn() {
+    val e = created(5) copy {holds: {"2,3,0": 0, "2,3,1": 3, "2,3,2": 4}}
+    val generous = e copy {factions: e.factions[:0] + [e.factions[0] copy {traits: e.factions[0].traits copy {greedy: -2}}] + e.factions[1:]}
+    val greedy = e copy {factions: e.factions[:0] + [e.factions[0] copy {traits: e.factions[0].traits copy {greedy: 2}}] + e.factions[1:]}
+    assertEqual(map(empire.bounties(generous, 2, 3), fn(b) { b.kind }), ["kobold", "orc", "hobgoblin"])
+    assertTrue(empire.bounties(generous, 2, 3)[1].price > empire.bounties(greedy, 2, 3)[1].price)
+    assertEqual(empire.bounties(e, 0, 0), [])
+}
+
+@test
+val marketsChargeMoreAtWarAndUnderGreed = fn() {
+    val e = created(6) copy {holds: {"0,0,0": 0}, step: 10}
+    val f = e.factions[0] copy {traits: e.factions[0].traits copy {greedy: 0}, lastFight: -100}
+    val peace = e copy {factions: [f] + e.factions[1:]}
+    val war = e copy {factions: [f copy {lastFight: 8}] + e.factions[1:]}
+    assertEqual(empire.priceFactor(peace, "0,0,0"), 100)
+    assertEqual(empire.priceFactor(war, "0,0,0"), 125)
+    assertEqual(empire.priceFactor(peace, "5,5,0"), 100)
+}
+
+// --- In the game ------------------------------------------------------------
+
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+@test
+val theEmpireTakesAStepEverySoManyTicks = fn() {
+    game.newGame(7, {empireEvery: 5})
+    game.join("a", "Ann")
+    map(range(11), fn(_) { game.tick([], ["a"]) })
+    assertEqual(game.current().world.empire.step, 2)
+}
+
+@test
+val aWorldSavedBeforeEmpiresGainsOne = fn() {
+    game.newGame(8)
+    val s = game.snapshot()
+    game.load(s copy {world: s.world copy {empire: nil}})
+    assertEqual(game.current().world.empire, s.world.empire)
+}
+
+@test
+val aCaptainPaysForKillsUnderTheirRegion = fn() {
+    game.newGame(9)
+    game.join("a", "Ann")
+    val p = game.playerOf("a")
+    val key = game.chunkKey(p.cx, p.cy, 0)
+    val rx = int(p.cx / empire.REGION)
+    val ry = int(p.cy / empire.REGION)
+    val s = game.snapshot()
+    // Orcs hold the depths under the start town, and a captain stands
+    // beside Ann.
+    val e = s.world.empire copy {holds: s.world.empire.holds + {["" + rx + "," + ry + ",2"]: 4}}
+    val lv = s.levels[key]
+    val spot = filter(range(lv.walls.left + 1, lv.walls.right), fn(x) { lv.map[10][x] == "=" && lv.map[10][x + 1] == "=" })[0]
+    game.load(s copy {
+        world: s.world copy {empire: e},
+        levels: s.levels + {[key]: lv copy {characters: lv.characters :+ {x: spot + 1, y: 10, role: "captain", name: "Gil"}}},
+        players: s.players + {a: s.players.a copy {x: spot, y: 10, gold: 0, kills: {["" + rx + "," + ry + "|orc"]: 3, ["" + rx + "," + ry + "|bat"]: 2, "0,0|orc": 1}}},
+    })
+    game.command("a", "l", false)
+    val m = match game.menu("a") {
+        m: map => m
+        _ => throw Error {type: "test", msg: "no menu"}
+    }
+    val price = filter(empire.bounties(e, rx, ry), fn(b) { b.kind == "orc" })[0].price
+    assertTrue(contains(m.title, "gold an orc"))
+    assertEqual(m.entries[0].label, "Claim " + (3 * price) + " gold for 3 kills")
+    game.command("a", "1", false)
+    assertEqual(game.playerOf("a").gold, 3 * price)
+    assertEqual(game.playerOf("a").kills, {["" + rx + "," + ry + "|bat"]: 2, "0,0|orc": 1})
+}
+
+@test
+val killingAPeoplesMonsterCountsForTheEmpireAndForBounties = fn() {
+    game.newGame(10)
+    game.join("a", "Ann")
+    val p = game.playerOf("a")
+    val key = game.chunkKey(p.cx, p.cy, 0)
+    val s = game.snapshot()
+    val lv = s.levels[key]
+    val spot = filter(range(lv.walls.left + 1, lv.walls.right), fn(x) { lv.map[10][x] == "=" && lv.map[10][x + 1] == "=" })[0]
+    game.load(s copy {
+        levels: s.levels + {[key]: lv copy {monsters: [{x: spot + 1, y: 10, kind: 0, hp: 1, maxHp: 1, state: "awake"}]}},
+        players: s.players + {a: s.players.a copy {x: spot, y: 10, str: 18, level: 10}},
+    })
+    val hit = fn(n:num) { if (n > 0 && len(game.here("a").monsters) > 0) { game.command("a", "l", false); recur(n - 1) } }
+    hit(20)
+    assertEqual(game.here("a").monsters, [])
+    val territory = empire.territoryOf(p.cx, p.cy, 0)
+    assertEqual(game.current().world.empire.kills[territory + "|kobold"], 1)
+    val [rx, ry, _] = string.split(territory, ",")
+    assertEqual(game.playerOf("a").kills[rx + "," + ry + "|kobold"], 1)
+}
+
+val string = import("slug.string")
+
+val contains = fn(xs, v):bool {
+    match xs {
+        text: str => len(string.split(text, v)) > 1
+        list: list => any(list, fn(x) { x == v })
+    }
+}

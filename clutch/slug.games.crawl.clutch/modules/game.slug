@@ -16,6 +16,11 @@
  * chunk while no one is there (`slug.games.crawl.region`), so a chunk
  * cleared fills again in time, from its neighbours as well as its own.
  *
+ * Factions of the peoples above and below hold the land, a region at a band
+ * of depths, and fight over it (`slug.games.crawl.empire`): their peoples'
+ * monsters thrive where they hold it, players' kills weaken them, and
+ * their nature sets prices and the bounties forts pay.
+ *
  * The surface has towns and forts (`slug.games.crawl.town`), whose people,
  * characters, stand in place: walking into one opens their menu, to buy and
  * sell, eat, rest, hear a rumour, or talk.
@@ -29,6 +34,7 @@ val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
 val region = import("slug.games.crawl.region")
+val empire = import("slug.games.crawl.empire")
 val string = import("slug.string")
 val math = import("slug.math")
 val {map, filter, reduce, remove, range} = import("slug.std")
@@ -697,6 +703,12 @@ val neighbours = fn(cx:num, cy:num, depth:num):list {
     across + [[cx, cy, depth + 1]] + (if (depth > 0) { [[cx, cy, depth - 1]] } else { [] })
 }
 
+// The monster kinds that belong in chunk (cx, cy) on `depth`: those of its
+// depth, as the faction holding the land has it (see `empire.habitatAt`).
+val habitatOf = fn(cx:num, cy:num, depth:num):list {
+    empire.habitatAt(world.empire ?? {holds: {}, factions: []}, empire.territoryOf(cx, cy, depth), level.habitat(depth))
+}
+
 // Whether monsters can live in chunk (cx, cy) on `depth`: anywhere but a
 // settlement.
 val wild = fn(cx:num, cy:num, depth:num):bool { settlementAt(cx, cy, depth) == nil }
@@ -708,7 +720,7 @@ val frontier = fn(cx:num, cy:num, depth:num) {
         val [ncx, ncy, nd] = n
         val key = chunkKey(ncx, ncy, nd)
         if (levels[key] == nil && populations[key] == nil && wild(ncx, ncy, nd)) {
-            val counts = rng.within(rng.mix([world.seed, 52, ncx, ncy, nd]), fn() { region.initial(nd, level.habitat(nd)) })
+            val counts = rng.within(rng.mix([world.seed, 52, ncx, ncy, nd]), fn() { region.initial(nd, habitatOf(ncx, ncy, nd)) })
             populations = populations + {[key]: counts}
             dirty = dirty copy {populations: dirty.populations + {[key]: true}}
         }
@@ -796,7 +808,7 @@ val visitChunk = fn(key:str, busy:map) {
     val [cx, cy, depth] = map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 })
     if (!wild(cx, cy, depth)) { return nil }
     rng.within(rng.mix([world.seed, 51, world.turn, cx, cy, depth]), fn() {
-        val habitat = level.habitat(depth)
+        val habitat = habitatOf(cx, cy, depth)
         val cap = region.capacity(depth)
         match levels[key] {
             lv: map => {
@@ -946,10 +958,16 @@ export val load = fn(saved:map) {
     rng.setState(saved.rng)
     // Worlds saved before there were settlements gain them; chunks already
     // made stay as they are.
-    world = if (saved.world.settlements == nil) {
+    val placed = if (saved.world.settlements == nil) {
         saved.world + {settlements: town.place(saved.world.seed, saved.world.size ?? 0)}
     } else {
         saved.world
+    }
+    // And worlds saved before there were empires gain them.
+    world = if (placed.empire == nil) {
+        placed + {empire: rng.within(rng.mix([placed.seed, 60]), fn() { empire.create(placed.seed, placed.size ?? 0, placed.settlements) })}
+    } else {
+        placed
     }
     levels = saved.levels
     players = saved.players
@@ -962,14 +980,17 @@ export val load = fn(saved:map) {
 }
 
 // How many ticks pass between visits of the region layer to each chunk,
-// unless `newGame` is told otherwise.
+// and between steps of the empire layer, unless `newGame` is told
+// otherwise.
 val REGION_EVERY = 20
+val EMPIRE_EVERY = 400
 
 /**
  * Starts a new world with `seed`, with no one in it yet. The region layer
  * visits each chunk no one is in once every `options.regionEvery` ticks
  * (default 20), where its monsters breed, die off and move on, and loot
- * turns up. The world is `options.size` chunks across and down
+ * turns up; and the empire layer takes a step every `options.empireEvery`
+ * ticks (default 400, a minute). The world is `options.size` chunks across and down
  * (default 32), with towns and forts on its surface, and new characters
  * start in the town nearest its middle.
  */
@@ -979,9 +1000,11 @@ export val newGame = fn(seed:num, options:map = {}) {
     val titles = rng.shuffle(data.titles)
     world = {
         seed: seed, turn: 0, colours: colours, titles: titles,
-        regionEvery: options.regionEvery ?? REGION_EVERY, size: options.size ?? SIZE,
+        regionEvery: options.regionEvery ?? REGION_EVERY, empireEvery: options.empireEvery ?? EMPIRE_EVERY,
+        size: options.size ?? SIZE,
     }
     world = world + {settlements: town.place(seed, world.size)}
+    world = world + {empire: rng.within(rng.mix([seed, 60]), fn() { empire.create(seed, world.size, world.settlements) })}
     levels = {}
     players = {}
     populations = {}
@@ -1080,6 +1103,20 @@ val strengthHit = fn(str:num):num {
 
 val strengthDamage = fn(str:num):num {
     if (str >= 18) { 2 } else if (str == 17) { 1 } else if (str <= 6) { -1 } else { 0 }
+}
+
+// A kill of a monster of the kind called `name`, if it belongs to a people:
+// it weakens that people's faction where it happened, at the empire's next
+// step, and counts towards the bounties posted for the region.
+val counted = fn(name:str) {
+    if (empire.peopleOf(name) == nil) { return nil }
+    val p = player
+    val territory = empire.territoryOf(p.cx, p.cy, p.depth)
+    world = world copy {empire: empire.killed(world.empire, territory, name)}
+    val [rx, ry, _] = string.split(territory, ",")
+    val k = rx + "," + ry + "|" + name
+    val kills = p.kills ?? {}
+    setPlayer(p copy {kills: kills + {[k]: (kills[k] ?? 0) + 1}})
 }
 
 val die = fn(cause:str) {
@@ -1383,6 +1420,7 @@ val attack = fn(i:num) {
             removeMonster(i)
             say("You defeat the " + kind.name + ".")
             gainXp(kind.xp)
+            counted(kind.name)
         } else {
             setMonster(i, m copy {hp: m.hp - damage})
             say("You hit the " + kind.name + ".")
@@ -1778,6 +1816,29 @@ val greet = fn(i:num) {
     player = player copy {menu: {character: i, page: "main"}}
 }
 
+// The territory the acting player is in.
+val territoryHere = fn():str { empire.territoryOf(player.cx, player.cy, player.depth) }
+
+// What things cost here and what dealers pay, as the faction holding the
+// land has it (see `empire.priceFactor`).
+val factorHere = fn():num { empire.priceFactor(world.empire ?? {holds: {}}, territoryHere()) }
+val buyPrice = fn(item:map):num { math.max(1, math.div(town.price(item) * factorHere(), 100)) }
+val sellPrice = fn(item:map):num { math.max(1, math.div(town.offer(item) * 100, factorHere())) }
+val innPrice = fn(base:num):num { math.max(1, math.div(base * factorHere(), 100)) }
+
+// The bounties posted for the region the acting player is in, and what
+// they are owed under them: `{bounties, gold, kills}`.
+val bountiesHere = fn():map {
+    val [rx, ry, _] = string.split(territoryHere(), ",")
+    val posted = empire.bounties(world.empire ?? {holds: {}, factions: []}, string.toInt(rx) ?? 0, string.toInt(ry) ?? 0)
+    val kills = player.kills ?? {}
+    val owed = reduce(posted, {gold: 0, kills: 0}, fn(acc, b) {
+        val n = kills[rx + "," + ry + "|" + b.kind] ?? 0
+        {gold: acc.gold + n * b.price, kills: acc.kills + n}
+    })
+    {bounties: posted, gold: owed.gold, kills: owed.kills, region: rx + "," + ry}
+}
+
 // What a ware is called: by what it is, since a dealer knows.
 val wareName = fn(item:map):str {
     match item.kind {
@@ -1803,7 +1864,7 @@ val characterMenu = fn(c:map, page:str):map {
             {
                 title: name + " sells, for your " + player.gold + " gold:",
                 entries: map(range(len(wares)), fn(i) {
-                    {key: "" + (i + 1), label: wareName(wares[i]) + ", " + town.price(wares[i]) + " gold", act: ["buy", i]}
+                    {key: "" + (i + 1), label: wareName(wares[i]) + ", " + buyPrice(wares[i]) + " gold", act: ["buy", i]}
                 }),
             }
         }
@@ -1811,20 +1872,32 @@ val characterMenu = fn(c:map, page:str):map {
             val goods = sellable(c)
             {
                 title: if (len(goods) == 0) { name + " wants nothing you have." } else { name + " would pay:" },
-                entries: map(goods, fn(e) { {key: e.letter, label: nameOf(e.item, 1) + ", " + town.offer(e.item) + " gold", act: ["sell", e.letter]} }),
+                entries: map(goods, fn(e) { {key: e.letter, label: nameOf(e.item, 1) + ", " + sellPrice(e.item) + " gold", act: ["sell", e.letter]} }),
             }
         }
         _ => {
-            val greeting = if (c.role == "guard" || c.role == "townsperson") { name + "." } else { name + ": \"" + lines[0] + "\"" }
+            // Only a captain deals in bounties.
+            val here = if (c.role == "captain") { bountiesHere() } else { {bounties: [], gold: 0, kills: 0, region: ""} }
+            val posted = if (len(here.bounties) == 0) { "No bounties are posted here." } else {
+                val [rx, ry] = string.split(here.region, ",")
+                "Bounties for " + empire.regionName(world.seed, string.toInt(rx) ?? 0, string.toInt(ry) ?? 0) + ": "
+                    + string.join(map(here.bounties, fn(b) { "" + b.price + " gold " + an(b.kind) }), ", ") + "."
+            }
+            val greeting = if (c.role == "guard" || c.role == "townsperson") { name + "." }
+                else if (c.role == "captain") { name + ": \"" + posted + "\"" }
+                else { name + ": \"" + lines[0] + "\"" }
             val entries = match c.role {
+                "captain" => (if (here.gold > 0) {
+                    [{key: "1", label: "Claim " + here.gold + " gold for " + here.kills + (if (here.kills == 1) { " kill" } else { " kills" }), act: ["claim"]}]
+                } else { [] }) + [{key: "2", label: "Talk", act: ["talk"]}]
                 "trader", "quartermaster" => [
                     {key: "1", label: "Buy", act: ["page", "buy"]},
                     {key: "2", label: "Sell", act: ["page", "sell"]},
                 ]
                 "innkeeper" => [
                     {key: "1", label: "Hear a rumour", act: ["rumour"]},
-                    {key: "2", label: "A meal, " + town.MEAL + " gold", act: ["meal"]},
-                    {key: "3", label: "A bed for the night, " + town.BED + " gold", act: ["bed"]},
+                    {key: "2", label: "A meal, " + innPrice(town.MEAL) + " gold", act: ["meal"]},
+                    {key: "3", label: "A bed for the night, " + innPrice(town.BED) + " gold", act: ["bed"]},
                 ]
                 _ => [{key: "1", label: "Talk", act: ["talk"]}]
             }
@@ -1850,7 +1923,7 @@ val deal = fn(c:map, act:list) {
     match act {
         ["buy", i] => {
             val ware = town.wares(c.role)[i]
-            val cost = town.price(ware)
+            val cost = buyPrice(ware)
             if (player.gold < cost) {
                 say("You can't afford " + wareName(ware) + ".")
             } else if (addToPack(ware) == nil) {
@@ -1871,23 +1944,39 @@ val deal = fn(c:map, act:list) {
             val i = packIndex(letter)
             if (i >= 0) {
                 val item = player.pack[i].item
-                val paid = town.offer(item)
+                val paid = sellPrice(item)
                 val name = nameOf(item, 1)
                 takeOne(letter)
                 setPlayer(player copy {gold: player.gold + paid})
                 say("You sell " + name + " for " + paid + " gold.")
             }
         }
-        ["rumour"] => say(c.name + " says: \"" + town.RUMOURS[rng.below(len(town.RUMOURS))] + "\"")
+        ["rumour"] => {
+            // Half the time, news of the world, when there is any.
+            val heard = match empire.news(world.empire ?? {chronicle: []}) {
+                n: str => if (rng.below(2) == 0) { n } else { nil }
+                _ => nil
+            }
+            say(c.name + " says: \"" + (heard ?? town.RUMOURS[rng.below(len(town.RUMOURS))]) + "\"")
+        }
+        ["claim"] => {
+            val here = bountiesHere()
+            if (here.gold > 0) {
+                val kills = player.kills ?? {}
+                val left = reduce(here.bounties, kills, fn(acc, b) { acc - (here.region + "|" + b.kind) })
+                setPlayer(player copy {gold: player.gold + here.gold, kills: left})
+                say(c.name + " pays you " + here.gold + " gold.")
+            }
+        }
         ["talk"] => {
             val lines = town.LINES[c.role] ?? ["..."]
             say(c.name + " says: \"" + lines[rng.below(len(lines))] + "\"")
         }
-        ["meal"] => if (pay(town.MEAL, "a meal")) {
+        ["meal"] => if (pay(innPrice(town.MEAL), "a meal")) {
             setPlayer(player copy {food: FOOD_MAX})
             say("You eat a hot meal.")
         }
-        ["bed"] => if (pay(town.BED, "a bed")) {
+        ["bed"] => if (pay(innPrice(town.BED), "a bed")) {
             setPlayer(player copy {hp: player.maxHp})
             say("You sleep soundly and wake refreshed.")
         }
@@ -2285,6 +2374,10 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     })
     each(timed, fn() { if (!player.dead) { upkeep() } })
     regionTick()
+    if (world.turn % (world.empireEvery ?? EMPIRE_EVERY) == 0 && world.turn > 0) {
+        val e = world.empire
+        world = world copy {empire: rng.within(rng.mix([world.seed, 61, e.step]), fn() { empire.step(e, world.seed) })}
+    }
     world = world copy {turn: world.turn + 1}
     each(present, fn() { if (!player.dead) { see() } })
     ticking = false
@@ -2334,6 +2427,23 @@ export val view = fn(id:str, left:num, top:num, cols:num, rows:num):list {
             if (wy == top + rows) { out } else { recur(wy + 1, out :+ line(wy)) }
         }
         go(top, [])
+    })
+}
+
+/**
+ * The land the player with `id` is in: `{holder, place}`, the name of the
+ * faction holding it, or nil, and where it is in words.
+ */
+export val land = fn(id:str):map {
+    actAs(id, fn() {
+        val t = territoryHere()
+        {
+            holder: match empire.holder(world.empire ?? {holds: {}}, t) {
+                f: map => f.name
+                _ => nil
+            },
+            place: empire.placeName(world.seed, t),
+        }
     })
 }
 

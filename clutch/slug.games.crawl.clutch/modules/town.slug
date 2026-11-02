@@ -4,8 +4,9 @@
  * Where a world's settlements are, and what each one is like: a town is a
  * walled chunk with four gates and roads out, a market whose trader buys
  * and sells, an inn, houses, and guards at the gates; a fort is a palisade
- * around a way down into the dungeon, with guards and a quartermaster who
- * deals in weapons and armour. Each fills one surface chunk, built over the
+ * around a way down into the dungeon, with guards, a captain who pays the
+ * bounties posted there, and a quartermaster who deals in weapons and
+ * armour. Each fills one surface chunk, built over the
  * terrain `slug.games.crawl.level` makes there.
  *
  * The people in them are characters: `{x, y, role, name}` in a chunk's
@@ -246,7 +247,7 @@ val buildFort = fn(lv:map):map {
         [{x: 41, y: walls.bottom - 1}, "guard"],
         [{x: 38, y: 13}, "guard"],
         [{x: 42, y: 13}, "guard"],
-        [{x: 31, y: 6}, "guard"],
+        [{x: 31, y: 6}, "captain"],
     ])
     {map: rows, down: down, characters: characters, walls: walls, items: outside(lv, rows, walls), start: {x: 40, y: 11}}
 }
@@ -370,6 +371,11 @@ export val LINES = {
     trader: ["Fine goods at fair prices."],
     innkeeper: ["Welcome, traveller. Rest your feet."],
     quartermaster: ["Steel for the road, or steel for below?"],
+    captain: [
+        "Every one of them you put down is one less at our gates.",
+        "Bring word of what's below, and bring their heads.",
+        "The pay's fair. The work isn't.",
+    ],
 }
 
 /**

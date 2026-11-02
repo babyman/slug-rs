@@ -1,0 +1,442 @@
+/**
+ * slug.games.crawl.empire — peoples, factions and territory
+ *
+ * The empire layer of the living world. Peoples are kinds of beings with a
+ * side, above or below, and a home band of depths: humans on the surface,
+ * dwarfs and kobolds in the shallows, orcs in the middle depths, trolls and
+ * the undead in the deep. Factions belong to peoples; each has a name, a
+ * home, four traits from -2 to 2 (bold, aggressive, orderly, greedy), a
+ * wealth and a strength.
+ *
+ * The map is regions of REGION by REGION chunks, and a territory is a region
+ * at one band of depths: the surface, the shallows (depths 1 to 3), the
+ * middle (4 to 6), or the deep (7 and below). At each step, about once a
+ * minute, factions earn from what they hold, turn wealth into strength,
+ * and push into the territories beside theirs, wild or held, as their
+ * traits incline them; a clash goes to the stronger, and strength fades
+ * with distance from home. What happens goes into a chronicle.
+ *
+ * The layer hands summaries down: who holds a territory, which monster
+ * kinds thrive there (`habitatAt`), what its markets charge
+ * (`priceFactor`), and the bounties forts post (`bounties`). It takes the
+ * players' kills up, as counts, at each step. Everything here is a pure
+ * function of its arguments and the generator it runs under.
+ */
+val rng = import("slug.games.crawl.rng")
+val math = import("slug.math")
+val string = import("slug.string")
+val {map, filter, reduce, range, any} = import("slug.std")
+
+/**
+ * How many chunks across and down a region is.
+ */
+export val REGION = 4
+
+/**
+ * The band of `depth`: 0 the surface, 1 the shallows (depths 1 to 3), 2 the
+ * middle (4 to 6), 3 the deep (7 and below).
+ */
+export val bandOf = fn(depth:num):num { if (depth == 0) { 0 } else { math.min(3, 1 + math.div(depth - 1, 3)) } }
+
+val floorDiv = fn(a:num, b:num):num { if (a >= 0) { math.div(a, b) } else { -math.div(-a - 1, b) - 1 } }
+
+/**
+ * The key of the territory holding chunk (cx, cy) on `depth`, as
+ * "rx,ry,band".
+ */
+export val territoryOf = fn(cx:num, cy:num, depth:num):str {
+    "" + floorDiv(cx, REGION) + "," + floorDiv(cy, REGION) + "," + bandOf(depth)
+}
+
+val parse = fn(key:str):list { map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 }) }
+
+// ---------------------------------------------------------------------------
+// Peoples.
+
+/**
+ * The peoples: their side, home band, and the monster kinds that are theirs.
+ */
+export val PEOPLES = {
+    humans: {side: "above", home: 0, kinds: []},
+    dwarfs: {side: "above", home: 1, kinds: []},
+    kobolds: {side: "below", home: 1, kinds: ["kobold"]},
+    orcs: {side: "below", home: 2, kinds: ["orc", "hobgoblin"]},
+    trolls: {side: "below", home: 3, kinds: ["troll"]},
+    undead: {side: "below", home: 3, kinds: ["zombie"]},
+}
+
+// The people called `name`, which must be one.
+val people = fn(name:str):map {
+    match PEOPLES[name] {
+        p: map => p
+        _ => throw Error {type: "crawl.empire", msg: "no people called " + name}
+    }
+}
+
+/**
+ * The people monster kind `name` belongs to, or nil for the solitary and
+ * wild kinds.
+ */
+export val peopleOf = fn(name:str):str|nil {
+    val found = filter(keys(PEOPLES), fn(p) { any(people(p).kinds, fn(k) { k == name }) })
+    if (len(found) == 0) { nil } else { found[0] }
+}
+
+// The factions a new world starts with, by people, in order.
+val FOUNDING = ["humans", "humans", "dwarfs", "kobolds", "orcs", "orcs", "trolls", "undead"]
+
+val pick = fn(xs:list) { xs[rng.below(len(xs))] }
+
+// A faction name in its people's style; `seat` names a human faction's town.
+val nameFor = fn(folk:str, seat:str):str {
+    match folk {
+        "humans" => "the " + pick(["Iron", "Golden", "Silver", "Free", "Old", "High", "River"]) + " "
+            + pick(["Compact", "League", "Crown", "Concord", "March", "Wardens"]) + " of " + seat
+        "dwarfs" => "the " + pick(["Stone", "Iron", "Deep", "Hammer", "Coal", "Anvil"])
+            + pick(["beard", "hand", "delve", "fall", "brow", "forge"]) + " Clan"
+        "kobolds" => "the " + pick(["Yip", "Skree", "Rattle", "Gnash", "Mudpaw", "Sootfang"]) + " "
+            + pick(["Warren", "Pack", "Tribe", "Den"])
+        "orcs" => "the " + pick(["Black", "Red", "Broken", "Blood", "Grim", "Ash"])
+            + pick(["maw", "tusk", "fang", "hand", "skull", "axe"]) + " Horde"
+        "trolls" => "the " + pick(["Mossback", "Bonegnaw", "Stonegut", "Gristle"]) + " Brood"
+        _ => "the " + pick(["Pale", "Hollow", "Grey", "Silent"]) + " " + pick(["Host", "Court", "Legion", "Choir"])
+    }
+}
+
+/**
+ * The name of region (rx, ry), drawn from the world's seed, as "the
+ * Ashmoor".
+ */
+export val regionName = fn(seed:num, rx:num, ry:num):str {
+    rng.within(rng.mix([seed, 62, rx, ry]), fn() {
+        "the " + pick(["Ash", "Thorn", "Grey", "Raven", "Mist", "Cold", "Red", "Wolf", "Iron", "Stone", "Bramble", "Dun"])
+            + pick(["moor", "wood", "fell", "vale", "marsh", "downs", "reach", "hills", "mere", "heath"])
+    })
+}
+
+/**
+ * Where territory `key` is, in words: "on the Ashmoor", "in the shallows
+ * under the Ashmoor", and so on.
+ */
+export val placeName = fn(seed:num, key:str):str {
+    val [rx, ry, band] = parse(key)
+    val region = regionName(seed, rx, ry)
+    ["on " + region, "in the shallows under " + region, "in the depths under " + region, "in the deep under " + region][band]
+}
+
+// ---------------------------------------------------------------------------
+// A new world's empires.
+
+// The territories beside `key`: the regions beside it at its band, inside
+// `regions` across and down, and the bands above and below it in its region.
+val besides = fn(key:str, regions:num):list {
+    val [rx, ry, band] = parse(key)
+    val across = filter([[rx - 1, ry], [rx + 1, ry], [rx, ry - 1], [rx, ry + 1]], fn(r) {
+        r[0] >= 0 && r[1] >= 0 && r[0] < regions && r[1] < regions
+    })
+    map(across, fn(r) { "" + r[0] + "," + r[1] + "," + band })
+        + map(filter([band - 1, band + 1], fn(b) { b >= 0 && b <= 3 }), fn(b) { "" + rx + "," + ry + "," + b })
+}
+
+/**
+ * The empires of a new world `size` chunks across and down (0 for no
+ * bound, which has none) with `settlements` (see `slug.games.crawl.town`),
+ * drawn from the generator it runs under: eight factions, the human ones
+ * seated in towns and holding the surface around every settlement, the
+ * rest each holding a few territories at their home band.
+ */
+export val create = fn(seed:num, size:num, settlements:list):map {
+    if (size == 0) { return {factions: [], holds: {}, fixed: {}, chronicle: [], step: 0, regions: 0, kills: {}} }
+    val regions = math.div(size + REGION - 1, REGION)
+    val towns = filter(settlements, fn(s) { s.kind == "town" })
+    val seats = [towns[0], if (len(towns) > 1) { towns[len(towns) - 1] } else { towns[0] }]
+    val trait = fn():num { rng.below(5) - 2 }
+    var holds = {}
+    var humans = 0
+    val factions = map(FOUNDING, fn(folk) {
+        val seat = if (folk == "humans") {
+            val s = seats[humans]
+            humans = humans + 1
+            s.name
+        } else { "" }
+        {
+            people: folk, name: nameFor(folk, seat), home: people(folk).home,
+            traits: {bold: trait(), aggressive: trait(), orderly: trait(), greedy: trait()},
+            wealth: 20, strength: 30, lastFight: -100,
+        }
+    })
+    // Every settlement's surface territory goes to the nearer human seat.
+    val seatTerritories = map(seats, fn(s) { territoryOf(s.cx, s.cy, 0) })
+    val nearer = fn(s:map):num {
+        val d = fn(t:map):num { math.abs(t.cx - s.cx) + math.abs(t.cy - s.cy) }
+        if (d(seats[0]) <= d(seats[1])) { 0 } else { 1 }
+    }
+    map(settlements, fn(s) { holds = holds + {[territoryOf(s.cx, s.cy, 0)]: nearer(s)} })
+    val fixed = reduce(settlements, {}, fn(acc, s) { acc + {[territoryOf(s.cx, s.cy, 0)]: true} })
+    // Each other faction starts from a free territory at its home band and
+    // spreads to a few beside it.
+    val spread = fn(i:num, key:str, n:num) {
+        if (n <= 0) { return nil }
+        val free = filter(besides(key, regions), fn(k) { holds[k] == nil && parse(k)[2] == factions[i].home })
+        if (len(free) > 0) {
+            val next = pick(free)
+            holds = holds + {[next]: i}
+            recur(i, next, n - 1)
+        }
+    }
+    map(range(len(factions)), fn(i) {
+        val f = factions[i]
+        if (f.people != "humans") {
+            val start = fn(tries:num):str|nil {
+                if (tries == 0) { return nil }
+                val k = "" + rng.below(regions) + "," + rng.below(regions) + "," + f.home
+                if (holds[k] == nil) { k } else { recur(tries - 1) }
+            }
+            match start(50) {
+                k: str => {
+                    holds = holds + {[k]: i}
+                    spread(i, k, 3 + rng.below(4))
+                }
+                _ => nil
+            }
+        }
+    })
+    {factions: factions, holds: holds, fixed: fixed, chronicle: [], step: 0, regions: regions, kills: {}}
+}
+
+// ---------------------------------------------------------------------------
+// The step.
+
+// How much of a faction's strength reaches each band from its home, by
+// distance, in percent.
+val REACH = [100, 50, 25, 10]
+
+// What a faction earns from a territory each step, by band.
+val YIELD = [3, 2, 2, 2]
+
+// How long a faction counts as at war after a fight, in steps.
+val WAR = 5
+
+// Strength a faction loses for each of its people's kind killed by players
+// in its territory.
+val KILL_COST = 1
+
+// The chronicle keeps this many events.
+val CHRONICLE = 40
+
+/**
+ * The strength faction `i` of `empire` brings to territory `key`: its
+ * strength, as much as reaches that band from its home, spread over what it
+ * already holds.
+ */
+export val power = fn(empire:map, i:num, key:str):num {
+    val f = empire.factions[i]
+    val band = parse(key)[2]
+    val held = len(filter(keys(empire.holds), fn(k) { empire.holds[k] == i }))
+    math.div(f.strength * REACH[math.abs(band - f.home)], 100 + 10 * held)
+}
+
+val clamp = fn(n:num):num { math.max(-2, math.min(2, n)) }
+
+val note = fn(empire:map, text:str):map {
+    val all = empire.chronicle :+ {step: empire.step, text: text}
+    empire copy {chronicle: if (len(all) > CHRONICLE) { all[len(all) - CHRONICLE:] } else { all }}
+}
+
+val setFaction = fn(empire:map, i:num, f:map):map {
+    empire copy {factions: empire.factions[:i] + [f] + empire.factions[i + 1:]}
+}
+
+// Faction `i` earns from what it holds, pays its upkeep, and turns half its
+// spare wealth into strength (less if greedy).
+val earn = fn(empire:map, i:num):map {
+    val f = empire.factions[i]
+    val held = filter(keys(empire.holds), fn(k) { empire.holds[k] == i })
+    val income = reduce(held, 0, fn(sum, k) { sum + YIELD[parse(k)[2]] })
+    val wealth = f.wealth + income - math.div(f.strength, 10)
+    val spend = if (wealth > 10) { math.div(wealth * (50 - 10 * f.traits.greedy), 100) } else { 0 }
+    val broke = if (wealth < 0) { -wealth } else { 0 }
+    setFaction(empire, i, f copy {wealth: math.max(0, wealth - spend), strength: math.max(0, f.strength + spend - broke)})
+}
+
+// Faction `i` may push into a territory beside its own: more often if
+// bold; a wild one is claimed, a held one fought for, more often if
+// aggressive, and less often from its own side if orderly. Settlements'
+// territories are never taken.
+val push = fn(empire:map, i:num, seed:num):map {
+    val f = empire.factions[i]
+    if (rng.below(100) >= 30 + 10 * f.traits.bold) { return empire }
+    val mine = filter(keys(empire.holds), fn(k) { empire.holds[k] == i })
+    if (len(mine) == 0) { return empire }
+    val targets = filter(reduce(mine, [], fn(acc, k) { acc + besides(k, empire.regions) }), fn(k) {
+        empire.holds[k] != i && empire.fixed[k] == nil
+    })
+    if (len(targets) == 0) { return empire }
+    // Boxed in, with no wild land left beside it, a faction grows hungrier.
+    val boxed = !any(targets, fn(k) { empire.holds[k] == nil })
+    val hungry = if (boxed && rng.below(10) == 0) {
+        setFaction(empire, i, f copy {traits: f.traits copy {aggressive: clamp(f.traits.aggressive + 1)}})
+    } else { empire }
+    pushInto(hungry, i, seed, targets[rng.below(len(targets))])
+}
+
+// Faction `i` pushes into territory `target`.
+val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
+    val f = empire.factions[i]
+    val where = placeName(seed, target)
+    match empire.holds[target] {
+        j: num => {
+            val g = empire.factions[j]
+            val sameSide = people(g.people).side == people(f.people).side
+            val willing = 40 + 20 * f.traits.aggressive - (if (sameSide) { 30 + 10 * f.traits.orderly } else { 0 })
+            if (rng.below(100) >= willing) { return empire }
+            val attack = power(empire, i, target) * (50 + rng.below(101))
+            val home = if (parse(target)[2] == g.home) { 150 } else { 100 }
+            val defence = math.div(power(empire, j, target) * (50 + rng.below(101)) * home, 100)
+            val won = attack > defence
+            val winner = if (won) { i } else { j }
+            val loser = if (won) { j } else { i }
+            val wf = empire.factions[winner]
+            val lf = empire.factions[loser]
+            val after = setFaction(setFaction(empire, winner, wf copy {
+                strength: wf.strength - math.div(wf.strength, 10), lastFight: empire.step,
+                traits: wf.traits copy {bold: clamp(wf.traits.bold + if (rng.below(4) == 0) { 1 } else { 0 })},
+            }), loser, lf copy {
+                strength: lf.strength - math.div(lf.strength, 5), lastFight: empire.step,
+                // A beaten faction may turn cautious, or vengeful.
+                traits: lf.traits copy {
+                    bold: clamp(lf.traits.bold - if (rng.below(4) == 0) { 1 } else { 0 }),
+                    aggressive: clamp(lf.traits.aggressive + if (rng.below(4) == 0) { 1 } else { 0 }),
+                },
+            })
+            if (won) {
+                note(after copy {holds: after.holds + {[target]: i}}, f.name + " took the land " + where + " from " + g.name + ".")
+            } else {
+                note(after, g.name + " threw back " + f.name + " " + where + ".")
+            }
+        }
+        _ => {
+            if (power(empire, i, target) < 3) { return empire }
+            note(empire copy {holds: empire.holds + {[target]: i}}, f.name + " settled the land " + where + ".")
+        }
+    }
+}
+
+// The players' kills since the last step weaken the factions of the
+// peoples killed, where they hold the land.
+val bleed = fn(empire:map):map {
+    reduce(keys(empire.kills), empire, fn(e, k) {
+        // Keys are "territory|kind".
+        val [territory, kind] = string.split(k, "|")
+        val n = empire.kills[k]
+        match e.holds[territory] {
+            i: num => if (e.factions[i].people == peopleOf(kind)) {
+                val f = e.factions[i]
+                setFaction(e, i, f copy {strength: math.max(0, f.strength - n * KILL_COST)})
+            } else { e }
+            _ => e
+        }
+    }) copy {kills: {}}
+}
+
+// A faction that has not fought for a long while may grow more peaceful.
+val calm = fn(empire:map, i:num):map {
+    val f = empire.factions[i]
+    if (empire.step - f.lastFight > 20 && rng.below(10) == 0) {
+        setFaction(empire, i, f copy {traits: f.traits copy {aggressive: clamp(f.traits.aggressive - 1)}})
+    } else { empire }
+}
+
+/**
+ * One step of the empire layer for the world with seed `seed`: the players'
+ * kills weaken their peoples' factions; then each faction in turn earns,
+ * may push into the territory beside its own, and may calm down.
+ */
+export val step = fn(empire:map, seed:num):map {
+    val bled = bleed(empire)
+    val each = fn(i:num, e:map):map {
+        if (i == len(e.factions)) { return e }
+        recur(i + 1, calm(push(earn(e, i), i, seed), i))
+    }
+    each(0, bled) copy {step: empire.step + 1}
+}
+
+/**
+ * The empire with one kill by players of a monster of the kind called
+ * `name` in territory `key` counted, for the next step.
+ */
+export val killed = fn(empire:map, key:str, name:str):map {
+    val k = key + "|" + name
+    empire copy {kills: empire.kills + {[k]: (empire.kills[k] ?? 0) + 1}}
+}
+
+// ---------------------------------------------------------------------------
+// Summaries for the layers below.
+
+/**
+ * The faction holding territory `key`, or nil.
+ */
+export val holder = fn(empire:map, key:str):map|nil {
+    match empire.holds[key] {
+        i: num => empire.factions[i]
+        _ => nil
+    }
+}
+
+/**
+ * The monster kinds that thrive in territory `key`, from `base`, the kinds
+ * of its depth: a people's kinds belong only where their faction holds the
+ * land, and there they belong whatever the depth; the wild kinds belong
+ * wherever they live.
+ */
+export val habitatAt = fn(empire:map, key:str, base:list):list {
+    val owner = match holder(empire, key) {
+        f: map => f.people
+        _ => nil
+    }
+    val wild = filter(base, fn(k) { peopleOf(k) == nil })
+    val theirs = if (owner == nil) { filter(base, fn(k) { peopleOf(k) != nil }) } else { people(owner).kinds }
+    // Land no one holds keeps its kinds; held land has only its holder's.
+    wild + filter(theirs, fn(k) { !any(wild, fn(w) { w == k }) })
+}
+
+/**
+ * What markets in territory `key` charge, in percent of the usual price:
+ * more while its holder is at war and the greedier it is.
+ */
+export val priceFactor = fn(empire:map, key:str):num {
+    match holder(empire, key) {
+        f: map => 100 + (if (empire.step - f.lastFight <= WAR) { 25 } else { 0 }) + 10 * f.traits.greedy
+        _ => 100
+    }
+}
+
+// What a bounty pays a head for each kind, before the faction's nature.
+val HEADS = {kobold: 5, hobgoblin: 8, orc: 10, zombie: 10, troll: 40}
+
+/**
+ * The bounties posted for the region (rx, ry): a price a head for the kinds
+ * of every people from below that holds land under it, as `{kind, price}`,
+ * from the faction holding its surface; generous factions pay more.
+ */
+export val bounties = fn(empire:map, rx:num, ry:num):list {
+    val payer = holder(empire, "" + rx + "," + ry + ",0")
+    val greed = match payer {
+        f: map => f.traits.greedy
+        _ => 0
+    }
+    val below = filter(map([1, 2, 3], fn(b) { holder(empire, "" + rx + "," + ry + "," + b) }), fn(f) { f != nil && people(f.people).side == "below" })
+    val kinds = reduce(below, [], fn(acc, f) { acc + filter(people(f.people).kinds, fn(k) { !any(acc, fn(a) { a == k }) }) })
+    map(kinds, fn(k) { {kind: k, price: math.max(1, math.div(HEADS[k] * (100 - 15 * greed), 100))} })
+}
+
+val uncap = fn(text:str):str { string.lower(text[:1]) + text[1:] }
+
+/**
+ * Something an innkeeper might have heard: one of the chronicle's latest
+ * events, or nil when nothing has happened yet.
+ */
+export val news = fn(empire:map):str|nil {
+    val recent = if (len(empire.chronicle) > 8) { empire.chronicle[len(empire.chronicle) - 8:] } else { empire.chronicle }
+    if (len(recent) == 0) { nil } else { "They say " + uncap(recent[rng.below(len(recent))].text) }
+}

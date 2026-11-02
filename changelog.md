@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Crawl has an empire layer. The world's regions, four chunks across, are
+  held at four bands of depth (the surface, the shallows, the middle and
+  the deep) by eight factions of six peoples: humans and dwarfs above;
+  kobolds, orcs, trolls and the undead below. Each faction has a name in its
+  people's style, a home band, and four traits (bold, aggressive, orderly,
+  greedy) that shift as it wins, loses, or lives in peace. About once a
+  minute (`--empire=N`, default 400 ticks) factions earn from their land,
+  turn wealth into strength, which fades with distance from home, and push
+  into the land beside theirs, settling wild land or fighting for held land;
+  towns and forts stay human. What happens goes into a chronicle that
+  innkeepers now tell as news. The layers below follow: a people's monsters
+  thrive where their faction holds the land and fade elsewhere; players'
+  kills weaken the faction; markets charge more while their holder is at
+  war, and more or less as it is greedy; and a new captain in each fort
+  pays standing bounties, a price a head, for the peoples below its region,
+  for kills made in that region. The stats show who holds the land you are
+  in. The new module `slug.games.crawl.empire` holds the rules, as pure
+  functions; worlds saved before gain an empire when they load.
+
 - Crawl's monsters live in populations. A region layer visits each chunk no
   one is in once every 20 ticks (`--region=N`), a share of the chunks each
   tick: there its monsters breed, up to what the chunk holds (two on the

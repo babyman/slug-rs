@@ -352,6 +352,8 @@ val statsView = fn(id:str, p:map):map {
             _ => "" + p.cx + ", " + p.cy
         }, gold: p.gold, str: p.str, maxStr: p.maxStr,
         armour: game.armourValue(id), level: p.level, xp: p.xp,
+        // Who holds the land here, and where that is.
+        land: game.land(id).holder ?? "No one", place: game.land(id).place,
         conditions: filter([
             hunger,
             if (p.confused > 0) { "Confused" } else { "" },
@@ -589,7 +591,7 @@ export val resume = fn(saved:map) {
 
 // Starts a new world as `serve`'s options say.
 val fresh = fn(options:map) {
-    start(options.seed ?? secure.seed(), {regionEvery: options.region ?? 20, size: options.size ?? 32})
+    start(options.seed ?? secure.seed(), {regionEvery: options.region ?? 20, empireEvery: options.empire ?? 400, size: options.size ?? 32})
 }
 
 /**
@@ -604,6 +606,8 @@ val fresh = fn(options:map) {
  * Otherwise, or with no world saved yet, a new world starts with
  * `options.seed` (default: a fresh one from `slug.random.secure`), whose
  * region layer visits each chunk every `options.region` ticks (default 20),
+ * whose empire layer takes a step every `options.empire` ticks (default
+ * 400),
  * `options.size` chunks across and down (default 32).
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {

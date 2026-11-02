@@ -4,6 +4,7 @@ val town = import("slug.games.crawl.town")
 val {assertEqual, assertTrue} = import("slug.test")
 val {filter, map, range, any, all} = import("slug.std")
 val math = import("slug.math")
+val string = import("slug.string")
 
 // Changes the player with `id` by `fields`.
 val setPlayer = fn(id:str, fields:map) {
@@ -142,6 +143,9 @@ val openMenu = fn():map {
     }
 }
 
+// The price in a menu label such as "a food ration, 10 gold".
+val priceOf = fn(label:str):num { string.toInt(string.split(string.split(label, ", ")[1], " ")[0]) ?? 0 }
+
 val last = fn():str {
     val m = game.playerOf("a").messages
     m[len(m) - 1]
@@ -169,16 +173,18 @@ val buyingCostsGoldAndWhatIsBoughtIsKnown = fn() {
     val key = besideRole("trader", 100)
     game.command("a", key, false)
     game.command("a", "1", false)
+    val cost = priceOf(openMenu().entries[1].label)
+    assertTrue(cost >= 40 && cost <= 70)
     game.command("a", "2", false)
     val p = game.playerOf("a")
-    assertEqual(p.gold, 60)
+    assertEqual(p.gold, 100 - cost)
     assertTrue(any(p.pack, fn(e) { e.item == {kind: "potion", type: 0} }))
     assertEqual(p.known.potions, [0])
-    assertEqual(last(), "You buy a potion of healing for 40 gold.")
+    assertEqual(last(), "You buy a potion of healing for " + cost + " gold.")
     assertEqual(openMenu().page, "buy")
-    game.command("a", "2", false)
-    game.command("a", "2", false)
-    assertEqual(game.playerOf("a").gold, 20)
+    // Buying until the gold runs out.
+    map(range(3), fn(_) { game.command("a", "2", false) })
+    assertTrue(game.playerOf("a").gold < cost)
     assertEqual(last(), "You can't afford a potion of healing.")
 }
 
@@ -193,8 +199,9 @@ val sellingPaysHalfButNotForWhatIsInUseOrWhatTheDealerDoesNotWant = fn() {
     assertTrue(!any(keys, fn(k) { k == p.armour }))
     assertTrue(!any(keys, fn(k) { k == p.weapon }))
     val food = filter(p.pack, fn(e) { e.item.kind == "food" })[0]
+    val paid = priceOf(filter(openMenu().entries, fn(e) { e.key == food.letter })[0].label)
     game.command("a", food.letter, false)
-    assertEqual(game.playerOf("a").gold, town.offer(food.item))
+    assertEqual(game.playerOf("a").gold, paid)
     assertEqual(game.playerOf("a").pack, filter(p.pack, fn(e) { e.letter != food.letter }))
     val mace = filter(p.pack, fn(e) { e.letter == p.weapon })[0].item
     assertEqual(town.offer(mace), math.div(town.price(mace), 2))
@@ -211,10 +218,14 @@ val anInnFeedsHealsAndTellsRumours = fn() {
     game.command("a", key, false)
     game.command("a", "1", false)
     assertTrue(any(town.RUMOURS, fn(r) { last() == game.here("a").characters[game.playerOf("a").menu.character].name + " says: \"" + r + "\"" }))
+    // Prices are the land's: read them off the menu.
+    val labels = map(openMenu().entries, fn(e) { e.label })
+    val meal = priceOf(labels[1])
+    val bed = priceOf(labels[2])
     game.command("a", "2", false)
     game.command("a", "3", false)
     val p = game.playerOf("a")
-    assertEqual([p.gold, p.hp, p.food > 1000], [30 - town.MEAL - town.BED, p.maxHp, true])
+    assertEqual([p.gold, p.hp, p.food > 1000], [30 - meal - bed, p.maxHp, true])
     game.command("a", "3", false)
     assertEqual(last(), "You can't afford a bed.")
 }

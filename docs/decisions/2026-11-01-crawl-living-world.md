@@ -223,13 +223,15 @@ the counts. This replaces restocking by idle time.
 ## Open Questions
 
 - How far from home a faction's strength reaches, and so how deep the
-  contested band is.
+  contested band is. The first version halves it for each band away from
+  home (all of it at home, then 50, 25 and 10 percent).
 - Leaders as characters players can meet, and fight: killing a faction's
   leader would shift its personality and strength. Wanted, but after the
   empire layer works.
 - How large a world is by default, in regions and chunks per region.
 - What the economy's goods are, and how many: few enough to balance, enough
-  for trade to matter.
+  for trade to matter. The first version has none: each faction has one
+  wealth, which its land earns and its strength costs.
 - Whether players can hold anything: a house, a stall, a share in a town.
 - Whether players can attack each other, and where: not yet (decided
   2026-11-01); perhaps later with factions and the law in towns.
@@ -253,6 +255,9 @@ Each step leaves a playable game:
    made, and the chunks beside them as counts; loot turns up too. Lairs
    wait for the empire layer.)
 6. The empire layer: factions, territory, resources, production and trade;
-   market prices and contracts from it; player events nudging it.
+   market prices and contracts from it; player events nudging it. (Done,
+   first version: one wealth number for each faction instead of goods,
+   standing bounties at forts as the contracts, and players see only who
+   holds the land they are in.)
 7. History at world creation: the empire layer run for a few hundred
    years, ruins from fallen settlements, rumours from the chronicle.
