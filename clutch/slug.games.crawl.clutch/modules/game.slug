@@ -417,7 +417,7 @@ val pickUp = fn() {
                     setHere(site() copy {items: site().items[:i] + site().items[i + 1:]})
                     say(packLine(player.pack[packIndex(letter)]))
                 }
-                _ => say("Your pack is full.")
+                _ => say("Your pack is full; you leave " + nameOf(item, 1) + ".")
             }
         }
     }
@@ -1969,7 +1969,7 @@ val deal = fn(c:map, act:list) {
             if (player.gold < cost) {
                 say("You can't afford " + wareName(ware) + ".")
             } else if (addToPack(ware) == nil) {
-                say("Your pack is full.")
+                say("Your pack is full; there's no room for " + wareName(ware) + ".")
             } else {
                 setPlayer(player copy {gold: player.gold - cost})
                 // A ware bought is known for what it is.

@@ -9,6 +9,11 @@
   now known as Aria."), and a new character after death keeps it. The
   engine takes it as the key "name" with `text`, as it does "say".
 
+- Crawl says what a full pack leaves behind: "Your pack is full; you leave
+  a potion of healing." (or, unidentified, "an amber potion"), and at a
+  market "Your pack is full; there's no room for a scroll of identify."
+  The eval's reference keeps its plain "Your pack is full.".
+
 - Crawl's worlds have a history. Before anyone comes, a new world's empires
   live through 300 years (`--history=N`; the engine's `newGame` runs none
   unless `options.history` asks), about a second at start. In those years

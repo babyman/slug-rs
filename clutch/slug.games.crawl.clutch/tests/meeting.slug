@@ -216,3 +216,23 @@ val playersCanNameThemselvesAndThoseInSightHear = fn() {
     game.command("a", "enter", false)
     assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
 }
+
+@test
+val aFullPackSaysWhatIsLeftBehind = fn() {
+    sideBySide(13)
+    val b = game.playerOf("b")
+    setPlayer("b", {depth: 5})
+    val full = map(range(22), fn(i) { {letter: "abcdefghijklmnopqrstuv"[i], item: {kind: "weapon", type: 0, bonus: i}, count: 1} })
+    // Ann knows healing potions, so she knows what she leaves.
+    setPlayer("a", {pack: full, weapon: nil, armour: nil, known: {potions: [0], scrolls: []}})
+    val s = game.snapshot()
+    val a = game.playerOf("a")
+    val key = game.chunkKey(a.cx, a.cy, a.depth)
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] copy {
+        items: [{x: b.x, y: b.y, item: {kind: "potion", type: 0}}], monsters: [], characters: [],
+    }}})
+    game.command("a", "l", false)
+    assertEqual(game.playerOf("a").x, b.x)
+    assertTrue(contains(messagesOf("a"), "Your pack is full; you leave a potion of healing."))
+    assertEqual(len(game.here("a").items), 1)
+}
