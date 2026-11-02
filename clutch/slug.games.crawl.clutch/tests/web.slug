@@ -1,5 +1,6 @@
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
+val level = import("slug.games.crawl.level")
 val {toBytes, fromBytes, split} = import("slug.string")
 val {recv} = import("slug.channel")
 val {map, filter} = import("slug.std")
@@ -289,4 +290,49 @@ val theMapScrollsOnlyNearItsEdges = fn() {
     val step = fn() { web.press(id, "l", false); web.tickOnce(); youAt(mapText(web.gameHtml(id))[4]) }
     assertEqual([step(), step(), step(), step(), step(), step()], [11, 12, 13, 14, 14, 14])
     close(events.body)
+}
+
+// Two new players, the second just east of the first on an open square.
+val twoSideBySide = fn():list {
+    web.start(1)
+    val a = web.newPlayer()
+    val b = web.newPlayer()
+    val s = game.snapshot()
+    val pa = s.players[a]
+    val rows = game.here(a).map
+    val go = fn(i:num):list {
+        val x = i % (level.WIDTH - 1)
+        val y = int(i / (level.WIDTH - 1))
+        if (rows[y][x] == "." && rows[y][x + 1] == ".") { [x, y] } else { recur(i + 1) }
+    }
+    val [x, y] = go(0)
+    game.load(s copy {players: s.players + {
+        [a]: pa copy {x: x, y: y},
+        [b]: s.players[b] copy {cx: pa.cx, cy: pa.cy, depth: pa.depth, x: x + 1, y: y},
+    }})
+    [a, b]
+}
+
+@test
+val meetingAnotherPlayerShowsTheMenuAsButtons = fn() {
+    val [a, _] = twoSideBySide()
+    post("/key", "key=l", a)
+    web.tickOnce()
+    val html = web.gameHtml(a)
+    assertTrue(includes(html, "You meet Player 2."))
+    assertTrue(includes(html, "hx-vals='{\"key\": \"1\"}'><kbd>1</kbd> Talk</button>"))
+    post("/key", "key=1", a)
+    web.tickOnce()
+    assertTrue(includes(web.gameHtml(a), "Say something else"))
+}
+
+@test
+val whatIsTypedIsSaidOnTheNextTick = fn() {
+    val [a, b] = twoSideBySide()
+    // Player 2's page is open, so they hear it.
+    get("/events", b, {cols: "80", rows: "22"})
+    assertEqual(post("/say", "text=%3Cb%3Ehello%3C%2Fb%3E", a).status, 204)
+    web.tickOnce()
+    assertTrue(includes(web.gameHtml(a), "You say: &quot;&lt;b&gt;hello&lt;/b&gt;&quot;"))
+    assertTrue(includes(web.gameHtml(b), "Player 1 says: &quot;&lt;b&gt;hello"))
 }

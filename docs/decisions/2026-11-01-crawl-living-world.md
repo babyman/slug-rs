@@ -162,6 +162,10 @@ arrive in a world that already has borders, roads, ruins and grudges.
 - The same mechanism handles players meeting: walking into another player
   offers talk and trade instead of blocking. Attacking a character or a
   player needs a deliberate choice, never a bump.
+- Players talk both ways: a menu of fixed phrases, one key each, and free
+  text, which everyone in sight hears. Trading starts as giving, one way: an
+  item or gold, with nothing to accept; two gifts make a trade. Players
+  cannot attack each other yet.
 
 ### Players nudge, they don't decide
 
@@ -227,7 +231,8 @@ the counts. This replaces restocking by idle time.
 - What the economy's goods are, and how many: few enough to balance, enough
   for trade to matter.
 - Whether players can hold anything: a house, a stall, a share in a town.
-- Whether players can chat freely, or only through fixed choices.
+- Whether players can attack each other, and where: not yet (decided
+  2026-11-01); perhaps later with factions and the law in towns.
 
 ## Plan
 
@@ -239,7 +244,8 @@ Each step leaves a playable game:
 2. Saving the world in SQLite, resuming it on start, `--new` for a new one.
    (Done.)
 3. Characters and interaction menus, used first for players meeting each
-   other (talk, trade).
+   other (talk, trade). (Done for players: menus, talk and giving; the
+   characters themselves come with towns.)
 4. Towns and forts as walkable chunks with fixed people: a market with fixed
    prices and an inn with fixed rumours.
 5. The region layer: monster populations per chunk, spread and breeding,

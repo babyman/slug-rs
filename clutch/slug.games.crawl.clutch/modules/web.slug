@@ -26,6 +26,11 @@
  * `slug.games.crawl.store`, and carries on the world it holds when it
  * starts, so a restart loses at most the last few seconds.
  *
+ * Walking into another player opens a menu over the map, to talk, from a
+ * list of phrases, or to give them an item or gold. A box above the game,
+ * outside what each push replaces, says what is typed in it to everyone in
+ * sight (`POST /say`).
+ *
  * A `crawl` cookie names each browser's player; a browser without one, or
  * with one this server does not know, joins as a new player. Each id is 128
  * random bits from `slug.random.secure`, so no one can guess another
@@ -61,7 +66,7 @@ val {trySend} = import("slug.channel")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
 // place of the map, which the page does not need.
-val KEYS = chars("abcdefghjklmnopqrstuvwxyz") + ["left", "down", "up", "right", "space", "enter"]
+val KEYS = chars("abcdefghjklmnopqrstuvwxyz0123456789") + ["left", "down", "up", "right", "space", "enter"]
 
 // The command that uses each kind of item.
 val USES = {food: "e", potion: "q", scroll: "r", weapon: "w", armour: "a"}
@@ -111,7 +116,8 @@ var logs = {}
 // How many players have joined, which numbers them.
 var joined = 0
 
-// The keys waiting for a tick, `{id, key, shift}` in the order they came.
+// The keys waiting for a tick, `{id, key, shift, text}` in the order they
+// came; `text` is what the key "say" says.
 var queue = []
 
 // The open event streams by player id, each a list of channels, the HTML
@@ -165,12 +171,13 @@ export val newPlayer = fn():str {
 
 /**
  * Queues command `key` for the player with `id`, with `shift` held or not,
- * for a coming tick; returns whether it was queued, which it is not when
- * they already have QUEUE_SIZE keys waiting.
+ * for a coming tick, and for the key "say" the `text` to say; returns
+ * whether it was queued, which it is not when they already have QUEUE_SIZE
+ * keys waiting.
  */
-export val press = fn(id:str, key:str, shift:bool):bool {
+export val press = fn(id:str, key:str, shift:bool, text:str = ""):bool {
     if (len(filter(queue, fn(a) { a.id == id })) >= QUEUE_SIZE) { return false }
-    queue = queue :+ {id: id, key: key, shift: shift}
+    queue = queue :+ {id: id, key: key, shift: shift, text: text}
     true
 }
 
@@ -404,6 +411,21 @@ val view = fn(id:str):map {
         name: p.name,
         stats: statsView(id, p),
         pack: packView(id, p),
+        menu: menuView(id),
+    }
+}
+
+// The menu the player has open, drawn over the map: its entries as
+// buttons, and on the Talk page a way to type something instead.
+val menuView = fn(id:str):map|nil {
+    match game.menu(id) {
+        m: map => {
+            title: m.title,
+            entries: m.entries,
+            talk: m.page == "talk",
+            back: if (m.page == "main") { "Close" } else { "Back" },
+        }
+        _ => nil
     }
 }
 
@@ -458,6 +480,15 @@ val onKey = fn(request:map):map {
     })
 }
 
+// Says the form's `text` aloud, to everyone in sight.
+val onSay = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val text = http.form(request).text ?? ""
+        if (len(trim(text)) > 0) { press(id, "say", false, text) }
+        {status: 204}
+    })
+}
+
 // Uses a pack item the way its kind is used, eating food or wielding a
 // weapon, or with `action` "drop", drops it: queues the command's key, then
 // the item's letter for the prompt it asks.
@@ -500,8 +531,8 @@ val onEvents = fn(request:map):map {
 
 /**
  * The HTTP handler for the game: `GET /` serves the page; `/htmx.js`,
- * `/crawl.css`, and `/crawl.js` the clutch's assets; and `POST /key` and
- * `POST /use` play.
+ * `/crawl.css`, and `/crawl.js` the clutch's assets; and `POST /key`,
+ * `POST /use`, and `POST /say` play.
  */
 export val handler = fn():fn {
     http.router([
@@ -511,6 +542,7 @@ export val handler = fn():fn {
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
         ["POST", "/key", onKey],
         ["POST", "/use", onUse],
+        ["POST", "/say", onSay],
         ["GET", "/events", onEvents],
     ])
 }

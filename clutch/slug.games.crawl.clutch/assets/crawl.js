@@ -2,12 +2,22 @@
 const NAMED = { ArrowLeft: "left", ArrowDown: "down", ArrowUp: "up", ArrowRight: "right", " ": "space", Enter: "enter" };
 function gameKey(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
+  // Typing in the Say box is not playing.
+  if (e.target.closest && e.target.closest("input, textarea")) return null;
+  if (/^[0-9]$/.test(e.key)) return e.key;
   if (/^[a-zA-Z]$/.test(e.key)) return e.key === "i" || e.key === "I" ? null : e.key.toLowerCase();
   return NAMED[e.key] || null;
 }
 // An htmx trigger filter must return exactly true.
 function isGameKey(e) { return gameKey(e) !== null; }
-document.addEventListener("keydown", e => { if (gameKey(e)) e.preventDefault(); });
+document.addEventListener("keydown", e => {
+  if (gameKey(e)) e.preventDefault();
+  // "/" starts saying something; Escape leaves the Say box.
+  const say = document.getElementById("say");
+  if (!say) return;
+  if (e.key === "/" && document.activeElement !== say) { e.preventDefault(); say.focus(); }
+  else if (e.key === "Escape" && document.activeElement === say) say.blur();
+});
 document.addEventListener("htmx:configRequest", e => {
   const t = e.detail.triggeringEvent;
   if (t && t.type === "keydown") {
@@ -30,6 +40,7 @@ function setRunning(on) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest(".touch .run")) setRunning(!running());
+  if (e.target.closest(".say-something")) document.getElementById("say").focus();
 });
 // How many map columns and rows fit the page: as wide as the space beside
 // the panels (or the page, when they go below), leaving room for the log.

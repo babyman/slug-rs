@@ -8,6 +8,10 @@
  * place in it, stats, pack, what they have identified, what they remember
  * of each chunk, and their messages, prompt, and whether they are dead.
  *
+ * Players who walk into each other meet: a menu opens, to say something
+ * from a list of phrases or give the other an item or gold. Players can
+ * also say what they type, and everyone who can see them hears it.
+ *
  * A player starts, and after dying starts again as a new character, at a
  * random spot on the surface, depth 0, near the middle of the world; the
  * world carries on.
@@ -17,7 +21,7 @@ val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val string = import("slug.string")
 val math = import("slug.math")
-val {map, filter, reduce, remove} = import("slug.std")
+val {map, filter, reduce, remove, range} = import("slug.std")
 
 export val DIRECTIONS = {
     h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0],
@@ -76,6 +80,10 @@ var acting:str|nil = nil
 // spent the player's turn.
 var ticking = false
 var spent = false
+
+// Whether the step being taken is part of a run, which stops at another
+// player instead of meeting them.
+var runStep = false
 
 // What has changed since `changes` was last asked, for saving: chunk keys,
 // player ids, and remembered chunks as [id, chunk key] by "id chunk key",
@@ -723,6 +731,7 @@ val newCharacter = fn() {
         messages: ["Welcome! The dungeon lies below."],
         more: [],
         prompt: nil,
+        menu: nil,
         showingPack: false,
         dead: false,
         sense: false,
@@ -1193,7 +1202,13 @@ val step = fn(dx:num, dy:num):bool {
     val p = player
     if (!inBounds(p.x + dx, p.y + dy)) {
         cross(dx, dy)
-    } else if (!stepOk(p.x, p.y, dx, dy) || playerAt(p.x + dx, p.y + dy)) {
+    } else if (!stepOk(p.x, p.y, dx, dy)) {
+        false
+    } else if (playerAt(p.x + dx, p.y + dy)) {
+        match playerIdIn(playerKey(), p.x + dx, p.y + dy) {
+            id: str => if (!runStep) { meet(id) }
+            _ => nil
+        }
         false
     } else {
         val i = indexAt(site().monsters, p.x + dx, p.y + dy)
@@ -1223,7 +1238,14 @@ val cross = fn(dx:num, dy:num):bool {
     val ny = (y + level.HEIGHT) % level.HEIGHT
     if ((dx != 0 && dy != 0) || !inWorld(cx, cy)) { return false }
     val next = chunk(cx, cy, p.depth)
-    val blocked = indexAt(next.monsters, nx, ny) >= 0 || playerIn(chunkKey(cx, cy, p.depth), nx, ny)
+    match playerIdIn(chunkKey(cx, cy, p.depth), nx, ny) {
+        id: str => {
+            if (!runStep) { meet(id) }
+            return false
+        }
+        _ => nil
+    }
+    val blocked = indexAt(next.monsters, nx, ny) >= 0
     if (!contains(PASSABLE, next.map[ny][nx]) || blocked) { return false }
     enter(cx, cy, p.depth, fn(lv) { {x: nx, y: ny} })
     pickUp()
@@ -1249,7 +1271,10 @@ val monsterVisible = fn():bool {
 // message, or is dead. Running never attacks.
 val run = fn(dx:num, dy:num) {
     val p = player
-    if (indexAt(site().monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)) {
+    runStep = true
+    val moved = indexAt(site().monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)
+    runStep = false
+    if (moved) {
         val q = player
         val ground = terrain(q.x, q.y)
         val stop = ground == level.DOOR || ground == level.STAIRS || ground == level.UP || indexAt(site().items, q.x, q.y) >= 0
@@ -1496,6 +1521,192 @@ val askWith = fn(spec:struct<ItemCommand>, c:str) {
 }
 
 // ---------------------------------------------------------------------------
+// Meeting other players.
+
+/**
+ * What players can say to each other with one key from the Talk menu.
+ */
+export val PHRASES = ["Hello!", "Follow me.", "Wait here.", "Help!", "Watch out!", "Thanks!", "Goodbye."]
+
+// The longest thing a player can say, in characters.
+val SAY_LIMIT = 80
+
+// The id of the living player other than the acting one at (x, y) in the
+// chunk with `key`, or nil.
+val playerIdIn = fn(key:str, x:num, y:num):str|nil {
+    val company = companyIn(key)
+    val go = fn(i:num):str|nil {
+        if (i == len(company)) { return nil }
+        val [id, o] = company[i]
+        if (id != acting && o.x == x && o.y == y) { id } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// Where player `o` stands, in the coordinates of the acting player's chunk.
+val relative = fn(o:map):map {
+    {x: o.x + (o.cx - player.cx) * level.WIDTH, y: o.y + (o.cy - player.cy) * level.HEIGHT}
+}
+
+// The player with `id` if they are alive, on the acting player's depth,
+// and on a square next to them, or nil.
+val beside = fn(id:str):map|nil {
+    match players[id] {
+        o: map => {
+            val r = relative(o)
+            val near = math.max(math.abs(r.x - player.x), math.abs(r.y - player.y)) == 1
+            if (!o.dead && o.depth == player.depth && near) { o } else { nil }
+        }
+        _ => nil
+    }
+}
+
+// Opens the menu for meeting the player with `id`, as bumping into them
+// does: it takes no time.
+val meet = fn(id:str) {
+    player = player copy {menu: {with: id, page: "main"}}
+}
+
+val closeMenu = fn() { player = player copy {menu: nil} }
+
+// The entries of the acting player's open menu, each `{key, label}` and
+// what choosing it does as `act`, with the menu's title.
+val menuOf = fn():map {
+    val m = player.menu
+    val name = players[m.with].name
+    match m.page {
+        "talk" => {
+            title: "Say to " + name + ":",
+            entries: map(range(len(PHRASES)), fn(i) { {key: "" + (i + 1), label: PHRASES[i], act: ["phrase", i]} }),
+        }
+        "give" => {
+            val worn = player.armour
+            val items = filter(player.pack, fn(e) { e.letter != worn })
+            val gold = player.gold
+            val some = if (gold >= 20) { [{key: "1", label: "10 gold", act: ["gold", 10]}] } else { [] }
+            val all = if (gold > 0) { [{key: "2", label: "All your gold (" + gold + ")", act: ["gold", gold]}] } else { [] }
+            {
+                title: "Give " + name + ":",
+                entries: map(items, fn(e) {
+                    val held = if (e.letter == player.weapon) { " (weapon in hand)" } else { "" }
+                    {key: e.letter, label: nameOf(e.item, 1) + held, act: ["item", e.letter]}
+                }) + some + all,
+            }
+        }
+        _ => {
+            title: "You meet " + name + ".",
+            entries: [
+                {key: "1", label: "Talk", act: ["page", "talk"]},
+                {key: "2", label: "Give", act: ["page", "give"]},
+                {key: "3", label: "Leave", act: ["close"]},
+            ],
+        }
+    }
+}
+
+// The players who can hear the acting player: everyone else alive whom
+// they can see.
+val hearers = fn():list {
+    val sight = inSightNow()
+    filter(string.sort(keys(players)), fn(id) {
+        val o = if (id == acting) { nil } else { players[id] }
+        if (o == nil || o.dead || o.depth != player.depth) { return false }
+        val r = relative(o)
+        sight[viewKey(r.x, r.y)] == true
+    })
+}
+
+// The acting player says `words` aloud, to everyone who can see them.
+val speak = fn(words:str) {
+    val name = player.name
+    say("You say: \"" + words + "\"")
+    map(hearers(), fn(id) { actAs(id, fn() { say(name + " says: \"" + words + "\"") }) })
+}
+
+// What a player typed, made fit to say: control characters as spaces, so on
+// one line, trimmed, and at most SAY_LIMIT characters.
+val tidy = fn(text:str):str {
+    val flat = string.join(map(string.chars(text), fn(c) { if (string.ord(c) < 32 || string.ord(c) == 127) { " " } else { c } }), "")
+    val trimmed = string.trim(flat)
+    if (len(trimmed) > SAY_LIMIT) { trimmed[:SAY_LIMIT] } else { trimmed }
+}
+
+// Gives the player with `id`, who is beside the acting player, one of the
+// item with `letter`; it takes a turn.
+val giveItem = fn(id:str, letter:str) {
+    val i = packIndex(letter)
+    if (i < 0) { return nil }
+    val item = player.pack[i].item
+    val giver = player.name
+    val taken = actAs(id, fn() {
+        val got = addToPack(item)
+        if (got != nil) { say(giver + " gives you " + nameOf(item, 1) + " (" + got + ").") }
+        got != nil
+    })
+    if (taken) {
+        say("You give " + players[id].name + " " + nameOf(item, 1) + ".")
+        takeOne(letter)
+        endTurn()
+    } else {
+        say(players[id].name + " can't carry any more.")
+    }
+}
+
+val giveGold = fn(id:str, amount:num) {
+    val n = math.min(amount, player.gold)
+    if (n <= 0) { return nil }
+    val giver = player.name
+    setPlayer(player copy {gold: player.gold - n})
+    actAs(id, fn() {
+        setPlayer(player copy {gold: player.gold + n})
+        say(giver + " gives you " + n + " gold.")
+    })
+    say("You give " + players[id].name + " " + n + " gold.")
+    endTurn()
+}
+
+// Does what menu entry `act` says, for the player the menu is about, if
+// they are still beside the acting player.
+val choose = fn(act:list) {
+    val id = player.menu.with
+    match act {
+        ["page", page] => player = player copy {menu: player.menu copy {page: page}}
+        ["close"] => closeMenu()
+        _ => {
+            closeMenu()
+            if (beside(id) == nil) {
+                say((players[id] ?? {name: "They"}).name + " is no longer beside you.")
+            } else {
+                match act {
+                    ["phrase", i] => speak(PHRASES[i])
+                    ["item", letter] => giveItem(id, letter)
+                    ["gold", n] => giveGold(id, n)
+                    _ => nil
+                }
+            }
+        }
+    }
+}
+
+// A key while a menu is open: an entry's key chooses it, and space goes
+// back a page, or closes the menu from its first. Returns whether the key
+// was the menu's; any other key closes it and acts as usual.
+val menuKey = fn(key:str):bool {
+    if (key == "space") {
+        if (player.menu.page == "main") { closeMenu() } else { player = player copy {menu: player.menu copy {page: "main"}} }
+        return true
+    }
+    val chosen = filter(menuOf().entries, fn(e) { e.key == key })
+    if (len(chosen) > 0) {
+        choose(chosen[0].act)
+        true
+    } else {
+        closeMenu()
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Commands.
 
 /**
@@ -1532,14 +1743,23 @@ val finish = fn() {
 }
 
 // Carries out one command key for the acting player; see `command`.
-val perform = fn(key:str, shift:bool) {
+val perform = fn(key:str, shift:bool, text:str = "") {
     player = player copy {running: nil}
-    if (len(player.more) > 0) {
+    if (key == "say") {
+        val words = tidy(text)
+        if (!player.dead && words != "") {
+            player = player copy {messages: []}
+            speak(words)
+            finish()
+        }
+    } else if (len(player.more) > 0) {
         if (key == "space") { showMessages(player.more) }
     } else if (player.dead) {
         if (key == "enter") { newCharacter() }
     } else if (player.showingPack) {
         if (key == "space") { player = player copy {showingPack: false, messages: []} }
+    } else if (player.menu != nil && menuKey(key)) {
+        finish()
     } else if (player.prompt != nil) {
         val c = player.prompt
         if (key == "space") {
@@ -1583,10 +1803,39 @@ val perform = fn(key:str, shift:bool) {
     }
 }
 
+// The map of the acting player's chunk as they know it, with the monsters
+// and players they can see on it.
+val mapRows = fn():list {
+    val monsters = fn(i:num, rows:list):list {
+        if (i == len(site().monsters)) {
+            rows
+        } else {
+            val m = site().monsters[i]
+            val shown = player.sense || canSee(m.x, m.y)
+            recur(i + 1, if (shown) { write(rows, m.x, m.y, data.monsters[m.kind].letter) } else { rows })
+        }
+    }
+    val company = companyIn(playerKey())
+    val others = fn(i:num, rows:list):list {
+        if (i == len(company)) {
+            rows
+        } else {
+            val o = company[i][1]
+            recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
+        }
+    }
+    write(others(0, monsters(0, memory())), player.x, player.y, "@")
+}
+
 // The acting player's screen; see `text`.
 val screen = fn():list {
     val p = player
-    val map = if (player.showingPack) {
+    val map = if (player.menu != nil) {
+        val m = menuOf()
+        val all = [m.title, ""] + map(m.entries, fn(e) { e.key + ") " + e.label }) + ["", "(space to go back)"]
+        val lines = if (len(all) > level.HEIGHT) { all[:level.HEIGHT] } else { all }
+        lines + map(range(level.HEIGHT - len(lines)), fn(_) { "" })
+    } else if (player.showingPack) {
         val lines = fn(i:num, rows:list):list {
             if (i == level.HEIGHT) {
                 rows
@@ -1596,25 +1845,7 @@ val screen = fn():list {
         }
         lines(0, [])
     } else {
-        val monsters = fn(i:num, rows:list):list {
-            if (i == len(site().monsters)) {
-                rows
-            } else {
-                val m = site().monsters[i]
-                val shown = player.sense || canSee(m.x, m.y)
-                recur(i + 1, if (shown) { write(rows, m.x, m.y, data.monsters[m.kind].letter) } else { rows })
-            }
-        }
-        val company = companyIn(playerKey())
-        val others = fn(i:num, rows:list):list {
-            if (i == len(company)) {
-                rows
-            } else {
-                val o = company[i][1]
-                recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
-            }
-        }
-        write(others(0, monsters(0, memory())), p.x, p.y, "@")
+        mapRows()
     }
     val hunger = if (p.food <= 0) { "  Faint" } else if (p.food <= 50) { "  Weak" } else if (p.food <= 150) { "  Hungry" } else { "" }
     val status = "Depth:" + player.depth + "  Gold:" + p.gold + "  Hp:" + p.hp + "(" + p.maxHp + ")  Str:" + p.str
@@ -1630,12 +1861,28 @@ val screen = fn():list {
  * Carries out one command key for the player with `id`: a letter, "space",
  * or "enter", with `shift` held or not, as the eval's task.md describes,
  * except that `enter` takes stairs up as well as down, and after death
- * starts a new character.
+ * starts a new character. Walking into another player opens a menu, which
+ * an entry's key chooses from and space backs out of; the key "say" says
+ * `text` aloud to everyone who can see the player.
  */
-export val command = fn(id:str, key:str, shift:bool) { actAs(id, fn() { perform(key, shift) }) }
+export val command = fn(id:str, key:str, shift:bool, text:str = "") { actAs(id, fn() { perform(key, shift, text) }) }
 
 /**
- * Advances the world by one tick. Each of `actions`, `{id, key, shift}` in
+ * The menu the player with `id` has open, as `{title, entries}` with each
+ * entry `{key, label}`, the key that chooses it; or nil when none is open.
+ * Bumping into another player opens one: Talk, Give, or Leave.
+ */
+export val menu = fn(id:str):map|nil {
+    actAs(id, fn() {
+        if (player.menu == nil) { return nil }
+        val m = menuOf()
+        {title: m.title, page: player.menu.page, entries: map(m.entries, fn(e) { {key: e.key, label: e.label} })}
+    })
+}
+
+/**
+ * Advances the world by one tick. Each of `actions`, `{id, key, shift}`,
+ * or `{id, key: "say", text}` to say `text` aloud, in
  * the order they arrived, at most one per player, is carried out as
  * `command` would, except that a frozen player's is dropped, and a run
  * takes one step a tick. Players in `present` (those playing now) with no
@@ -1668,7 +1915,7 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
                 acted = acted :+ a.id
                 actAs(a.id, fn() {
                     spent = false
-                    perform(a.key, a.shift ?? false)
+                    perform(a.key, a.shift ?? false, a.text ?? "")
                     if (spent) { timed = timed :+ a.id }
                 })
             }
@@ -1724,10 +1971,10 @@ export val text = fn(id:str):list { actAs(id, screen) }
  */
 export val view = fn(id:str, left:num, top:num, cols:num, rows:num):list {
     actAs(id, fn() {
-        val current = screen()
+        val current = mapRows()
         val rowOf = fn(cx:num, cy:num, ly:num):str {
             if (cx == player.cx && cy == player.cy) {
-                current[1 + ly]
+                current[ly]
             } else {
                 (player.memory[chunkKey(cx, cy, player.depth)] ?? BLANK_ROWS)[ly]
             }

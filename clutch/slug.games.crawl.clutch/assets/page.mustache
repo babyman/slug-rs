@@ -13,6 +13,11 @@
 <body hx-target="#game" hx-sync="#keys:queue all">
   <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
   <header><h1>CRAWL</h1><p>A world above, a dungeon below.</p></header>
+  {{! Outside #game, so what is being typed survives each push of the game. }}
+  <form class="say" hx-post="/say" hx-swap="none" hx-on::after-request="this.reset(); this.elements.text.blur()">
+    <input id="say" name="text" maxlength="80" autocomplete="off" enterkeyhint="send" placeholder="Say something to everyone in sight…" aria-label="Say">
+    <button>Say</button>
+  </form>
   <main id="game">
     {{>game}}
   </main>
@@ -40,6 +45,7 @@
   <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
   Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
   <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
-  or use the buttons beside each item in your pack. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
+  or use the buttons beside each item in your pack. Walk into another player to talk to them or give them something;
+  <kbd>/</kbd> to say something to everyone in sight. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
 </body>
 </html>

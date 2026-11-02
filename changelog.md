@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl's players can meet. Walking into another player opens a menu over
+  the map, which takes no time: Talk, a list of phrases one key each
+  ("Hello!", "Follow me.", "Help!"…), and Give, an item from the pack or
+  gold, which the other player gets at once. A box above the game (`/` to
+  type) says anything up to 80 characters to everyone in sight. Running
+  stops at another player without a menu, and players cannot attack each
+  other. The engine adds `menu(id)`, `PHRASES`, and a `text` argument to
+  `command`, for the key "say"; the web server adds `POST /say`.
+
 - New core module `slug.os.signal`: `notify(["int", "term"])` returns a
   channel that receives `"int"` for Ctrl-C (SIGINT) and `"term"` for
   SIGTERM (Ctrl-Break on Windows) instead of the program ending, so it can
