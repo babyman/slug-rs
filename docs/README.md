@@ -29,6 +29,7 @@ a specified feature is implemented.
 | [engineering/](engineering/) | Rust implementation architecture and contributor workflow. |
 | [planning/](planning/) | Living implementation roadmaps and completed plans retained for context. |
 | [decisions/](decisions/README.md) | Immutable records of durable architecture and language decisions. |
+| [games/](games/) | Guides to the games written in Slug. |
 | [generated/](generated/) | Derived implementation-status artifacts. |
 
 ### Reference
@@ -45,6 +46,12 @@ a specified feature is implemented.
 | [diagnostics.md](reference/diagnostics.md) | The version 2 diagnostic document shared by the CLI and the interactive server. |
 | [diagnostic-codes.md](reference/diagnostic-codes.md) | Stable codes for parse, semantic, runtime, and startup diagnostics. |
 | [capability-report.md](reference/capability-report.md) | `slug report`: what a program can touch outside its own Slug code. |
+
+### Games
+
+| Document | Purpose |
+|---|---|
+| [crawl.md](games/crawl.md) | How Crawl, the shared-world roguelike in `slug.games.crawl`, plays, and how to run a server. |
 
 ### Engineering
 
