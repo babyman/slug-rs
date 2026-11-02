@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Crawl's worlds have a history. Before anyone comes, a new world's empires
+  live through 300 years (`--history=N`; the engine's `newGame` runs none
+  unless `options.history` asks), about a second at start. In those years
+  the factions from below can besiege settlements next to the land they
+  hold; walls double a settlement's defence, but every siege it holds off
+  wears them down, and one that falls is a ruin from then on. Most worlds
+  lose none to four of their settlements; the start town always stands.
+  A ruin is the settlement as it stood, left to the years: walls fallen in
+  or overgrown, doors gone, roads and floors grown over, no one there,
+  monsters welcome, and the way down inside; the dungeon under it, down to
+  depth 3, holds what the fallen left behind. Players arrive with the
+  chronicle full, and innkeepers tell of falls ("Elmby fell to the Redaxe
+  Horde in the year 124. They say its cellars were never emptied.").
+
 - Crawl has an empire layer. The world's regions, four chunks across, are
   held at four bands of depth (the surface, the shallows, the middle and
   the deep) by eight factions of six peoples: humans and dwarfs above;

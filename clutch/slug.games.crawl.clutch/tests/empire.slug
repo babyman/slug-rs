@@ -34,7 +34,7 @@ val aNewWorldHasEightFactionsAndTheHumansHoldTheSettlements = fn() {
     val places = town.place(1, 32)
     assertTrue(all(places, fn(s) {
         val k = empire.territoryOf(s.cx, s.cy, 0)
-        e.fixed[k] == true && e.factions[e.holds[k]].people == "humans"
+        e.fixed[k] == s.name && e.factions[e.holds[k]].people == "humans"
     }))
     assertEqual(created(1), e)
 }

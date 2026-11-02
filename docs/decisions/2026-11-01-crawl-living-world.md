@@ -261,3 +261,7 @@ Each step leaves a playable game:
    holds the land they are in.)
 7. History at world creation: the empire layer run for a few hundred
    years, ruins from fallen settlements, rumours from the chronicle.
+   (Done: 300 years by default, `--history=N`. Only in history do factions
+   from below besiege settlements, and every siege a settlement holds off
+   wears its walls down; the start town never falls. The dungeon under a
+   ruin is richer, down to depth 3, but no deeper than elsewhere.)

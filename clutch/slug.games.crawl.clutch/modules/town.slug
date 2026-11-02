@@ -252,6 +252,41 @@ val buildFort = fn(lv:map):map {
     {map: rows, down: down, characters: characters, walls: walls, items: outside(lv, rows, walls), start: {x: 40, y: 11}}
 }
 
+// What the years leave of a settlement `built`: walls fallen in or grown
+// over, doors gone, roads and floors overgrown, no one left, and the way
+// down in the middle of what was.
+val decay = fn(built:map):map {
+    val w = built.walls
+    val square = fn(c:str):str {
+        val r = rng.below(100)
+        if (c == level.HWALL || c == level.VWALL) {
+            if (r < 35) { level.FLOOR } else if (r < 50) { level.SCRUB } else if (r < 55) { level.TREE } else { c }
+        } else if (c == level.DOOR) {
+            level.FLOOR
+        } else if (c == level.ROAD) {
+            if (r < 40) { level.SCRUB } else { c }
+        } else if (c == level.FLOOR) {
+            if (r < 8) { level.SCRUB } else if (r < 11) { level.TREE } else { c }
+        } else {
+            c
+        }
+    }
+    val row = fn(y:num, x:num, out:str):str {
+        if (x > w.right) { return out }
+        recur(y, x + 1, out + square(built.map[y][x]))
+    }
+    val rows = fn(y:num, acc:list):list {
+        if (y > w.bottom) { return acc }
+        recur(y + 1, write(acc, w.left, y, row(y, w.left, "")))
+    }
+    val worn = rows(w.top, built.map)
+    // The way down: in a fort's yard as it was, in a town's crossroads.
+    val within = built.down.x > w.left && built.down.x < w.right && built.down.y > w.top && built.down.y < w.bottom
+    val down = if (within) { built.down } else { built.start }
+    val cleared = if (down == built.down) { worn } else { write(worn, built.down.x, built.down.y, level.FLOOR) }
+    built + {map: write(cleared, down.x, down.y, level.STAIRS), down: down, characters: []}
+}
+
 /**
  * Builds settlement `s` over surface chunk `lv` of the world with seed
  * `world`: its walls, gates, roads and buildings over the terrain, its
@@ -259,14 +294,21 @@ val buildFort = fn(lv:map):map {
  * yard. Items inside the walls or under what was built go, and so do the
  * chunk's monsters. The chunk gains `place` (`{kind, name}`), `characters`,
  * and `walls`, the box its walls enclose; `start` is in its main street or
- * yard.
+ * yard. A settlement that fell (`kind` "ruin", `was` what it was) is built
+ * as it stood and then left to the years: the ruins of it, with no one
+ * there and the way down inside.
  */
 export val build = fn(world:num, lv:map, s:map):map {
     rng.within(rng.mix([world, 43, s.cx, s.cy]), fn() {
         // The way down moves, so the old one goes first.
         val cleared = lv copy {map: write(lv.map, lv.down.x, lv.down.y, level.FLOOR)}
-        val built = if (s.kind == "fort") { buildFort(cleared) } else { buildTown(cleared) }
-        lv + built + {monsters: [], place: {kind: s.kind, name: s.name}}
+        val kind = if (s.kind == "ruin") { s.was ?? "town" } else { s.kind }
+        val built = if (kind == "fort") { buildFort(cleared) } else { buildTown(cleared) }
+        if (s.kind == "ruin") {
+            lv + decay(built) + {monsters: [], place: {kind: "ruin", name: "the ruins of " + s.name}}
+        } else {
+            lv + built + {monsters: [], place: {kind: s.kind, name: s.name}}
+        }
     })
 }
 

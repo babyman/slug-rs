@@ -25,7 +25,7 @@
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
 val string = import("slug.string")
-val {map, filter, reduce, range, any} = import("slug.std")
+val {map, filter, reduce, range, any, remove} = import("slug.std")
 
 /**
  * How many chunks across and down a region is.
@@ -146,7 +146,7 @@ val besides = fn(key:str, regions:num):list {
  * rest each holding a few territories at their home band.
  */
 export val create = fn(seed:num, size:num, settlements:list):map {
-    if (size == 0) { return {factions: [], holds: {}, fixed: {}, chronicle: [], step: 0, regions: 0, kills: {}} }
+    if (size == 0) { return {factions: [], holds: {}, fixed: {}, start: "", fallen: [], chronicle: [], step: 0, regions: 0, kills: {}} }
     val regions = math.div(size + REGION - 1, REGION)
     val towns = filter(settlements, fn(s) { s.kind == "town" })
     val seats = [towns[0], if (len(towns) > 1) { towns[len(towns) - 1] } else { towns[0] }]
@@ -172,7 +172,8 @@ export val create = fn(seed:num, size:num, settlements:list):map {
         if (d(seats[0]) <= d(seats[1])) { 0 } else { 1 }
     }
     map(settlements, fn(s) { holds = holds + {[territoryOf(s.cx, s.cy, 0)]: nearer(s)} })
-    val fixed = reduce(settlements, {}, fn(acc, s) { acc + {[territoryOf(s.cx, s.cy, 0)]: true} })
+    // Settlements' territories, with their names; the first is the start town.
+    val fixed = reduce(settlements, {}, fn(acc, s) { acc + {[territoryOf(s.cx, s.cy, 0)]: s.name} })
     // Each other faction starts from a free territory at its home band and
     // spreads to a few beside it.
     val spread = fn(i:num, key:str, n:num) {
@@ -201,7 +202,10 @@ export val create = fn(seed:num, size:num, settlements:list):map {
             }
         }
     })
-    {factions: factions, holds: holds, fixed: fixed, chronicle: [], step: 0, regions: regions, kills: {}}
+    {
+        factions: factions, holds: holds, fixed: fixed, start: territoryOf(settlements[0].cx, settlements[0].cy, 0),
+        fallen: [], chronicle: [], step: 0, regions: regions, kills: {},
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,14 +266,16 @@ val earn = fn(empire:map, i:num):map {
 // Faction `i` may push into a territory beside its own: more often if
 // bold; a wild one is claimed, a held one fought for, more often if
 // aggressive, and less often from its own side if orderly. Settlements'
-// territories are never taken.
-val push = fn(empire:map, i:num, seed:num):map {
+// territories are never taken, but in `history` those from below may
+// besiege them, all but the start town.
+val push = fn(empire:map, i:num, seed:num, history:bool):map {
     val f = empire.factions[i]
     if (rng.below(100) >= 30 + 10 * f.traits.bold) { return empire }
     val mine = filter(keys(empire.holds), fn(k) { empire.holds[k] == i })
     if (len(mine) == 0) { return empire }
+    val besieging = history && people(f.people).side == "below"
     val targets = filter(reduce(mine, [], fn(acc, k) { acc + besides(k, empire.regions) }), fn(k) {
-        empire.holds[k] != i && empire.fixed[k] == nil
+        empire.holds[k] != i && (empire.fixed[k] == nil || (besieging && k != empire.start))
     })
     if (len(targets) == 0) { return empire }
     // Boxed in, with no wild land left beside it, a faction grows hungrier.
@@ -277,13 +283,20 @@ val push = fn(empire:map, i:num, seed:num):map {
     val hungry = if (boxed && rng.below(10) == 0) {
         setFaction(empire, i, f copy {traits: f.traits copy {aggressive: clamp(f.traits.aggressive + 1)}})
     } else { empire }
-    pushInto(hungry, i, seed, targets[rng.below(len(targets))])
+    // A settlement within reach draws a besieger half the time.
+    val walled = filter(targets, fn(k) { empire.fixed[k] != nil })
+    val pool = if (len(walled) > 0 && rng.below(2) == 0) { walled } else { targets }
+    pushInto(hungry, i, seed, pool[rng.below(len(pool))])
 }
 
 // Faction `i` pushes into territory `target`.
 val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
     val f = empire.factions[i]
     val where = placeName(seed, target)
+    match empire.fixed[target] {
+        name: str => return siege(empire, i, target, name)
+        _ => nil
+    }
     match empire.holds[target] {
         j: num => {
             val g = empire.factions[j]
@@ -322,6 +335,32 @@ val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
     }
 }
 
+// Faction `i` besieges the settlement called `name` in territory `target`,
+// whose walls double its holder's defence at first; each siege it holds off
+// wears them down. Taken, it falls and is a ruin from then on, and its land
+// the besieger's.
+val siege = fn(empire:map, i:num, target:str, name:str):map {
+    val f = empire.factions[i]
+    val j = empire.holds[target] ?? 0
+    val g = empire.factions[j]
+    if (rng.below(100) >= 30 + 20 * f.traits.aggressive) { return empire }
+    val attack = power(empire, i, target) * (50 + rng.below(101))
+    val worn = (empire.sieges ?? {})[target] ?? 0
+    val defence = math.div(power(empire, j, target) * (50 + rng.below(101)) * math.max(25, 200 - 25 * worn), 100)
+    val won = attack > defence
+    val after = setFaction(setFaction(empire, i, f copy {strength: f.strength - math.div(f.strength, if (won) { 10 } else { 5 }), lastFight: empire.step}),
+        j, g copy {strength: g.strength - math.div(g.strength, if (won) { 5 } else { 10 }), lastFight: empire.step})
+    if (won) {
+        note(after copy {
+            holds: after.holds + {[target]: i},
+            fixed: remove(after.fixed, target),
+            fallen: after.fallen :+ {name: name, by: f.name, year: empire.step},
+        }, f.name + " sacked " + name + ".")
+    } else {
+        note(after copy {sieges: (after.sieges ?? {}) + {[target]: worn + 1}}, name + " held against " + f.name + ".")
+    }
+}
+
 // The players' kills since the last step weaken the factions of the
 // peoples killed, where they hold the land.
 val bleed = fn(empire:map):map {
@@ -350,13 +389,16 @@ val calm = fn(empire:map, i:num):map {
 /**
  * One step of the empire layer for the world with seed `seed`: the players'
  * kills weaken their peoples' factions; then each faction in turn earns,
- * may push into the territory beside its own, and may calm down.
+ * may push into the territory beside its own, and may calm down. A step of
+ * `history`, before anyone plays, lets factions from below besiege
+ * settlements; those that fall are listed in `fallen`, as `{name, by,
+ * year}`.
  */
-export val step = fn(empire:map, seed:num):map {
+export val step = fn(empire:map, seed:num, history:bool = false):map {
     val bled = bleed(empire)
     val each = fn(i:num, e:map):map {
         if (i == len(e.factions)) { return e }
-        recur(i + 1, calm(push(earn(e, i), i, seed), i))
+        recur(i + 1, calm(push(earn(e, i), i, seed, history), i))
     }
     each(0, bled) copy {step: empire.step + 1}
 }
@@ -434,9 +476,16 @@ val uncap = fn(text:str):str { string.lower(text[:1]) + text[1:] }
 
 /**
  * Something an innkeeper might have heard: one of the chronicle's latest
- * events, or nil when nothing has happened yet.
+ * events, or the fall of a settlement, or nil when nothing has happened
+ * yet.
  */
 export val news = fn(empire:map):str|nil {
     val recent = if (len(empire.chronicle) > 8) { empire.chronicle[len(empire.chronicle) - 8:] } else { empire.chronicle }
+    val fallen = empire.fallen ?? []
+    // Now and then, the fall of a settlement, long ago.
+    if (len(fallen) > 0 && (len(recent) == 0 || rng.below(3) == 0)) {
+        val f = fallen[rng.below(len(fallen))]
+        return f.name + " fell to " + f.by + " in the year " + f.year + ". They say its cellars were never emptied."
+    }
     if (len(recent) == 0) { nil } else { "They say " + uncap(recent[rng.below(len(recent))].text) }
 }

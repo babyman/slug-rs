@@ -1,0 +1,82 @@
+val game = import("slug.games.crawl")
+val empire = import("slug.games.crawl.empire")
+val town = import("slug.games.crawl.town")
+val level = import("slug.games.crawl.level")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, reduce, all, any} = import("slug.std")
+
+// The count of squares in `rows` that are `c`.
+val count = fn(rows:list, c:str):num {
+    reduce(rows, 0, fn(n, row) { n + len(filter(range(len(row)), fn(x) { row[x] == c })) })
+}
+
+val inside = fn(walls:map, x:num, y:num):bool {
+    x > walls.left && x < walls.right && y > walls.top && y < walls.bottom
+}
+
+@test
+val aWorldHasNoHistoryUnlessAskedFor = fn() {
+    game.newGame(1)
+    val e = game.current().world.empire
+    assertEqual([e.step, e.chronicle, e.fallen], [0, [], []])
+    assertTrue(all(game.current().world.settlements, fn(s) { s.kind != "ruin" }))
+}
+
+@test
+val historyAgesTheWorldAndSomeSettlementsFall = fn() {
+    game.newGame(1, {history: 300})
+    val w = game.current().world
+    assertEqual(w.empire.step, 300)
+    assertEqual(len(w.empire.chronicle), 40)
+    val fell = map(w.empire.fallen, fn(f) { f.name })
+    assertTrue(len(fell) > 0)
+    val ruins = filter(w.settlements, fn(s) { s.kind == "ruin" })
+    assertEqual(map(ruins, fn(s) { s.name }), filter(map(w.settlements, fn(s) { s.name }), fn(n) { any(fell, fn(f) { f == n }) }))
+    assertTrue(all(ruins, fn(s) { s.was == "town" || s.was == "fort" }))
+    // The start town always stands, and new characters start there.
+    assertEqual(w.settlements[0].kind, "town")
+    game.join("a", "Ann")
+    assertEqual([game.playerOf("a").cx, game.playerOf("a").cy], [w.settlements[0].cx, w.settlements[0].cy])
+    // The same seed has the same history.
+    game.newGame(1, {history: 300})
+    assertEqual(game.current().world.empire, w.empire)
+}
+
+@test
+val aRuinIsEmptyBrokenAndHasAWayDownInside = fn() {
+    val s = filter(town.place(1, 32), fn(s) { s.kind == "town" })[1]
+    val ground = level.generate(1, s.cx, s.cy, 0, 32)
+    val standing = town.build(1, ground, s)
+    val ruin = town.build(1, ground, s + {kind: "ruin", was: "town"})
+    assertEqual(ruin.place, {kind: "ruin", name: "the ruins of " + s.name})
+    assertEqual(ruin.characters, [])
+    assertTrue(count(ruin.map, level.HWALL) < count(standing.map, level.HWALL))
+    assertEqual(count(ruin.map, level.DOOR), 0)
+    assertTrue(inside(ruin.walls, ruin.down.x, ruin.down.y))
+    assertEqual(ruin.map[ruin.down.y][ruin.down.x], level.STAIRS)
+    assertEqual(count(ruin.map, level.STAIRS), 1)
+}
+
+@test
+val theDungeonUnderARuinIsRicher = fn() {
+    game.newGame(1, {history: 300})
+    game.join("a", "Ann")
+    val s = filter(game.current().world.settlements, fn(s) { s.kind == "ruin" })[0]
+    val key = game.chunkKey(s.cx, s.cy, 0)
+    val ruin = town.build(1, level.generate(1, s.cx, s.cy, 0, 32), s)
+    val snap = game.snapshot()
+    game.load(snap copy {
+        levels: snap.levels + {[key]: ruin},
+        players: snap.players + {a: snap.players.a copy {cx: s.cx, cy: s.cy, depth: 0, x: ruin.down.x, y: ruin.down.y}},
+    })
+    game.command("a", "enter", false)
+    assertEqual(game.playerOf("a").depth, 1)
+    val plain = level.generate(1, s.cx, s.cy, 1, 32)
+    assertEqual(len(game.here("a").items), len(plain.items) + 5)
+}
+
+@test
+val innkeepersTellOfTheFallen = fn() {
+    val e = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", year: 124}]}
+    assertEqual(empire.news(e), "Elmby fell to the Redaxe Horde in the year 124. They say its cellars were never emptied.")
+}

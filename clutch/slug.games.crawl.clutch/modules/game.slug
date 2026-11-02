@@ -21,6 +21,10 @@
  * monsters thrive where they hold it, players' kills weaken them, and
  * their nature sets prices and the bounties forts pay.
  *
+ * A new world can live through years of history before anyone comes, and
+ * settlements that fell are ruins: broken walls, no one there, and a richer
+ * dungeon below.
+ *
  * The surface has towns and forts (`slug.games.crawl.town`), whose people,
  * characters, stand in place: walking into one opens their menu, to buy and
  * sell, eat, rest, hear a rumour, or talk.
@@ -710,8 +714,13 @@ val habitatOf = fn(cx:num, cy:num, depth:num):list {
 }
 
 // Whether monsters can live in chunk (cx, cy) on `depth`: anywhere but a
-// settlement.
-val wild = fn(cx:num, cy:num, depth:num):bool { settlementAt(cx, cy, depth) == nil }
+// settlement still standing.
+val wild = fn(cx:num, cy:num, depth:num):bool {
+    match settlementAt(cx, cy, depth) {
+        s: map => s.kind == "ruin"
+        _ => true
+    }
+}
 
 // Gives the chunks beside (cx, cy) on `depth` that are not made and have
 // no counts yet the monsters they start with.
@@ -851,6 +860,19 @@ val regionTick = fn() {
     map(due, fn(k) { if (busy[k] == nil) { visitChunk(k, busy) } })
 }
 
+// Dungeon chunk `lv` at (cx, cy) on `depth`, richer for lying under a ruin:
+// down to depth 3, what the fallen left behind lies about.
+val underRuin = fn(lv:map, cx:num, cy:num, depth:num):map {
+    val above = settlementAt(cx, cy, 0)
+    if (depth == 0 || depth > 3 || above == nil || above.kind != "ruin") { return lv }
+    rng.within(rng.mix([world.seed, 55, cx, cy, depth]), fn() {
+        val more = fn(k:num, l:map):map {
+            if (k == 0) { l } else { recur(k - 1, l copy {items: l.items :+ level.lootIn(l, depth + 2)}) }
+        }
+        more(5, lv)
+    })
+}
+
 // The chunk at (cx, cy) on `depth`, generated the first time it is needed.
 val chunk = fn(cx:num, cy:num, depth:num):map {
     val key = chunkKey(cx, cy, depth)
@@ -858,16 +880,19 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
         lv: map => lv
         _ => {
             val plain = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
-            val lv = match settlementAt(cx, cy, depth) {
+            val built = match settlementAt(cx, cy, depth) {
                 s: map => town.build(world.seed, plain, s)
-                _ => match populations[key] {
+                _ => underRuin(plain, cx, cy, depth)
+            }
+            val lv = if (!wild(cx, cy, depth)) { built } else {
+                match populations[key] {
                     counts: map => {
                         // Its monsters are those its counts say it has now.
                         populations = populations - key
                         dirty = dirty copy {populations: dirty.populations + {[key]: true}}
-                        rng.within(rng.mix([world.seed, 53, cx, cy, depth]), fn() { withCounts(plain, counts) })
+                        rng.within(rng.mix([world.seed, 53, cx, cy, depth]), fn() { withCounts(built, counts) })
                     }
-                    _ => plain
+                    _ => built
                 }
             }
             levels = levels + {[key]: lv}
@@ -990,7 +1015,9 @@ val EMPIRE_EVERY = 400
  * visits each chunk no one is in once every `options.regionEvery` ticks
  * (default 20), where its monsters breed, die off and move on, and loot
  * turns up; and the empire layer takes a step every `options.empireEvery`
- * ticks (default 400, a minute). The world is `options.size` chunks across and down
+ * ticks (default 400, a minute), after `options.history` steps (default 0)
+ * of history, a year each, run before anyone comes, in which settlements
+ * may fall to the peoples below and become ruins. The world is `options.size` chunks across and down
  * (default 32), with towns and forts on its surface, and new characters
  * start in the town nearest its middle.
  */
@@ -1005,6 +1032,21 @@ export val newGame = fn(seed:num, options:map = {}) {
     }
     world = world + {settlements: town.place(seed, world.size)}
     world = world + {empire: rng.within(rng.mix([seed, 60]), fn() { empire.create(seed, world.size, world.settlements) })}
+    // History: the empires run for `options.history` years before anyone
+    // comes, and the settlements that fell are ruins.
+    val years = options.history ?? 0
+    val past = fn(e:map):map {
+        if (e.step >= years) { return e }
+        recur(rng.within(rng.mix([seed, 61, e.step]), fn() { empire.step(e, seed, true) }))
+    }
+    val made = past(world.empire)
+    val fell = map(made.fallen, fn(f) { f.name })
+    world = world + {
+        empire: made,
+        settlements: map(world.settlements, fn(s) {
+            if (contains(fell, s.name)) { s + {kind: "ruin", was: s.kind} } else { s }
+        }),
+    }
     levels = {}
     players = {}
     populations = {}
