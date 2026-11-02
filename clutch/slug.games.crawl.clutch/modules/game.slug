@@ -12,6 +12,10 @@
  * from a list of phrases or give the other an item or gold. Players can
  * also say what they type, and everyone who can see them hears it.
  *
+ * Monsters live in populations that breed, die off and move from chunk to
+ * chunk while no one is there (`slug.games.crawl.region`), so a chunk
+ * cleared fills again in time, from its neighbours as well as its own.
+ *
  * The surface has towns and forts (`slug.games.crawl.town`), whose people,
  * characters, stand in place: walking into one opens their menu, to buy and
  * sell, eat, rest, hear a rumour, or talk.
@@ -24,6 +28,7 @@ val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
+val region = import("slug.games.crawl.region")
 val string = import("slug.string")
 val math = import("slug.math")
 val {map, filter, reduce, remove, range} = import("slug.std")
@@ -77,6 +82,10 @@ var world = {}
 var levels = {}
 var players = {}
 
+// The monsters of chunks not made yet, beside those that are, as counts by
+// name (see `slug.games.crawl.region`), by chunk key.
+var populations = {}
+
 // The player acting now, loaded from `players` by `actAs`, and their id.
 var player = {}
 var acting:str|nil = nil
@@ -93,17 +102,18 @@ var runStep = false
 // What has changed since `changes` was last asked, for saving: chunk keys,
 // player ids, and remembered chunks as [id, chunk key] by "id chunk key",
 // each as a set, and the players whose memories were wiped.
-var dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+var dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
 
 val touchLevel = fn(key:str) { dirty = dirty copy {levels: dirty.levels + {[key]: true}} }
 
 /**
  * The whole game: `world`, `levels` (the chunks generated so far, by
- * `chunkKey`), and `players` by id.
+ * `chunkKey`), `players` by id, and `populations`, the monsters of chunks
+ * beside them not generated yet, as counts.
  */
 export val current = fn():map {
     val all = if (acting == nil) { players } else { players + {[acting]: player} }
-    {world: world, levels: levels, players: all}
+    {world: world, levels: levels, players: all, populations: populations}
 }
 
 // Runs `body` as the player with `id`: the engine's rules all act on
@@ -676,6 +686,159 @@ val settlementAt = fn(cx:num, cy:num, depth:num):map|nil {
     if (len(found) == 0) { nil } else { found[0] }
 }
 
+// ---------------------------------------------------------------------------
+// The region layer: monster populations as counts, visited a share at a
+// tick. Chunks someone living is in are left to the dungeon.
+
+// The chunks next to (cx, cy) on `depth`: across each edge, inside the
+// world, and up and down the stairs, as [cx, cy, depth].
+val neighbours = fn(cx:num, cy:num, depth:num):list {
+    val across = filter([[cx - 1, cy, depth], [cx + 1, cy, depth], [cx, cy - 1, depth], [cx, cy + 1, depth]], fn(n) { inWorld(n[0], n[1]) })
+    across + [[cx, cy, depth + 1]] + (if (depth > 0) { [[cx, cy, depth - 1]] } else { [] })
+}
+
+// Whether monsters can live in chunk (cx, cy) on `depth`: anywhere but a
+// settlement.
+val wild = fn(cx:num, cy:num, depth:num):bool { settlementAt(cx, cy, depth) == nil }
+
+// Gives the chunks beside (cx, cy) on `depth` that are not made and have
+// no counts yet the monsters they start with.
+val frontier = fn(cx:num, cy:num, depth:num) {
+    map(neighbours(cx, cy, depth), fn(n) {
+        val [ncx, ncy, nd] = n
+        val key = chunkKey(ncx, ncy, nd)
+        if (levels[key] == nil && populations[key] == nil && wild(ncx, ncy, nd)) {
+            val counts = rng.within(rng.mix([world.seed, 52, ncx, ncy, nd]), fn() { region.initial(nd, level.habitat(nd)) })
+            populations = populations + {[key]: counts}
+            dirty = dirty copy {populations: dirty.populations + {[key]: true}}
+        }
+    })
+}
+
+// Chunk `lv` with monsters to match `counts`: new ones asleep at free
+// squares, and of a kind with too many, those asleep go first.
+val withCounts = fn(lv:map, counts:map):map {
+    val have = region.tally(lv.monsters)
+    val names = string.sort(keys(have + counts))
+    val adjust = fn(i:num, now:map):map {
+        if (i == len(names)) { return now }
+        val name = names[i]
+        val want = counts[name] ?? 0
+        val got = have[name] ?? 0
+        val added = fn(k:num, l:map):map {
+            if (k <= 0) { l } else { recur(k - 1, l copy {monsters: l.monsters :+ level.monsterIn(l, name)}) }
+        }
+        val removed = fn(k:num, l:map):map {
+            if (k <= 0) { return l }
+            val ofKind = filter(range(len(l.monsters)), fn(j) { data.monsters[l.monsters[j].kind].name == name })
+            val asleep = filter(ofKind, fn(j) { l.monsters[j].state == "asleep" })
+            val pool = if (len(asleep) > 0) { asleep } else { ofKind }
+            val j = pool[rng.below(len(pool))]
+            recur(k - 1, l copy {monsters: l.monsters[:j] + l.monsters[j + 1:]})
+        }
+        recur(i + 1, if (want > got) { added(want - got, now) } else { removed(got - want, now) })
+    }
+    adjust(0, lv)
+}
+
+// Each chunk's turn in the region layer, from its coordinates: one of the
+// `world.regionEvery` ticks of each round.
+var slots = {}
+
+val slotOf = fn(key:str):num {
+    match slots[key] {
+        n: num => n
+        _ => {
+            val [cx, cy, depth] = map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 })
+            val n = rng.mix([cx, cy, depth, 54]) % (world.regionEvery ?? REGION_EVERY)
+            slots = slots + {[key]: n}
+            n
+        }
+    }
+}
+
+// Loose things the region layer keeps a chunk stocked with, at most.
+val lootCap = fn(depth:num):num { if (depth == 0) { 2 } else { 6 } }
+
+// The chunks with someone living in them, as a set of keys.
+val occupied = fn():map {
+    reduce(keys(players), {}, fn(acc, id) {
+        val p = if (id == acting) { player } else { players[id] }
+        if (p.dead) { acc } else { acc + {[chunkKey(p.cx, p.cy, p.depth)]: true} }
+    })
+}
+
+// A monster of the kind called `name` that left (cx, cy) on `depth` goes to
+// a neighbouring chunk no one is in, made or with counts, if there is one.
+val moveOn = fn(name:str, cx:num, cy:num, depth:num, busy:map) {
+    val ways = filter(neighbours(cx, cy, depth), fn(n) {
+        val key = chunkKey(n[0], n[1], n[2])
+        busy[key] == nil && wild(n[0], n[1], n[2]) && (levels[key] != nil || populations[key] != nil)
+    })
+    if (len(ways) == 0) { return nil }
+    val [ncx, ncy, nd] = ways[rng.below(len(ways))]
+    val key = chunkKey(ncx, ncy, nd)
+    match levels[key] {
+        lv: map => {
+            levels = levels + {[key]: lv copy {monsters: lv.monsters :+ level.monsterIn(lv, name)}}
+            touchLevel(key)
+        }
+        _ => {
+            val counts = populations[key]
+            populations = populations + {[key]: counts + {[name]: (counts[name] ?? 0) + 1}}
+            dirty = dirty copy {populations: dirty.populations + {[key]: true}}
+        }
+    }
+}
+
+// The region layer's visit to the chunk with `key`; see `region.visit`.
+val visitChunk = fn(key:str, busy:map) {
+    val [cx, cy, depth] = map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 })
+    if (!wild(cx, cy, depth)) { return nil }
+    rng.within(rng.mix([world.seed, 51, world.turn, cx, cy, depth]), fn() {
+        val habitat = level.habitat(depth)
+        val cap = region.capacity(depth)
+        match levels[key] {
+            lv: map => {
+                val before = region.tally(lv.monsters)
+                val r = region.visit(before, habitat, cap)
+                val loose = len(filter(lv.items, fn(i) { i.dropped != true }))
+                val stocked = if (r.counts == before) { lv } else { withCounts(lv, r.counts) }
+                val looted = if (r.loot && loose < lootCap(depth)) { stocked copy {items: stocked.items :+ level.lootIn(stocked, depth)} } else { stocked }
+                if (r.counts != before || looted.items != lv.items) {
+                    levels = levels + {[key]: looted}
+                    touchLevel(key)
+                }
+                match r.leaving {
+                    name: str => moveOn(name, cx, cy, depth, busy)
+                    _ => nil
+                }
+            }
+            _ => {
+                val before = populations[key]
+                val r = region.visit(before, habitat, cap)
+                if (r.counts != before) {
+                    populations = populations + {[key]: r.counts}
+                    dirty = dirty copy {populations: dirty.populations + {[key]: true}}
+                }
+                match r.leaving {
+                    name: str => moveOn(name, cx, cy, depth, busy)
+                    _ => nil
+                }
+            }
+        }
+    })
+}
+
+// This tick's share of the region layer: the chunks whose turn it is, in
+// key order, but those someone living is in.
+val regionTick = fn() {
+    val slot = world.turn % (world.regionEvery ?? REGION_EVERY)
+    val busy = occupied()
+    val due = string.sort(filter(keys(levels) + keys(populations), fn(k) { slotOf(k) == slot }))
+    map(due, fn(k) { if (busy[k] == nil) { visitChunk(k, busy) } })
+}
+
 // The chunk at (cx, cy) on `depth`, generated the first time it is needed.
 val chunk = fn(cx:num, cy:num, depth:num):map {
     val key = chunkKey(cx, cy, depth)
@@ -685,55 +848,38 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
             val plain = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
             val lv = match settlementAt(cx, cy, depth) {
                 s: map => town.build(world.seed, plain, s)
-                _ => plain
+                _ => match populations[key] {
+                    counts: map => {
+                        // Its monsters are those its counts say it has now.
+                        populations = populations - key
+                        dirty = dirty copy {populations: dirty.populations + {[key]: true}}
+                        rng.within(rng.mix([world.seed, 53, cx, cy, depth]), fn() { withCounts(plain, counts) })
+                    }
+                    _ => plain
+                }
             }
             levels = levels + {[key]: lv}
             touchLevel(key)
+            frontier(cx, cy, depth)
             lv
         }
     }
 }
 
 // Puts the player in the chunk at (cx, cy) on `depth`, at the spot `place`
-// gives for that chunk, and looks around. A chunk no one has been in for
-// `world.restockAfter` turns is restocked first.
+// gives for that chunk, and looks around.
 val enter = fn(cx:num, cy:num, depth:num, place:fn) {
     val lv = chunk(cx, cy, depth)
     val spot = place(lv)
-    val key = chunkKey(cx, cy, depth)
-    val left = world.turn - (lv.seen ?? world.turn)
-    if (left >= world.restockAfter && len(companyIn(key)) == 0) { restock(cx, cy, depth, lv, spot) }
     val arriving = player.cx != cx || player.cy != cy || player.depth != depth
     player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
     match lv.place {
         p: map => if (arriving) { say("You come to " + p.name + ".") }
         _ => nil
     }
-    markSeen()
     see()
 }
 
-// Gives the chunk at (cx, cy) on `depth` fresh monsters and items, keeping
-// the items players dropped there and keeping clear of `spot` and of
-// anyone away who stands there.
-val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
-    val key = chunkKey(cx, cy, depth)
-    val n = (lv.restocks ?? 0) + 1
-    val standing = map(filter(keys(players), fn(id) {
-        val p = players[id]
-        chunkKey(p.cx, p.cy, p.depth) == key
-    }), fn(id) { {x: players[id].x, y: players[id].y} })
-    val keep = filter(lv.items, fn(i) { i.dropped == true })
-    // A settlement keeps its people and has no monsters to restock.
-    val fresh = if (lv.place != nil) { {items: lv.items, monsters: []} } else {
-        level.restock(world.seed, cx, cy, depth, n, lv, keep, standing :+ spot)
-    }
-    levels = levels + {[key]: lv + fresh + {restocks: n}}
-    touchLevel(key)
-}
-
-// Notes that someone is in the acting player's chunk this turn.
-val markSeen = fn() { setHere(site() + {seen: world.turn}) }
 
 // A new character, at a random free spot in the streets of the start town.
 val newCharacter = fn() {
@@ -807,21 +953,23 @@ export val load = fn(saved:map) {
     }
     levels = saved.levels
     players = saved.players
+    populations = saved.populations ?? {}
+    slots = {}
     sights = {}
     player = {}
     acting = nil
-    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
 }
 
-// How many turns a chunk stays as it was with no one in it before it is
-// restocked, unless `newGame` is told otherwise.
-val RESTOCK_AFTER = 2000
+// How many ticks pass between visits of the region layer to each chunk,
+// unless `newGame` is told otherwise.
+val REGION_EVERY = 20
 
 /**
- * Starts a new world with `seed`, with no one in it yet. A chunk that no one
- * has been in for `options.restockAfter` turns or ticks (default 2000) gets
- * fresh monsters and items when someone next enters it; items players
- * dropped there stay. The world is `options.size` chunks across and down
+ * Starts a new world with `seed`, with no one in it yet. The region layer
+ * visits each chunk no one is in once every `options.regionEvery` ticks
+ * (default 20), where its monsters breed, die off and move on, and loot
+ * turns up. The world is `options.size` chunks across and down
  * (default 32), with towns and forts on its surface, and new characters
  * start in the town nearest its middle.
  */
@@ -831,15 +979,17 @@ export val newGame = fn(seed:num, options:map = {}) {
     val titles = rng.shuffle(data.titles)
     world = {
         seed: seed, turn: 0, colours: colours, titles: titles,
-        restockAfter: options.restockAfter ?? RESTOCK_AFTER, size: options.size ?? SIZE,
+        regionEvery: options.regionEvery ?? REGION_EVERY, size: options.size ?? SIZE,
     }
     world = world + {settlements: town.place(seed, world.size)}
     levels = {}
     players = {}
+    populations = {}
+    slots = {}
     player = {}
     acting = nil
     sights = {}
-    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
 }
 
 /**
@@ -848,8 +998,9 @@ export val newGame = fn(seed:num, options:map = {}) {
  * they are now; the chunks that changed in `levels`, by key; the players
  * who did in `players`, by id and without their memories; what they
  * remember of the chunks whose memory changed in `memories`, as `{id, key,
- * rows}`; and in `forgotten` the ids of players whose memories were wiped
- * first, by dying.
+ * rows}`; in `forgotten` the ids of players whose memories were wiped
+ * first, by dying; and in `populations` the counts of chunks not made yet
+ * that changed, by key, nil for those now made.
  */
 export val changes = fn():map {
     val all = current()
@@ -863,8 +1014,9 @@ export val changes = fn():map {
             {id: id, key: key, rows: all.players[id].memory[key]}
         }),
         forgotten: keys(dirty.forgotten),
+        populations: reduce(keys(dirty.populations), {}, fn(acc, k) { acc + {[k]: populations[k]} }),
     }
-    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}}
+    dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
     result
 }
 
@@ -1201,7 +1353,6 @@ val endTurn = fn() {
         monstersAct()
         if (!player.dead) { upkeep() }
         world = world copy {turn: world.turn + 1}
-        markSeen()
         see()
     }
 }
@@ -2129,11 +2280,11 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
         val key = playerKey()
         if (!player.dead && !contains(chunks, key)) {
             chunks = chunks :+ key
-            markSeen()
             if (world.turn % monsterEvery == 0) { monstersAct() }
         }
     })
     each(timed, fn() { if (!player.dead) { upkeep() } })
+    regionTick()
     world = world copy {turn: world.turn + 1}
     each(present, fn() { if (!player.dead) { see() } })
     ticking = false

@@ -249,7 +249,9 @@ Each step leaves a playable game:
 4. Towns and forts as walkable chunks with fixed people: a market with fixed
    prices and an inn with fixed rumours. (Done.)
 5. The region layer: monster populations per chunk, spread and breeding,
-   dungeon stocked from counts instead of restocked.
+   dungeon stocked from counts instead of restocked. (Done: the chunks
+   made, and the chunks beside them as counts; loot turns up too. Lairs
+   wait for the empire layer.)
 6. The empire layer: factions, territory, resources, production and trade;
    market prices and contracts from it; player events nudging it.
 7. History at world creation: the empire layer run for a few hundred

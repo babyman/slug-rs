@@ -128,65 +128,33 @@ val kindsAt = fn(depth:num):list {
 }
 
 /**
- * Fresh monsters and items for chunk `lv` at (cx, cy) on `depth`, its
- * `n`-th restocking, by the rules that first stocked it: each room's gold
- * and monster, then nine tries at an item. `keep` are items that stay, and
- * nothing new is put on them or on the squares in `blocked`. Returns
- * `{items, monsters}`, the kept items first.
+ * The names of the monster kinds that live on `depth`: the wild kinds on
+ * the surface, and below it the kinds whose depths include it (depth 8's
+ * below depth 8).
  */
-export val restock = fn(world:num, cx:num, cy:num, depth:num, n:num, lv:map, keep:list, blocked:list):map {
-    rng.within(rng.mix([world, cx, cy, depth, n]), fn() {
-        if (lv.outdoor == true) { return stockSurface(lv, keep, blocked, n) }
-        var items = keep
-        var monsters = []
-        val taken = fn(list:list, x:num, y:num):bool {
-            val go = fn(i:num):bool {
-                if (i == len(list)) { false } else if (list[i].x == x && list[i].y == y) { true } else { recur(i + 1) }
-            }
-            go(0)
-        }
-        val free = fn(x:num, y:num):bool {
-            lv.map[y][x] == FLOOR && !taken(items, x, y) && !taken(monsters, x, y) && !taken(blocked, x, y)
-        }
-        val spotIn = fn(room:map):map {
-            val x = room.x + 1 + rng.below(room.w - 2)
-            val y = room.y + 1 + rng.below(room.h - 2)
-            if (free(x, y)) { {x: x, y: y} } else { recur(room) }
-        }
-        val kinds = kindsAt(depth)
-        val rooms = filter(lv.rooms, fn(r) { !r.gone })
-        val stock = fn(i:num) {
-            if (i < len(rooms)) {
-                val room = rooms[i]
-                val gold = rng.below(2) == 0
-                if (gold) {
-                    val amount = rng.below(50 + 10 * depth) + 2
-                    val spot = spotIn(room)
-                    items = items :+ {x: spot.x, y: spot.y, item: {kind: "gold", amount: amount}}
-                }
-                if (rng.below(100) < (if (gold) { 80 } else { 25 })) {
-                    val spot = spotIn(room)
-                    val kind = kinds[rng.below(len(kinds))]
-                    val hp = rng.roll(data.monsters[kind].level, 8)
-                    monsters = monsters :+ {x: spot.x, y: spot.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
-                }
-                recur(i + 1)
-            }
-        }
-        stock(0)
-        val things = fn(i:num) {
-            if (i < 9) {
-                if (rng.below(100) < 36) {
-                    val item = newItem()
-                    val spot = spotIn(rooms[rng.below(len(rooms))])
-                    items = items :+ {x: spot.x, y: spot.y, item: item}
-                }
-                recur(i + 1)
-            }
-        }
-        things(0)
-        {items: items, monsters: monsters}
-    })
+export val habitat = fn(depth:num):list {
+    if (depth == 0) { SURFACE_KINDS } else { map(kindsAt(depth), fn(i) { data.monsters[i].name }) }
+}
+
+/**
+ * A new monster of the kind called `name`, asleep, at a free square of
+ * chunk `lv`.
+ */
+export val monsterIn = fn(lv:map, name:str):map {
+    val spot = freeSpot(lv)
+    val kind = indexNamed(name)
+    val hp = rng.roll(data.monsters[kind].level, 8)
+    {x: spot.x, y: spot.y, kind: kind, hp: hp, maxHp: hp, state: "asleep"}
+}
+
+/**
+ * Something found lying at a free square of chunk `lv` on `depth`: gold half
+ * the time below the surface, as much as a room's, or else an item.
+ */
+export val lootIn = fn(lv:map, depth:num):map {
+    val spot = freeSpot(lv)
+    val item = if (depth > 0 && rng.below(2) == 0) { {kind: "gold", amount: rng.below(50 + 10 * depth) + 2} } else { newItem() }
+    {x: spot.x, y: spot.y, item: item}
 }
 
 /**
@@ -437,7 +405,7 @@ val surface = fn(world:num, cx:num, cy:num, size:num):map {
 
 // Monsters and items for surface chunk `lv`: a few wild beasts and a few
 // things lying about, on free open ground, from the same generator as the
-// chunk or a restocking. `keep` are items that stay; nothing new is put on
+// chunk. `keep` are items that stay; nothing new is put on
 // them or on the squares in `blocked`.
 val stockSurface = fn(lv:map, keep:list, blocked:list, n:num):map {
     var items = keep

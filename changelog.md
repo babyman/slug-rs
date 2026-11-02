@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Crawl's monsters live in populations. A region layer visits each chunk no
+  one is in once every 20 ticks (`--region=N`), a share of the chunks each
+  tick: there its monsters breed, up to what the chunk holds (two on the
+  surface, four at depth 1, rising to eight), die off, faster away from
+  the depths they belong to, crowd out the weakest, and move on to the
+  chunks beside them, across edges and up and down stairs; an empty chunk
+  can gain a wanderer, and loot turns up now and then. Chunks not made yet
+  but beside ones that are keep their monsters as counts, which become
+  real monsters when someone first goes there. Chunks someone is in, and
+  towns and forts, are left alone. This replaces restocking after an
+  absence (`--restock` is gone). The new module `slug.games.crawl.region`
+  holds the rules, as pure functions of counts; the engine's snapshot and
+  `changes` gain `populations`, which the store keeps in its own table.
+
 - Crawl's surface has towns and forts, placed from the world's seed on land:
   a town nearest the middle, where every new character starts, and about one
   more town for every 200 chunks and a fort for every 250, each filling a

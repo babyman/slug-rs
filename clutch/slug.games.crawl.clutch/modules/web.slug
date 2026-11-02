@@ -589,7 +589,7 @@ export val resume = fn(saved:map) {
 
 // Starts a new world as `serve`'s options say.
 val fresh = fn(options:map) {
-    start(options.seed ?? secure.seed(), {restockAfter: options.restock ?? 2000, size: options.size ?? 32})
+    start(options.seed ?? secure.seed(), {regionEvery: options.region ?? 20, size: options.size ?? 32})
 }
 
 /**
@@ -602,9 +602,9 @@ val fresh = fn(options:map) {
  * is saved there every `options.save` ticks (default 20, 3 seconds), and
  * the world it already holds carries on unless `options.new` is true.
  * Otherwise, or with no world saved yet, a new world starts with
- * `options.seed` (default: a fresh one from `slug.random.secure`), its
- * chunks restocked after `options.restock` ticks with no one in them
- * (default 2000), `options.size` chunks across and down (default 32).
+ * `options.seed` (default: a fresh one from `slug.random.secure`), whose
+ * region layer visits each chunk every `options.region` ticks (default 20),
+ * `options.size` chunks across and down (default 32).
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
     val db = options.db

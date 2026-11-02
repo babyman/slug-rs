@@ -7,9 +7,9 @@
  *
  * Each table keeps JSON (`slug.fmt.json`) by key: `meta` the world and the
  * random generator's state, `chunks` each chunk by its key, `players` each
- * player by id without their memories, and `memories` what each player
+ * player by id without their memories, `memories` what each player
  * remembers of each chunk, so a save writes only the chunks they saw
- * change. `write` takes the engine's `changes`, and `read` gives back a
+ * change, and `populations` the monster counts of chunks not made yet. `write` takes the engine's `changes`, and `read` gives back a
  * snapshot for the engine's `load`.
  *
  * ```slug
@@ -35,6 +35,7 @@ val TABLES = [
     "CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, state TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS players (id TEXT PRIMARY KEY, state TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS memories (player TEXT NOT NULL, chunk TEXT NOT NULL, rows TEXT NOT NULL, PRIMARY KEY (player, chunk))",
+    "CREATE TABLE IF NOT EXISTS populations (key TEXT PRIMARY KEY, counts TEXT NOT NULL)",
 ]
 
 val metaOf = fn(db:sqlite.Database, key:str) {
@@ -96,6 +97,7 @@ export val clear = fn(db:sqlite.Database) {
         sqlite.exec(db, "DELETE FROM chunks")
         sqlite.exec(db, "DELETE FROM players")
         sqlite.exec(db, "DELETE FROM memories")
+        sqlite.exec(db, "DELETE FROM populations")
     })
 }
 
@@ -121,6 +123,11 @@ export val write = fn(db:sqlite.Database, changes:map) {
         put("DELETE FROM memories WHERE player = ?", map(changes.forgotten, fn(id) { [id] }))
         put("INSERT OR REPLACE INTO memories VALUES (?, ?, ?)",
             map(changes.memories, fn(m) { [m.id, m.key, json.stringify(m.rows)] }))
+        val counts = changes.populations ?? {}
+        val gone = filter(keys(counts), fn(k) { counts[k] == nil })
+        put("DELETE FROM populations WHERE key = ?", map(gone, fn(k) { [k] }))
+        put("INSERT OR REPLACE INTO populations VALUES (?, ?)",
+            map(filter(keys(counts), fn(k) { counts[k] != nil }), fn(k) { [k, json.stringify(counts[k])] }))
     })
 }
 
@@ -139,5 +146,8 @@ export val read = fn(db:sqlite.Database):map {
     val players = reduce(sqlite.query(db, "SELECT id, state FROM players"), {}, fn(acc, row) {
         acc + {[row.id]: json.parse(row.state) + {memory: memories[row.id] ?? {}}}
     })
-    {world: metaOf(db, "world"), rng: metaOf(db, "rng"), levels: levels, players: players}
+    val populations = reduce(sqlite.query(db, "SELECT key, counts FROM populations"), {}, fn(acc, row) {
+        acc + {[row.key]: json.parse(row.counts)}
+    })
+    {world: metaOf(db, "world"), rng: metaOf(db, "rng"), levels: levels, players: players, populations: populations}
 }

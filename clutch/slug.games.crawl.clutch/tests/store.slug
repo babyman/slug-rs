@@ -2,7 +2,7 @@ val game = import("slug.games.crawl")
 val web = import("slug.games.crawl.web")
 val store = import("slug.games.crawl.store")
 val {assertEqual, assertTrue} = import("slug.test")
-val {map} = import("slug.std")
+val {map, filter} = import("slug.std")
 
 val KEYS = ["h", "j", "k", "l", "y", "u", "b", "n", "enter", ",", "s"]
 
@@ -74,10 +74,14 @@ val onlyWhatChangedIsWrittenAgain = fn() {
     play(ids, 0, 50, db)
     store.write(db, game.changes())
     val quiet = game.changes()
-    assertEqual([quiet.levels, quiet.players, quiet.memories, quiet.forgotten], [{}, {}, [], []])
-    game.tick([], ["a"])
+    assertEqual([quiet.levels, quiet.players, quiet.memories, quiet.forgotten, quiet.populations], [{}, {}, [], [], {}])
+    // A player who drops something changes themselves and their chunk.
     val p = game.playerOf("a")
-    assertEqual(keys(game.changes().levels), [game.chunkKey(p.cx, p.cy, p.depth)])
+    game.command("a", "d", false)
+    game.command("a", p.pack[len(p.pack) - 1].letter, false)
+    val after = game.changes()
+    assertEqual(keys(after.players), ["a"])
+    assertTrue(len(filter(keys(after.levels), fn(k) { k == game.chunkKey(p.cx, p.cy, p.depth) })) == 1)
 }
 
 @test

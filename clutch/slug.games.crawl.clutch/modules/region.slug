@@ -1,0 +1,132 @@
+/**
+ * slug.games.crawl.region — monster populations, as counts
+ *
+ * The region layer of the living world: each chunk's monsters as counts of
+ * each kind, by name, which breed, die off, crowd each other out, and move
+ * on to neighbouring chunks, a visit at a time, with no squares or hit
+ * points. The engine turns a chunk's monsters into counts and back, picks
+ * where those who move on go, and keeps the chunks someone is in out of
+ * it, since there the dungeon runs them.
+ *
+ * Everything here is a pure function of its arguments and the generator it
+ * runs under (see `slug.games.crawl.rng`'s `within`), so the layer can be
+ * tested alone.
+ */
+val data = import("slug.games.crawl.data")
+val rng = import("slug.games.crawl.rng")
+val math = import("slug.math")
+val {filter, reduce} = import("slug.std")
+val string = import("slug.string")
+
+// Chances, in percent, at each visit.
+val BREED = 8
+val DIE_EACH = 2
+val DIE_ASTRAY = 20
+val LEAVE = 10
+val WANDER_IN = 3
+val LOOT = 4
+
+/**
+ * How many monsters a chunk on `depth` holds before they crowd each other
+ * out: two on the surface, and from four at depth 1 to eight at depth 8
+ * and below.
+ */
+export val capacity = fn(depth:num):num {
+    if (depth == 0) { 2 } else { 4 + math.div(math.min(depth, 8) - 1, 2) + if (depth >= 8) { 1 } else { 0 } }
+}
+
+/**
+ * The monsters in `monsters` (with `kind`, an index into the monster table)
+ * as counts by name.
+ */
+export val tally = fn(monsters:list):map {
+    reduce(monsters, {}, fn(acc, m) {
+        val name = data.monsters[m.kind].name
+        acc + {[name]: (acc[name] ?? 0) + 1}
+    })
+}
+
+/**
+ * How many monsters `counts` holds in all.
+ */
+export val total = fn(counts:map):num { reduce(keys(counts), 0, fn(sum, k) { sum + counts[k] }) }
+
+val levelOf = fn(name:str):num {
+    val found = filter(data.monsters, fn(m) { m.name == name })
+    if (len(found) == 0) { 0 } else { found[0].level }
+}
+
+val set = fn(counts:map, name:str, n:num):map {
+    if (n <= 0) { counts - name } else { counts + {[name]: n} }
+}
+
+// One of the monsters in `counts`, each equally likely.
+val anyOne = fn(counts:map):str {
+    val names = string.sort(keys(counts))
+    val r = rng.below(total(counts))
+    val go = fn(i:num, seen:num):str {
+        val next = seen + counts[names[i]]
+        if (r < next) { names[i] } else { recur(i + 1, next) }
+    }
+    go(0, 0)
+}
+
+/**
+ * One visit to a chunk whose monsters are `counts`, where the kinds in
+ * `habitat` (names) belong and `cap` monsters fit. In name order, each
+ * kind may lose one (more likely the more there are, and far more likely
+ * astray from its habitat) and, at home and with room, gain one. While
+ * the chunk holds more than `cap`, the weakest kind loses one. An empty
+ * chunk may gain a wanderer from its habitat. Then one monster may leave.
+ * Returns `{counts, leaving, loot}`: the new counts, the name of the one
+ * leaving (gone from the counts already) or nil, and whether some loot
+ * turns up.
+ */
+export val visit = fn(counts:map, habitat:list, cap:num):map {
+    val home = fn(name:str):bool { len(filter(habitat, fn(h) { h == name })) > 0 }
+    val each = fn(names:list, i:num, now:map):map {
+        if (i == len(names)) { return now }
+        val name = names[i]
+        val n = now[name] ?? 0
+        val dies = if (home(name)) { rng.below(100) < DIE_EACH * n } else { rng.below(100) < DIE_ASTRAY }
+        val afterDeath = if (dies) { set(now, name, n - 1) } else { now }
+        val m = afterDeath[name] ?? 0
+        val born = m > 0 && home(name) && total(afterDeath) < cap && rng.below(100) < BREED
+        recur(names, i + 1, if (born) { set(afterDeath, name, m + 1) } else { afterDeath })
+    }
+    val lived = each(string.sort(keys(counts)), 0, counts)
+    // The crowded lose their weakest first.
+    val thin = fn(now:map):map {
+        if (total(now) <= cap) { return now }
+        val names = string.sort(keys(now))
+        val weakest = reduce(names, names[0], fn(w, name) { if (levelOf(name) < levelOf(w)) { name } else { w } })
+        recur(set(now, weakest, now[weakest] - 1))
+    }
+    val crowded = thin(lived)
+    val arrived = if (total(crowded) == 0 && len(habitat) > 0 && rng.below(100) < WANDER_IN) {
+        crowded + {[habitat[rng.below(len(habitat))]]: 1}
+    } else {
+        crowded
+    }
+    val leaving = if (total(arrived) > 0 && rng.below(100) < LEAVE) { anyOne(arrived) } else { nil }
+    val final = match leaving {
+        name: str => set(arrived, name, arrived[name] - 1)
+        _ => arrived
+    }
+    {counts: final, leaving: leaving, loot: rng.below(100) < LOOT}
+}
+
+/**
+ * The monsters a chunk no one has seen yet starts with, as counts: on the
+ * surface up to two, below from two to five, of the kinds in `habitat`.
+ */
+export val initial = fn(depth:num, habitat:list):map {
+    if (len(habitat) == 0) { return {} }
+    val n = if (depth == 0) { rng.below(3) } else { 2 + rng.below(4) }
+    val go = fn(i:num, acc:map):map {
+        if (i == n) { return acc }
+        val name = habitat[rng.below(len(habitat))]
+        recur(i + 1, acc + {[name]: (acc[name] ?? 0) + 1})
+    }
+    go(0, {})
+}

@@ -220,16 +220,18 @@ val anInnFeedsHealsAndTellsRumours = fn() {
 }
 
 @test
-val townsAreNeverRestockedWithMonsters = fn() {
-    game.newGame(10, {restockAfter: 5})
+val noMonstersComeToATown = fn() {
+    game.newGame(10, {regionEvery: 2})
     game.join("a", "Ann")
+    val home = game.playerOf("a")
+    val key = game.chunkKey(home.cx, home.cy, 0)
     val down = game.here("a").down
     setPlayer("a", {x: down.x, y: down.y})
     game.command("a", "enter", false)
-    map(range(10), fn(_) { game.command("a", "space", false) })
-    game.command("a", "enter", false)
-    assertEqual(game.here("a").monsters, [])
-    assertTrue(len(game.here("a").characters) >= 4)
+    map(range(300), fn(_) { game.tick([], ["a"]) })
+    assertEqual(game.current().levels[key].monsters, [])
+    assertEqual(game.current().populations[key], nil)
+    assertTrue(len(game.current().levels[key].characters) >= 4)
 }
 
 @test

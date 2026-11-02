@@ -9,10 +9,10 @@
  * replaces the one it held.
  *
  * Options for a new world: `--seed=N` (default: a fresh world each time;
- * the seed is printed, so a world can be played again), `--restock=N`, how
- * many ticks a chunk stays as it was with no one in it before it gets fresh
- * monsters and items (default 2000, 5 minutes), and `--size=N`, how many
- * chunks across and down the world is (default 32).
+ * the seed is printed, so a world can be played again), `--region=N`, how
+ * many ticks pass between the region layer's visits to each chunk, where
+ * its monsters breed, die off and move on (default 20, 3 seconds), and
+ * `--size=N`, how many chunks across and down the world is (default 32).
  *
  * Options for the server: `--port=N` (default 8080; 0 picks a free one),
  * `--host=H` (default 127.0.0.1), `--tick=MS`, the milliseconds between the
@@ -46,7 +46,7 @@ val main = fn() {
     }
     web.serve(listener, {
         db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
-        restock: cfg("restock", 2000), size: cfg("size", 32), save: cfg("save", 20),
+        region: cfg("region", 20), size: cfg("size", 32), save: cfg("save", 20),
     })
     println("Saved.")
 }

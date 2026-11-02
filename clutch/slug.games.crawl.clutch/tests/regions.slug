@@ -1,0 +1,141 @@
+val game = import("slug.games.crawl")
+val level = import("slug.games.crawl.level")
+val region = import("slug.games.crawl.region")
+val rng = import("slug.games.crawl.rng")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, reduce, all, any} = import("slug.std")
+
+// `n` visits in a row to a chunk starting with `counts`, each under its own
+// generator, as if it were closed: one that leaves comes back. Returns the
+// counts after each.
+val visits = fn(counts:map, habitat:list, cap:num, n:num, seed:num = 1):list {
+    val go = fn(i:num, now:map, acc:list):list {
+        if (i == n) { return acc }
+        val r = rng.within(rng.mix([seed, i]), fn() { region.visit(now, habitat, cap) })
+        val back = match r.leaving {
+            name: str => r.counts + {[name]: (r.counts[name] ?? 0) + 1}
+            _ => r.counts
+        }
+        recur(i + 1, back, acc :+ back)
+    }
+    go(0, counts, [])
+}
+
+@test
+val capacityGrowsWithDepth = fn() {
+    assertEqual(map([0, 1, 2, 3, 5, 7, 8, 20], fn(d) { region.capacity(d) }), [2, 4, 4, 5, 6, 7, 8, 8])
+}
+
+@test
+val monstersAreCountedByName = fn() {
+    val counts = region.tally([{kind: 0}, {kind: 1}, {kind: 0}])
+    assertEqual(counts, {kobold: 2, jackal: 1})
+    assertEqual(region.total(counts), 3)
+}
+
+@test
+val aVisitIsSeeded = fn() {
+    val one = rng.within(7, fn() { region.visit({kobold: 3}, ["kobold"], 5) })
+    assertEqual(rng.within(7, fn() { region.visit({kobold: 3}, ["kobold"], 5) }), one)
+}
+
+@test
+val populationsGrowAtHomeButNeverPastWhatFits = fn() {
+    val after = visits({kobold: 1}, ["kobold", "jackal"], 4, 300)
+    assertTrue(all(after, fn(c) { region.total(c) <= 4 }))
+    assertTrue(any(after, fn(c) { (c.kobold ?? 0) >= 3 }))
+}
+
+@test
+val theCrowdedLoseTheirWeakestFirst = fn() {
+    // Six where three fit: whatever else happens, it is kobolds that go.
+    map(range(20), fn(i) {
+        val r = rng.within(i, fn() { region.visit({troll: 2, kobold: 4}, ["troll", "kobold"], 3) })
+        assertTrue(region.total(r.counts) <= 3)
+        assertTrue((r.counts.kobold ?? 0) <= 3 - (r.counts.troll ?? 0) && (r.counts.troll ?? 0) >= 1)
+    })
+}
+
+@test
+val kindsAstrayDieOut = fn() {
+    val after = visits({troll: 3}, ["bat"], 4, 200)
+    assertEqual(after[len(after) - 1].troll ?? 0, 0)
+}
+
+@test
+val anEmptyChunkGetsWanderersFromItsHabitat = fn() {
+    val after = visits({}, ["bat"], 4, 300)
+    assertTrue(any(after, fn(c) { (c.bat ?? 0) > 0 }))
+    assertTrue(all(after, fn(c) { all(keys(c), fn(k) { k == "bat" }) }))
+}
+
+@test
+val oneThatLeavesIsTakenFromTheCounts = fn() {
+    val tries = map(range(200), fn(i) { rng.within(i, fn() { region.visit({kobold: 2}, ["kobold"], 4) }) })
+    val left = filter(tries, fn(r) { r.leaving != nil })
+    assertTrue(len(left) > 0)
+    assertTrue(all(left, fn(r) { r.leaving == "kobold" }))
+}
+
+// --- In the game ------------------------------------------------------------
+
+// Changes the player with `id` by `fields`.
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+// Player "a" in a world with seed `seed`, gone down the start town's stairs.
+val below = fn(seed:num, options:map = {}) {
+    game.newGame(seed, options)
+    game.join("a", "Ann")
+    val down = game.here("a").down
+    setPlayer("a", {x: down.x, y: down.y})
+    game.command("a", "enter", false)
+}
+
+@test
+val makingAChunkGivesTheChunksBesideItCounts = fn() {
+    below(1)
+    val p = game.playerOf("a")
+    val pops = game.current().populations
+    assertTrue(pops[game.chunkKey(p.cx + 1, p.cy, 1)] != nil)
+    assertTrue(pops[game.chunkKey(p.cx, p.cy, 2)] != nil)
+    assertEqual(pops[game.chunkKey(p.cx, p.cy, 1)], nil)
+}
+
+@test
+val aChunkIsMadeWithTheMonstersItsCountsSay = fn() {
+    below(2)
+    val p = game.playerOf("a")
+    val key = game.chunkKey(p.cx, p.cy, 2)
+    val s = game.snapshot()
+    game.load(s copy {populations: s.populations + {[key]: {orc: 2, kobold: 1}}})
+    setPlayer("a", {x: game.here("a").down.x, y: game.here("a").down.y})
+    game.command("a", "enter", false)
+    assertEqual(region.tally(game.here("a").monsters), {orc: 2, kobold: 1})
+    assertEqual(game.current().populations[key], nil)
+}
+
+@test
+val anEmptiedChunkFillsAgainInTime = fn() {
+    below(3, {regionEvery: 2})
+    val p = game.playerOf("a")
+    val key = game.chunkKey(p.cx, p.cy, 1)
+    val s = game.snapshot()
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] copy {monsters: []}}})
+    // Ann goes back up, so no one is there.
+    setPlayer("a", {x: game.here("a").up.x, y: game.here("a").up.y})
+    game.command("a", "enter", false)
+    map(range(600), fn(_) { game.tick([], ["a"]) })
+    assertTrue(len(game.current().levels[key].monsters) > 0)
+}
+
+@test
+val chunksSomeoneIsInAreLeftToTheDungeon = fn() {
+    below(4, {regionEvery: 1})
+    val before = game.here("a").monsters
+    // Ann is away, so her chunk stands still; the region layer leaves it be.
+    map(range(100), fn(_) { game.tick([], []) })
+    assertEqual(game.here("a").monsters, before)
+}
