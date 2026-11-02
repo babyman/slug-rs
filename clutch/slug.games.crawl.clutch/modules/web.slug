@@ -29,7 +29,8 @@
  * Walking into another player opens a menu over the map, to talk, from a
  * list of phrases, or to give them an item or gold. A box above the game,
  * outside what each push replaces, says what is typed in it to everyone in
- * sight (`POST /say`).
+ * sight (`POST /say`), and one in the header renames the player (`POST
+ * /name`).
  *
  * A `crawl` cookie names each browser's player; a browser without one, or
  * with one this server does not know, joins as a new player. Each id is 128
@@ -500,6 +501,15 @@ val onSay = fn(request:map):map {
     })
 }
 
+// Gives the player the name in the form's `name`.
+val onName = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val name = http.form(request).name ?? ""
+        if (len(trim(name)) > 0) { press(id, "name", false, name) }
+        {status: 204}
+    })
+}
+
 // Uses a pack item the way its kind is used, eating food or wielding a
 // weapon, or with `action` "drop", drops it: queues the command's key, then
 // the item's letter for the prompt it asks.
@@ -543,7 +553,7 @@ val onEvents = fn(request:map):map {
 /**
  * The HTTP handler for the game: `GET /` serves the page; `/htmx.js`,
  * `/crawl.css`, and `/crawl.js` the clutch's assets; and `POST /key`,
- * `POST /use`, and `POST /say` play.
+ * `POST /use`, `POST /say`, and `POST /name` play.
  */
 export val handler = fn():fn {
     http.router([
@@ -554,6 +564,7 @@ export val handler = fn():fn {
         ["POST", "/key", onKey],
         ["POST", "/use", onUse],
         ["POST", "/say", onSay],
+        ["POST", "/name", onName],
         ["GET", "/events", onEvents],
     ])
 }

@@ -5,9 +5,14 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
-header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
 header h1 { margin: 0; font-size: 18px; letter-spacing: .2em; color: var(--accent); }
 header p { margin: 0; color: var(--muted); font-size: 12px; }
+header .name { margin-left: auto; display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--muted); }
+header .name input { width: 14ch; font: 600 13px/1.4 inherit; font-family: inherit; color: var(--accent); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 6px; }
+header .name input { border-bottom: 1px dashed var(--line); border-radius: 4px 4px 0 0; }
+header .name input:hover { border-color: var(--line); }
+header .name input:focus { outline: none; border-color: var(--accent); background: var(--panel); }
 kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
 #game { display: flex; gap: 16px; padding: 16px 20px; align-items: flex-start; }
 .board { position: relative; background: #07080b; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }

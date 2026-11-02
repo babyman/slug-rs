@@ -12,7 +12,14 @@
     Requests run one at a time, in order, so fast typing is never reordered. }}
 <body hx-target="#game" hx-sync="#keys:queue all">
   <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
-  <header><h1>CRAWL</h1><p>A world above, a dungeon below.</p></header>
+  <header>
+    <h1>CRAWL</h1><p>A world above, a dungeon below.</p>
+    {{! Outside #game too: a new name, and Enter, renames the character. }}
+    <form class="name" hx-post="/name" hx-swap="none" hx-on::after-request="this.elements.name.blur()">
+      <label for="name">You are</label>
+      <input id="name" name="name" value="{{name}}" maxlength="20" autocomplete="off" enterkeyhint="done" aria-label="Your name" title="Type a new name and press Enter">
+    </form>
+  </header>
   {{! Outside #game, so what is being typed survives each push of the game. }}
   <form class="say" hx-post="/say" hx-swap="none" hx-on::after-request="this.reset(); this.elements.text.blur()">
     <input id="say" name="text" maxlength="80" autocomplete="off" enterkeyhint="send" placeholder="Say something to everyone in sight…" aria-label="Say">
@@ -46,6 +53,6 @@
   Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
   <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
   or use the buttons beside each item in your pack. Walk into another player to talk to them or give them something, and into the people of towns and forts to trade, eat, rest, hear the news, or claim the bounties a fort's captain posts;
-  <kbd>/</kbd> to say something to everyone in sight. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
+  <kbd>/</kbd> to say something to everyone in sight. Your name, at the top, is yours to change. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
 </body>
 </html>

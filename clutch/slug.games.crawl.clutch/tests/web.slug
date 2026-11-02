@@ -338,3 +338,15 @@ val whatIsTypedIsSaidOnTheNextTick = fn() {
     assertTrue(includes(web.gameHtml(a), "You say: &quot;&lt;b&gt;hello&lt;/b&gt;&quot;"))
     assertTrue(includes(web.gameHtml(b), "Player 1 says: &quot;&lt;b&gt;hello"))
 }
+
+@test
+val thePageRenamesThePlayerOnTheNextTick = fn() {
+    web.start(1)
+    val id = web.newPlayer()
+    assertTrue(includes(get("/", id).body, "value=\"Player 1\""))
+    assertEqual(post("/name", "name=Aria", id).status, 204)
+    web.tickOnce()
+    assertEqual(game.playerOf(id).name, "Aria")
+    assertTrue(includes(web.gameHtml(id), "You are now known as Aria."))
+    assertTrue(includes(get("/", id).body, "value=\"Aria\""))
+}

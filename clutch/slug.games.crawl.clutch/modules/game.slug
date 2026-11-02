@@ -2082,10 +2082,25 @@ val speak = fn(words:str) {
 
 // What a player typed, made fit to say: control characters as spaces, so on
 // one line, trimmed, and at most SAY_LIMIT characters.
-val tidy = fn(text:str):str {
+val tidy = fn(text:str, limit:num = SAY_LIMIT):str {
     val flat = string.join(map(string.chars(text), fn(c) { if (string.ord(c) < 32 || string.ord(c) == 127) { " " } else { c } }), "")
     val trimmed = string.trim(flat)
-    if (len(trimmed) > SAY_LIMIT) { trimmed[:SAY_LIMIT] } else { trimmed }
+    if (len(trimmed) > limit) { string.trim(trimmed[:limit]) } else { trimmed }
+}
+
+// The longest name a player can take, in characters.
+val NAME_LIMIT = 20
+
+// The acting player takes the name `wanted`, tidied as what is said is
+// and at most NAME_LIMIT characters; everyone who can see them hears of
+// it. A name that tidies to nothing, or is theirs already, changes nothing.
+val rename = fn(wanted:str) {
+    val name = tidy(wanted, NAME_LIMIT)
+    val old = player.name
+    if (name == "" || name == old) { return nil }
+    player = player copy {name: name}
+    say("You are now known as " + name + ".")
+    map(hearers(), fn(id) { actAs(id, fn() { say(old + " is now known as " + name + ".") }) })
 }
 
 // Gives the player with `id`, who is beside the acting player, one of the
@@ -2215,6 +2230,10 @@ val perform = fn(key:str, shift:bool, text:str = "") {
             speak(words)
             finish()
         }
+    } else if (key == "name") {
+        player = player copy {messages: []}
+        rename(text)
+        finish()
     } else if (len(player.more) > 0) {
         if (key == "space") { showMessages(player.more) }
     } else if (player.dead) {
@@ -2332,7 +2351,8 @@ val screen = fn():list {
  * except that `enter` takes stairs up as well as down, and after death
  * starts a new character. Walking into another player opens a menu, which
  * an entry's key chooses from and space backs out of; the key "say" says
- * `text` aloud to everyone who can see the player.
+ * `text` aloud to everyone who can see the player, and the key "name"
+ * gives the player the name `text`, at most 20 characters.
  */
 export val command = fn(id:str, key:str, shift:bool, text:str = "") { actAs(id, fn() { perform(key, shift, text) }) }
 
@@ -2351,7 +2371,8 @@ export val menu = fn(id:str):map|nil {
 
 /**
  * Advances the world by one tick. Each of `actions`, `{id, key, shift}`,
- * or `{id, key: "say", text}` to say `text` aloud, in
+ * or `{id, key: "say", text}` to say `text` aloud, or `{id, key: "name",
+ * text}` to take the name `text`, in
  * the order they arrived, at most one per player, is carried out as
  * `command` would, except that a frozen player's is dropped, and a run
  * takes one step a tick. Players in `present` (those playing now) with no

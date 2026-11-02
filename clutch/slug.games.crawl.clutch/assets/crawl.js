@@ -12,11 +12,11 @@ function gameKey(e) {
 function isGameKey(e) { return gameKey(e) !== null; }
 document.addEventListener("keydown", e => {
   if (gameKey(e)) e.preventDefault();
-  // "/" starts saying something; Escape leaves the Say box.
+  // "/" starts saying something; Escape leaves the Say or name box.
   const say = document.getElementById("say");
   if (!say) return;
   if (e.key === "/" && document.activeElement !== say) { e.preventDefault(); say.focus(); }
-  else if (e.key === "Escape" && document.activeElement === say) say.blur();
+  else if (e.key === "Escape" && document.activeElement.closest("input")) document.activeElement.blur();
 });
 document.addEventListener("htmx:configRequest", e => {
   const t = e.detail.triggeringEvent;

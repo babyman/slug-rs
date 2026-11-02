@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Crawl's players can name their characters: the page's header shows "You
+  are" and the name, which is a box to type a new one in (`POST /name`).
+  The new name, tidied to one line of at most 20 characters, takes on the
+  next tick; the player is told, and so is everyone in sight ("Player 1 is
+  now known as Aria."), and a new character after death keeps it. The
+  engine takes it as the key "name" with `text`, as it does "say".
+
 - Crawl's worlds have a history. Before anyone comes, a new world's empires
   live through 300 years (`--history=N`; the engine's `newGame` runs none
   unless `options.history` asks), about a second at start. In those years

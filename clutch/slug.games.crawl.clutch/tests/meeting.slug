@@ -197,3 +197,22 @@ val playersMeetAcrossAChunkEdge = fn() {
 }
 
 val contains = fn(xs:list, v):bool { len(filter(xs, fn(x) { x == v })) > 0 }
+
+@test
+val playersCanNameThemselvesAndThoseInSightHear = fn() {
+    sideBySide(12)
+    game.command("a", "name", false, "  Aria\tof the Vale  ")
+    assertEqual(game.playerOf("a").name, "Aria of the Vale")
+    assertEqual(messagesOf("a"), ["You are now known as Aria of the Vale."])
+    assertTrue(contains(messagesOf("b"), "Ann is now known as Aria of the Vale."))
+    assertTrue(!contains(messagesOf("c"), "Ann is now known as Aria of the Vale."))
+    // At most 20 characters, and nothing for a blank name.
+    game.command("a", "name", false, "Bartholomew the Unready")
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+    game.command("a", "name", false, "   ")
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+    // The name outlives the character.
+    setPlayer("a", {dead: true})
+    game.command("a", "enter", false)
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+}
