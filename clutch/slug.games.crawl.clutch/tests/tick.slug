@@ -36,12 +36,16 @@ val floorRun = fn(id:str, n:num):map {
     go(0)
 }
 
-// Player "a" alone in an empty stretch of floor; "b" joined elsewhere.
+// Player "a" alone in an empty stretch of floor; "b" joined and went
+// down the stairs, out of the town where both started.
 val setUp = fn(seed:num):map {
     game.newGame(seed)
     game.join("a", "Ann")
     game.join("b", "Bo")
-    setChunk("a", {monsters: [], items: []})
+    val down = game.here("b").down
+    setPlayer("b", {x: down.x, y: down.y})
+    game.command("b", "enter", false)
+    setChunk("a", {monsters: [], items: [], characters: []})
     val spot = floorRun("a", 4)
     setPlayer("a", {x: spot.x, y: spot.y})
     spot

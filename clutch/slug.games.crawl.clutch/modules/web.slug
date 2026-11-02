@@ -56,6 +56,7 @@ val store = import("slug.games.crawl.store")
 val sqlite = import("slug.db.sqlite")
 val data = import("slug.games.crawl.data")
 val level = import("slug.games.crawl.level")
+val town = import("slug.games.crawl.town")
 val {map, filter, contains} = import("slug.std")
 val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
@@ -95,7 +96,7 @@ val CLASSES = {
     ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
     "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
     ")": "weapon", "]": "armour",
-    ",": "scrub", "&": "tree", "~": "water", "^": "rock",
+    ",": "scrub", "&": "tree", "~": "water", "^": "rock", "=": "road",
 }
 
 // How many messages the log keeps.
@@ -298,7 +299,10 @@ val cell = fn(id:str, p:map, sight:map, c:str, wx:num, wy:num):map {
     if (c == "@") {
         if (x == p.x && y == p.y) { return {cls: "you", title: nil} }
         val there = filter(game.others(id), fn(o) { o[1].x == x && o[1].y == y })
-        return {cls: "ally", title: if (len(there) > 0) { there[0][1].name } else { nil }}
+        if (len(there) > 0) { return {cls: "ally", title: there[0][1].name} }
+        val people = filter(game.here(id).characters ?? [], fn(c) { c.x == x && c.y == y })
+        if (len(people) > 0) { return {cls: "character", title: town.title(people[0])} }
+        return {cls: "ally", title: nil}
     }
     if (c >= "A" && c <= "Z") {
         val named = filter(data.monsters, fn(m) { m.letter == c })
@@ -343,7 +347,10 @@ val statsView = fn(id:str, p:map):map {
     {
         hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
         band: band(p.hp, p.maxHp),
-        depth: if (p.depth == 0) { "Surface" } else { p.depth }, area: "" + p.cx + ", " + p.cy, gold: p.gold, str: p.str, maxStr: p.maxStr,
+        depth: if (p.depth == 0) { "Surface" } else { p.depth }, area: match game.here(id).place {
+            place: map => place.name
+            _ => "" + p.cx + ", " + p.cy
+        }, gold: p.gold, str: p.str, maxStr: p.maxStr,
         armour: game.armourValue(id), level: p.level, xp: p.xp,
         conditions: filter([
             hunger,
@@ -378,7 +385,9 @@ val packView = fn(id:str, p:map):map {
 val foesView = fn(id:str, p:map):list {
     val people = filter(game.others(id), fn(o) { game.visible(id, o[1].x, o[1].y) })
     val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
+    val folk = filter(game.here(id).characters ?? [], fn(c) { game.visible(id, c.x, c.y) })
     map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+        + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
         + map(seen, fn(m) {
             val kind = data.monsters[m.kind]
             {cls: "monster", bar: "foe", letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Crawl's surface has towns and forts, placed from the world's seed on land:
+  a town nearest the middle, where every new character starts, and about one
+  more town for every 200 chunks and a fort for every 250, each filling a
+  chunk. A town has walls with four gates and roads out, a market, an inn,
+  houses and guards; a fort is a palisade around a way down, with guards and
+  a quartermaster. Their people are characters, who stand in place: walking
+  into one opens their menu. Traders and quartermasters sell at fixed prices
+  (what is bought is known for what it is) and buy for half, but not what you are wielding or wearing; innkeepers tell
+  rumours (hints, for now) and sell a meal, which fills you, and a bed,
+  which heals you; guards and townsfolk talk. Settlements never get
+  monsters. The new module `slug.games.crawl.town` places and builds them
+  and holds the prices and what people say. Worlds saved before this gain
+  settlements on load, but chunks already made stay as they were, so
+  `--new` gives a world with its start town.
+
 - Crawl's players can meet. Walking into another player opens a menu over
   the map, which takes no time: Talk, a list of phrases one key each
   ("Hello!", "Follow me.", "Help!"…), and Give, an item from the pack or

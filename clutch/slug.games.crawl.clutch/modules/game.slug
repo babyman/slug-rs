@@ -12,13 +12,18 @@
  * from a list of phrases or give the other an item or gold. Players can
  * also say what they type, and everyone who can see them hears it.
  *
- * A player starts, and after dying starts again as a new character, at a
- * random spot on the surface, depth 0, near the middle of the world; the
- * world carries on.
+ * The surface has towns and forts (`slug.games.crawl.town`), whose people,
+ * characters, stand in place: walking into one opens their menu, to buy and
+ * sell, eat, rest, hear a rumour, or talk.
+ *
+ * A player starts, and after dying starts again as a new character, in the
+ * streets of the town nearest the middle of the world; the world carries
+ * on.
  */
 val data = import("slug.games.crawl.data")
 val rng = import("slug.games.crawl.rng")
 val level = import("slug.games.crawl.level")
+val town = import("slug.games.crawl.town")
 val string = import("slug.string")
 val math = import("slug.math")
 val {map, filter, reduce, remove, range} = import("slug.std")
@@ -34,7 +39,7 @@ val ORDER = [[-1, 0], [0, 1], [0, -1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1
 
 val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
 
-val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP, level.SCRUB, level.TREE]
+val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP, level.SCRUB, level.TREE, level.ROAD]
 
 // Players start on the surface in a chunk within SPAWN of the middle of the
 // world on each axis.
@@ -178,6 +183,9 @@ val playerIn = fn(key:str, x:num, y:num):bool {
 }
 
 val playerAt = fn(x:num, y:num):bool { playerIn(playerKey(), x, y) }
+
+// The index of the character at (x, y) in the acting player's chunk, or -1.
+val characterAt = fn(x:num, y:num):num { indexAt(site().characters ?? [], x, y) }
 
 val contains = fn(xs:list, v):bool {
     val go = fn(i:num):bool {
@@ -660,13 +668,25 @@ val seeOutdoors = fn() {
 // Whether chunk (cx, cy) is inside the world's bounds.
 val inWorld = fn(cx:num, cy:num):bool { level.inWorld(world.size ?? 0, cx, cy) }
 
+// The settlement at chunk (cx, cy) on `depth`, or nil: settlements are all
+// on the surface.
+val settlementAt = fn(cx:num, cy:num, depth:num):map|nil {
+    if (depth != 0) { return nil }
+    val found = filter(world.settlements ?? [], fn(s) { s.cx == cx && s.cy == cy })
+    if (len(found) == 0) { nil } else { found[0] }
+}
+
 // The chunk at (cx, cy) on `depth`, generated the first time it is needed.
 val chunk = fn(cx:num, cy:num, depth:num):map {
     val key = chunkKey(cx, cy, depth)
     match levels[key] {
         lv: map => lv
         _ => {
-            val lv = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
+            val plain = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
+            val lv = match settlementAt(cx, cy, depth) {
+                s: map => town.build(world.seed, plain, s)
+                _ => plain
+            }
             levels = levels + {[key]: lv}
             touchLevel(key)
             lv
@@ -683,7 +703,12 @@ val enter = fn(cx:num, cy:num, depth:num, place:fn) {
     val key = chunkKey(cx, cy, depth)
     val left = world.turn - (lv.seen ?? world.turn)
     if (left >= world.restockAfter && len(companyIn(key)) == 0) { restock(cx, cy, depth, lv, spot) }
+    val arriving = player.cx != cx || player.cy != cy || player.depth != depth
     player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
+    match lv.place {
+        p: map => if (arriving) { say("You come to " + p.name + ".") }
+        _ => nil
+    }
     markSeen()
     see()
 }
@@ -699,7 +724,10 @@ val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
         chunkKey(p.cx, p.cy, p.depth) == key
     }), fn(id) { {x: players[id].x, y: players[id].y} })
     val keep = filter(lv.items, fn(i) { i.dropped == true })
-    val fresh = level.restock(world.seed, cx, cy, depth, n, lv, keep, standing :+ spot)
+    // A settlement keeps its people and has no monsters to restock.
+    val fresh = if (lv.place != nil) { {items: lv.items, monsters: []} } else {
+        level.restock(world.seed, cx, cy, depth, n, lv, keep, standing :+ spot)
+    }
     levels = levels + {[key]: lv + fresh + {restocks: n}}
     touchLevel(key)
 }
@@ -707,8 +735,7 @@ val restock = fn(cx:num, cy:num, depth:num, lv:map, spot:map) {
 // Notes that someone is in the acting player's chunk this turn.
 val markSeen = fn() { setHere(site() + {seen: world.turn}) }
 
-// A new character, at a random free spot on the surface in a chunk near
-// the middle of the world.
+// A new character, at a random free spot in the streets of the start town.
 val newCharacter = fn() {
     val name = player.name ?? "someone"
     val id = acting ?? ""
@@ -736,15 +763,29 @@ val newCharacter = fn() {
         dead: false,
         sense: false,
     }
+    // The first settlement is the town where everyone starts.
+    val home = (world.settlements ?? [])[0]
     val middle = math.div(world.size ?? 0, 2)
-    val cx = middle + rng.below(2 * SPAWN + 1) - SPAWN
-    val cy = middle + rng.below(2 * SPAWN + 1) - SPAWN
+    val cx = if (home != nil) { home.cx } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
+    val cy = if (home != nil) { home.cy } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
     val key = chunkKey(cx, cy, 0)
     val free = fn(lv:map):map {
-        val spot = level.freeSpot(lv)
+        val spot = if (lv.walls != nil) { insideSpot(lv) } else { level.freeSpot(lv) }
         if (playerIn(key, spot.x, spot.y)) { recur(lv) } else { spot }
     }
     enter(cx, cy, 0, free)
+}
+
+// A free square of street or yard inside settlement chunk `lv`'s walls.
+val insideSpot = fn(lv:map):map {
+    val w = lv.walls
+    val x = w.left + 1 + rng.below(w.right - w.left - 1)
+    val y = w.top + 1 + rng.below(w.bottom - w.top - 1)
+    val c = lv.map[y][x]
+    val open = (c == level.ROAD || c == level.FLOOR) && indexAt(lv.items, x, y) < 0 && indexAt(lv.characters, x, y) < 0
+    // Not inside a building: open ground the walls' gates can reach.
+    val street = c == level.ROAD || lv.place.kind == "fort"
+    if (open && street) { {x: x, y: y} } else { recur(lv) }
 }
 
 /**
@@ -757,7 +798,13 @@ export val snapshot = fn():map { current() + {rng: rng.getState()} }
  */
 export val load = fn(saved:map) {
     rng.setState(saved.rng)
-    world = saved.world
+    // Worlds saved before there were settlements gain them; chunks already
+    // made stay as they are.
+    world = if (saved.world.settlements == nil) {
+        saved.world + {settlements: town.place(saved.world.seed, saved.world.size ?? 0)}
+    } else {
+        saved.world
+    }
     levels = saved.levels
     players = saved.players
     sights = {}
@@ -775,7 +822,8 @@ val RESTOCK_AFTER = 2000
  * has been in for `options.restockAfter` turns or ticks (default 2000) gets
  * fresh monsters and items when someone next enters it; items players
  * dropped there stay. The world is `options.size` chunks across and down
- * (default 32), and new characters start on its surface near the middle.
+ * (default 32), with towns and forts on its surface, and new characters
+ * start in the town nearest its middle.
  */
 export val newGame = fn(seed:num, options:map = {}) {
     rng.seed(seed)
@@ -785,6 +833,7 @@ export val newGame = fn(seed:num, options:map = {}) {
         seed: seed, turn: 0, colours: colours, titles: titles,
         restockAfter: options.restockAfter ?? RESTOCK_AFTER, size: options.size ?? SIZE,
     }
+    world = world + {settlements: town.place(seed, world.size)}
     levels = {}
     players = {}
     player = {}
@@ -959,7 +1008,7 @@ val near = fn(x:num, y:num):bool {
 // Whether (x, y) is free for a monster to step to: no monster and not the
 // player.
 val openFor = fn(x:num, y:num):bool {
-    indexAt(site().monsters, x, y) < 0 && !playerAt(x, y)
+    indexAt(site().monsters, x, y) < 0 && !playerAt(x, y) && characterAt(x, y) < 0
 }
 
 // The pack entries a nymph can steal: everything not wielded or worn.
@@ -1209,6 +1258,9 @@ val step = fn(dx:num, dy:num):bool {
             id: str => if (!runStep) { meet(id) }
             _ => nil
         }
+        false
+    } else if (characterAt(p.x + dx, p.y + dy) >= 0) {
+        if (!runStep) { greet(characterAt(p.x + dx, p.y + dy)) }
         false
     } else {
         val i = indexAt(site().monsters, p.x + dx, p.y + dy)
@@ -1569,10 +1621,134 @@ val meet = fn(id:str) {
 
 val closeMenu = fn() { player = player copy {menu: nil} }
 
+// Opens the menu for the character with index `i` in the acting player's
+// chunk, as walking into them does: it takes no time.
+val greet = fn(i:num) {
+    player = player copy {menu: {character: i, page: "main"}}
+}
+
+// What a ware is called: by what it is, since a dealer knows.
+val wareName = fn(item:map):str {
+    match item.kind {
+        "potion" => "a potion of " + data.potions[item.type].name
+        "scroll" => "a scroll of " + data.scrolls[item.type].name
+        _ => nameOf(item, 1)
+    }
+}
+
+// The pack entries character `c` would buy: anything of a kind they deal
+// in but the weapon in hand and worn armour.
+val sellable = fn(c:map):list {
+    filter(player.pack, fn(e) { e.letter != player.armour && e.letter != player.weapon && town.buys(c.role, e.item) })
+}
+
+// The menu of character `c` on `page`, as `menuOf` gives.
+val characterMenu = fn(c:map, page:str):map {
+    val name = town.title(c)
+    val lines = town.LINES[c.role] ?? []
+    match page {
+        "buy" => {
+            val wares = town.wares(c.role)
+            {
+                title: name + " sells, for your " + player.gold + " gold:",
+                entries: map(range(len(wares)), fn(i) {
+                    {key: "" + (i + 1), label: wareName(wares[i]) + ", " + town.price(wares[i]) + " gold", act: ["buy", i]}
+                }),
+            }
+        }
+        "sell" => {
+            val goods = sellable(c)
+            {
+                title: if (len(goods) == 0) { name + " wants nothing you have." } else { name + " would pay:" },
+                entries: map(goods, fn(e) { {key: e.letter, label: nameOf(e.item, 1) + ", " + town.offer(e.item) + " gold", act: ["sell", e.letter]} }),
+            }
+        }
+        _ => {
+            val greeting = if (c.role == "guard" || c.role == "townsperson") { name + "." } else { name + ": \"" + lines[0] + "\"" }
+            val entries = match c.role {
+                "trader", "quartermaster" => [
+                    {key: "1", label: "Buy", act: ["page", "buy"]},
+                    {key: "2", label: "Sell", act: ["page", "sell"]},
+                ]
+                "innkeeper" => [
+                    {key: "1", label: "Hear a rumour", act: ["rumour"]},
+                    {key: "2", label: "A meal, " + town.MEAL + " gold", act: ["meal"]},
+                    {key: "3", label: "A bed for the night, " + town.BED + " gold", act: ["bed"]},
+                ]
+                _ => [{key: "1", label: "Talk", act: ["talk"]}]
+            }
+            {title: greeting, entries: entries}
+        }
+    }
+}
+
+// Pays `cost` gold for something, saying so; returns false, saying why,
+// when the player has too little.
+val pay = fn(cost:num, what:str):bool {
+    if (player.gold < cost) {
+        say("You can't afford " + what + ".")
+        false
+    } else {
+        setPlayer(player copy {gold: player.gold - cost})
+        true
+    }
+}
+
+// Does what character `c`'s menu entry `act` says. The menu stays open.
+val deal = fn(c:map, act:list) {
+    match act {
+        ["buy", i] => {
+            val ware = town.wares(c.role)[i]
+            val cost = town.price(ware)
+            if (player.gold < cost) {
+                say("You can't afford " + wareName(ware) + ".")
+            } else if (addToPack(ware) == nil) {
+                say("Your pack is full.")
+            } else {
+                setPlayer(player copy {gold: player.gold - cost})
+                // A ware bought is known for what it is.
+                val known = player.known
+                setPlayer(player copy {known: match ware.kind {
+                    "potion" => known copy {potions: if (contains(known.potions, ware.type)) { known.potions } else { known.potions :+ ware.type }}
+                    "scroll" => known copy {scrolls: if (contains(known.scrolls, ware.type)) { known.scrolls } else { known.scrolls :+ ware.type }}
+                    _ => known
+                }})
+                say("You buy " + wareName(ware) + " for " + cost + " gold.")
+            }
+        }
+        ["sell", letter] => {
+            val i = packIndex(letter)
+            if (i >= 0) {
+                val item = player.pack[i].item
+                val paid = town.offer(item)
+                val name = nameOf(item, 1)
+                takeOne(letter)
+                setPlayer(player copy {gold: player.gold + paid})
+                say("You sell " + name + " for " + paid + " gold.")
+            }
+        }
+        ["rumour"] => say(c.name + " says: \"" + town.RUMOURS[rng.below(len(town.RUMOURS))] + "\"")
+        ["talk"] => {
+            val lines = town.LINES[c.role] ?? ["..."]
+            say(c.name + " says: \"" + lines[rng.below(len(lines))] + "\"")
+        }
+        ["meal"] => if (pay(town.MEAL, "a meal")) {
+            setPlayer(player copy {food: FOOD_MAX})
+            say("You eat a hot meal.")
+        }
+        ["bed"] => if (pay(town.BED, "a bed")) {
+            setPlayer(player copy {hp: player.maxHp})
+            say("You sleep soundly and wake refreshed.")
+        }
+        _ => nil
+    }
+}
+
 // The entries of the acting player's open menu, each `{key, label}` and
 // what choosing it does as `act`, with the menu's title.
 val menuOf = fn():map {
     val m = player.menu
+    if (m.character != nil) { return characterMenu(site().characters[m.character], m.page) }
     val name = players[m.with].name
     match m.page {
         "talk" => {
@@ -1598,7 +1774,6 @@ val menuOf = fn():map {
             entries: [
                 {key: "1", label: "Talk", act: ["page", "talk"]},
                 {key: "2", label: "Give", act: ["page", "give"]},
-                {key: "3", label: "Leave", act: ["close"]},
             ],
         }
     }
@@ -1668,7 +1843,11 @@ val giveGold = fn(id:str, amount:num) {
 // Does what menu entry `act` says, for the player the menu is about, if
 // they are still beside the acting player.
 val choose = fn(act:list) {
-    val id = player.menu.with
+    val m = player.menu
+    if (m.character != nil && act[0] != "page" && act[0] != "close") {
+        return deal(site().characters[m.character], act)
+    }
+    val id = m.with
     match act {
         ["page", page] => player = player copy {menu: player.menu copy {page: page}}
         ["close"] => closeMenu()
@@ -1698,6 +1877,8 @@ val menuKey = fn(key:str):bool {
     }
     val chosen = filter(menuOf().entries, fn(e) { e.key == key })
     if (len(chosen) > 0) {
+        // Each choice's messages are its own.
+        player = player copy {messages: []}
         choose(chosen[0].act)
         true
     } else {
@@ -1824,7 +2005,13 @@ val mapRows = fn():list {
             recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
         }
     }
-    write(others(0, monsters(0, memory())), player.x, player.y, "@")
+    val people = site().characters ?? []
+    val characters = fn(i:num, rows:list):list {
+        if (i == len(people)) { return rows }
+        val c = people[i]
+        recur(i + 1, if (canSee(c.x, c.y)) { write(rows, c.x, c.y, "@") } else { rows })
+    }
+    write(others(0, characters(0, monsters(0, memory()))), player.x, player.y, "@")
 }
 
 // The acting player's screen; see `text`.

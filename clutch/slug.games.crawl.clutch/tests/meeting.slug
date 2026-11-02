@@ -56,7 +56,7 @@ val walkingIntoAnotherPlayerOpensAMenuAndTakesNoTime = fn() {
     meetBo()
     val m = openMenu("a")
     assertEqual(m.title, "You meet Bo.")
-    assertEqual(map(m.entries, fn(e) { [e.key, e.label] }), [["1", "Talk"], ["2", "Give"], ["3", "Leave"]])
+    assertEqual(map(m.entries, fn(e) { [e.key, e.label] }), [["1", "Talk"], ["2", "Give"]])
     assertEqual([game.playerOf("a").x, game.current().world.turn], [before.x, turn])
     assertEqual(game.menu("b"), nil)
     assertEqual(game.text("a")[1], "You meet Bo.")

@@ -1,7 +1,7 @@
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
 val level = import("slug.games.crawl.level")
-val {toBytes, fromBytes, split} = import("slug.string")
+val {toBytes, fromBytes, split, join} = import("slug.string")
 val {recv} = import("slug.channel")
 val {map, filter} = import("slug.std")
 val {assertEqual, assertTrue} = import("slug.test")
@@ -255,7 +255,9 @@ val mapText = fn(html:str):list {
         val c = text[i]
         if (c == "<") { recur(text, i + 1, out, true) } else if (c == ">") { recur(text, i + 1, out, false) } else if (tag) { recur(text, i + 1, out, true) } else { recur(text, i + 1, out + c, false) }
     }
-    split(strip(inside, 0, "", false), "\n")
+    // Entities stand for one character each.
+    val text = join(split(join(split(join(split(strip(inside, 0, "", false), "&lt;"), "<"), "&gt;"), ">"), "&amp;"), "&")
+    split(text, "\n")
 }
 
 // The column of the player's @ in a map row.
@@ -277,7 +279,7 @@ val theMapScrollsOnlyNearItsEdges = fn() {
     }
     val spot = find(0)
     val s = game.snapshot()
-    game.load(s copy {levels: s.levels + {[game.chunkKey(s.players[id].cx, s.players[id].cy, s.players[id].depth)]: game.here(id) + {monsters: []}}})
+    game.load(s copy {levels: s.levels + {[game.chunkKey(s.players[id].cx, s.players[id].cy, s.players[id].depth)]: game.here(id) + {monsters: [], characters: []}}})
     val t = game.snapshot()
     game.load(t copy {players: t.players + {[id]: t.players[id] + {x: spot.x, y: spot.y}}})
     val events = get("/events", id, {cols: "20", rows: "8"})

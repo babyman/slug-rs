@@ -234,9 +234,10 @@ export val SCRUB = ","
 export val TREE = "&"
 export val WATER = "~"
 export val ROCK = "^"
+export val ROAD = "="
 
 // Squares on the surface that block sight.
-export val OPAQUE = [TREE, ROCK]
+export val OPAQUE = [TREE, ROCK, HWALL, VWALL]
 
 // The wild kinds that live on the surface, by name.
 val SURFACE_KINDS = ["jackal", "snake", "bat"]
@@ -271,6 +272,33 @@ val noise = fn(world:num, layer:num, sx:num, sy:num):fn {
             math.div(a * (sy - fy) + b * fy, sx * sy)
         }
     }
+}
+
+/**
+ * Roughly how much of surface chunk (cx, cy) is land, in percent, from the
+ * terrain at a grid of its squares: cheap enough to judge many chunks, as
+ * placing settlements does.
+ */
+export val landShare = fn(world:num, cx:num, cy:num, size:num):num {
+    val x0 = cx * WIDTH
+    val y0 = cy * HEIGHT
+    val broad = noise(world, 1, 24, 10)(x0, y0)
+    val fine = noise(world, 2, 8, 4)(x0, y0)
+    val coast = fn(x:num, y:num):num {
+        if (size == 0) { return 1000 }
+        math.min(math.min(x, size * WIDTH - 1 - x), 2 * math.min(y, size * HEIGHT - 1 - y))
+    }
+    val land = fn(x:num, y:num):bool {
+        val h = math.div(broad(x, y) * 2 + fine(x, y), 3)
+        coast(x, y) >= 3 + math.div(fine(x, y), 250) && h >= 280 && h <= 700
+    }
+    val count = fn(i:num, n:num):num {
+        if (i == 16 * 6) { return n }
+        val x = x0 + 2 + (i % 16) * 5
+        val y = y0 + 1 + math.div(i, 16) * 4
+        recur(i + 1, if (land(x, y)) { n + 1 } else { n })
+    }
+    math.div(count(0, 0) * 100, 16 * 6)
 }
 
 // The squares (as y * WIDTH + x) of each group of passable squares joined
