@@ -1009,15 +1009,16 @@ export val load = fn(saved:map) {
 // and between steps of the empire layer, unless `newGame` is told
 // otherwise.
 val REGION_EVERY = 20
-val EMPIRE_EVERY = 400
+val EMPIRE_EVERY = 6000
 
 /**
  * Starts a new world with `seed`, with no one in it yet. The region layer
  * visits each chunk no one is in once every `options.regionEvery` ticks
  * (default 20), where its monsters breed, die off and move on, and loot
- * turns up; and the empire layer takes a step every `options.empireEvery`
- * ticks (default 400, a minute), after `options.history` steps (default 0)
- * of history, a year each, run before anyone comes, in which settlements
+ * turns up; and the empire layer takes a step, a season, every
+ * `options.empireEvery` ticks (default 6000, 15 minutes at 150 ms a tick),
+ * after `options.history` seasons (default 0) of history, run before
+ * anyone comes, in which settlements
  * may fall to the peoples below and become ruins. The world is `options.size` chunks across and down
  * (default 32), with towns and forts on its surface, and new characters
  * start in the town nearest its middle.
@@ -1033,11 +1034,11 @@ export val newGame = fn(seed:num, options:map = {}) {
     }
     world = world + {settlements: town.place(seed, world.size)}
     world = world + {empire: rng.within(rng.mix([seed, 60]), fn() { empire.create(seed, world.size, world.settlements) })}
-    // History: the empires run for `options.history` years before anyone
+    // History: the empires run for `options.history` seasons before anyone
     // comes, and the settlements that fell are ruins.
-    val years = options.history ?? 0
+    val seasons = options.history ?? 0
     val past = fn(e:map):map {
-        if (e.step >= years) { return e }
+        if (e.step >= seasons) { return e }
         recur(rng.within(rng.mix([seed, 61, e.step]), fn() { empire.step(e, seed, true) }))
     }
     val made = past(world.empire)
@@ -2445,6 +2446,8 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     if (world.turn % (world.empireEvery ?? EMPIRE_EVERY) == 0 && world.turn > 0) {
         val e = world.empire
         world = world copy {empire: rng.within(rng.mix([world.seed, 61, e.step]), fn() { empire.step(e, world.seed) })}
+        val comes = string.upper(empire.seasonOf(world.empire.step)[:1]) + empire.seasonOf(world.empire.step)[1:] + " comes."
+        each(present, fn() { say(comes) })
     }
     world = world copy {turn: world.turn + 1}
     each(present, fn() { if (!player.dead) { see() } })
@@ -2496,6 +2499,21 @@ export val view = fn(id:str, left:num, top:num, cols:num, rows:num):list {
         }
         go(top, [])
     })
+}
+
+/**
+ * The date in the world: `{year, season, part}`, the part of the season
+ * "early", "mid" or "late", and `text`, as "Late spring, year 76", or
+ * "Spring, year 76" in the middle of it.
+ */
+export val date = fn():map {
+    val step = (world.empire ?? {step: 0}).step
+    val every = world.empireEvery ?? EMPIRE_EVERY
+    val part = ["early", "mid", "late"][math.min(2, math.div(3 * (world.turn % every), every))]
+    val season = empire.seasonOf(step)
+    val year = empire.yearOf(step)
+    val named = if (part == "mid") { season } else { part + " " + season }
+    {year: year, season: season, part: part, text: string.upper(named[:1]) + named[1:] + ", year " + year}
 }
 
 /**

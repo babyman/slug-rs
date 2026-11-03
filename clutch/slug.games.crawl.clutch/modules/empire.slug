@@ -10,11 +10,12 @@
  *
  * The map is regions of REGION by REGION chunks, and a territory is a region
  * at one band of depths: the surface, the shallows (depths 1 to 3), the
- * middle (4 to 6), or the deep (7 and below). At each step, about once a
- * minute, factions earn from what they hold, turn wealth into strength,
+ * middle (4 to 6), or the deep (7 and below). At each step, a season, factions
+ * earn from what they hold, turn wealth into strength,
  * and push into the territories beside theirs, wild or held, as their
  * traits incline them; a clash goes to the stronger, and strength fades
- * with distance from home. What happens goes into a chronicle.
+ * with distance from home. What happens goes into a chronicle. Each step
+ * is a season, four to a year.
  *
  * The layer hands summaries down: who holds a territory, which monster
  * kinds thrive there (`habitatAt`), what its markets charge
@@ -49,6 +50,24 @@ export val territoryOf = fn(cx:num, cy:num, depth:num):str {
 }
 
 val parse = fn(key:str):list { map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 }) }
+
+// ---------------------------------------------------------------------------
+// The calendar.
+
+/**
+ * The seasons of a year, in order; each step of the empire layer is one.
+ */
+export val SEASONS = ["spring", "summer", "autumn", "winter"]
+
+/**
+ * The year step `step` falls in, counting from year 1.
+ */
+export val yearOf = fn(step:num):num { math.div(step, 4) + 1 }
+
+/**
+ * The season step `step` is.
+ */
+export val seasonOf = fn(step:num):str { SEASONS[step % 4] }
 
 // ---------------------------------------------------------------------------
 // Peoples.
@@ -354,7 +373,7 @@ val siege = fn(empire:map, i:num, target:str, name:str):map {
         note(after copy {
             holds: after.holds + {[target]: i},
             fixed: remove(after.fixed, target),
-            fallen: after.fallen :+ {name: name, by: f.name, year: empire.step},
+            fallen: after.fallen :+ {name: name, by: f.name, step: empire.step},
         }, f.name + " sacked " + name + ".")
     } else {
         note(after copy {sieges: (after.sieges ?? {}) + {[target]: worn + 1}}, name + " held against " + f.name + ".")
@@ -392,7 +411,7 @@ val calm = fn(empire:map, i:num):map {
  * may push into the territory beside its own, and may calm down. A step of
  * `history`, before anyone plays, lets factions from below besiege
  * settlements; those that fall are listed in `fallen`, as `{name, by,
- * year}`.
+ * step}`.
  */
 export val step = fn(empire:map, seed:num, history:bool = false):map {
     val bled = bleed(empire)
@@ -488,7 +507,9 @@ export val news = fn(empire:map):str|nil {
     // Now and then, the fall of a settlement, long ago.
     if (len(fallen) > 0 && (len(recent) == 0 || rng.below(3) == 0)) {
         val f = fallen[rng.below(len(fallen))]
-        return f.name + " fell to " + f.by + " in the year " + f.year + ". They say its cellars were never emptied."
+        // Worlds saved before the calendar kept the step as `year`.
+        val when = f.step ?? f.year ?? 0
+        return f.name + " fell to " + f.by + " in the " + seasonOf(when) + " of year " + yearOf(when) + ". They say its cellars were never emptied."
     }
     if (len(recent) == 0) { nil } else { "They say " + uncap(recent[rng.below(len(recent))].text) }
 }

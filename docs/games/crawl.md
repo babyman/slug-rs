@@ -33,9 +33,9 @@ Write options as `--name=value`.
 | `--new` | off | Start a new world in the database, replacing the one it holds. |
 | `--seed=N` | random | The seed of a new world; the same seed makes the same world. |
 | `--size=N` | 32 | How many chunks across and down a new world is. |
-| `--history=N` | 300 | Years of history a new world lives through before anyone comes. |
+| `--history=N` | 300 | Seasons of history (75 years) a new world lives through before anyone comes. |
 | `--region=N` | 20 | Ticks between the region layer's visits to each chunk. |
-| `--empire=N` | 400 | Ticks between steps of the empire layer. |
+| `--empire=N` | 6000 | Ticks between steps of the empire layer, a season each (15 minutes). |
 | `--host=H` | 127.0.0.1 | The address to listen on; `0.0.0.0` for every interface. |
 | `--port=N` | 8080 | The port to listen on; 0 picks a free one. |
 | `--tick=MS` | 150 | Milliseconds between ticks. |
@@ -179,8 +179,9 @@ what survived. Towns and forts never get monsters.
   of depths: the surface, depths 1 to 3, 4 to 6, or 7 and below. Each has a
   name in its people's style and four traits, bold, aggressive, orderly and
   greedy, which shift as it wins, loses or keeps the peace.
-- About once a minute, each faction earns from its land, grows stronger, and
-  may settle wild land beside its own or fight for held land. Strength fades
+- Each season, 15 minutes of play and four to a year, each faction earns
+  from its land, grows stronger, and may settle wild land beside its own or
+  fight for held land. Strength fades
   the farther a faction reaches from its home depths, so the shallow depths
   are a contested frontier.
 - A people's monsters thrive where its faction holds the land and fade where
@@ -190,12 +191,13 @@ what survived. Towns and forts never get monsters.
   is greedy or generous.
 - A fort's captain posts bounties, a price a head, on the peoples below its
   region; generous factions pay more.
-- The stats show who holds the land you are in.
+- The stats show the date, as "Late spring, year 76", and who holds the
+  land you are in. Each new season is announced as it comes.
 
 ## History
 
-A new world lives through 300 years of the empire layer before anyone
-comes. In those years the peoples below may besiege the settlements beside
+A new world lives through 300 seasons, 75 years, of the empire layer
+before anyone comes. In those years the peoples below may besiege the settlements beside
 their land. Walls double a settlement's defence, but each siege it holds off
 wears them down; one that falls is a ruin from then on. Most worlds lose
 none to four settlements; the start town always stands. The dungeon under a

@@ -77,6 +77,27 @@ val theDungeonUnderARuinIsRicher = fn() {
 
 @test
 val innkeepersTellOfTheFallen = fn() {
-    val e = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", year: 124}]}
-    assertEqual(empire.news(e), "Elmby fell to the Redaxe Horde in the year 124. They say its cellars were never emptied.")
+    val e = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", step: 125}]}
+    assertEqual(empire.news(e), "Elmby fell to the Redaxe Horde in the summer of year 32. They say its cellars were never emptied.")
+    // Worlds saved before the calendar kept the step as the year.
+    val old = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", year: 124}]}
+    assertEqual(empire.news(old), "Elmby fell to the Redaxe Horde in the spring of year 32. They say its cellars were never emptied.")
+}
+
+@test
+val seasonsAreStepsFourToAYear = fn() {
+    assertEqual([empire.yearOf(0), empire.seasonOf(0)], [1, "spring"])
+    assertEqual([empire.yearOf(3), empire.seasonOf(3)], [1, "winter"])
+    assertEqual([empire.yearOf(300), empire.seasonOf(300)], [76, "spring"])
+    game.newGame(1, {history: 300, empireEvery: 30})
+    assertEqual(game.date().text, "Early spring, year 76")
+    game.join("a", "Ann")
+    val run = fn(n:num) { if (n > 0) { game.tick([], ["a"]); recur(n - 1) } }
+    run(10)
+    assertEqual(game.date().text, "Spring, year 76")
+    run(10)
+    assertEqual(game.date().text, "Late spring, year 76")
+    run(11)
+    assertEqual(game.date().text, "Early summer, year 76")
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == "Summer comes." }))
 }
