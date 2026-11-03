@@ -19,6 +19,7 @@ val world = {
     ],
     holds: {"1,1,0": 1, "1,1,1": 0, "2,1,1": 0, "5,5,0": 2, "7,7,0": 0},
     fixed: {"1,1,0": "Elmby"},
+    lands: {"2,1,1": {since: 40, changes: 3}, "7,7,0": {since: 30, changes: 1}},
     step: 42,
     chronicle: [
         {step: 40, kind: "took", by: 0, against: 1, at: "2,1,1"},
@@ -125,6 +126,34 @@ val dealersSayWhyPricesAreWhatTheyAre = fn() {
 }
 
 @test
+val landSaysHowLongItHasBeenHeld = fn() {
+    assertEqual(lore.heldSince(world, "2,1,1"), "since the spring of year 11")
+    assertEqual(lore.heldSince(world, "1,1,0"), "for as long as anyone remembers")
+    assertEqual(lore.heldSince(world, "20,20,0"), nil)
+}
+
+@test
+val comingIntoLandSaysWhereAndWhoHoldsIt = fn() {
+    assertEqual(lore.arriving(SEED, world, "2,1,1"),
+        "You are now " + place("2,1,1") + ", held by the Redaxe Horde since the spring of year 11. It has changed hands three times.")
+    assertEqual(lore.arriving(SEED, world, "7,7,0"), "You are now " + place("7,7,0") + ", held by the Redaxe Horde since the autumn of year 8.")
+    assertEqual(lore.arriving(SEED, world copy {lands: {"7,7,0": {since: 30, changes: 2}}}, "7,7,0"),
+        "You are now " + place("7,7,0") + ", held by the Redaxe Horde since the autumn of year 8. It has changed hands twice.")
+    assertEqual(lore.arriving(SEED, world, "1,1,0"), "You are now " + place("1,1,0") + ", held by the Iron Compact of Elmby for as long as anyone remembers.")
+    assertEqual(lore.arriving(SEED, world, "20,20,0"), "You are now " + place("20,20,0") + ", which no one holds.")
+}
+
+@test
+val settlementsShowTheirPast = fn() {
+    assertEqual(lore.settlementPast(world, "Elmby", false), "Its walls bear the marks of the Redaxe Horde's assaults, held off twice.")
+    assertEqual(lore.settlementPast(world, "Oakby", true), "A broken stone by the gate reads: sacked by the Redaxe Horde in the spring of year 2.")
+    assertEqual(lore.settlementPast(world, "Highford", false), nil)
+    // Sieges by more than one faction.
+    val two = world copy {annals: world.annals :+ {step: 30, kind: "siege", by: 2, against: 1, at: "1,1,0", name: "Elmby", held: 1, last: 30, fell: false}}
+    assertEqual(lore.settlementPast(two, "Elmby", false), "Its walls bear the marks of assaults held off three times, the last by the Stonebeard Clan.")
+}
+
+@test
 val charactersTellOfTheWorldNearThem = fn() {
     assertEqual(lore.talk("captain", SEED, world, "1,1,0"), lore.bountyReason(SEED, world, "1,1,0"))
     assertEqual(lore.talk("trader", SEED, world, "1,1,0"), lore.prices(SEED, world, "1,1,0"))
@@ -135,6 +164,26 @@ val charactersTellOfTheWorldNearThem = fn() {
     assertTrue(any(folk, fn(f) { f == walls }))
     assertTrue(any(folk, fn(f) { f == "Did you hear? The Redaxe Horde took the land " + place("2,1,1") + " from the Iron Compact of Elmby." }))
     assertEqual(lore.talk("innkeeper", SEED, world copy {chronicle: [], annals: []}, "1,1,0"), nil)
+}
+
+@test
+val newCharactersAndThoseGoingDownHearWhereTheyAre = fn() {
+    game.newGame(2, {history: 75})
+    game.join("a", "Ann")
+    val w = game.current().world
+    val home = empire.territoryOf(w.settlements[0].cx, w.settlements[0].cy, 0)
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == lore.arriving(w.seed, w.empire, home) }))
+    assertEqual(game.land("a").since, lore.heldSince(w.empire, home))
+    // Going down, the band changes: the land under the town.
+    val move = fn(fields:map) {
+        val s = game.snapshot()
+        game.load(s copy {players: s.players + {a: s.players.a + fields}})
+    }
+    val down = game.here("a").down
+    move({x: down.x, y: down.y})
+    game.command("a", "enter", false)
+    val under = empire.territoryOf(w.settlements[0].cx, w.settlements[0].cy, 1)
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == lore.arriving(w.seed, w.empire, under) }))
 }
 
 @test

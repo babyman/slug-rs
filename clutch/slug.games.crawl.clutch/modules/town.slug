@@ -305,7 +305,7 @@ export val build = fn(world:num, lv:map, s:map):map {
         val kind = if (s.kind == "ruin") { s.was ?? "town" } else { s.kind }
         val built = if (kind == "fort") { buildFort(cleared) } else { buildTown(cleared) }
         if (s.kind == "ruin") {
-            lv + decay(built) + {monsters: [], place: {kind: "ruin", name: "the ruins of " + s.name}}
+            lv + decay(built) + {monsters: [], place: {kind: "ruin", name: "the ruins of " + s.name, was: s.name}}
         } else {
             lv + built + {monsters: [], place: {kind: s.kind, name: s.name}}
         }

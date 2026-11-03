@@ -356,6 +356,10 @@ val statsView = fn(id:str, p:map):map {
         armour: game.armourValue(id), level: p.level, xp: p.xp,
         // Who holds the land here, and where that is.
         land: game.land(id).holder ?? "No one", place: game.land(id).place,
+        since: match game.land(id).since {
+            t: str => ", " + t
+            _ => ""
+        },
         date: game.date().text,
         conditions: filter([
             hunger,

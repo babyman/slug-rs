@@ -911,9 +911,25 @@ val enter = fn(cx:num, cy:num, depth:num, place:fn) {
     val lv = chunk(cx, cy, depth)
     val spot = place(lv)
     val arriving = player.cx != cx || player.cy != cy || player.depth != depth
+    val from = empire.territoryOf(player.cx, player.cy, player.depth)
+    val to = empire.territoryOf(cx, cy, depth)
     player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
+    // Coming into new land, where it is and who holds it, in a world of
+    // factions.
+    val e = world.empire ?? {factions: []}
+    val factions = len(e.factions) > 0
+    if (arriving && factions && to != from) { say(lore.arriving(world.seed, e, to)) }
     match lv.place {
-        p: map => if (arriving) { say("You come to " + p.name + ".") }
+        p: map => if (arriving) {
+            say("You come to " + p.name + ".")
+            // What a settlement shows of its past.
+            if (factions) {
+                match lore.settlementPast(e, p.was ?? p.name, p.kind == "ruin") {
+                    past: str => say(past)
+                    _ => nil
+                }
+            }
+        }
         _ => nil
     }
     see()
@@ -2531,8 +2547,9 @@ export val date = fn():map {
 }
 
 /**
- * The land the player with `id` is in: `{holder, place}`, the name of the
- * faction holding it, or nil, and where it is in words.
+ * The land the player with `id` is in: `{holder, place, since}`, the name
+ * of the faction holding it, or nil, where it is in words, and how long it
+ * has been held (see `slug.games.crawl.lore.heldSince`), or nil.
  */
 export val land = fn(id:str):map {
     actAs(id, fn() {
@@ -2543,6 +2560,7 @@ export val land = fn(id:str):map {
                 _ => nil
             },
             place: empire.placeName(world.seed, t),
+            since: lore.heldSince(world.empire ?? {holds: {}}, t),
         }
     })
 }

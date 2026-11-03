@@ -178,7 +178,7 @@ val besides = fn(key:str, regions:num):list {
  * rest each holding a few territories at their home band.
  */
 export val create = fn(seed:num, size:num, settlements:list):map {
-    if (size == 0) { return {factions: [], holds: {}, fixed: {}, start: "", fallen: [], chronicle: [], annals: [], step: 0, regions: 0, kills: {}} }
+    if (size == 0) { return {factions: [], holds: {}, fixed: {}, start: "", fallen: [], chronicle: [], annals: [], lands: {}, step: 0, regions: 0, kills: {}} }
     val regions = math.div(size + REGION - 1, REGION)
     val towns = filter(settlements, fn(s) { s.kind == "town" })
     val seats = [towns[0], if (len(towns) > 1) { towns[len(towns) - 1] } else { towns[0] }]
@@ -236,7 +236,7 @@ export val create = fn(seed:num, size:num, settlements:list):map {
     })
     {
         factions: factions, holds: holds, fixed: fixed, start: territoryOf(settlements[0].cx, settlements[0].cy, 0),
-        fallen: [], chronicle: [], annals: [], step: 0, regions: regions, kills: {},
+        fallen: [], chronicle: [], annals: [], lands: {}, step: 0, regions: regions, kills: {},
     }
 }
 
@@ -314,10 +314,32 @@ val note = fn(empire:map, event:map):map {
     }
 }
 
+// The empire with territory `key` given to faction `i`, and the land's
+// record saying since when, and how many times it has changed hands.
+val claim = fn(empire:map, key:str, i:num):map {
+    val lands = empire.lands ?? {}
+    val before = lands[key] ?? {changes: 0}
+    val changed = if (empire.holds[key] == nil) { 0 } else { 1 }
+    empire copy {
+        holds: empire.holds + {[key]: i},
+        lands: lands + {[key]: {since: empire.step, changes: before.changes + changed}},
+    }
+}
+
+/**
+ * The record of territory `key`: `since`, the step its holder took it, or
+ * nil if it has held it from the first or no one holds it, and `changes`,
+ * how many times it has changed hands.
+ */
+export val landOf = fn(empire:map, key:str):map {
+    val record = (empire.lands ?? {})[key] ?? {changes: 0}
+    {since: if (empire.holds[key] == nil) { nil } else { record.since }, changes: record.changes}
+}
+
 // The empire with territory `target` given to faction `i`; if that leaves
 // faction `j`, its holder before, with no land, they are noted as broken.
 val takeOver = fn(empire:map, i:num, j:num, target:str):map {
-    val after = empire copy {holds: empire.holds + {[target]: i}}
+    val after = claim(empire, target, i)
     if (any(keys(after.holds), fn(k) { after.holds[k] == j })) { after } else {
         note(after, {kind: "broken", by: i, against: j, at: target})
     }
@@ -405,7 +427,7 @@ val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
         }
         _ => {
             if (power(empire, i, target) < 3) { return empire }
-            note(empire copy {holds: empire.holds + {[target]: i}}, {kind: "settled", by: i, at: target})
+            note(claim(empire, target, i), {kind: "settled", by: i, at: target})
         }
     }
 }

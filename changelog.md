@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Crawl's places tell their history. Coming into new land, by an edge or
+  the stairs, says where it is and who holds it, and since when: "You are
+  now in the shallows under the Ashmoor, held by the Gnash Pack since the
+  autumn of year 34." (or "for as long as anyone remembers", or "which no
+  one holds"), and how many times it has changed hands, if more than once.
+  The stats' "Held by" shows the same "since" when hovered. A ruin's gate
+  stone says who sacked it and when ("A broken stone by the gate reads:
+  sacked by the Gnash Pack in the winter of year 67."), and a standing
+  settlement's walls the assaults they held off. The empire keeps a record
+  of each territory, `lands` (`empire.landOf`: since when its holder has
+  held it, and how many times it has changed hands); ruins' `place`
+  carries the settlement's name as `was`; `game.land` gives `since`; the
+  words are `lore.arriving`, `lore.heldSince` and `lore.settlementPast`.
+
 - Crawl's people tell of the world near them. Innkeepers' rumours, half
   the time, are news and legends weighed by how near they happened, how
   lately and how much they mattered: news fades with distance and is

@@ -20,11 +20,14 @@ val empire = import("slug.games.crawl.empire")
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
 val string = import("slug.string")
-val {map, filter, reduce, range} = import("slug.std")
+val {map, filter, reduce, range, all} = import("slug.std")
 
 val parse = fn(key:str):list { map(string.split(key, ","), fn(t) { string.toInt(t) ?? 0 }) }
 
 val capital = fn(text:str):str { string.upper(text[:1]) + text[1:] }
+
+// "the Gnash Pack" as "the Gnash Pack's".
+val possessive = fn(name:str):str { if (name[len(name) - 1:] == "s") { name + "'" } else { name + "'s" } }
 
 /**
  * How far territory `a` is from territory `b`: one for each region across
@@ -223,6 +226,60 @@ export val prices = fn(seed:num, e:map, here:str):str|nil {
             } else { nil }
         }
         _ => nil
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Places.
+
+/**
+ * How long the holder of territory `key` has held it: "since the autumn of
+ * year 34", "for as long as anyone remembers", or nil if no one holds it.
+ */
+export val heldSince = fn(e:map, key:str):str|nil {
+    if (e.holds[key] == nil) { return nil }
+    match empire.landOf(e, key).since {
+        step: num => "since " + empire.dateOf(step)
+        _ => "for as long as anyone remembers"
+    }
+}
+
+/**
+ * What a traveller learns coming into territory `key`, as "You are now in
+ * the shallows under the Ashmoor, held by the Gnash Pack since the autumn
+ * of year 34.", and, if it has changed hands more than once, how often.
+ */
+export val arriving = fn(seed:num, e:map, key:str):str {
+    val where = empire.placeName(seed, key)
+    val held = match empire.holder(e, key) {
+        f: map => ", held by " + f.name + " " + (heldSince(e, key) ?? "")
+        _ => ", which no one holds"
+    }
+    val changes = empire.landOf(e, key).changes
+    "You are now " + where + held + "."
+        + (if (changes >= 2) { " It has changed hands " + empire.times(changes) + "." } else { "" })
+}
+
+/**
+ * What the settlement called `name` shows of its past to someone coming
+ * to it, if anything: for a ruin (`ruin` true), who sacked it and when;
+ * for one standing, the sieges its walls held.
+ */
+export val settlementPast = fn(e:map, name:str, ruin:bool):str|nil {
+    val sieges = filter(e.annals ?? [], fn(a) { a.kind == "siege" && a.name == name })
+    if (len(sieges) == 0) { return nil }
+    val last = sieges[len(sieges) - 1]
+    if (ruin) {
+        if (!last.fell) { return nil }
+        "A broken stone by the gate reads: sacked by " + empire.factionName(e, last.by) + " in " + empire.dateOf(last.last ?? last.step) + "."
+    } else {
+        val held = reduce(sieges, 0, fn(n, a) { n + (a.held ?? 0) })
+        val one = all(sieges, fn(a) { a.by == last.by })
+        if (one) {
+            "Its walls bear the marks of " + possessive(empire.factionName(e, last.by)) + " assaults, held off " + empire.times(held) + "."
+        } else {
+            "Its walls bear the marks of assaults held off " + empire.times(held) + ", the last by " + empire.factionName(e, last.by) + "."
+        }
     }
 }
 

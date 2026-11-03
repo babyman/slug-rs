@@ -217,4 +217,10 @@ Guards name the nearest land the peoples below hold, captains whose land
 their bounties are for, dealers why their prices are what they are, and
 townsfolk pass on news or remember their own sieges.
 
+Places tell their history too. Coming into new land says where you are,
+who holds it and since when, and how many times it has changed hands, if
+more than once; hover over "Held by" in the stats to see it again. A
+ruin's gate stone says who sacked it and when, and a standing settlement's
+walls show the assaults they held off.
+
 Players nudge the world; they do not decide it.

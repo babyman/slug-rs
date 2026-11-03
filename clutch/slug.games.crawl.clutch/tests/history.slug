@@ -48,7 +48,7 @@ val aRuinIsEmptyBrokenAndHasAWayDownInside = fn() {
     val ground = level.generate(1, s.cx, s.cy, 0, 32)
     val standing = town.build(1, ground, s)
     val ruin = town.build(1, ground, s + {kind: "ruin", was: "town"})
-    assertEqual(ruin.place, {kind: "ruin", name: "the ruins of " + s.name})
+    assertEqual(ruin.place, {kind: "ruin", name: "the ruins of " + s.name, was: s.name})
     assertEqual(ruin.characters, [])
     assertTrue(count(ruin.map, level.HWALL) < count(standing.map, level.HWALL))
     assertEqual(count(ruin.map, level.DOOR), 0)
