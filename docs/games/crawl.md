@@ -201,7 +201,13 @@ before anyone comes. In those years the peoples below may besiege the settlement
 their land. Walls double a settlement's defence, but each siege it holds off
 wears them down; one that falls is a ruin from then on. Most worlds lose
 none to five settlements; the start town always stands. The dungeon under a
-ruin, down to depth 3, holds what the fallen left behind, and innkeepers
-tell of the falls along with the latest news.
+ruin, down to depth 3, holds what the fallen left behind.
+
+The world remembers. Every fight goes into a chronicle of the latest news,
+and the great events go into the annals for good: each siege, how many
+times the settlement held and whether it fell, and any faction driven from
+the last of its land. Innkeepers tell of both: "Wolfby fell to the Sootfang
+Warren in the summer of year 53, after holding out six times since the
+autumn of year 46."
 
 Players nudge the world; they do not decide it.

@@ -2002,7 +2002,7 @@ val deal = fn(c:map, act:list) {
         }
         ["rumour"] => {
             // Half the time, news of the world, when there is any.
-            val heard = match empire.news(world.empire ?? {chronicle: []}) {
+            val heard = match empire.news(world.seed, world.empire ?? {chronicle: []}) {
                 n: str => if (rng.below(2) == 0) { n } else { nil }
                 _ => nil
             }

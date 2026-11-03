@@ -75,13 +75,65 @@ val theDungeonUnderARuinIsRicher = fn() {
     assertEqual(len(game.here("a").items), len(plain.items) + 5)
 }
 
+// An empire of two factions for telling events.
+val told = {
+    factions: [{name: "the Redaxe Horde"}, {name: "the Iron Compact of Elmby"}],
+    chronicle: [], annals: [],
+}
+
 @test
-val innkeepersTellOfTheFallen = fn() {
-    val e = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", step: 125}]}
-    assertEqual(empire.news(e), "Elmby fell to the Redaxe Horde in the summer of year 32. They say its cellars were never emptied.")
-    // Worlds saved before the calendar kept the step as the year.
-    val old = {chronicle: [], fallen: [{name: "Elmby", by: "the Redaxe Horde", year: 124}]}
-    assertEqual(empire.news(old), "Elmby fell to the Redaxe Horde in the spring of year 32. They say its cellars were never emptied.")
+val eventsAreToldInWords = fn() {
+    val where = empire.placeName(7, "1,2,1")
+    val tell = fn(event:map):str { empire.tell(7, told, {step: 0, at: "1,2,1"} + event) }
+    assertEqual(tell({kind: "settled", by: 0}), "The Redaxe Horde settled the land " + where + ".")
+    assertEqual(tell({kind: "took", by: 0, against: 1}), "The Redaxe Horde took the land " + where + " from the Iron Compact of Elmby.")
+    assertEqual(tell({kind: "repelled", by: 1, against: 0}), "The Iron Compact of Elmby threw back the Redaxe Horde " + where + ".")
+    assertEqual(tell({kind: "sacked", by: 0, against: 1, name: "Elmby"}), "The Redaxe Horde sacked Elmby.")
+    assertEqual(tell({kind: "held", by: 1, against: 0, name: "Elmby"}), "Elmby held against the Redaxe Horde.")
+    assertEqual(tell({kind: "broken", by: 0, against: 1}), "The Redaxe Horde drove the Iron Compact of Elmby from the last of their land, " + where + ".")
+    // Sieges, as the annals keep them.
+    val siege = {kind: "siege", by: 0, against: 1, name: "Elmby", last: 9}
+    assertEqual(tell(siege + {held: 0, fell: true}), "The Redaxe Horde sacked Elmby.")
+    assertEqual(tell(siege + {held: 3, fell: true}), "The Redaxe Horde besieged Elmby, which held three times before it fell.")
+    assertEqual(tell(siege + {held: 12, fell: false}), "The Redaxe Horde besieged Elmby, which held 12 times.")
+    // Events saved as text before they were data are told as they were.
+    assertEqual(empire.tell(7, told, {step: 3, text: "the Redaxe Horde sacked Elmby."}), "The Redaxe Horde sacked Elmby.")
+    assertEqual(empire.whenOf({step: 125}), "the summer of year 32")
+}
+
+@test
+val innkeepersTellOfTheGreatEventsOfThePast = fn() {
+    val siege = {step: 101, kind: "siege", by: 0, against: 1, at: "1,2,0", name: "Elmby"}
+    val news = fn(event:map):str|nil { empire.news(7, told copy {annals: [siege + event]}) }
+    assertEqual(news({held: 0, last: 125, fell: true}), "Elmby fell to the Redaxe Horde in the summer of year 32. They say its cellars were never emptied.")
+    assertEqual(news({held: 2, last: 125, fell: true}),
+        "Elmby fell to the Redaxe Horde in the summer of year 32, after holding out twice since the summer of year 26. They say its cellars were never emptied.")
+    assertEqual(news({held: 1, last: 101, fell: false}), "Elmby held against the Redaxe Horde in the summer of year 26. Its walls still bear the marks.")
+    assertEqual(news({held: 4, last: 126, fell: false}),
+        "Elmby held against the Redaxe Horde four times, from the summer of year 26 to the autumn of year 32. Its walls still bear the marks.")
+    val broken = told copy {annals: [{step: 0, kind: "broken", by: 0, against: 1, at: "1,2,1"}]}
+    assertEqual(empire.news(7, broken), "In the spring of year 1, the Redaxe Horde drove the Iron Compact of Elmby from the last of their land, "
+        + empire.placeName(7, "1,2,1") + ".")
+    // Recent news is from the chronicle.
+    val recent = told copy {chronicle: [{step: 4, kind: "sacked", by: 0, against: 1, at: "1,2,0", name: "Elmby"}]}
+    assertEqual(empire.news(7, recent), "They say the Redaxe Horde sacked Elmby.")
+    assertEqual(empire.news(7, told), nil)
+}
+
+@test
+val theAnnalsKeepTheGreatEventsForGood = fn() {
+    game.newGame(1, {history: 75})
+    val e = game.current().world.empire
+    // The chronicle has only the latest; the annals keep every great event.
+    assertTrue(all(e.annals, fn(a) { a.kind == "siege" || a.kind == "broken" }))
+    assertTrue(any(e.annals, fn(a) { a.step < e.chronicle[0].step }))
+    // Every fall ends a siege; one siege is one entry, however long.
+    val fell = filter(e.annals, fn(a) { a.kind == "siege" && a.fell })
+    assertTrue(len(fell) > 0)
+    assertEqual(map(fell, fn(a) { [a.name, e.factions[a.by].name, a.last] }), map(e.fallen, fn(f) { [f.name, f.by, f.step] }))
+    assertTrue(any(e.annals, fn(a) { a.kind == "siege" && a.held > 1 }))
+    // A broken faction holds no land.
+    assertTrue(all(filter(e.annals, fn(a) { a.kind == "broken" }), fn(a) { !any(keys(e.holds), fn(k) { e.holds[k] == a.against }) }))
 }
 
 @test

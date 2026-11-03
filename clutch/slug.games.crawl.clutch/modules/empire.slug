@@ -14,8 +14,21 @@
  * earn from what they hold, turn wealth into strength,
  * and push into the territories beside theirs, wild or held, as their
  * traits incline them; a clash goes to the stronger, and strength fades
- * with distance from home. What happens goes into a chronicle. Each step
- * is a season, four to a year.
+ * with distance from home. Each step is a season, four to a year.
+ *
+ * What happens is kept as events, `{step, kind, by, against, at, name}`:
+ * `by` the faction that did it and `against` the one it was done to, by
+ * index, `at` the territory, and `name` the settlement, if any. The kinds
+ * are "settled" (wild land claimed), "took" (held land won), "repelled"
+ * (an attack thrown back, `by` the defender), "sacked" (a settlement
+ * taken), "held" (a settlement holding out against a siege, `by` its
+ * holder), and "broken" (a faction driven from the last of its land).
+ *
+ * The chronicle keeps the latest events of every kind. The annals keep the
+ * great ones for good: every "broken", and every siege as one entry, kind
+ * "siege", `by` the besieger and `against` the holder, with `held`, how
+ * many assaults it held off, `last`, the step of the latest, and whether
+ * it `fell`. `tell` puts an event into words.
  *
  * The layer hands summaries down: who holds a territory, which monster
  * kinds thrive there (`habitatAt`), what its markets charge
@@ -165,7 +178,7 @@ val besides = fn(key:str, regions:num):list {
  * rest each holding a few territories at their home band.
  */
 export val create = fn(seed:num, size:num, settlements:list):map {
-    if (size == 0) { return {factions: [], holds: {}, fixed: {}, start: "", fallen: [], chronicle: [], step: 0, regions: 0, kills: {}} }
+    if (size == 0) { return {factions: [], holds: {}, fixed: {}, start: "", fallen: [], chronicle: [], annals: [], step: 0, regions: 0, kills: {}} }
     val regions = math.div(size + REGION - 1, REGION)
     val towns = filter(settlements, fn(s) { s.kind == "town" })
     val seats = [towns[0], if (len(towns) > 1) { towns[len(towns) - 1] } else { towns[0] }]
@@ -223,7 +236,7 @@ export val create = fn(seed:num, size:num, settlements:list):map {
     })
     {
         factions: factions, holds: holds, fixed: fixed, start: territoryOf(settlements[0].cx, settlements[0].cy, 0),
-        fallen: [], chronicle: [], step: 0, regions: regions, kills: {},
+        fallen: [], chronicle: [], annals: [], step: 0, regions: regions, kills: {},
     }
 }
 
@@ -247,6 +260,10 @@ val KILL_COST = 1
 // The chronicle keeps this many events.
 val CHRONICLE = 40
 
+// A settlement assaulted again within this many steps of the last time is
+// still under the same siege.
+val SIEGE_GAP = 20
+
 /**
  * The strength faction `i` of `empire` brings to territory `key`: its
  * strength, as much as reaches that band from its home, spread over what it
@@ -261,9 +278,49 @@ export val power = fn(empire:map, i:num, key:str):num {
 
 val clamp = fn(n:num):num { math.max(-2, math.min(2, n)) }
 
-val note = fn(empire:map, text:str):map {
-    val all = empire.chronicle :+ {step: empire.step, text: text}
-    empire copy {chronicle: if (len(all) > CHRONICLE) { all[len(all) - CHRONICLE:] } else { all }}
+// The annals `annals` with assault `e`, "held" or "sacked", in the
+// settlement's siege: the one its besieger has kept up, or a new one.
+val besieged = fn(annals:list, e:map):list {
+    val besieger = if (e.kind == "held") { e.against } else { e.by }
+    val holder = if (e.kind == "held") { e.by } else { e.against }
+    val fell = e.kind == "sacked"
+    val held = if (fell) { 0 } else { 1 }
+    val open = filter(range(len(annals)), fn(k) {
+        val a = annals[k]
+        a.kind == "siege" && a.name == e.name && a.by == besieger && !a.fell && e.step - a.last <= SIEGE_GAP
+    })
+    if (len(open) == 0) {
+        annals :+ {step: e.step, kind: "siege", by: besieger, against: holder, at: e.at, name: e.name, held: held, last: e.step, fell: fell}
+    } else {
+        val k = open[len(open) - 1]
+        val a = annals[k]
+        annals[:k] + [a copy {held: a.held + held, last: e.step, fell: fell}] + annals[k + 1:]
+    }
+}
+
+// The empire with `event` (without its step) noted in the chronicle and,
+// if it is a great one, in the annals.
+val note = fn(empire:map, event:map):map {
+    val e = {step: empire.step} + event
+    val all = empire.chronicle :+ e
+    val annals = empire.annals ?? []
+    empire copy {
+        chronicle: if (len(all) > CHRONICLE) { all[len(all) - CHRONICLE:] } else { all },
+        annals: match e.kind {
+            "held", "sacked" => besieged(annals, e)
+            "broken" => annals :+ e
+            _ => annals
+        },
+    }
+}
+
+// The empire with territory `target` given to faction `i`; if that leaves
+// faction `j`, its holder before, with no land, they are noted as broken.
+val takeOver = fn(empire:map, i:num, j:num, target:str):map {
+    val after = empire copy {holds: empire.holds + {[target]: i}}
+    if (any(keys(after.holds), fn(k) { after.holds[k] == j })) { after } else {
+        note(after, {kind: "broken", by: i, against: j, at: target})
+    }
 }
 
 val setFaction = fn(empire:map, i:num, f:map):map {
@@ -311,7 +368,6 @@ val push = fn(empire:map, i:num, seed:num, history:bool):map {
 // Faction `i` pushes into territory `target`.
 val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
     val f = empire.factions[i]
-    val where = placeName(seed, target)
     match empire.fixed[target] {
         name: str => return siege(empire, i, target, name)
         _ => nil
@@ -342,14 +398,14 @@ val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
                 },
             })
             if (won) {
-                note(after copy {holds: after.holds + {[target]: i}}, f.name + " took the land " + where + " from " + g.name + ".")
+                takeOver(note(after, {kind: "took", by: i, against: j, at: target}), i, j, target)
             } else {
-                note(after, g.name + " threw back " + f.name + " " + where + ".")
+                note(after, {kind: "repelled", by: j, against: i, at: target})
             }
         }
         _ => {
             if (power(empire, i, target) < 3) { return empire }
-            note(empire copy {holds: empire.holds + {[target]: i}}, f.name + " settled the land " + where + ".")
+            note(empire copy {holds: empire.holds + {[target]: i}}, {kind: "settled", by: i, at: target})
         }
     }
 }
@@ -370,13 +426,13 @@ val siege = fn(empire:map, i:num, target:str, name:str):map {
     val after = setFaction(setFaction(empire, i, f copy {strength: f.strength - math.div(f.strength, if (won) { 10 } else { 5 }), lastFight: empire.step}),
         j, g copy {strength: g.strength - math.div(g.strength, if (won) { 5 } else { 10 }), lastFight: empire.step})
     if (won) {
-        note(after copy {
-            holds: after.holds + {[target]: i},
+        val sacked = note(after copy {
             fixed: remove(after.fixed, target),
             fallen: after.fallen :+ {name: name, by: f.name, step: empire.step},
-        }, f.name + " sacked " + name + ".")
+        }, {kind: "sacked", by: i, against: j, at: target, name: name})
+        takeOver(sacked, i, j, target)
     } else {
-        note(after copy {sieges: (after.sieges ?? {}) + {[target]: worn + 1}}, name + " held against " + f.name + ".")
+        note(after copy {sieges: (after.sieges ?? {}) + {[target]: worn + 1}}, {kind: "held", by: j, against: i, at: target, name: name})
     }
 }
 
@@ -494,22 +550,95 @@ export val bounties = fn(empire:map, rx:num, ry:num):list {
     map(kinds, fn(k) { {kind: k, price: math.max(1, math.div(HEADS[k] * (100 - 15 * greed), 100))} })
 }
 
-val uncap = fn(text:str):str { string.lower(text[:1]) + text[1:] }
+// The name of faction `i`, if there is one.
+val nameOf = fn(empire:map, i:num|nil):str {
+    match i {
+        n: num => if (n >= 0 && n < len(empire.factions)) { empire.factions[n].name } else { "someone" }
+        _ => "someone"
+    }
+}
+
+// Event `event` in words, as a clause: "the Redaxe Horde sacked Elmby."
+// Events saved before they were kept as data are their text.
+val clause = fn(seed:num, empire:map, event:map):str {
+    match event.text {
+        // Their faction names begin "the", and settlement names are capitals.
+        t: str => return t
+        _ => nil
+    }
+    val by = nameOf(empire, event.by)
+    val against = nameOf(empire, event.against)
+    val where = placeName(seed, event.at ?? "0,0,0")
+    val name = event.name ?? "a settlement"
+    val told = match event.kind {
+        "settled" => by + " settled the land " + where + "."
+        "took" => by + " took the land " + where + " from " + against + "."
+        "repelled" => by + " threw back " + against + " " + where + "."
+        "sacked" => by + " sacked " + name + "."
+        "held" => name + " held against " + against + "."
+        "broken" => by + " drove " + against + " from the last of their land, " + where + "."
+        "siege" => if (event.fell) {
+            if ((event.held ?? 0) == 0) { by + " sacked " + name + "." }
+            else { by + " besieged " + name + ", which held " + times(event.held) + " before it fell." }
+        } else { by + " besieged " + name + ", which held " + times(event.held ?? 1) + "." }
+        _ => "something happened " + where + "."
+    }
+    told
+}
 
 /**
- * Something an innkeeper might have heard: one of the chronicle's latest
- * events, or the fall of a settlement, or nil when nothing has happened
- * yet.
+ * Event `event` of `empire`, in the world with seed `seed`, in words, as
+ * "The Redaxe Horde sacked Elmby."
  */
-export val news = fn(empire:map):str|nil {
-    val recent = if (len(empire.chronicle) > 8) { empire.chronicle[len(empire.chronicle) - 8:] } else { empire.chronicle }
-    val fallen = empire.fallen ?? []
-    // Now and then, the fall of a settlement, long ago.
-    if (len(fallen) > 0 && (len(recent) == 0 || rng.below(3) == 0)) {
-        val f = fallen[rng.below(len(fallen))]
-        // Worlds saved before the calendar kept the step as `year`.
-        val when = f.step ?? f.year ?? 0
-        return f.name + " fell to " + f.by + " in the " + seasonOf(when) + " of year " + yearOf(when) + ". They say its cellars were never emptied."
+export val tell = fn(seed:num, empire:map, event:map):str {
+    val told = clause(seed, empire, event)
+    string.upper(told[:1]) + told[1:]
+}
+
+// How many times, in words: "once", "twice", "three times", "12 times".
+val times = fn(n:num):str {
+    val words = ["no times", "once", "twice", "three times", "four times", "five times", "six times", "seven times", "eight times", "nine times", "ten times"]
+    if (n >= 0 && n < len(words)) { words[n] } else { "" + n + " times" }
+}
+
+// Step `step` as "the summer of year 32".
+val dateOf = fn(step:num):str { "the " + seasonOf(step) + " of year " + yearOf(step) }
+
+/**
+ * When `event` happened, or began, as "the summer of year 32".
+ */
+export val whenOf = fn(event:map):str { dateOf(event.step) }
+
+// A great event from long ago, as an innkeeper tells it.
+val legend = fn(seed:num, empire:map, event:map):str {
+    val when = whenOf(event)
+    val name = event.name ?? "A settlement"
+    val by = nameOf(empire, event.by)
+    val held = event.held ?? 0
+    match event.kind {
+        "siege" => if (event.fell) {
+            name + " fell to " + by + " in " + dateOf(event.last ?? event.step)
+                + (if (held == 0) { "" } else { ", after holding out " + times(held) + " since " + when })
+                + ". They say its cellars were never emptied."
+        } else {
+            name + " held against " + by
+                + (if (held <= 1) { " in " + when } else { " " + times(held) + ", from " + when + " to " + dateOf(event.last ?? event.step) })
+                + ". Its walls still bear the marks."
+        }
+        _ => "In " + when + ", " + clause(seed, empire, event)
     }
-    if (len(recent) == 0) { nil } else { "They say " + uncap(recent[rng.below(len(recent))].text) }
+}
+
+/**
+ * Something an innkeeper might have heard, in the world with seed `seed`:
+ * one of the chronicle's latest events, or now and then one of the great
+ * events of the annals, or nil when nothing has happened yet.
+ */
+export val news = fn(seed:num, empire:map):str|nil {
+    val recent = if (len(empire.chronicle) > 8) { empire.chronicle[len(empire.chronicle) - 8:] } else { empire.chronicle }
+    val annals = empire.annals ?? []
+    if (len(annals) > 0 && (len(recent) == 0 || rng.below(3) == 0)) {
+        return legend(seed, empire, annals[rng.below(len(annals))])
+    }
+    if (len(recent) == 0) { nil } else { "They say " + clause(seed, empire, recent[rng.below(len(recent))]) }
 }

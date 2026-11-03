@@ -47,7 +47,7 @@ val factionsGrowFightAndKeepTheirSettlements = fn() {
     assertTrue(len(keys(e.holds)) > len(keys(e0.holds)))
     assertTrue(all(keys(e0.fixed), fn(k) { e.holds[k] == e0.holds[k] }))
     assertTrue(len(e.chronicle) > 0 && len(e.chronicle) <= 40)
-    assertTrue(any(e.chronicle, fn(c) { contains(c.text, " took the land ") || contains(c.text, " threw back ") }))
+    assertTrue(any(e.chronicle, fn(c) { c.kind == "took" || c.kind == "repelled" }))
     assertTrue(all(e.factions, fn(f) { all([f.traits.bold, f.traits.aggressive, f.traits.orderly, f.traits.greedy], fn(t) { t >= -2 && t <= 2 }) }))
     assertEqual(steps(e0, 2, 150), e)
 }
