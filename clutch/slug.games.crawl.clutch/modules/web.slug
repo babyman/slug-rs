@@ -606,7 +606,7 @@ export val resume = fn(saved:map) {
 val fresh = fn(options:map) {
     start(options.seed ?? secure.seed(), {
         regionEvery: options.region ?? 20, empireEvery: options.empire ?? 6000,
-        history: options.history ?? 300, size: options.size ?? 32,
+        history: options.history ?? 100, size: options.size ?? 32,
     })
 }
 
@@ -623,8 +623,8 @@ val fresh = fn(options:map) {
  * `options.seed` (default: a fresh one from `slug.random.secure`), whose
  * region layer visits each chunk every `options.region` ticks (default 20),
  * whose empire layer takes a step, a season, every `options.empire` ticks
- * (default 6000, 15 minutes) after `options.history` seasons of history
- * (default 300, 75 years),
+ * (default 6000, 15 minutes) after `options.history` years of history
+ * (default 100),
  * `options.size` chunks across and down (default 32).
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {

@@ -14,9 +14,9 @@
  * its monsters breed, die off and move on (default 20, 3 seconds),
  * `--empire=N`, how many ticks pass between the empire layer's steps, where
  * factions earn, grow and fight over land, each step a season (default
- * 6000, 15 minutes), `--history=N`, how many seasons of history the
+ * 6000, 15 minutes), `--history=N`, how many years of history the
  * empires live through before anyone comes, in which settlements may fall
- * to ruin (default 300, 75 years), and
+ * to ruin (default 100), and
  * `--size=N`, how many chunks across and down the world is (default 32).
  *
  * Options for the server: `--port=N` (default 8080; 0 picks a free one),
@@ -51,7 +51,7 @@ val main = fn() {
     }
     web.serve(listener, {
         db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
-        region: cfg("region", 20), empire: cfg("empire", 6000), history: cfg("history", 300), size: cfg("size", 32), save: cfg("save", 20),
+        region: cfg("region", 20), empire: cfg("empire", 6000), history: cfg("history", 100), size: cfg("size", 32), save: cfg("save", 20),
     })
     println("Saved.")
 }

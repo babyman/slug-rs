@@ -1017,9 +1017,10 @@ val EMPIRE_EVERY = 6000
  * (default 20), where its monsters breed, die off and move on, and loot
  * turns up; and the empire layer takes a step, a season, every
  * `options.empireEvery` ticks (default 6000, 15 minutes at 150 ms a tick),
- * after `options.history` seasons (default 0) of history, run before
- * anyone comes, in which settlements
- * may fall to the peoples below and become ruins. The world is `options.size` chunks across and down
+ * after `options.history` years (default 0) of history, four seasons
+ * each, run before anyone comes, in which settlements may fall to the
+ * peoples below and become ruins. The world is `options.size` chunks
+ * across and down
  * (default 32), with towns and forts on its surface, and new characters
  * start in the town nearest its middle.
  */
@@ -1034,9 +1035,9 @@ export val newGame = fn(seed:num, options:map = {}) {
     }
     world = world + {settlements: town.place(seed, world.size)}
     world = world + {empire: rng.within(rng.mix([seed, 60]), fn() { empire.create(seed, world.size, world.settlements) })}
-    // History: the empires run for `options.history` seasons before anyone
+    // History: the empires run for `options.history` years before anyone
     // comes, and the settlements that fell are ruins.
-    val seasons = options.history ?? 0
+    val seasons = 4 * (options.history ?? 0)
     val past = fn(e:map):map {
         if (e.step >= seasons) { return e }
         recur(rng.within(rng.mix([seed, 61, e.step]), fn() { empire.step(e, seed, true) }))

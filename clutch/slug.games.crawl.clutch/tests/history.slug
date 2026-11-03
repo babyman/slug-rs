@@ -24,7 +24,7 @@ val aWorldHasNoHistoryUnlessAskedFor = fn() {
 
 @test
 val historyAgesTheWorldAndSomeSettlementsFall = fn() {
-    game.newGame(1, {history: 300})
+    game.newGame(1, {history: 75})
     val w = game.current().world
     assertEqual(w.empire.step, 300)
     assertEqual(len(w.empire.chronicle), 40)
@@ -38,7 +38,7 @@ val historyAgesTheWorldAndSomeSettlementsFall = fn() {
     game.join("a", "Ann")
     assertEqual([game.playerOf("a").cx, game.playerOf("a").cy], [w.settlements[0].cx, w.settlements[0].cy])
     // The same seed has the same history.
-    game.newGame(1, {history: 300})
+    game.newGame(1, {history: 75})
     assertEqual(game.current().world.empire, w.empire)
 }
 
@@ -59,7 +59,7 @@ val aRuinIsEmptyBrokenAndHasAWayDownInside = fn() {
 
 @test
 val theDungeonUnderARuinIsRicher = fn() {
-    game.newGame(1, {history: 300})
+    game.newGame(1, {history: 75})
     game.join("a", "Ann")
     val s = filter(game.current().world.settlements, fn(s) { s.kind == "ruin" })[0]
     val key = game.chunkKey(s.cx, s.cy, 0)
@@ -89,7 +89,7 @@ val seasonsAreStepsFourToAYear = fn() {
     assertEqual([empire.yearOf(0), empire.seasonOf(0)], [1, "spring"])
     assertEqual([empire.yearOf(3), empire.seasonOf(3)], [1, "winter"])
     assertEqual([empire.yearOf(300), empire.seasonOf(300)], [76, "spring"])
-    game.newGame(1, {history: 300, empireEvery: 30})
+    game.newGame(1, {history: 75, empireEvery: 30})
     assertEqual(game.date().text, "Early spring, year 76")
     game.join("a", "Ann")
     val run = fn(n:num) { if (n > 0) { game.tick([], ["a"]); recur(n - 1) } }
