@@ -169,7 +169,8 @@ val killingAPeoplesMonsterCountsForTheEmpireAndForBounties = fn() {
     hit(20)
     assertEqual(game.here("a").monsters, [])
     val territory = empire.territoryOf(p.cx, p.cy, 0)
-    assertEqual(game.current().world.empire.kills[territory + "|kobold"], 1)
+    // Counted under the killer's name, for their deeds.
+    assertEqual(game.current().world.empire.kills[territory + "|kobold|" + game.playerOf("a").name], 1)
     val [rx, ry, _] = string.split(territory, ",")
     assertEqual(game.playerOf("a").kills[rx + "," + ry + "|kobold"], 1)
 }

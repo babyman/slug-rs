@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Crawl remembers its players. A character who dies leaves a grave (`_` on
+  the map) where they fell, with everything they carried, and their gold,
+  laid on the free squares around it for anyone to recover; walking onto a
+  grave reads it ("Here lies Mara, level 4, killed by the troll, in the
+  summer of year 102."). Deaths go into the chronicle and the annals, and
+  innkeepers keep a roll of the latest ("Ask after the fallen"). The annals
+  also remember deeds: slaying a dragon, troll, ogre or wraith; a bounty
+  claim of 100 gold or more; the first to reach each new depth from 5
+  (`world.deepest`; "No one has come this deep before."); and ten or more
+  kills of a faction's people in its land in one season, now that kills
+  carry their killer's name (`empire.killed(e, key, kind, who)`). The
+  annals keep the latest 60 of these; news and legends tell of them like
+  any other event. New: `empire.record`, `lore.epitaph`, `lore.fallen`,
+  `game.GRAVE`, a chunk's `graves`.
+
 - Crawl's places tell their history. Coming into new land, by an edge or
   the stairs, says where it is and who holds it, and since when: "You are
   now in the shallows under the Ashmoor, held by the Gnash Pack since the

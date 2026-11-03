@@ -56,6 +56,22 @@ val ORDER = [[-1, 0], [0, 1], [0, -1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1
 
 val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
 
+/**
+ * A grave, where a character fell, as the map shows it when nothing lies
+ * on it.
+ */
+export val GRAVE = "_"
+
+// Monsters whose killing is remembered.
+val RENOWNED = ["dragon", "troll", "ogre", "wraith"]
+
+// A bounty claim of this much gold or more is remembered.
+val BOUNTY_DEED = 100
+
+// The first to go deeper than this, and every deeper depth after, is
+// remembered.
+val DESCENT_FROM = 4
+
 val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS, level.UP, level.SCRUB, level.TREE, level.ROAD]
 
 // Players start on the surface in a chunk within SPAWN of the middle of the
@@ -425,6 +441,13 @@ val pickUp = fn() {
     }
 }
 
+// Reads the grave on the player's square, if there is one.
+val readGrave = fn() {
+    val graves = site().graves ?? []
+    val i = indexAt(graves, player.x, player.y)
+    if (i >= 0) { say(lore.epitaph(graves[i])) }
+}
+
 // ---------------------------------------------------------------------------
 // Seeing.
 
@@ -538,11 +561,18 @@ val outdoorSight = fn():map {
     found
 }
 
-// What the player remembers at (x, y): the item there, or the terrain.
-val sight = fn(x:num, y:num):str {
-    val i = indexAt(site().items, x, y)
-    if (i >= 0) { GLYPHS[site().items[i].item.kind] } else { terrain(x, y) }
+// What is seen at (x, y) in chunk `lv`: the item there, or a grave, or the
+// terrain.
+val glyphAt = fn(lv:map, x:num, y:num):str {
+    val i = indexAt(lv.items, x, y)
+    if (i >= 0) { GLYPHS[lv.items[i].item.kind] }
+    else if (indexAt(lv.graves ?? [], x, y) >= 0) { GRAVE }
+    else { lv.map[y][x] }
 }
+
+// What the player remembers at (x, y): the item there, a grave, or the
+// terrain.
+val sight = fn(x:num, y:num):str { if (inBounds(x, y)) { glyphAt(site(), x, y) } else { level.BLANK } }
 
 // Records every visible square in the player's memory.
 val see = fn() {
@@ -656,8 +686,7 @@ val seeOutdoors = fn() {
         val right = math.min(box.right - x0, level.WIDTH - 1)
         val shown = fn(x:num, y:num):str {
             if (visible[viewKey(x0 + x, y0 + y)] == true) {
-                val i = indexAt(lv.items, x, y)
-                if (i >= 0) { GLYPHS[lv.items[i].item.kind] } else { lv.map[y][x] }
+                glyphAt(lv, x, y)
             } else {
                 rows[y][x]
             }
@@ -914,6 +943,12 @@ val enter = fn(cx:num, cy:num, depth:num, place:fn) {
     val from = empire.territoryOf(player.cx, player.cy, player.depth)
     val to = empire.territoryOf(cx, cy, depth)
     player = player copy {cx: cx, cy: cy, depth: depth, x: spot.x, y: spot.y, sense: false}
+    // The first to come this deep is remembered.
+    if (chronicled() && depth > (world.deepest ?? DESCENT_FROM)) {
+        world = world copy {deepest: depth}
+        chronicle({kind: "deed", deed: "descent", depth: depth})
+        say("No one has come this deep before.")
+    }
     // Coming into new land, where it is and who holds it, in a world of
     // factions.
     val e = world.empire ?? {factions: []}
@@ -1167,24 +1202,74 @@ val strengthDamage = fn(str:num):num {
     if (str >= 18) { 2 } else if (str == 17) { 1 } else if (str <= 6) { -1 } else { 0 }
 }
 
-// A kill of a monster of the kind called `name`, if it belongs to a people:
-// it weakens that people's faction where it happened, at the empire's next
-// step, and counts towards the bounties posted for the region.
+// A kill of a monster of the kind called `name`: remembered if it is one of
+// the renowned; and if it belongs to a people, it weakens that people's
+// faction where it happened, at the empire's next step, and counts towards
+// the bounties posted for the region.
 val counted = fn(name:str) {
+    if (contains(RENOWNED, name)) { chronicle({kind: "deed", deed: "slew", what: name}) }
     if (empire.peopleOf(name) == nil) { return nil }
     val p = player
     val territory = empire.territoryOf(p.cx, p.cy, p.depth)
-    world = world copy {empire: empire.killed(world.empire, territory, name)}
+    world = world copy {empire: empire.killed(world.empire, territory, name, p.name ?? "")}
     val [rx, ry, _] = string.split(territory, ",")
     val k = rx + "," + ry + "|" + name
     val kills = p.kills ?? {}
     setPlayer(p copy {kills: kills + {[k]: (kills[k] ?? 0) + 1}})
 }
 
+// Whether this world keeps a history: it has factions.
+val chronicled = fn():bool { len((world.empire ?? {factions: []}).factions) > 0 }
+
+// The current step of the empire layer: the season.
+val season = fn():num { (world.empire ?? {step: 0}).step }
+
+// The world with a player's death or deed `event` recorded in its history,
+// where it is in the acting player's land.
+val chronicle = fn(event:map) {
+    if (chronicled()) {
+        world = world copy {empire: empire.record(world.empire, {who: player.name ?? "someone", at: empire.territoryOf(player.cx, player.cy, player.depth)} + event)}
+    }
+}
+
+// Up to `n` free squares around (x, y) in chunk `lv`, nearest first, out to
+// four squares away: open ground with nothing on it, and not stairs.
+val freeAround = fn(lv:map, x:num, y:num, n:num):list {
+    val open = fn(sx:num, sy:num):bool {
+        sx >= 0 && sy >= 0 && sx < level.WIDTH && sy < level.HEIGHT
+            && contains(PASSABLE, lv.map[sy][sx]) && lv.map[sy][sx] != level.STAIRS && lv.map[sy][sx] != level.UP
+            && indexAt(lv.items, sx, sy) < 0 && indexAt(lv.graves ?? [], sx, sy) < 0
+            && indexAt(lv.characters ?? [], sx, sy) < 0
+    }
+    val ring = fn(r:num):list {
+        reduce(range(2 * r + 1), [], fn(acc, j) {
+            acc + filter(map(range(2 * r + 1), fn(k) { {x: x + k - r, y: y + j - r} }), fn(q) {
+                math.max(math.abs(q.x - x), math.abs(q.y - y)) == r && open(q.x, q.y)
+            })
+        })
+    }
+    val all = reduce([1, 2, 3, 4], [], fn(acc, r) { acc + ring(r) })
+    all[:math.min(n, len(all))]
+}
+
+// The acting player dies of `cause`: a grave where they fell, what they
+// carried and their gold laid about it, and in a world with a history, the
+// death remembered.
 val die = fn(cause:str) {
-    player = player copy {dead: true}
+    val p = player
+    val lv = site()
+    val told = string.lower(cause[:1]) + cause[1:]
+    val grave = {x: p.x, y: p.y, name: p.name ?? "someone", level: p.level, cause: told, step: season()}
+    val things = reduce(p.pack, [], fn(acc, e) { acc + map(range(e.count), fn(_) { e.item }) })
+        + (if (p.gold > 0) { [{kind: "gold", amount: p.gold}] } else { [] })
+    val spots = freeAround(lv copy {graves: (lv.graves ?? []) :+ grave}, p.x, p.y, len(things))
+    val laid = map(range(len(spots)), fn(k) { {x: spots[k].x, y: spots[k].y, item: things[k], dropped: true} })
+    setHere(lv copy {items: lv.items + laid, graves: (lv.graves ?? []) :+ grave})
+    chronicle({kind: "death", level: p.level, cause: told, depth: p.depth})
+    player = player copy {dead: true, pack: [], gold: 0}
     say("You die.")
     say(cause + " on depth " + player.depth + ".")
+    say("Your grave lies here, and what you carried around it.")
     say("Press enter to start again.")
 }
 
@@ -1526,6 +1611,7 @@ val step = fn(dx:num, dy:num):bool {
         } else {
             setPlayer(p copy {x: p.x + dx, y: p.y + dy})
             pickUp()
+            readGrave()
             endTurn()
             true
         }
@@ -1556,6 +1642,7 @@ val cross = fn(dx:num, dy:num):bool {
     if (!contains(PASSABLE, next.map[ny][nx]) || blocked) { return false }
     enter(cx, cy, p.depth, fn(lv) { {x: nx, y: ny} })
     pickUp()
+    readGrave()
     endTurn()
     true
 }
@@ -1977,6 +2064,7 @@ val characterMenu = fn(c:map, page:str):map {
                     {key: "1", label: "Hear a rumour", act: ["rumour"]},
                     {key: "2", label: "A meal, " + innPrice(town.MEAL) + " gold", act: ["meal"]},
                     {key: "3", label: "A bed for the night, " + innPrice(town.BED) + " gold", act: ["bed"]},
+                    {key: "4", label: "Ask after the fallen", act: ["fallen"]},
                 ]
                 _ => [{key: "1", label: "Talk", act: ["talk"]}]
             }
@@ -2042,6 +2130,14 @@ val deal = fn(c:map, act:list) {
                 val left = reduce(here.bounties, kills, fn(acc, b) { acc - (here.region + "|" + b.kind) })
                 setPlayer(player copy {gold: player.gold + here.gold, kills: left})
                 say(c.name + " pays you " + here.gold + " gold.")
+                // A great haul is remembered.
+                if (here.gold >= BOUNTY_DEED) {
+                    val fort = match site().place {
+                        pl: map => pl.name
+                        _ => "a fort"
+                    }
+                    chronicle({kind: "deed", deed: "bounty", gold: here.gold, kills: here.kills, name: fort})
+                }
             }
         }
         ["talk"] => {
@@ -2049,6 +2145,16 @@ val deal = fn(c:map, act:list) {
             val lines = town.LINES[c.role] ?? ["..."]
             val told = if (rng.below(2) == 0) { tellHere(c.role) } else { nil }
             say(c.name + " says: \"" + (told ?? lines[rng.below(len(lines))]) + "\"")
+        }
+        ["fallen"] => {
+            val roll = match world.empire {
+                e: map => lore.fallen(world.seed, e, 3)
+                _ => []
+            }
+            if (len(roll) == 0) { say(c.name + " says: \"No one has fallen yet. May it stay that way.\"") } else {
+                say(c.name + " says: \"We remember them here:\"")
+                map(roll, fn(line) { say(line) })
+            }
         }
         ["meal"] => if (pay(innPrice(town.MEAL), "a meal")) {
             setPlayer(player copy {food: FOOD_MAX})

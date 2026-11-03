@@ -93,7 +93,11 @@ its character waiting.
 - Each turn you act costs one food. At 150 you are hungry, at 50 weak; at 0
   and below you sometimes faint, and at -850 you starve.
 - When you die, the world carries on: press `enter` to start again as a new
-  character in the start town, under the same name.
+  character in the start town, under the same name. You leave a grave
+  (`_`) where you fell, with everything you carried, and your gold, on the
+  squares around it, for you or anyone to go back for. Walking onto a grave
+  reads it: "Here lies Mara, level 4, killed by the troll, in the summer of
+  year 102."
 
 ## Fighting
 
@@ -222,5 +226,14 @@ who holds it and since when, and how many times it has changed hands, if
 more than once; hover over "Held by" in the stats to see it again. A
 ruin's gate stone says who sacked it and when, and a standing settlement's
 walls show the assaults they held off.
+
+Players are part of the history. Every death goes into the chronicle and
+the annals, and innkeepers keep a roll of the fallen ("Ask after the
+fallen"). So do deeds: slaying a dragon, troll, ogre or wraith; claiming
+100 gold or more of bounties at once; being the first to reach a new
+depth, from depth 5 down; and killing ten or more of a faction's people in
+its land in one season. The annals keep the latest 60 of the players'
+deaths and deeds, and the people of the surface tell of them like any
+other news.
 
 Players nudge the world; they do not decide it.

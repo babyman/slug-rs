@@ -40,7 +40,7 @@ export val distance = fn(a:str, b:str):num {
 }
 
 // How much each kind of event matters.
-val SIZE = {settled: 1, repelled: 2, took: 3, held: 4, sacked: 6, broken: 6, siege: 6}
+val SIZE = {settled: 1, repelled: 2, death: 2, took: 3, held: 4, deed: 4, sacked: 6, broken: 6, siege: 6}
 
 // How far news travels, and legends.
 val NEWS_RANGE = 6
@@ -227,6 +227,31 @@ export val prices = fn(seed:num, e:map, here:str):str|nil {
         }
         _ => nil
     }
+}
+
+// ---------------------------------------------------------------------------
+// The fallen.
+
+/**
+ * An epitaph for `grave`, `{name, level, cause, step}`: "Here lies Mara,
+ * level 4, killed by the troll, in the summer of year 102."
+ */
+export val epitaph = fn(grave:map):str {
+    "Here lies " + grave.name + ", level " + grave.level + ", " + grave.cause + ", in " + empire.dateOf(grave.step) + "."
+}
+
+/**
+ * The roll of the fallen an innkeeper keeps: the latest `n` deaths in the
+ * annals, newest first, as "Mara, level 4, killed by the troll in the
+ * depths under the Ashmoor, in the summer of year 102."
+ */
+export val fallen = fn(seed:num, e:map, n:num):list {
+    val deaths = filter(e.annals ?? [], fn(a) { a.kind == "death" })
+    val newest = map(range(math.min(n, len(deaths))), fn(k) { deaths[len(deaths) - 1 - k] })
+    map(newest, fn(d) {
+        (d.who ?? "Someone") + ", level " + (d.level ?? 1) + ", " + (d.cause ?? "died") + " "
+            + empire.placeName(seed, d.at ?? "0,0,1") + ", in " + empire.whenOf(d) + "."
+    })
 }
 
 // ---------------------------------------------------------------------------

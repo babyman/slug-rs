@@ -24,11 +24,18 @@
  * taken), "held" (a settlement holding out against a siege, `by` its
  * holder), and "broken" (a faction driven from the last of its land).
  *
+ * Players make events too, recorded by the engine with `record`: "death"
+ * (`who` died, `level`, of `cause`, on `depth`) and "deed" (`who` did it:
+ * `deed` "slew" a monster of kind `what`, "bounty" claimed `gold` for
+ * `kills` at the settlement `name`, "descent" was first to reach `depth`,
+ * or "weakened" faction `against` with `kills` of its people in a season).
+ *
  * The chronicle keeps the latest events of every kind. The annals keep the
  * great ones for good: every "broken", and every siege as one entry, kind
  * "siege", `by` the besieger and `against` the holder, with `held`, how
  * many assaults it held off, `last`, the step of the latest, and whether
- * it `fell`. `tell` puts an event into words.
+ * it `fell`; and the players' deaths and deeds, the latest of them. `tell`
+ * puts an event into words.
  *
  * The layer hands summaries down: who holds a territory, which monster
  * kinds thrive there (`habitatAt`), what its markets charge
@@ -264,6 +271,13 @@ val CHRONICLE = 40
 // still under the same siege.
 val SIEGE_GAP = 20
 
+// The annals keep this many of the players' deaths and deeds.
+val PLAYER_ANNALS = 60
+
+// A player who kills this many of a faction's people in its land in one
+// step is remembered for it.
+val HUNTER = 10
+
 /**
  * The strength faction `i` of `empire` brings to territory `key`: its
  * strength, as much as reaches that band from its home, spread over what it
@@ -309,10 +323,29 @@ val note = fn(empire:map, event:map):map {
         annals: match e.kind {
             "held", "sacked" => besieged(annals, e)
             "broken" => annals :+ e
+            "death", "deed" => latest(annals :+ e)
             _ => annals
         },
     }
 }
+
+// Whether event `e` is one of the players'.
+val byPlayer = fn(e:map):bool { e.kind == "death" || e.kind == "deed" }
+
+// The annals `annals` with only the latest PLAYER_ANNALS of the players'
+// events.
+val latest = fn(annals:list):list {
+    val theirs = len(filter(annals, byPlayer))
+    if (theirs <= PLAYER_ANNALS) { return annals }
+    val first = filter(range(len(annals)), fn(k) { byPlayer(annals[k]) })[0]
+    annals[:first] + annals[first + 1:]
+}
+
+/**
+ * The empire with a player's event `event` (without its step) recorded:
+ * in the chronicle, and, as it is great, in the annals.
+ */
+export val record = fn(empire:map, event:map):map { note(empire, event) }
 
 // The empire with territory `key` given to faction `i`, and the land's
 // record saying since when, and how many times it has changed hands.
@@ -460,19 +493,36 @@ val siege = fn(empire:map, i:num, target:str, name:str):map {
 
 // The players' kills since the last step weaken the factions of the
 // peoples killed, where they hold the land.
+// A player who killed HUNTER or more of a faction's people in its land is
+// remembered for it.
 val bleed = fn(empire:map):map {
-    reduce(keys(empire.kills), empire, fn(e, k) {
-        // Keys are "territory|kind".
-        val [territory, kind] = string.split(k, "|")
+    var hunters = {}
+    val bled = reduce(keys(empire.kills), empire, fn(e, k) {
+        // Keys are "territory|kind", with "|who" for a named player's.
+        val parts = string.split(k, "|")
+        val territory = parts[0]
+        val kind = parts[1]
         val n = empire.kills[k]
         match e.holds[territory] {
             i: num => if (e.factions[i].people == peopleOf(kind)) {
+                if (len(parts) > 2) {
+                    val h = "" + i + "|" + parts[2]
+                    val before = hunters[h] ?? {kills: 0}
+                    hunters = hunters + {[h]: {kills: before.kills + n, at: territory}}
+                }
                 val f = e.factions[i]
                 setFaction(e, i, f copy {strength: math.max(0, f.strength - n * KILL_COST)})
             } else { e }
             _ => e
         }
-    }) copy {kills: {}}
+    })
+    reduce(keys(hunters), bled copy {kills: {}}, fn(e, h) {
+        val [i, who] = string.split(h, "|")
+        val hunt = hunters[h]
+        if (hunt.kills < HUNTER) { e } else {
+            note(e, {kind: "deed", deed: "weakened", who: who, against: string.toInt(i) ?? 0, kills: hunt.kills, at: hunt.at})
+        }
+    })
 }
 
 // A faction that has not fought for a long while may grow more peaceful.
@@ -501,11 +551,14 @@ export val step = fn(empire:map, seed:num, history:bool = false):map {
 }
 
 /**
- * The empire with one kill by players of a monster of the kind called
- * `name` in territory `key` counted, for the next step.
+ * The empire with one kill by a player, `who` (default none named), of a
+ * monster of the kind called `name` in territory `key` counted, for the
+ * next step.
  */
-export val killed = fn(empire:map, key:str, name:str):map {
-    val k = key + "|" + name
+export val killed = fn(empire:map, key:str, name:str, who:str = ""):map {
+    // "|" separates the parts of a key; a name keeps none of its own.
+    val named = string.join(string.split(who, "|"), "/")
+    val k = key + "|" + name + (if (named == "") { "" } else { "|" + named })
     empire copy {kills: empire.kills + {[k]: (empire.kills[k] ?? 0) + 1}}
 }
 
@@ -614,10 +667,30 @@ export val clause = fn(seed:num, empire:map, event:map):str {
             if ((event.held ?? 0) == 0) { by + " sacked " + name + "." }
             else { by + " besieged " + name + ", which held " + times(event.held) + " before it fell." }
         } else { by + " besieged " + name + ", which held " + times(event.held ?? 1) + "." }
+        "death" => (event.who ?? "someone") + " "
+            + (if ((event.cause ?? "")[:6] == "killed") { "was " } else { "" }) + (event.cause ?? "died") + " " + where + "."
+        "deed" => {
+            val who = event.who ?? "someone"
+            match event.deed {
+                "slew" => who + " slew " + article(event.what ?? "monster") + " " + where + "."
+                "bounty" => who + " claimed " + (event.gold ?? 0) + " gold in bounties at " + name + ", for " + (event.kills ?? 0) + " kills."
+                "descent" => who + " was the first to reach depth " + (event.depth ?? 0) + ", " + where + "."
+                "weakened" => who + "'s hunting thinned " + possessive(against) + " ranks " + where + "."
+                _ => who + " did something " + where + "."
+            }
+        }
         _ => "something happened " + where + "."
     }
     told
 }
+
+// "a troll", "an ogre".
+val article = fn(noun:str):str {
+    if (any(["a", "e", "i", "o", "u"], fn(v) { noun[:1] == v })) { "an " + noun } else { "a " + noun }
+}
+
+// "the Gnash Pack's"; "the Iron Compact of Elmby's".
+val possessive = fn(name:str):str { if (name[len(name) - 1:] == "s") { name + "'" } else { name + "'s" } }
 
 /**
  * Event `event` of `empire`, in the world with seed `seed`, in words, as
