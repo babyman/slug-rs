@@ -1,6 +1,8 @@
 val game = import("slug.games.crawl")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
+val empire = import("slug.games.crawl.empire")
+val lore = import("slug.games.crawl.lore")
 val {assertEqual, assertTrue} = import("slug.test")
 val {filter, map, range, any, all} = import("slug.std")
 val math = import("slug.math")
@@ -159,7 +161,10 @@ val walkingIntoATraderOpensTheirMenuAndTakesNoTime = fn() {
     game.command("a", key, false)
     val m = openMenu()
     val trader = filter(game.here("a").characters, fn(c) { c.role == "trader" })[0]
-    assertEqual(m.title, town.title(trader) + ": \"Fine goods at fair prices.\"")
+    // A trader says why prices are what they are, or that they're fair.
+    val w = game.current().world
+    val here = empire.territoryOf(before.cx, before.cy, 0)
+    assertEqual(m.title, town.title(trader) + ": \"" + (lore.prices(w.seed, w.empire, here) ?? "Fine goods at fair prices.") + "\"")
     assertEqual(map(m.entries, fn(e) { e.label }), ["Buy", "Sell"])
     assertEqual([game.playerOf("a").x, game.playerOf("a").y], [before.x, before.y])
     game.command("a", "space", false)

@@ -521,12 +521,18 @@ export val habitatAt = fn(empire:map, key:str, base:list):list {
 }
 
 /**
+ * Whether faction `f` of `empire` is at war: it fought within the last few
+ * steps.
+ */
+export val atWar = fn(empire:map, f:map):bool { empire.step - f.lastFight <= WAR }
+
+/**
  * What markets in territory `key` charge, in percent of the usual price:
  * more while its holder is at war and the greedier it is.
  */
 export val priceFactor = fn(empire:map, key:str):num {
     match holder(empire, key) {
-        f: map => 100 + (if (empire.step - f.lastFight <= WAR) { 25 } else { 0 }) + 10 * f.traits.greedy
+        f: map => 100 + (if (atWar(empire, f)) { 25 } else { 0 }) + 10 * f.traits.greedy
         _ => 100
     }
 }
@@ -550,24 +556,29 @@ export val bounties = fn(empire:map, rx:num, ry:num):list {
     map(kinds, fn(k) { {kind: k, price: math.max(1, math.div(HEADS[k] * (100 - 15 * greed), 100))} })
 }
 
-// The name of faction `i`, if there is one.
-val nameOf = fn(empire:map, i:num|nil):str {
+/**
+ * The name of faction `i` of `empire`, or "someone" if there is none.
+ */
+export val factionName = fn(empire:map, i:num|nil):str {
     match i {
         n: num => if (n >= 0 && n < len(empire.factions)) { empire.factions[n].name } else { "someone" }
         _ => "someone"
     }
 }
 
-// Event `event` in words, as a clause: "the Redaxe Horde sacked Elmby."
-// Events saved before they were kept as data are their text.
-val clause = fn(seed:num, empire:map, event:map):str {
+/**
+ * Event `event` of `empire`, in the world with seed `seed`, in words, as a
+ * clause to go in a sentence: "the Redaxe Horde sacked Elmby." Events
+ * saved before they were kept as data are their text.
+ */
+export val clause = fn(seed:num, empire:map, event:map):str {
     match event.text {
         // Their faction names begin "the", and settlement names are capitals.
         t: str => return t
         _ => nil
     }
-    val by = nameOf(empire, event.by)
-    val against = nameOf(empire, event.against)
+    val by = factionName(empire, event.by)
+    val against = factionName(empire, event.against)
     val where = placeName(seed, event.at ?? "0,0,0")
     val name = event.name ?? "a settlement"
     val told = match event.kind {
@@ -595,50 +606,20 @@ export val tell = fn(seed:num, empire:map, event:map):str {
     string.upper(told[:1]) + told[1:]
 }
 
-// How many times, in words: "once", "twice", "three times", "12 times".
-val times = fn(n:num):str {
+/**
+ * How many times, in words: "once", "twice", "three times", "12 times".
+ */
+export val times = fn(n:num):str {
     val words = ["no times", "once", "twice", "three times", "four times", "five times", "six times", "seven times", "eight times", "nine times", "ten times"]
     if (n >= 0 && n < len(words)) { words[n] } else { "" + n + " times" }
 }
 
-// Step `step` as "the summer of year 32".
-val dateOf = fn(step:num):str { "the " + seasonOf(step) + " of year " + yearOf(step) }
+/**
+ * Step `step` as "the summer of year 32".
+ */
+export val dateOf = fn(step:num):str { "the " + seasonOf(step) + " of year " + yearOf(step) }
 
 /**
  * When `event` happened, or began, as "the summer of year 32".
  */
 export val whenOf = fn(event:map):str { dateOf(event.step) }
-
-// A great event from long ago, as an innkeeper tells it.
-val legend = fn(seed:num, empire:map, event:map):str {
-    val when = whenOf(event)
-    val name = event.name ?? "A settlement"
-    val by = nameOf(empire, event.by)
-    val held = event.held ?? 0
-    match event.kind {
-        "siege" => if (event.fell) {
-            name + " fell to " + by + " in " + dateOf(event.last ?? event.step)
-                + (if (held == 0) { "" } else { ", after holding out " + times(held) + " since " + when })
-                + ". They say its cellars were never emptied."
-        } else {
-            name + " held against " + by
-                + (if (held <= 1) { " in " + when } else { " " + times(held) + ", from " + when + " to " + dateOf(event.last ?? event.step) })
-                + ". Its walls still bear the marks."
-        }
-        _ => "In " + when + ", " + clause(seed, empire, event)
-    }
-}
-
-/**
- * Something an innkeeper might have heard, in the world with seed `seed`:
- * one of the chronicle's latest events, or now and then one of the great
- * events of the annals, or nil when nothing has happened yet.
- */
-export val news = fn(seed:num, empire:map):str|nil {
-    val recent = if (len(empire.chronicle) > 8) { empire.chronicle[len(empire.chronicle) - 8:] } else { empire.chronicle }
-    val annals = empire.annals ?? []
-    if (len(annals) > 0 && (len(recent) == 0 || rng.below(3) == 0)) {
-        return legend(seed, empire, annals[rng.below(len(annals))])
-    }
-    if (len(recent) == 0) { nil } else { "They say " + clause(seed, empire, recent[rng.below(len(recent))]) }
-}

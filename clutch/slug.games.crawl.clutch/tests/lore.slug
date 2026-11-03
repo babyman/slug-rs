@@ -1,0 +1,161 @@
+val game = import("slug.games.crawl")
+val empire = import("slug.games.crawl.empire")
+val lore = import("slug.games.crawl.lore")
+val town = import("slug.games.crawl.town")
+val level = import("slug.games.crawl.level")
+val rng = import("slug.games.crawl.rng")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, all, any} = import("slug.std")
+
+val SEED = 7
+
+// A small empire: orcs under Elmby and at war with its humans, dwarfs far
+// off, and news near and far.
+val world = {
+    factions: [
+        {name: "the Redaxe Horde", people: "orcs", traits: {greedy: 0}, lastFight: 40},
+        {name: "the Iron Compact of Elmby", people: "humans", traits: {greedy: 1}, lastFight: 40},
+        {name: "the Stonebeard Clan", people: "dwarfs", traits: {greedy: -1}, lastFight: -100},
+    ],
+    holds: {"1,1,0": 1, "1,1,1": 0, "2,1,1": 0, "5,5,0": 2, "7,7,0": 0},
+    fixed: {"1,1,0": "Elmby"},
+    step: 42,
+    chronicle: [
+        {step: 40, kind: "took", by: 0, against: 1, at: "2,1,1"},
+        {step: 41, kind: "settled", by: 2, at: "9,9,1"},
+    ],
+    annals: [
+        {step: 20, kind: "siege", by: 0, against: 1, at: "1,1,0", name: "Elmby", held: 2, last: 24, fell: false},
+        {step: 4, kind: "siege", by: 0, against: 2, at: "9,9,0", name: "Oakby", held: 0, last: 4, fell: true},
+    ],
+}
+
+val place = fn(key:str):str { empire.placeName(SEED, key) }
+
+// What `f` gives under each of `n` generators, seeded well apart (small
+// seeds draw alike at first).
+val under = fn(n:num, f:fn):list { map(range(n), fn(i) { rng.within(rng.mix([i]), f) }) }
+
+@test
+val distanceCountsRegionsAndBands = fn() {
+    assertEqual(lore.distance("1,1,0", "2,3,1"), 4)
+    assertEqual(lore.distance("2,3,1", "1,1,0"), 4)
+    assertEqual(lore.distance("1,1,0", "1,1,0"), 0)
+}
+
+@test
+val newsIsOfWhatHappenedNear = fn() {
+    val took = "They say the Redaxe Horde took the land " + place("2,1,1") + " from the Iron Compact of Elmby."
+    val settled = "They say the Stonebeard Clan settled the land " + place("9,9,1") + "."
+    // Each is too far to be heard where the other happened.
+    assertTrue(all(under(20, fn() { lore.news(SEED, world, "1,1,0") }), fn(n) { n == took }))
+    assertTrue(all(under(20, fn() { lore.news(SEED, world, "9,9,0") }), fn(n) { n == settled }))
+    assertEqual(lore.news(SEED, world, "20,20,0"), nil)
+    // News three years old is still news; older is not.
+    assertEqual(lore.news(SEED, world copy {step: 52}, "1,1,0"), took)
+    assertEqual(lore.news(SEED, world copy {step: 53}, "1,1,0"), nil)
+}
+
+@test
+val nearerAndLaterNewsIsLikelier = fn() {
+    val both = world copy {chronicle: [
+        {step: 30, kind: "took", by: 0, against: 1, at: "3,1,0"},
+        {step: 42, kind: "took", by: 0, against: 1, at: "1,1,1"},
+    ]}
+    val heard = under(100, fn() { lore.news(SEED, both, "1,1,0") })
+    val near = len(filter(heard, fn(n) { n == "They say the Redaxe Horde took the land " + place("1,1,1") + " from the Iron Compact of Elmby." }))
+    assertTrue(near > 80 && near < 100)
+}
+
+@test
+val legendsAreOfTheGreatEventsNear = fn() {
+    val elmby = "Elmby held against the Redaxe Horde twice, from the spring of year 6 to the spring of year 7. Its walls still bear the marks."
+    assertTrue(all(under(20, fn() { lore.legendNear(SEED, world, "1,1,0") }), fn(l) { l == elmby }))
+    assertEqual(lore.legendNear(SEED, world, "30,30,0"), nil)
+    // An innkeeper tells legends and news both.
+    val told = under(30, fn() { lore.rumour(SEED, world, "1,1,0") })
+    assertTrue(any(told, fn(t) { t == elmby }) && any(told, fn(t) { t != elmby }))
+}
+
+@test
+val legendsTellHowSiegesWent = fn() {
+    val siege = {step: 101, kind: "siege", by: 0, against: 1, at: "1,2,0", name: "Elmby"}
+    val legend = fn(event:map):str { lore.legend(SEED, world, siege + event) }
+    assertEqual(legend({held: 0, last: 125, fell: true}), "Elmby fell to the Redaxe Horde in the summer of year 32. They say its cellars were never emptied.")
+    assertEqual(legend({held: 2, last: 125, fell: true}),
+        "Elmby fell to the Redaxe Horde in the summer of year 32, after holding out twice since the summer of year 26. They say its cellars were never emptied.")
+    assertEqual(legend({held: 1, last: 101, fell: false}), "Elmby held against the Redaxe Horde in the summer of year 26. Its walls still bear the marks.")
+    assertEqual(legend({held: 4, last: 126, fell: false}),
+        "Elmby held against the Redaxe Horde four times, from the summer of year 26 to the autumn of year 32. Its walls still bear the marks.")
+    assertEqual(lore.legend(SEED, world, {step: 0, kind: "broken", by: 0, against: 1, at: "1,2,1"}),
+        "In the spring of year 1, the Redaxe Horde drove the Iron Compact of Elmby from the last of their land, " + place("1,2,1") + ".")
+}
+
+@test
+val guardsFearTheNearestLandFromBelow = fn() {
+    assertEqual(lore.threat(SEED, world, "1,1,0"), "The Redaxe Horde hold the land " + place("1,1,1") + ". They're right under our feet.")
+    assertEqual(lore.threat(SEED, world, "3,1,0"), "The Redaxe Horde hold the land " + place("2,1,1") + ". That's where the trouble comes from.")
+    // The orcs' surface land is too far from the dwarfs'; the dwarfs are no threat.
+    assertEqual(lore.threat(SEED, world, "5,5,0"), nil)
+}
+
+@test
+val settlementsRememberTheSiegesTheyHeld = fn() {
+    assertEqual(lore.ownWalls(SEED, world, "1,1,0"), "Our walls held against the Redaxe Horde twice, back in the spring of year 6.")
+    assertEqual(lore.ownWalls(SEED, world, "5,5,0"), nil)
+}
+
+@test
+val captainsSayWhoTheBountiesAreFor = fn() {
+    assertEqual(lore.bountyReason(SEED, world, "1,1,0"),
+        "The Redaxe Horde hold the land " + place("1,1,1") + ". Every one of theirs you put down weakens them.")
+    assertEqual(lore.bountyReason(SEED, world, "5,5,0"), nil)
+}
+
+@test
+val dealersSayWhyPricesAreWhatTheyAre = fn() {
+    // At war: the holder's latest fight.
+    assertEqual(lore.prices(SEED, world, "1,1,0"),
+        "Prices are up since the Redaxe Horde took the land " + place("2,1,1") + " from the Iron Compact of Elmby.")
+    // At peace, generous, or neither.
+    assertEqual(lore.prices(SEED, world copy {step: 60}, "1,1,0"), "The Iron Compact of Elmby take their cut, so prices are what they are.")
+    assertEqual(lore.prices(SEED, world, "5,5,0"), "The Stonebeard Clan go easy on traders. You'll find prices kind.")
+    assertEqual(lore.prices(SEED, world copy {step: 60}, "7,7,0"), nil)
+    assertEqual(lore.prices(SEED, world, "9,9,0"), nil)
+}
+
+@test
+val charactersTellOfTheWorldNearThem = fn() {
+    assertEqual(lore.talk("captain", SEED, world, "1,1,0"), lore.bountyReason(SEED, world, "1,1,0"))
+    assertEqual(lore.talk("trader", SEED, world, "1,1,0"), lore.prices(SEED, world, "1,1,0"))
+    val walls = lore.ownWalls(SEED, world, "1,1,0")
+    val guard = under(20, fn() { lore.talk("guard", SEED, world, "1,1,0") })
+    assertTrue(any(guard, fn(g) { g == walls }) && any(guard, fn(g) { g == lore.threat(SEED, world, "1,1,0") }))
+    val folk = under(20, fn() { lore.talk("townsperson", SEED, world, "1,1,0") })
+    assertTrue(any(folk, fn(f) { f == walls }))
+    assertTrue(any(folk, fn(f) { f == "Did you hear? The Redaxe Horde took the land " + place("2,1,1") + " from the Iron Compact of Elmby." }))
+    assertEqual(lore.talk("innkeeper", SEED, world copy {chronicle: [], annals: []}, "1,1,0"), nil)
+}
+
+@test
+val anInnkeeperInAWorldWithAHistoryTellsOfIt = fn() {
+    game.newGame(1, {history: 75})
+    game.join("a", "Ann")
+    val lv = game.here("a")
+    val inn = filter(lv.characters, fn(c) { c.role == "innkeeper" })[0]
+    // Stand beside the innkeeper, walk into them, and ask ten times.
+    val sides = filter([["h", 1, 0], ["l", -1, 0], ["k", 0, 1], ["j", 0, -1]], fn(d) {
+        val ch = lv.map[inn.y + d[2]][inn.x + d[1]]
+        (ch == level.FLOOR || ch == level.ROAD) && !any(lv.characters, fn(o) { o.x == inn.x + d[1] && o.y == inn.y + d[2] })
+    })
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {a: s.players.a + {x: inn.x + sides[0][1], y: inn.y + sides[0][2]}}})
+    game.command("a", sides[0][0], false)
+    val heard = map(range(10), fn(_) {
+        game.command("a", "1", false)
+        val m = game.playerOf("a").messages
+        m[len(m) - 1]
+    })
+    val stock = map(town.RUMOURS, fn(r) { inn.name + " says: \"" + r + "\"" })
+    assertTrue(any(heard, fn(h) { !any(stock, fn(r) { r == h }) }))
+}

@@ -102,25 +102,6 @@ val eventsAreToldInWords = fn() {
 }
 
 @test
-val innkeepersTellOfTheGreatEventsOfThePast = fn() {
-    val siege = {step: 101, kind: "siege", by: 0, against: 1, at: "1,2,0", name: "Elmby"}
-    val news = fn(event:map):str|nil { empire.news(7, told copy {annals: [siege + event]}) }
-    assertEqual(news({held: 0, last: 125, fell: true}), "Elmby fell to the Redaxe Horde in the summer of year 32. They say its cellars were never emptied.")
-    assertEqual(news({held: 2, last: 125, fell: true}),
-        "Elmby fell to the Redaxe Horde in the summer of year 32, after holding out twice since the summer of year 26. They say its cellars were never emptied.")
-    assertEqual(news({held: 1, last: 101, fell: false}), "Elmby held against the Redaxe Horde in the summer of year 26. Its walls still bear the marks.")
-    assertEqual(news({held: 4, last: 126, fell: false}),
-        "Elmby held against the Redaxe Horde four times, from the summer of year 26 to the autumn of year 32. Its walls still bear the marks.")
-    val broken = told copy {annals: [{step: 0, kind: "broken", by: 0, against: 1, at: "1,2,1"}]}
-    assertEqual(empire.news(7, broken), "In the spring of year 1, the Redaxe Horde drove the Iron Compact of Elmby from the last of their land, "
-        + empire.placeName(7, "1,2,1") + ".")
-    // Recent news is from the chronicle.
-    val recent = told copy {chronicle: [{step: 4, kind: "sacked", by: 0, against: 1, at: "1,2,0", name: "Elmby"}]}
-    assertEqual(empire.news(7, recent), "They say the Redaxe Horde sacked Elmby.")
-    assertEqual(empire.news(7, told), nil)
-}
-
-@test
 val theAnnalsKeepTheGreatEventsForGood = fn() {
     game.newGame(1, {history: 75})
     val e = game.current().world.empire

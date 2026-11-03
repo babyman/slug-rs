@@ -135,9 +135,9 @@ goes back and closes it.
 |---|---|---|
 | Trader | Town markets | Sells food, potions of healing and scrolls of identify; buys anything but what you wield or wear, for half its price. |
 | Quartermaster | Fort armouries | Sells and buys weapons and armour. |
-| Innkeeper | Town inns | Sells a meal, which fills you, and a bed, which heals you; tells rumours. |
-| Captain | Fort barracks | Posts bounties for the region and pays for kills made in it. |
-| Guard, townsperson | Gates, houses | Talks. |
+| Innkeeper | Town inns | Sells a meal, which fills you, and a bed, which heals you; tells rumours, news and legends. |
+| Captain | Fort barracks | Posts bounties for the region and pays for kills made in it; says whose land they are for. |
+| Guard, townsperson | Gates, houses | Talks: of the threat from below, the sieges their walls held, and the news. |
 
 What you buy is known for what it is, and what a dealer offers for an
 unknown potion gives its nature away. Prices depend on the faction that
@@ -209,5 +209,12 @@ times the settlement held and whether it fell, and any faction driven from
 the last of its land. Innkeepers tell of both: "Wolfby fell to the Sootfang
 Warren in the summer of year 53, after holding out six times since the
 autumn of year 46."
+
+People tell what they have heard near them. News is of what happened
+within a few regions in the last three years, the nearer and later the
+likelier; legends are the annals' great events, the nearer the likelier.
+Guards name the nearest land the peoples below hold, captains whose land
+their bounties are for, dealers why their prices are what they are, and
+townsfolk pass on news or remember their own sieges.
 
 Players nudge the world; they do not decide it.

@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- Crawl's people tell of the world near them. Innkeepers' rumours, half
+  the time, are news and legends weighed by how near they happened, how
+  lately and how much they mattered: news fades with distance and is
+  forgotten after three years, legends fade only with distance, and
+  neither carries past a handful of regions. Guards name the nearest land a faction from below
+  holds ("The Redaxe Horde hold the land in the shallows under the
+  Ashmoor. They're right under our feet."), or the sieges their walls held;
+  captains say whose land the bounties are for; traders and quartermasters
+  greet you with why prices are what they are ("Prices are up since the
+  Hollow Host took the land ..."), or their faction's greed or generosity;
+  townsfolk pass on news ("Did you hear? ...") or remember their own
+  sieges. Each says it half the time, and their usual lines otherwise. The
+  new module `slug.games.crawl.lore` holds all of it; `empire.news` is
+  gone, and `empire` exports `clause`, `factionName`, `times`, `dateOf` and
+  `atWar` for it.
+
+- Crawl's history is kept as events, not sentences: `{step, kind, by,
+  against, at, name}`, the kinds settled, took, repelled, sacked, held, and
+  broken (a faction driven from the last of its land), told in words by
+  `empire.tell`. The chronicle keeps the latest 40 of them; the new annals
+  keep the great ones for good: each siege as one entry, with how many
+  assaults it held off and whether it fell, and every faction broken.
+  Innkeepers tell legends from them ("Wolfby fell to the Sootfang Warren
+  in the summer of year 53, after holding out six times since the autumn
+  of year 46."). News that began with a settlement's name no longer has
+  it lowercased.
+
+- Crawl has a calendar. Each step of the empire layer is a season, four to
+  a year: a season is 15 minutes of play (`--empire` now defaults to 6000
+  ticks, from 400), and a year about an hour. The stats show the date
+  ("Late spring, year 101"), and everyone playing is told when a new season
+  comes ("Summer comes."). `--history=N` counts years, now 100 by default,
+  run as 400 seasons; about two of a world's settlements fall in that
+  time, none to five. A world saved before this keeps its old pace;
+  start it again with `--new`.
+
 - Crawl has eight more monsters, for nineteen: giant rats and wolves on the
   surface and in the shallows, goblins (with the orcs), giant ants,
   skeletons and wraiths (with the undead; a wraith's blows can sap
@@ -26,18 +62,20 @@
   The eval's reference keeps its plain "Your pack is full.".
 
 - Crawl's worlds have a history. Before anyone comes, a new world's empires
-  live through 300 years (`--history=N`; the engine's `newGame` runs none
-  unless `options.history` asks), about a second at start. In those years
+  live through years of history (`--history=N`, see the calendar above; the
+  engine's `newGame` runs none unless `options.history` asks), about a
+  second at start. In those years
   the factions from below can besiege settlements next to the land they
   hold; walls double a settlement's defence, but every siege it holds off
   wears them down, and one that falls is a ruin from then on. Most worlds
-  lose none to four of their settlements; the start town always stands.
+  lose a few of their settlements; the start town always stands.
   A ruin is the settlement as it stood, left to the years: walls fallen in
   or overgrown, doors gone, roads and floors grown over, no one there,
   monsters welcome, and the way down inside; the dungeon under it, down to
   depth 3, holds what the fallen left behind. Players arrive with the
   chronicle full, and innkeepers tell of falls ("Elmby fell to the Redaxe
-  Horde in the year 124. They say its cellars were never emptied.").
+  Horde in the summer of year 32. They say its cellars were never
+  emptied.").
 
 - Crawl has an empire layer. The world's regions, four chunks across, are
   held at four bands of depth (the surface, the shallows, the middle and

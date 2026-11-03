@@ -40,6 +40,7 @@ val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
 val region = import("slug.games.crawl.region")
 val empire = import("slug.games.crawl.empire")
+val lore = import("slug.games.crawl.lore")
 val string = import("slug.string")
 val math = import("slug.math")
 val {map, filter, reduce, remove, range} = import("slug.std")
@@ -1875,6 +1876,15 @@ val buyPrice = fn(item:map):num { math.max(1, math.div(town.price(item) * factor
 val sellPrice = fn(item:map):num { math.max(1, math.div(town.offer(item) * 100, factorHere())) }
 val innPrice = fn(base:num):num { math.max(1, math.div(base * factorHere(), 100)) }
 
+// Something a character in `role` says of the world near the acting
+// player (see `slug.games.crawl.lore`), or nil.
+val tellHere = fn(role:str):str|nil {
+    match world.empire {
+        e: map => lore.talk(role, world.seed, e, territoryHere())
+        _ => nil
+    }
+}
+
 // The bounties posted for the region the acting player is in, and what
 // they are owed under them: `{bounties, gold, kills}`.
 val bountiesHere = fn():map {
@@ -1932,9 +1942,13 @@ val characterMenu = fn(c:map, page:str):map {
                 "Bounties for " + empire.regionName(world.seed, string.toInt(rx) ?? 0, string.toInt(ry) ?? 0) + ": "
                     + string.join(map(here.bounties, fn(b) { "" + b.price + " gold " + an(b.kind) }), ", ") + "."
             }
+            // A dealer says why prices are as they are, if they are not as usual.
+            val prices = if (c.role == "trader" || c.role == "quartermaster") {
+                lore.prices(world.seed, world.empire ?? {holds: {}}, territoryHere())
+            } else { nil }
             val greeting = if (c.role == "guard" || c.role == "townsperson") { name + "." }
                 else if (c.role == "captain") { name + ": \"" + posted + "\"" }
-                else { name + ": \"" + lines[0] + "\"" }
+                else { name + ": \"" + (prices ?? lines[0]) + "\"" }
             val entries = match c.role {
                 "captain" => (if (here.gold > 0) {
                     [{key: "1", label: "Claim " + here.gold + " gold for " + here.kills + (if (here.kills == 1) { " kill" } else { " kills" }), act: ["claim"]}]
@@ -2001,11 +2015,8 @@ val deal = fn(c:map, act:list) {
             }
         }
         ["rumour"] => {
-            // Half the time, news of the world, when there is any.
-            val heard = match empire.news(world.seed, world.empire ?? {chronicle: []}) {
-                n: str => if (rng.below(2) == 0) { n } else { nil }
-                _ => nil
-            }
+            // Half the time, what has been heard of the world near here.
+            val heard = if (rng.below(2) == 0) { tellHere(c.role) } else { nil }
             say(c.name + " says: \"" + (heard ?? town.RUMOURS[rng.below(len(town.RUMOURS))]) + "\"")
         }
         ["claim"] => {
@@ -2018,8 +2029,10 @@ val deal = fn(c:map, act:list) {
             }
         }
         ["talk"] => {
+            // Half the time, something of the world near here.
             val lines = town.LINES[c.role] ?? ["..."]
-            say(c.name + " says: \"" + lines[rng.below(len(lines))] + "\"")
+            val told = if (rng.below(2) == 0) { tellHere(c.role) } else { nil }
+            say(c.name + " says: \"" + (told ?? lines[rng.below(len(lines))]) + "\"")
         }
         ["meal"] => if (pay(innPrice(town.MEAL), "a meal")) {
             setPlayer(player copy {food: FOOD_MAX})
