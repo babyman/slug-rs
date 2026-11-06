@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
     rc::Rc,
@@ -67,6 +67,10 @@ struct ModuleGraphState {
     compiled: RefCell<HashMap<ModuleKey, Program>>,
     semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
     resolving_snapshots: RefCell<HashSet<ModuleKey>>,
+    /// Whether the compilation of the module whose snapshot is being made
+    /// found an import already being resolved, an import cycle, and so
+    /// compiled without that import's snapshot.
+    cycle_cut: Cell<bool>,
     instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
 }
 
@@ -138,6 +142,7 @@ impl ModuleGraph {
                 compiled: RefCell::new(HashMap::new()),
                 semantic_snapshots: RefCell::new(HashMap::new()),
                 resolving_snapshots: RefCell::new(HashSet::new()),
+                cycle_cut: Cell::new(false),
                 instances: RefCell::new(HashMap::new()),
             }),
         }
@@ -281,29 +286,35 @@ impl ModuleGraph {
         if let Some(index) = indexes.get(key) {
             return Ok(*index);
         }
-        let mut compilation = self
-            .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
-            .map_err(|error| ModuleLoadError::Compile {
-                location: diagnostic_name.into(),
-                error: Box::new((&error).into()),
-            })?;
-        compilation.program.set_module_name(name);
-        compilation.program.set_module_key(key.as_str());
-        self.state
-            .semantic_snapshots
-            .borrow_mut()
-            .insert(key.clone(), compilation.snapshot);
+        let cached = self.state.compiled.borrow().get(key).cloned();
+        let mut program = if let Some(program) = cached {
+            program
+        } else {
+            let compilation = self
+                .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
+                .map_err(|error| ModuleLoadError::Compile {
+                    location: diagnostic_name.into(),
+                    error: Box::new((&error).into()),
+                })?;
+            self.state
+                .semantic_snapshots
+                .borrow_mut()
+                .insert(key.clone(), compilation.snapshot);
+            compilation.program
+        };
+        program.set_module_name(name);
+        program.set_module_key(key.as_str());
         self.state
             .compiled
             .borrow_mut()
-            .insert(key.clone(), compilation.program.clone());
+            .insert(key.clone(), program.clone());
 
         let index = modules.len();
         indexes.insert(key.clone(), index);
         modules.push(ArtifactModule {
             key: key.as_str().into(),
             name: name.into(),
-            program: compilation.program,
+            program,
         });
         sources.push(ArtifactSource {
             diagnostic_name: diagnostic_name.into(),
@@ -370,9 +381,11 @@ impl ModuleGraph {
             .borrow_mut()
             .insert(source.key.clone())
         {
+            self.state.cycle_cut.set(true);
             return None;
         }
-        let snapshot = self
+        let outer_cut = self.state.cycle_cut.replace(false);
+        let compilation = self
             .compile_source_for_module(
                 resolver,
                 &source.key,
@@ -380,13 +393,27 @@ impl ModuleGraph {
                 &source.text,
                 Some(request.name),
             )
-            .ok()
-            .map(|compilation| compilation.snapshot);
+            .ok();
+        let cut = self.state.cycle_cut.replace(outer_cut);
         self.state
             .resolving_snapshots
             .borrow_mut()
             .remove(&source.key);
-        let snapshot = snapshot?;
+        let compilation = compilation?;
+        // The program is the one compiling the module for itself would make,
+        // so it is kept, unless an import cycle left out a snapshot that a
+        // later compilation will have.
+        if !cut {
+            let mut program = compilation.program;
+            program.set_module_name(request.name);
+            program.set_module_key(source.key.as_str());
+            self.state
+                .compiled
+                .borrow_mut()
+                .entry(source.key.clone())
+                .or_insert(program);
+        }
+        let snapshot = compilation.snapshot;
         self.state
             .semantic_snapshots
             .borrow_mut()

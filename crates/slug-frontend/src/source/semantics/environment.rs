@@ -280,8 +280,12 @@ struct NilStarts {
 
 #[derive(Clone, Debug)]
 pub(super) struct Environment {
-    scopes: Vec<HashMap<String, SemanticBinding>>,
-    type_scopes: Vec<HashMap<String, TypeMember>>,
+    /// Innermost last. A clone shares every scope and binding, and a scope
+    /// or binding is copied when it is first changed (`Rc::make_mut`), so
+    /// cloning for a block, branch, or function body costs one pointer per
+    /// scope rather than a copy of every binding's type.
+    scopes: Vec<Rc<Scope>>,
+    type_scopes: Vec<Rc<HashMap<String, TypeMember>>>,
     imports: Rc<ImportSnapshots>,
     records: Rc<RefCell<SemanticRecords>>,
     /// The function body being checked, shared by every environment cloned
@@ -290,6 +294,9 @@ pub(super) struct Environment {
     function: Option<Rc<RefCell<FunctionReturns>>>,
     nil_starts: Rc<RefCell<NilStarts>>,
 }
+
+/// One lexical scope's bindings, each shared until changed.
+type Scope = HashMap<String, Rc<SemanticBinding>>;
 
 /// What a function body's `return` expressions must and do produce.
 #[derive(Clone, Debug)]
@@ -309,8 +316,14 @@ impl Environment {
         session: &SessionSnapshot,
     ) -> Self {
         Self {
-            scopes: vec![session.bindings.clone()],
-            type_scopes: vec![session.types.clone()],
+            scopes: vec![Rc::new(
+                session
+                    .bindings
+                    .iter()
+                    .map(|(name, binding)| (name.clone(), Rc::new(binding.clone())))
+                    .collect(),
+            )],
+            type_scopes: vec![Rc::new(session.types.clone())],
             imports: Rc::new(imports),
             records: Rc::new(RefCell::new(SemanticRecords::default())),
             function: None,
@@ -410,10 +423,12 @@ impl Environment {
         };
         let mut binding = binding.clone();
         binding.implicit = true;
-        self.scopes
-            .first_mut()
-            .expect("a semantic environment always has a root scope")
-            .insert(name.into(), binding);
+        Rc::make_mut(
+            self.scopes
+                .first_mut()
+                .expect("a semantic environment always has a root scope"),
+        )
+        .insert(name.into(), Rc::new(binding));
     }
 
     pub(super) fn import_snapshot(&self, name: &str) -> Option<ModuleSnapshot> {
@@ -421,8 +436,25 @@ impl Environment {
     }
 
     pub(super) fn enter_scope(&mut self) {
-        self.scopes.push(HashMap::new());
-        self.type_scopes.push(HashMap::new());
+        self.scopes.push(Rc::default());
+        self.type_scopes.push(Rc::default());
+    }
+
+    /// The innermost scope, to change.
+    fn innermost_mut(&mut self) -> &mut Scope {
+        Rc::make_mut(
+            self.scopes
+                .last_mut()
+                .expect("a semantic environment always has a scope"),
+        )
+    }
+
+    /// The innermost scope's binding of `name`, to change, when it has one.
+    fn innermost_binding_mut(&mut self, name: &str) -> Option<&mut SemanticBinding> {
+        if !self.scopes.last()?.contains_key(name) {
+            return None;
+        }
+        self.innermost_mut().get_mut(name).map(Rc::make_mut)
     }
 
     #[cfg(test)]
@@ -433,17 +465,16 @@ impl Environment {
     }
 
     pub(super) fn declare(&mut self, name: String, binding: SemanticBinding) {
-        self.scopes
-            .last_mut()
-            .expect("a semantic environment always has a scope")
-            .insert(name, binding);
+        self.innermost_mut().insert(name, Rc::new(binding));
     }
 
     pub(super) fn declare_type(&mut self, name: String, member: TypeMember) {
-        self.type_scopes
-            .last_mut()
-            .expect("a semantic environment always has a type scope")
-            .insert(name, member);
+        Rc::make_mut(
+            self.type_scopes
+                .last_mut()
+                .expect("a semantic environment always has a type scope"),
+        )
+        .insert(name, member);
     }
 
     pub(super) fn declare_callable(
@@ -452,12 +483,9 @@ impl Environment {
         signature: CallableSignature,
         span: &SourceSpan,
     ) -> Result<(), super::SourceError> {
-        let scope = self
-            .scopes
-            .last_mut()
-            .expect("a semantic environment always has a scope");
-        let Some(existing) = scope.get_mut(&name) else {
-            scope.insert(name, SemanticBinding::callable(signature));
+        let scope = self.innermost_mut();
+        let Some(existing) = scope.get_mut(&name).map(Rc::make_mut) else {
+            scope.insert(name, Rc::new(SemanticBinding::callable(signature)));
             return Ok(());
         };
         if existing.callables.is_empty() || existing.implicit {
@@ -485,7 +513,7 @@ impl Environment {
         identity: &CallableIdentity,
         result: Type,
     ) {
-        let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) else {
+        let Some(binding) = self.innermost_binding_mut(name) else {
             return;
         };
         if let Some(signature) = binding
@@ -506,7 +534,7 @@ impl Environment {
         let in_trial = self.in_trial();
         let site = (declaration.clone(), name.to_string());
         let inferred = self.nil_starts.borrow().inferred.get(&site).cloned();
-        if let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) {
+        if let Some(binding) = self.innermost_binding_mut(name) {
             if binding.value_type == Type::Nil {
                 let assignments = inferred.unwrap_or_default();
                 binding.value_type = if assignments.is_empty() && in_trial {
@@ -531,10 +559,23 @@ impl Environment {
     /// in scope, as a nested function must: it may run after any later
     /// assignment.
     pub(super) fn forget_mutable_facts(&mut self) {
+        let established = |binding: &SemanticBinding| {
+            binding
+                .declared
+                .as_ref()
+                .is_some_and(|declared| *declared != binding.value_type)
+        };
         for scope in &mut self.scopes {
-            for binding in scope.values_mut() {
-                if let Some(declared) = &binding.declared {
-                    binding.value_type = declared.clone();
+            if !scope.values().any(|binding| established(binding)) {
+                continue;
+            }
+            for binding in Rc::make_mut(scope).values_mut() {
+                if established(binding) {
+                    let binding = Rc::make_mut(binding);
+                    binding.value_type = binding
+                        .declared
+                        .clone()
+                        .expect("an established fact is about a declared var");
                 }
             }
         }
@@ -542,18 +583,26 @@ impl Environment {
 
     /// The binding of `name` in the innermost scope only.
     pub(super) fn lookup_in_scope(&self, name: &str) -> Option<&SemanticBinding> {
-        self.scopes.last()?.get(name)
+        self.scopes.last()?.get(name).map(Rc::as_ref)
     }
 
     pub(super) fn lookup(&self, name: &str) -> Option<&SemanticBinding> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(name))
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .map(Rc::as_ref)
     }
 
+    /// The binding of `name`, to change: its scope and the binding are
+    /// copied first when another environment shares them.
     pub(super) fn lookup_mut(&mut self, name: &str) -> Option<&mut SemanticBinding> {
-        self.scopes
+        let scope = self
+            .scopes
             .iter_mut()
             .rev()
-            .find_map(|scope| scope.get_mut(name))
+            .find(|scope| scope.contains_key(name))?;
+        Rc::make_mut(scope).get_mut(name).map(Rc::make_mut)
     }
 
     pub(super) fn schema_by_identity(&self, identity: &SchemaIdentity) -> Option<SemanticBinding> {
@@ -674,24 +723,47 @@ impl Environment {
             else {
                 continue;
             };
-            for (name, binding) in scope {
-                let (Some(left), Some(right)) = (left_scope.get(name), right_scope.get(name))
-                else {
-                    continue;
-                };
-                binding.value_type = if left.value_type == right.value_type {
-                    left.value_type.clone()
-                } else {
-                    Type::union([left.value_type.clone(), right.value_type.clone()])
-                };
-                // A member fact holds after the branches only when each one
-                // that continues established it.
-                binding.member_facts = left
-                    .member_facts
-                    .iter()
-                    .filter(|(key, value_type)| right.member_facts.get(*key) == Some(*value_type))
-                    .map(|(key, value_type)| (key.clone(), value_type.clone()))
-                    .collect();
+            // A scope neither branch changed is still this one.
+            if Rc::ptr_eq(scope, left_scope) && Rc::ptr_eq(scope, right_scope) {
+                continue;
+            }
+            let merged = scope
+                .iter()
+                .filter_map(|(name, binding)| {
+                    let (Some(left), Some(right)) = (left_scope.get(name), right_scope.get(name))
+                    else {
+                        return None;
+                    };
+                    if Rc::ptr_eq(binding, left) && Rc::ptr_eq(binding, right) {
+                        return None;
+                    }
+                    let value_type = if left.value_type == right.value_type {
+                        left.value_type.clone()
+                    } else {
+                        Type::union([left.value_type.clone(), right.value_type.clone()])
+                    };
+                    // A member fact holds after the branches only when each
+                    // one that continues established it.
+                    let member_facts = left
+                        .member_facts
+                        .iter()
+                        .filter(|(key, value_type)| {
+                            right.member_facts.get(*key) == Some(*value_type)
+                        })
+                        .map(|(key, value_type)| (key.clone(), value_type.clone()))
+                        .collect::<HashMap<_, _>>();
+                    (binding.value_type != value_type || binding.member_facts != member_facts)
+                        .then(|| (name.clone(), value_type, member_facts))
+                })
+                .collect::<Vec<_>>();
+            if merged.is_empty() {
+                continue;
+            }
+            let scope = Rc::make_mut(scope);
+            for (name, value_type, member_facts) in merged {
+                let binding = Rc::make_mut(scope.get_mut(&name).expect("merged from this scope"));
+                binding.value_type = value_type;
+                binding.member_facts = member_facts;
             }
         }
     }
@@ -798,8 +870,21 @@ impl Environment {
 
     fn session_snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
-            bindings: self.scopes.first().cloned().unwrap_or_default(),
-            types: self.type_scopes.first().cloned().unwrap_or_default(),
+            bindings: self
+                .scopes
+                .first()
+                .map(|scope| {
+                    scope
+                        .iter()
+                        .map(|(name, binding)| (name.clone(), SemanticBinding::clone(binding)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            types: self
+                .type_scopes
+                .first()
+                .map(|scope| HashMap::clone(scope))
+                .unwrap_or_default(),
         }
     }
 }

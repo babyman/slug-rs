@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Compiling is about 5.7 times faster on a large program: the Crawl clutch
+  (some 6,600 lines in 13 modules) compiles in 0.07 s, from 0.40 s, and
+  starts that much sooner from source. Each imported module is compiled
+  once: the compilation that made its type snapshot for its importers was
+  thrown away and done again to run it (not when an import cycle cut that
+  first compilation short). And the type checker's scopes are shared
+  until changed, where each block, branch, `match` case, and function
+  body copied every binding's type in scope. Compiled programs are
+  unchanged byte for byte.
+
 - `slug run` of a compiled `.cslug` program calls the native bindings of
   the installed clutches it uses (`slug.math`, `slug.string`, SQLite,
   `slug.random.secure`, ...). It used to stop at the first one with

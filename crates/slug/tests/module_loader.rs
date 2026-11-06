@@ -1403,7 +1403,9 @@ fn module_graph_compiles_entry_source_through_an_injected_resolver() {
         program.bindings(),
         &["answer".to_owned(), "math".to_owned()]
     );
-    assert_eq!(graph.cached_module_count(), 0);
+    // The import compiled for its snapshot is kept for running it; the
+    // entry is not.
+    assert_eq!(graph.cached_module_count(), 1);
 }
 
 #[test]
