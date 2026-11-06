@@ -154,6 +154,17 @@ val settlementsShowTheirPast = fn() {
 }
 
 @test
+val inAWarDealersAndGuardsSaySo = fn() {
+    val warring = world copy {wars: [{by: 0, against: 1, began: 30, strength: [100, 100], gains: [0, 0], at: "2,1,1"}]}
+    assertEqual(lore.prices(SEED, warring, "1,1,0"), "Prices are up with the war against the Redaxe Horde.")
+    assertEqual(lore.war(SEED, warring, "1,1,0"), "We're at war with the Redaxe Horde, since the autumn of year 8.")
+    assertEqual(lore.talk("guard", SEED, warring, "1,1,0"), lore.war(SEED, warring, "1,1,0"))
+    // At peace, nothing to say of war.
+    assertEqual(lore.war(SEED, world, "1,1,0"), nil)
+    assertEqual(lore.war(SEED, warring, "5,5,0"), nil)
+}
+
+@test
 val charactersTellOfTheWorldNearThem = fn() {
     assertEqual(lore.talk("captain", SEED, world, "1,1,0"), lore.bountyReason(SEED, world, "1,1,0"))
     assertEqual(lore.talk("trader", SEED, world, "1,1,0"), lore.prices(SEED, world, "1,1,0"))

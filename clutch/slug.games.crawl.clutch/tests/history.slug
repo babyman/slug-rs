@@ -106,7 +106,7 @@ val theAnnalsKeepTheGreatEventsForGood = fn() {
     game.newGame(1, {history: 75})
     val e = game.current().world.empire
     // The chronicle has only the latest; the annals keep every great event.
-    assertTrue(all(e.annals, fn(a) { a.kind == "siege" || a.kind == "broken" }))
+    assertTrue(all(e.annals, fn(a) { any(["siege", "broken", "rose", "war"], fn(k) { a.kind == k }) }))
     assertTrue(any(e.annals, fn(a) { a.step < e.chronicle[0].step }))
     // Every fall ends a siege; one siege is one entry, however long.
     val fell = filter(e.annals, fn(a) { a.kind == "siege" && a.fell })

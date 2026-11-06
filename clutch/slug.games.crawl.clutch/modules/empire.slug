@@ -22,7 +22,10 @@
  * are "settled" (wild land claimed), "took" (held land won), "repelled"
  * (an attack thrown back, `by` the defender), "sacked" (a settlement
  * taken), "held" (a settlement holding out against a siege, `by` its
- * holder), and "broken" (a faction driven from the last of its land).
+ * holder), "broken" (a faction driven from the last of its land), "rose"
+ * (a broken faction rising again, `against` whoever held the land),
+ * "declared" (`by` went to war with `against`), and "peace" (the war's end,
+ * with `began` and `gains`, the lands each side won from the other).
  *
  * Players make events too, recorded by the engine with `record`: "death"
  * (`who` died, `level`, of `cause`, on `depth`) and "deed" (`who` did it:
@@ -31,10 +34,13 @@
  * or "weakened" faction `against` with `kills` of its people in a season).
  *
  * The chronicle keeps the latest events of every kind. The annals keep the
- * great ones for good: every "broken", and every siege as one entry, kind
+ * great ones for good: every "broken" and "rose", every war, when it ends,
+ * as kind "war" (`step` when it began, `last` when it ended, `by`,
+ * `against`, `gains`), every siege as one entry, kind
  * "siege", `by` the besieger and `against` the holder, with `held`, how
  * many assaults it held off, `last`, the step of the latest, and whether
- * it `fell`; and the players' deaths and deeds, the latest of them. `tell`
+ * it `fell`; and the players' deaths and deeds. Of wars and of the
+ * players' events, the annals keep only the latest. `tell`
  * puts an event into words.
  *
  * The layer hands summaries down: who holds a territory, which monster
@@ -260,9 +266,30 @@ val YIELD = [3, 2, 2, 2]
 // How long a faction counts as at war after a fight, in steps.
 val WAR = 5
 
-// Strength a faction loses for each of its people's kind killed by players
-// in its territory.
-val KILL_COST = 1
+// What a faction loses for each of its people's kind killed by players in
+// its territory, in thousandths of its strength (at least 1).
+val KILL_COST = 5
+
+// A defender fighting at its home band has this much of its power, in
+// percent.
+val HOME_DEFENCE = 125
+
+// Wars: the chance in percent a faction at peace declares war on a
+// neighbour each step, before its nature; how likely, in percent, each
+// side is to attack in a step of war; and when peace comes: a side down to
+// EXHAUSTED percent of its strength at the start may sue for it, and a war
+// LONG steps old may end of weariness.
+val DECLARE = 2
+val ATTACK = 70
+val COUNTER = 40
+val EXHAUSTED = 70
+val LONG = 12
+
+// A broken faction may rise again, RISE percent of steps, once it has held
+// no land for LOW steps, with at least RISEN strength.
+val RISE = 10
+val LOW = 8
+val RISEN = 60
 
 // The chronicle keeps this many events.
 val CHRONICLE = 40
@@ -271,8 +298,9 @@ val CHRONICLE = 40
 // still under the same siege.
 val SIEGE_GAP = 20
 
-// The annals keep this many of the players' deaths and deeds.
+// The annals keep this many of the players' deaths and deeds, and of wars.
 val PLAYER_ANNALS = 60
+val WAR_ANNALS = 40
 
 // A player who kills this many of a faction's people in its land in one
 // step is remembered for it.
@@ -322,8 +350,11 @@ val note = fn(empire:map, event:map):map {
         chronicle: if (len(all) > CHRONICLE) { all[len(all) - CHRONICLE:] } else { all },
         annals: match e.kind {
             "held", "sacked" => besieged(annals, e)
-            "broken" => annals :+ e
-            "death", "deed" => latest(annals :+ e)
+            "broken", "rose" => annals :+ e
+            "death", "deed" => latest(annals :+ e, byPlayer, PLAYER_ANNALS)
+            // A war is remembered when it ends.
+            "peace" => latest(annals :+ {step: e.began, kind: "war", by: e.by, against: e.against, gains: e.gains, last: e.step, at: e.at},
+                fn(a) { a.kind == "war" }, WAR_ANNALS)
             _ => annals
         },
     }
@@ -332,12 +363,11 @@ val note = fn(empire:map, event:map):map {
 // Whether event `e` is one of the players'.
 val byPlayer = fn(e:map):bool { e.kind == "death" || e.kind == "deed" }
 
-// The annals `annals` with only the latest PLAYER_ANNALS of the players'
-// events.
-val latest = fn(annals:list):list {
-    val theirs = len(filter(annals, byPlayer))
-    if (theirs <= PLAYER_ANNALS) { return annals }
-    val first = filter(range(len(annals)), fn(k) { byPlayer(annals[k]) })[0]
+// The annals `annals` with only the latest `n` of the events `kept` picks
+// out.
+val latest = fn(annals:list, kept:fn, n:num):list {
+    if (len(filter(annals, kept)) <= n) { return annals }
+    val first = filter(range(len(annals)), fn(k) { kept(annals[k]) })[0]
     annals[:first] + annals[first + 1:]
 }
 
@@ -374,7 +404,7 @@ export val landOf = fn(empire:map, key:str):map {
 val takeOver = fn(empire:map, i:num, j:num, target:str):map {
     val after = claim(empire, target, i)
     if (any(keys(after.holds), fn(k) { after.holds[k] == j })) { after } else {
-        note(after, {kind: "broken", by: i, against: j, at: target})
+        note(setFaction(after, j, after.factions[j] copy {brokenAt: empire.step}), {kind: "broken", by: i, against: j, at: target})
     }
 }
 
@@ -433,36 +463,176 @@ val pushInto = fn(empire:map, i:num, seed:num, target:str):map {
             val sameSide = people(g.people).side == people(f.people).side
             val willing = 40 + 20 * f.traits.aggressive - (if (sameSide) { 30 + 10 * f.traits.orderly } else { 0 })
             if (rng.below(100) >= willing) { return empire }
-            val attack = power(empire, i, target) * (50 + rng.below(101))
-            val home = if (parse(target)[2] == g.home) { 150 } else { 100 }
-            val defence = math.div(power(empire, j, target) * (50 + rng.below(101)) * home, 100)
-            val won = attack > defence
-            val winner = if (won) { i } else { j }
-            val loser = if (won) { j } else { i }
-            val wf = empire.factions[winner]
-            val lf = empire.factions[loser]
-            val after = setFaction(setFaction(empire, winner, wf copy {
-                strength: wf.strength - math.div(wf.strength, 10), lastFight: empire.step,
-                traits: wf.traits copy {bold: clamp(wf.traits.bold + if (rng.below(4) == 0) { 1 } else { 0 })},
-            }), loser, lf copy {
-                strength: lf.strength - math.div(lf.strength, 5), lastFight: empire.step,
-                // A beaten faction may turn cautious, or vengeful.
-                traits: lf.traits copy {
-                    bold: clamp(lf.traits.bold - if (rng.below(4) == 0) { 1 } else { 0 }),
-                    aggressive: clamp(lf.traits.aggressive + if (rng.below(4) == 0) { 1 } else { 0 }),
-                },
-            })
-            if (won) {
-                takeOver(note(after, {kind: "took", by: i, against: j, at: target}), i, j, target)
-            } else {
-                note(after, {kind: "repelled", by: j, against: i, at: target})
-            }
+            fight(empire, i, j, target)
         }
         _ => {
             if (power(empire, i, target) < 3) { return empire }
             note(claim(empire, target, i), {kind: "settled", by: i, at: target})
         }
     }
+}
+
+// Faction `i` attacks territory `target`, held by faction `j`: the stronger
+// there, with luck, wins it or holds it; the winner loses a tenth of its
+// strength and the loser a fifth. In a war between them, what is won counts
+// for the winner.
+val fight = fn(empire:map, i:num, j:num, target:str):map {
+    val g = empire.factions[j]
+    val attack = power(empire, i, target) * (50 + rng.below(101))
+    val home = if (parse(target)[2] == g.home) { HOME_DEFENCE } else { 100 }
+    val defence = math.div(power(empire, j, target) * (50 + rng.below(101)) * home, 100)
+    val won = attack > defence
+    val winner = if (won) { i } else { j }
+    val loser = if (won) { j } else { i }
+    val wf = empire.factions[winner]
+    val lf = empire.factions[loser]
+    val after = setFaction(setFaction(empire, winner, wf copy {
+        strength: wf.strength - math.div(wf.strength, 10), lastFight: empire.step,
+        traits: wf.traits copy {bold: clamp(wf.traits.bold + if (rng.below(4) == 0) { 1 } else { 0 })},
+    }), loser, lf copy {
+        strength: lf.strength - math.div(lf.strength, 5), lastFight: empire.step,
+        // A beaten faction may turn cautious, or vengeful.
+        traits: lf.traits copy {
+            bold: clamp(lf.traits.bold - if (rng.below(4) == 0) { 1 } else { 0 }),
+            aggressive: clamp(lf.traits.aggressive + if (rng.below(4) == 0) { 1 } else { 0 }),
+        },
+    })
+    if (won) {
+        gained(takeOver(note(after, {kind: "took", by: i, against: j, at: target}), i, j, target), i, j)
+    } else {
+        note(after, {kind: "repelled", by: j, against: i, at: target})
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wars.
+
+// The wars going on: `{by, against, began, strength, gains, at}`, `by` the
+// faction that declared it, `strength` both sides' at the start, `gains`
+// the lands each has won from the other, and `at` where it began.
+val warsOf = fn(empire:map):list { empire.wars ?? [] }
+
+// The index in the wars of the one between factions `i` and `j`, or -1.
+val warBetween = fn(empire:map, i:num, j:num):num {
+    val wars = warsOf(empire)
+    val found = filter(range(len(wars)), fn(k) {
+        (wars[k].by == i && wars[k].against == j) || (wars[k].by == j && wars[k].against == i)
+    })
+    if (len(found) == 0) { -1 } else { found[0] }
+}
+
+// The empire with a land faction `i` won from faction `j` counted in their
+// war, if they are at war.
+val gained = fn(empire:map, i:num, j:num):map {
+    val k = warBetween(empire, i, j)
+    if (k < 0) { return empire }
+    val wars = warsOf(empire)
+    val w = wars[k]
+    val gains = if (w.by == i) { [w.gains[0] + 1, w.gains[1]] } else { [w.gains[0], w.gains[1] + 1] }
+    empire copy {wars: wars[:k] + [w copy {gains: gains}] + wars[k + 1:]}
+}
+
+/**
+ * The faction faction `i` of `empire` is at war with, or nil.
+ */
+export val enemyOf = fn(empire:map, i:num):num|nil {
+    val found = filter(warsOf(empire), fn(w) { w.by == i || w.against == i })
+    if (len(found) == 0) { nil } else if (found[0].by == i) { found[0].against } else { found[0].by }
+}
+
+// The lands of faction `j` beside those of faction `i`, settlements aside.
+val border = fn(empire:map, i:num, j:num):list {
+    val mine = filter(keys(empire.holds), fn(k) { empire.holds[k] == i })
+    filter(reduce(mine, [], fn(acc, k) { acc + besides(k, empire.regions) }), fn(k) {
+        empire.holds[k] == j && empire.fixed[k] == nil
+    })
+}
+
+// Faction `i`, at peace, may declare war on a neighbour at peace: more
+// likely if aggressive or boxed in, less if the neighbour is of its own
+// side and it is orderly.
+val declare = fn(empire:map, i:num):map {
+    if (enemyOf(empire, i) != nil) { return empire }
+    val f = empire.factions[i]
+    // One roll against the most the chance could be, so that most steps
+    // need not look for a neighbour; the neighbour's chance takes the same
+    // roll.
+    val roll = rng.below(100)
+    if (roll >= DECLARE * (2 + f.traits.aggressive)) { return empire }
+    val mine = filter(keys(empire.holds), fn(k) { empire.holds[k] == i })
+    val beside = reduce(mine, [], fn(acc, k) { acc + besides(k, empire.regions) })
+    val near = reduce(beside, [], fn(acc, k) {
+        match empire.holds[k] {
+            j: num => if (j != i && empire.fixed[k] == nil && enemyOf(empire, j) == nil && !any(acc, fn(a) { a == j })) { acc :+ j } else { acc }
+            _ => acc
+        }
+    })
+    if (len(near) == 0) { return empire }
+    val j = near[rng.below(len(near))]
+    val g = empire.factions[j]
+    val boxed = !any(beside, fn(k) { empire.holds[k] == nil })
+    val sameSide = people(g.people).side == people(f.people).side
+    val chance = DECLARE + DECLARE * f.traits.aggressive + (if (boxed) { DECLARE } else { 0 })
+        - (if (sameSide) { DECLARE + f.traits.orderly } else { 0 })
+    if (roll >= chance) { return empire }
+    val front = border(empire, i, j)
+    note(empire copy {wars: warsOf(empire) :+ {by: i, against: j, began: empire.step, strength: [f.strength, g.strength], gains: [0, 0], at: front[0]}},
+        {kind: "declared", by: i, against: j, at: front[0]})
+}
+
+// One step of the war between factions `a` and `b`: each may attack across
+// their border, and then peace may come.
+val wage = fn(empire:map, a:num, b:num):map {
+    val attacked = fn(e:map, i:num, j:num, chance:num):map {
+        val front = border(e, i, j)
+        if (len(front) == 0 || rng.below(100) >= chance) { e } else { fight(e, i, j, front[rng.below(len(front))]) }
+    }
+    val e1 = attacked(empire, a, b, ATTACK)
+    val e2 = attacked(e1, b, a, COUNTER + 10 * e1.factions[b].traits.aggressive)
+    val k = warBetween(e2, a, b)
+    if (k < 0) { return e2 }
+    val w = warsOf(e2)[k]
+    val length = e2.step - w.began
+    val worn = e2.factions[a].strength * 100 < w.strength[0] * EXHAUSTED || e2.factions[b].strength * 100 < w.strength[1] * EXHAUSTED
+    val apart = len(border(e2, a, b)) == 0 && len(border(e2, b, a)) == 0
+    val ends = apart || (length >= 2 && ((worn && rng.below(100) < 40) || (length >= LONG && rng.below(100) < 25)))
+    if (!ends) { return e2 }
+    val wars = warsOf(e2)
+    note(e2 copy {wars: wars[:k] + wars[k + 1:]}, {kind: "peace", by: w.by, against: w.against, began: w.began, gains: w.gains, at: w.at})
+}
+
+// Faction `i`, broken a while, may rise again at its home band: in wild
+// land there if there is any, else in the land there whose holder is
+// weakest in it, settlements aside.
+val rise = fn(empire:map, i:num):map {
+    val f = empire.factions[i]
+    if (any(keys(empire.holds), fn(k) { empire.holds[k] == i })) { return empire }
+    if (empire.step - (f.brokenAt ?? empire.step) < LOW || rng.below(100) >= RISE) { return empire }
+    val home = filter(map(range(empire.regions * empire.regions), fn(r) {
+        "" + r % empire.regions + "," + math.div(r, empire.regions) + "," + f.home
+    }), fn(k) { empire.fixed[k] == nil })
+    if (len(home) == 0) { return empire }
+    val wild = filter(home, fn(k) { empire.holds[k] == nil })
+    val weakness = fn(k:str):num { power(empire, empire.holds[k] ?? 0, k) }
+    val k = if (len(wild) > 0) { wild[rng.below(len(wild))] } else {
+        reduce(home, home[0], fn(best, k) { if (weakness(k) < weakness(best)) { k } else { best } })
+    }
+    val before = empire.holds[k]
+    val risen = setFaction(claim(empire, k, i), i, f copy {strength: math.max(f.strength, RISEN), brokenAt: nil})
+    val noted = note(risen, {kind: "rose", by: i, against: before, at: k})
+    // Whoever held the land there may be broken in turn.
+    match before {
+        j: num => if (any(keys(noted.holds), fn(t) { noted.holds[t] == j })) { noted } else {
+            note(setFaction(noted, j, noted.factions[j] copy {brokenAt: empire.step}), {kind: "broken", by: i, against: j, at: k})
+        }
+        _ => noted
+    }
+}
+
+// Every war goes on a step, in the order they began.
+val wars = fn(empire:map):map {
+    val pairs = map(warsOf(empire), fn(w) { [w.by, w.against] })
+    reduce(pairs, empire, fn(e, pair) { if (warBetween(e, pair[0], pair[1]) < 0) { e } else { wage(e, pair[0], pair[1]) } })
 }
 
 // Faction `i` besieges the settlement called `name` in territory `target`,
@@ -491,11 +661,13 @@ val siege = fn(empire:map, i:num, target:str, name:str):map {
     }
 }
 
-// The players' kills since the last step weaken the factions of the
-// peoples killed, where they hold the land.
-// A player who killed HUNTER or more of a faction's people in its land is
-// remembered for it.
-val bleed = fn(empire:map):map {
+/**
+ * The empire with the players' kills since the last step taken from the
+ * factions of the peoples killed, where they hold the land: each kill half
+ * a percent of the faction's strength, at least one. A player who killed
+ * HUNTER or more of a faction's people in its land is remembered for it.
+ */
+export val bleed = fn(empire:map):map {
     var hunters = {}
     val bled = reduce(keys(empire.kills), empire, fn(e, k) {
         // Keys are "territory|kind", with "|who" for a named player's.
@@ -511,7 +683,7 @@ val bleed = fn(empire:map):map {
                     hunters = hunters + {[h]: {kills: before.kills + n, at: territory}}
                 }
                 val f = e.factions[i]
-                setFaction(e, i, f copy {strength: math.max(0, f.strength - n * KILL_COST)})
+                setFaction(e, i, f copy {strength: math.max(0, f.strength - n * math.max(1, math.div(f.strength * KILL_COST, 1000)))})
             } else { e }
             _ => e
         }
@@ -536,7 +708,9 @@ val calm = fn(empire:map, i:num):map {
 /**
  * One step of the empire layer for the world with seed `seed`: the players'
  * kills weaken their peoples' factions; then each faction in turn earns,
- * may push into the territory beside its own, and may calm down. A step of
+ * may push into the territory beside its own, and may calm down; then each
+ * war goes on, and may end in peace, factions at peace may go to war, and
+ * broken factions may rise again. A step of
  * `history`, before anyone plays, lets factions from below besiege
  * settlements; those that fall are listed in `fallen`, as `{name, by,
  * step}`.
@@ -547,7 +721,10 @@ export val step = fn(empire:map, seed:num, history:bool = false):map {
         if (i == len(e.factions)) { return e }
         recur(i + 1, calm(push(earn(e, i), i, seed, history), i))
     }
-    each(0, bled) copy {step: empire.step + 1}
+    // Then the wars go on, and new ones may begin.
+    val warred = wars(each(0, bled))
+    // Then broken factions may rise again.
+    reduce(range(len(warred.factions)), warred, fn(e, i) { rise(declare(e, i), i) }) copy {step: empire.step + 1}
 }
 
 /**
@@ -596,18 +773,20 @@ export val habitatAt = fn(empire:map, key:str, base:list):list {
 }
 
 /**
- * Whether faction `f` of `empire` is at war: it fought within the last few
- * steps.
+ * Whether faction `i` of `empire` is at war: in a war, or it fought within
+ * the last few steps.
  */
-export val atWar = fn(empire:map, f:map):bool { empire.step - f.lastFight <= WAR }
+export val atWar = fn(empire:map, i:num):bool {
+    enemyOf(empire, i) != nil || empire.step - empire.factions[i].lastFight <= WAR
+}
 
 /**
  * What markets in territory `key` charge, in percent of the usual price:
  * more while its holder is at war and the greedier it is.
  */
 export val priceFactor = fn(empire:map, key:str):num {
-    match holder(empire, key) {
-        f: map => 100 + (if (atWar(empire, f)) { 25 } else { 0 }) + 10 * f.traits.greedy
+    match empire.holds[key] {
+        i: num => 100 + (if (atWar(empire, i)) { 25 } else { 0 }) + 10 * empire.factions[i].traits.greedy
         _ => 100
     }
 }
@@ -667,6 +846,23 @@ export val clause = fn(seed:num, empire:map, event:map):str {
             if ((event.held ?? 0) == 0) { by + " sacked " + name + "." }
             else { by + " besieged " + name + ", which held " + times(event.held) + " before it fell." }
         } else { by + " besieged " + name + ", which held " + times(event.held ?? 1) + "." }
+        "declared" => by + " went to war with " + against + "."
+        "rose" => by + " rose again " + where + "."
+        "peace" => {
+            val gains = event.gains ?? [0, 0]
+            val net = gains[0] - gains[1]
+            if (net > 0) { by + " made peace with " + against + ", the richer by " + lands(net) + "." }
+            else if (net < 0) { by + " made peace with " + against + ", the poorer by " + lands(-net) + "." }
+            else { by + " and " + against + " made peace, with no land won." }
+        }
+        "war" => {
+            val gains = event.gains ?? [0, 0]
+            val net = gains[0] - gains[1]
+            by + " fought " + against + " until " + dateOf(event.last ?? event.step)
+                + (if (net > 0) { ", and took " + lands(net) + " from them." }
+                    else if (net < 0) { ", and lost " + lands(-net) + " to them." }
+                    else { ", and neither won any land." })
+        }
         "death" => (event.who ?? "someone") + " "
             + (if ((event.cause ?? "")[:6] == "killed") { "was " } else { "" }) + (event.cause ?? "died") + " " + where + "."
         "deed" => {
@@ -682,6 +878,12 @@ export val clause = fn(seed:num, empire:map, event:map):str {
         _ => "something happened " + where + "."
     }
     told
+}
+
+// "one land", "two lands", "12 lands".
+val lands = fn(n:num):str {
+    val words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+    (if (n >= 0 && n < len(words)) { words[n] } else { "" + n }) + (if (n == 1) { " land" } else { " lands" })
 }
 
 // "a troll", "an ogre".

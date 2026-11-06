@@ -40,7 +40,7 @@ export val distance = fn(a:str, b:str):num {
 }
 
 // How much each kind of event matters.
-val SIZE = {settled: 1, repelled: 2, death: 2, took: 3, held: 4, deed: 4, sacked: 6, broken: 6, siege: 6}
+val SIZE = {settled: 1, repelled: 2, death: 2, took: 3, held: 4, deed: 4, declared: 5, peace: 5, rose: 5, sacked: 6, broken: 6, siege: 6, war: 6}
 
 // How far news travels, and legends.
 val NEWS_RANGE = 6
@@ -188,6 +188,23 @@ export val ownWalls = fn(seed:num, e:map, here:str):str|nil {
 }
 
 /**
+ * What a guard at `here` says of their holder's war, if it is in one: "We're
+ * at war with the Gnash Pack, since the summer of year 30."
+ */
+export val war = fn(seed:num, e:map, here:str):str|nil {
+    match e.holds[here] {
+        i: num => match empire.enemyOf(e, i) {
+            foe: num => {
+                val w = filter(e.wars ?? [], fn(w) { w.by == i || w.against == i })[0]
+                "We're at war with " + empire.factionName(e, foe) + ", since " + empire.dateOf(w.began) + "."
+            }
+            _ => nil
+        }
+        _ => nil
+    }
+}
+
+/**
  * Why a captain at `here` posts bounties: one of the factions from below
  * holding land under their region.
  */
@@ -206,15 +223,19 @@ export val bountyReason = fn(seed:num, e:map, here:str):str|nil {
 }
 
 /**
- * Why a dealer at `here` charges what they do: their holder's latest fight
- * while it is at war, or its greed or generosity; nil when prices are as
- * usual. Draws nothing from the generator, so menus can show it.
+ * Why a dealer at `here` charges what they do: their holder's war, or its
+ * latest fight while it counts as at war, or its greed or generosity; nil
+ * when prices are as usual. Draws nothing from the generator, so menus can show it.
  */
 export val prices = fn(seed:num, e:map, here:str):str|nil {
     match e.holds[here] {
         i: num => {
             val f = e.factions[i]
-            if (empire.atWar(e, f)) {
+            match empire.enemyOf(e, i) {
+                foe: num => return "Prices are up with the war against " + empire.factionName(e, foe) + "."
+                _ => nil
+            }
+            if (empire.atWar(e, i)) {
                 val fights = filter(e.chronicle, fn(ev) { ev.kind != "settled" && (ev.by == i || ev.against == i) })
                 if (len(fights) == 0) { "Prices are up. There's fighting." } else {
                     "Prices are up since " + empire.clause(seed, e, fights[len(fights) - 1])
@@ -317,7 +338,7 @@ export val settlementPast = fn(e:map, name:str, ruin:bool):str|nil {
 export val talk = fn(role:str, seed:num, e:map, here:str):str|nil {
     match role {
         "innkeeper" => rumour(seed, e, here)
-        "guard" => if (rng.below(2) == 0) { ownWalls(seed, e, here) ?? threat(seed, e, here) } else { threat(seed, e, here) ?? ownWalls(seed, e, here) }
+        "guard" => war(seed, e, here) ?? (if (rng.below(2) == 0) { ownWalls(seed, e, here) ?? threat(seed, e, here) } else { threat(seed, e, here) ?? ownWalls(seed, e, here) })
         "captain" => bountyReason(seed, e, here)
         "trader", "quartermaster" => prices(seed, e, here)
         "townsperson" => if (rng.below(3) == 0) { ownWalls(seed, e, here) ?? news(seed, e, here) } else {

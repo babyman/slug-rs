@@ -185,14 +185,23 @@ what survived. Towns and forts never get monsters.
   greedy, which shift as it wins, loses or keeps the peace.
 - Each season, 15 minutes of play and four to a year, each faction earns
   from its land, grows stronger, and may settle wild land beside its own or
-  fight for held land. Strength fades
-  the farther a faction reaches from its home depths, so the shallow depths
-  are a contested frontier.
+  fight for held land. Strength fades the farther a faction reaches from
+  its home depths, so the shallow depths are a contested frontier.
+- Factions go to war with their neighbours: an aggressive faction, or one
+  boxed in with no wild land left, is the likelier to declare, an orderly
+  one the less likely against its own side. At war, both sides fight across
+  their border most seasons, until one is worn down, the war drags on past
+  three years, or they no longer share a border; then they make peace, and
+  the annals remember who won what. Usually a war or two is going on
+  somewhere. A faction driven from all its land may rise again at its home
+  depths a few years later.
 - A people's monsters thrive where its faction holds the land and fade where
   another does, so the shallows under human land are quieter.
-- Your kills of a people's monsters weaken its faction where you make them.
+- Your kills of a people's monsters weaken its faction where you make them:
+  each costs it half a percent of its strength, so a few dozen in a season
+  can tip a war.
 - Markets charge more while their faction is at war, and more or less as it
-  is greedy or generous.
+  is greedy or generous; dealers say why, and guards name the enemy.
 - A fort's captain posts bounties, a price a head, on the peoples below its
   region; generous factions pay more.
 - The stats show the date, as "Late spring, year 76", and who holds the

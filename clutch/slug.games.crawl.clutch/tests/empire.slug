@@ -183,3 +183,65 @@ val contains = fn(xs, v):bool {
         list: list => any(list, fn(x) { x == v })
     }
 }
+
+@test
+val factionsGoToWarAndMakePeace = fn() {
+    val e = steps(created(2), 2, 150)
+    val wars = filter(e.annals, fn(a) { a.kind == "war" })
+    assertTrue(len(wars) >= 3)
+    assertTrue(all(wars, fn(w) { w.by != w.against && w.last >= w.step + 1 }))
+    // Each war began with a declaration and ended in peace.
+    val declared = filter(e.chronicle, fn(c) { c.kind == "declared" })
+    val peace = filter(e.chronicle, fn(c) { c.kind == "peace" })
+    assertTrue(len(declared) > 0 && len(peace) > 0)
+    // No faction fights two wars at once.
+    val sides = reduce(e.wars ?? [], [], fn(acc, w) { acc + [w.by, w.against] })
+    assertTrue(all(range(len(sides)), fn(k) { len(filter(sides, fn(x) { x == sides[k] })) == 1 }))
+    // Wars mean fighting: land changes hands.
+    assertTrue(any(keys(e.lands), fn(k) { e.lands[k].changes > 0 }))
+    assertEqual(steps(created(2), 2, 150), e)
+}
+
+@test
+val warsAreToldInWords = fn() {
+    val e = {factions: [{name: "the Gnash Pack"}, {name: "the Stonebrow Clan"}], annals: [], chronicle: []}
+    val tell = fn(event:map):str { empire.tell(7, e, {step: 4, by: 0, against: 1, at: "1,1,1"} + event) }
+    assertEqual(tell({kind: "declared"}), "The Gnash Pack went to war with the Stonebrow Clan.")
+    assertEqual(tell({kind: "peace", gains: [3, 1]}), "The Gnash Pack made peace with the Stonebrow Clan, the richer by two lands.")
+    assertEqual(tell({kind: "peace", gains: [0, 1]}), "The Gnash Pack made peace with the Stonebrow Clan, the poorer by one land.")
+    assertEqual(tell({kind: "peace", gains: [1, 1]}), "The Gnash Pack and the Stonebrow Clan made peace, with no land won.")
+    assertEqual(tell({kind: "war", gains: [2, 0], last: 9}), "The Gnash Pack fought the Stonebrow Clan until the summer of year 3, and took two lands from them.")
+    assertEqual(tell({kind: "war", gains: [0, 0], last: 9}), "The Gnash Pack fought the Stonebrow Clan until the summer of year 3, and neither won any land.")
+    assertEqual(tell({kind: "rose"}), "The Gnash Pack rose again " + empire.placeName(7, "1,1,1") + ".")
+}
+
+@test
+val aBrokenFactionRisesAgain = fn() {
+    val e0 = steps(created(2), 2, 20)
+    // The trolls lose everything, long enough ago.
+    val trolls = filter(range(len(e0.factions)), fn(i) { e0.factions[i].people == "trolls" })[0]
+    val lost = reduce(heldBy(e0, trolls), e0.holds, fn(h, k) { h - k })
+    val broken = e0 copy {
+        holds: lost,
+        factions: e0.factions[:trolls] + [e0.factions[trolls] copy {strength: 5, brokenAt: e0.step - 10}] + e0.factions[trolls + 1:],
+    }
+    val later = steps(broken, 2, 60)
+    val risen = filter(later.annals, fn(a) { a.kind == "rose" && a.by == trolls })
+    assertTrue(len(risen) > 0)
+    // They rose at their home band.
+    assertTrue(all(risen, fn(a) { string.split(a.at, ",")[2] == "" + e0.factions[trolls].home }))
+}
+
+@test
+val killsCostAShareOfAFactionsStrength = fn() {
+    val e = created(3)
+    val orcs = filter(range(len(e.factions)), fn(i) { e.factions[i].people == "orcs" })[0]
+    val k = heldBy(e, orcs)[0]
+    val strong = e copy {factions: e.factions[:orcs] + [e.factions[orcs] copy {strength: 1000}] + e.factions[orcs + 1:]}
+    val hit = reduce(range(10), strong, fn(x, _) { empire.killed(x, k, "orc", "Mara") })
+    // Each kill costs half a percent of what is left: five of a thousand.
+    assertEqual(empire.bleed(hit).factions[orcs].strength, 950)
+    // A weak faction still loses at least one a kill.
+    val weak = e copy {factions: e.factions[:orcs] + [e.factions[orcs] copy {strength: 100}] + e.factions[orcs + 1:]}
+    assertEqual(empire.bleed(reduce(range(3), weak, fn(x, _) { empire.killed(x, k, "orc") })).factions[orcs].strength, 97)
+}

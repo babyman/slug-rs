@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Crawl's factions go to war. A faction at peace may declare war on a
+  neighbour, the likelier if aggressive or boxed in with no wild land left,
+  the less against its own side if orderly; while at war both sides fight
+  across their border most seasons, and peace comes when one side is worn
+  down to 70% of its strength, the war passes three years, or their border
+  is gone. A faction can fight one war at a time. Wars go into the
+  chronicle ("The Gnash Pack went to war with the Stonebrow Clan.", "...
+  made peace with ..., the richer by two lands.") and, when they end, the
+  annals ("The Gnash Pack fought the Stonebrow Clan until the summer of
+  year 3, and took two lands from them."), which keep the latest 40. In a
+  100-year history, land now changes hands about ten times as often, with
+  a war or two going on at a time, and in play two or three fights a
+  season. A faction driven from all its land may rise again at its home
+  band two years later ("The Mossback Brood rose again ..."). The home
+  band's defence is 125% of a faction's power there, from 150%. Players'
+  kills cost a faction half a percent of its strength each (at least 1),
+  from a flat 1, so a few dozen in a season tell. Dealers say "Prices are
+  up with the war against the Gnash Pack.", and guards "We're at war with
+  the Gnash Pack, since the summer of year 30." New: `empire.enemyOf`,
+  `empire.bleed` (exported), `lore.war`; `empire.atWar` takes a faction's
+  index. A new world's history takes about 40% longer.
+
 - Crawl remembers its players. A character who dies leaves a grave (`_` on
   the map) where they fell, with everything they carried, and their gold,
   laid on the free squares around it for anyone to recover; walking onto a
