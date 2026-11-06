@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- `slug run` of a compiled `.cslug` program calls the native bindings of
+  the installed clutches it uses (`slug.math`, `slug.string`, SQLite,
+  `slug.random.secure`, ...). It used to stop at the first one with
+  "foreign function `slug.math.addRaw` is not registered". The clutches
+  are activated, and their declarations checked, as an import from source
+  does.
+- An `import` inside a function resolves from the module that made the
+  function, not from the module that calls it. A relative import such as
+  `import("helper")` in `sub/lib.slug`, run by a call from `main.slug`,
+  used to find nothing, and in a compiled program so did any import in a
+  function called from another module (crawl's SQLite saving failed so).
+  `describe` resolves its module the same way.
+- A module that fails while it is initialized is the cause of the import
+  that failed. The error reads "cannot initialize a.slug: list index is
+  out of bounds" (code `module`) and its `caused by:` is the runtime error
+  itself, with its code (`out_of_bounds`), the failing line, and the
+  imports it was reached through. It used to repeat "runtime error:" (and,
+  from source, "cannot compile") once for each module of the chain, with
+  only the code `module`. New: `ModuleLoadError::Initialization`,
+  `InitializationFailure`, `ImportFailure::Initialization`.
+
 - Crawl's factions have leaders: a name and title in the people's style
   ("Warlord Gruk Ashmaw", "Thane Dagna Flintbrow", "Chief Yip the Sly",
   "Lich Morvane the Pale"; human titles are Marshal, Warden and Reeve).

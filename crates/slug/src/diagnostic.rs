@@ -227,22 +227,44 @@ impl Diagnostic {
                 data: native.data.as_ref().map(value_json),
             }),
             // An import of a module that failed to compile is caused by that
-            // module's source error.
-            cause: error.compile_error().map_or_else(
-                || {
-                    error
-                        .cause
-                        .as_deref()
-                        .map(|cause| Box::new(Self::from_runtime_in(cause, sources)))
-                },
-                |compile_error| Some(Box::new(Self::from_source_diagnostic(compile_error))),
-            ),
+            // module's source error, and one that failed while it was
+            // initialized by the runtime error its code raised.
+            cause: if let Some(compile_error) = error.compile_error() {
+                Some(Box::new(Self::from_source_diagnostic(compile_error)))
+            } else if let Some(failure) = error.initialization_failure() {
+                Some(Box::new(Self::from_initialization(failure)))
+            } else {
+                error
+                    .cause
+                    .as_deref()
+                    .map(|cause| Box::new(Self::from_runtime_in(cause, sources)))
+            },
             ..Self::new(category, runtime_code(&error.kind), error.message.clone())
         };
         if let Some(missing) = error.missing_module() {
             diagnostic.suggest_modules(missing, sources);
         }
         diagnostic
+    }
+
+    /// The runtime error a module's code raised while it was initialized.
+    fn from_initialization(failure: &slug_vm::InitializationFailure) -> Self {
+        Self {
+            location: failure.span.as_ref().map(location),
+            frames: failure
+                .frames
+                .iter()
+                .map(|frame| DiagnosticFrame {
+                    function: frame.function.clone(),
+                    location: frame.span.as_ref().map(location),
+                })
+                .collect(),
+            ..Self::new(
+                DiagnosticCategory::Runtime,
+                runtime_code(&failure.kind),
+                failure.message.clone(),
+            )
+        }
     }
 
     /// Points a not-found module diagnostic at the module's name in its

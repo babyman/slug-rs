@@ -74,6 +74,6 @@ pub use vm::InteractiveTask;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 pub use vm::{
-    CallFrame, ImportFailure, InstalledProgram, InteractiveEnvironment, NativeErrorDetails,
-    RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
+    CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
+    NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };

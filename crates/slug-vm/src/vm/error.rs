@@ -54,6 +54,55 @@ pub enum ImportFailure {
     Compile(SourceDiagnostic),
     /// No module has the name.
     NotFound(crate::MissingModule),
+    /// The module's top-level code failed while it was initialized.
+    Initialization(InitializationFailure),
+}
+
+/// The runtime error that a module's top-level code raised while the module
+/// was initialized, kept so an import of it can report where and why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitializationFailure {
+    pub kind: RuntimeErrorKind,
+    pub message: String,
+    pub span: Option<SourceSpan>,
+    /// The failing module's frames, then those of each module whose
+    /// initialization imported it, innermost first.
+    pub frames: Vec<CallFrame>,
+}
+
+impl InitializationFailure {
+    /// The failure behind `error`, raised by a module's top-level code. When
+    /// `error` is itself an import of a module that failed to initialize,
+    /// it is that module's failure, with this module's frames added, so a
+    /// chain of imports reports the error that began it once.
+    #[must_use]
+    pub fn from_runtime(error: &RuntimeError) -> Self {
+        let Some(ImportFailure::Initialization(inner)) = error.import_failure.as_deref() else {
+            return Self {
+                kind: error.kind.clone(),
+                message: error.message.clone(),
+                span: error.span.clone(),
+                frames: error.frames.clone(),
+            };
+        };
+        let mut failure = inner.clone();
+        // This module's innermost frame was at its `import`.
+        failure.frames.extend(
+            error
+                .frames
+                .iter()
+                .enumerate()
+                .map(|(index, frame)| CallFrame {
+                    function: frame.function.clone(),
+                    span: if index == 0 {
+                        error.span.clone()
+                    } else {
+                        frame.span.clone()
+                    },
+                }),
+        );
+        failure
+    }
 }
 
 impl RuntimeError {
@@ -62,6 +111,16 @@ impl RuntimeError {
     pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
         match self.import_failure.as_deref() {
             Some(ImportFailure::Compile(error)) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// The runtime error of an imported module that failed while it was
+    /// initialized.
+    #[must_use]
+    pub fn initialization_failure(&self) -> Option<&InitializationFailure> {
+        match self.import_failure.as_deref() {
+            Some(ImportFailure::Initialization(failure)) => Some(failure),
             _ => None,
         }
     }
@@ -185,7 +244,8 @@ impl Vm {
     }
 
     /// A module error for a failed import, keeping the source error of a
-    /// module that failed to compile.
+    /// module that failed to compile or the runtime error of one that failed
+    /// to initialize.
     #[cold]
     #[inline(never)]
     pub(super) fn import_error(
@@ -201,7 +261,16 @@ impl Vm {
         } else {
             (
                 RuntimeErrorKind::Module,
-                error.compile_error().cloned().map(ImportFailure::Compile),
+                error
+                    .compile_error()
+                    .cloned()
+                    .map(ImportFailure::Compile)
+                    .or_else(|| {
+                        error
+                            .initialization_failure()
+                            .cloned()
+                            .map(ImportFailure::Initialization)
+                    }),
             )
         };
         let mut runtime_error = self.error(kind, error.to_string(), span);

@@ -394,6 +394,36 @@ impl ModuleGraph {
         Some(snapshot)
     }
 
+    /// Activates the native clutch that provides module `name`'s foreign
+    /// bindings, without compiling or initializing the module, for a host
+    /// that runs it from a compiled artifact. The module's installed source
+    /// is checked against the native bindings as an import checks it. A
+    /// module with no native clutch activates nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the module cannot be resolved, or its
+    /// native clutch cannot be staged, does not match the module's foreign
+    /// declarations, or cannot be registered.
+    pub fn activate_foreign<H: ModuleGraphHost>(
+        &self,
+        host: &H,
+        name: &str,
+    ) -> Result<(), ModuleLoadError> {
+        let source = host.resolve(ModuleRequest::new(None, name))?;
+        let Some(mut activation) = host.stage_activation(&source)? else {
+            return Ok(());
+        };
+        if let Err(error) = Self::check_foreign_declarations(host, &source, name)
+            .and_then(|()| activation.register())
+        {
+            activation.cleanup();
+            return Err(error);
+        }
+        activation.retain();
+        Ok(())
+    }
+
     /// Resolves, compiles, and initializes one module instance.
     ///
     /// # Errors
@@ -488,9 +518,11 @@ impl ModuleGraph {
                     ),
                     error: compile_error,
                 },
-                None => ModuleLoadError::Source {
+                // The failure is the runtime error that began it, whether
+                // in this module's code or a module it imported.
+                None => ModuleLoadError::Initialization {
                     location: source.diagnostic_name.clone(),
-                    message: error.to_string(),
+                    failure: Box::new(slug_vm::InitializationFailure::from_runtime(&error)),
                 },
             });
         }

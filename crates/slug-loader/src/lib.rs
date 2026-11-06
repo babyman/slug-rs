@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, fmt, path::PathBuf};
 
-use slug_vm::{MissingModule, SourceDiagnostic, VmHostError};
+use slug_vm::{InitializationFailure, MissingModule, SourceDiagnostic, VmHostError};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -235,6 +235,11 @@ pub enum ModuleLoadError {
         location: String,
         message: String,
     },
+    /// The module's top-level code failed while it was initialized.
+    Initialization {
+        location: String,
+        failure: Box<InitializationFailure>,
+    },
     Clutch {
         location: String,
         message: String,
@@ -250,6 +255,9 @@ impl fmt::Display for ModuleLoadError {
             Self::Compile { location, error } => write!(f, "cannot compile {location}: {error}"),
             Self::Source { location, message } => {
                 write!(f, "cannot compile {location}: {message}")
+            }
+            Self::Initialization { location, failure } => {
+                write!(f, "cannot initialize {location}: {}", failure.message)
             }
             Self::Clutch { location, message } => {
                 write!(f, "cannot load clutch {location}: {message}")
@@ -275,6 +283,9 @@ impl From<ModuleLoadError> for VmHostError {
                 elsewhere,
             }),
             ModuleLoadError::Compile { error, .. } => Self::compile(message, *error),
+            ModuleLoadError::Initialization { failure, .. } => {
+                Self::initialization(message, *failure)
+            }
             _ => Self::new(message),
         }
     }

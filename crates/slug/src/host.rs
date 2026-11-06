@@ -178,6 +178,42 @@ impl DesktopLoader {
         self.state.graph.compile_artifact(self, path, source)
     }
 
+    /// Activates the installed native clutches that provide a compiled
+    /// artifact's foreign bindings, and returns those bindings for the host
+    /// that runs it. The clutches stay active while this loader lives.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked loader error when a module that declares foreign
+    /// bindings is not installed or its native clutch cannot be activated.
+    pub fn artifact_foreign_functions(
+        &self,
+        artifact: &slug_vm::cslug::Artifact,
+    ) -> Result<Vec<NativeFunction>, ModuleLoadError> {
+        let mut functions = Vec::new();
+        for module in &artifact.modules {
+            let bindings = module
+                .program
+                .declarations()
+                .iter()
+                .filter(|declaration| declaration.foreign)
+                .flat_map(|declaration| &declaration.bindings)
+                .collect::<Vec<_>>();
+            if bindings.is_empty() {
+                continue;
+            }
+            self.state.graph.activate_foreign(self, &module.name)?;
+            // A binding the clutch does not provide is reported by the VM
+            // when the module is installed.
+            functions.extend(
+                bindings
+                    .into_iter()
+                    .filter_map(|name| self.state.resolver.foreign_function(&module.name, name)),
+            );
+        }
+        Ok(functions)
+    }
+
     /// Compiles entry source and its static imports and reports their capabilities.
     ///
     /// # Errors

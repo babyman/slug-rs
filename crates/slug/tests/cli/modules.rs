@@ -660,3 +660,129 @@ fn clutch_assets_embed_at_compile_time() {
     assert_eq!(diagnostic["code"], "invalid_asset");
     fs::remove_dir_all(root).expect("remove asset fixture");
 }
+
+/// Runs the program at `path` from source, and compiled into an artifact,
+/// returning both outputs.
+fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 2] {
+    let artifact = path.with_extension("cslug");
+    let source = slug().arg(path).output().expect("run source");
+    let compile = slug()
+        .args([
+            "compile",
+            path.to_str().unwrap(),
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile artifact");
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = slug()
+        .args(["run", artifact.to_str().unwrap()])
+        .output()
+        .expect("run artifact");
+    [source, compiled]
+}
+
+#[test]
+fn an_import_in_a_function_resolves_from_the_module_that_made_it() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-import-in-function-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("sub")).expect("create import fixture directory");
+    // `helper` is beside `lib`, not beside `main`, so it resolves only from
+    // `lib`, whose function `main` calls.
+    fs::write(
+        root.join("sub/lib.slug"),
+        "export val hello = fn() { import(\"helper\").message }\n",
+    )
+    .expect("write importing module");
+    fs::write(
+        root.join("sub/helper.slug"),
+        "export val message = \"from helper\"\n",
+    )
+    .expect("write imported module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val lib = import(\"sub.lib\")\nval main = fn() { println(lib.hello()) }\n",
+    )
+    .expect("write program");
+
+    let outputs = run_as_source_and_artifact(&path);
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+    for output in outputs {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "from helper\n");
+    }
+}
+
+#[test]
+fn a_module_that_fails_to_initialize_is_the_cause_of_its_import() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-initialization-failure-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(root.join("c.slug"), "export val x = [1][5]\n").expect("write failing module");
+    fs::write(
+        root.join("b.slug"),
+        "val c = import(\"c\")\nexport val y = 1\n",
+    )
+    .expect("write middle module");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val z = 1\n",
+    )
+    .expect("write outer module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val a = import(\"a\")\nval main = fn() { println(a.z) }\n",
+    )
+    .expect("write program");
+
+    let outputs = run_as_source_and_artifact(&path);
+    let c = root
+        .join("c.slug")
+        .canonicalize()
+        .expect("canonical module path");
+    let b = root
+        .join("b.slug")
+        .canonicalize()
+        .expect("canonical module path");
+    fs::remove_dir_all(&root).expect("remove import fixture directory");
+    for output in outputs {
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let (import, cause) = stderr
+            .split_once("\n\ncaused by: ")
+            .unwrap_or_else(|| panic!("the failure is the cause: {stderr}"));
+        assert!(
+            import.starts_with("slug: runtime error: cannot initialize ")
+                && import.contains(": list index is out of bounds\n")
+                && import.ends_with("= code: module"),
+            "{stderr}"
+        );
+        assert!(
+            cause.starts_with(&format!(
+                "runtime error: list index is out of bounds\n    --> {}:1:19\n",
+                c.display()
+            )),
+            "{stderr}"
+        );
+        assert!(
+            cause.contains(&format!("\n  in main at {}:1:9\n", b.display())),
+            "{stderr}"
+        );
+        assert!(cause.ends_with("= code: out_of_bounds\n"), "{stderr}");
+        assert_eq!(stderr.matches("runtime error:").count(), 2, "{stderr}");
+    }
+}

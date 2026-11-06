@@ -771,7 +771,7 @@ fn clutch_plugins_reject_unavailable_or_unrelated_registrations() {
     let missing = ModuleLoader::with_clutch_repository(&root, None, repository);
     assert!(matches!(
         missing.initialize(None, "example.plugin"),
-        Err(ModuleLoadError::Source { .. })
+        Err(ModuleLoadError::Initialization { .. })
     ));
     assert_eq!(INVALID_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 2);
 
@@ -810,7 +810,7 @@ fn clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations() {
 
     assert!(matches!(
         loader.initialize(None, "example.plugin"),
-        Err(ModuleLoadError::Source { .. })
+        Err(ModuleLoadError::Initialization { .. })
     ));
     assert_eq!(loader.initialized_module_count(), 0);
     assert_eq!(RETRY_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
@@ -1551,9 +1551,23 @@ fn imported_module_failures_retain_the_imported_source_location() {
         .expect_err("broken module must fail");
 
     assert_eq!(error.kind, RuntimeErrorKind::Module);
-    let expected_location = format!("{}:1:1", broken.display());
-    assert!(error.message.contains(&expected_location), "{error}");
     assert!(error.message.contains("not implemented"), "{error}");
+    let failure = error
+        .initialization_failure()
+        .expect("the import keeps the module's failure");
+    let span = failure.span.as_ref().expect("the failure has a location");
+    assert_eq!(
+        (span.path.to_string(), span.line, span.column),
+        (
+            broken
+                .canonicalize()
+                .expect("canonical module path")
+                .display()
+                .to_string(),
+            1,
+            1
+        )
+    );
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 

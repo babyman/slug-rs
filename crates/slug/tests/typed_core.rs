@@ -189,6 +189,36 @@ fn adds_and_takes_square_roots() {
 }
 
 #[test]
+fn a_compiled_artifact_calls_installed_native_bindings() {
+    let directory = TemporaryDirectory::new();
+    slug_home(&directory);
+    let program = directory.path().join("sums.slug");
+    let artifact = directory.path().join("sums.cslug");
+    fs::write(
+        &program,
+        "val math = import(\"slug.math\")\n\
+         val main = fn() { println(math.add(20, 22), math.sqrt(16)) }\n",
+    )
+    .expect("write program");
+    let slug = |arguments: &[&Path]| {
+        Command::new(env!("CARGO_BIN_EXE_slug"))
+            .env("SLUG_HOME", directory.path())
+            .args(arguments)
+            .output()
+            .expect("run slug CLI")
+    };
+    let compile = slug(&[Path::new("compile"), &program, &artifact]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let run = slug(&[Path::new("run"), &artifact]);
+    assert_eq!(stdout(&run), "42 4\n");
+}
+
+#[test]
 fn converts_characters_and_unicode_scalar_values() {
     let output = run_cli(
         "val {ord, chr} = import(\"slug.string\")\n\

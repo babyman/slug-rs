@@ -430,6 +430,28 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    // The artifact carries no native code: its foreign bindings come from
+    // the installed clutches, which stay active while `loader` lives, so it
+    // is declared before the host that calls them.
+    let loader = match build_default_host_vm(
+        source_root,
+        slug_home.as_deref(),
+        program_arguments,
+        entry_module,
+    ) {
+        Ok((_, loader)) => loader,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    let foreign = match loader.artifact_foreign_functions(&artifact) {
+        Ok(functions) => functions,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
     let configuration = slug::Configuration::load(
         source_root,
         slug_home.as_deref(),
@@ -449,6 +471,10 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
             eprint_startup_error("host", "builtin", error.to_string(), json);
             return ExitCode::from(1);
         }
+    }
+    if let Err(error) = host.register_foreign_batch(foreign) {
+        eprint_startup_error("host", "clutch", error.to_string(), json);
+        return ExitCode::from(1);
     }
     match host.run() {
         Ok(result) => exit_status(host.has_entrypoint(), &result, json),

@@ -423,7 +423,14 @@ impl ArtifactHost {
             .insert(module.key.clone(), live_exports);
         if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&module.key);
-            return Err(VmHostError::new(error.to_string()));
+            let failure = crate::InitializationFailure::from_runtime(&error);
+            return Err(VmHostError::initialization(
+                format!(
+                    "cannot initialize module `{}`: {}",
+                    module.name, failure.message
+                ),
+                failure,
+            ));
         }
         let exports = vm.exported_values(program.program());
         self.state

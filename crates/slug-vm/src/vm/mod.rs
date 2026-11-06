@@ -60,7 +60,10 @@ use calls::ClosureCallOptions;
 use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
-pub use error::{CallFrame, ImportFailure, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
+pub use error::{
+    CallFrame, ImportFailure, InitializationFailure, NativeErrorDetails, RuntimeError,
+    RuntimeErrorKind,
+};
 use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments};
 pub use installation::InstalledProgram;
 use operations::{
@@ -3783,10 +3786,13 @@ impl Vm {
                 "module loader is not configured".into(),
             )
         })?;
-        let importer = self
-            .module_program
-            .as_ref()
-            .and_then(|program| program.module_key());
+        // The importer is the module whose code is running, which differs
+        // from this VM's module when it runs a function another module made.
+        let importer = program.module_key().or_else(|| {
+            self.module_program
+                .as_ref()
+                .and_then(|program| program.module_key())
+        });
         let mut exports = Vec::new();
         for name in names {
             let Value::Str(name) = name else {
@@ -4418,6 +4424,20 @@ impl Vm {
         }
     }
 
+    /// The key of the module whose code is running, which `describe`
+    /// resolves module names from. It differs from this VM's module when the
+    /// VM runs a function another module made.
+    fn running_module_key(&self) -> Option<&str> {
+        self.frames
+            .last()
+            .and_then(|frame| frame.program.module_key())
+            .or_else(|| {
+                self.module_program
+                    .as_ref()
+                    .and_then(|program| program.module_key())
+            })
+    }
+
     /// `describe(module, unexported = false)`: the top-level declarations of
     /// the named module, one map per binding, in source order. Unexported
     /// ones are included only when asked for and the host's user granted it.
@@ -4471,10 +4491,7 @@ impl Vm {
                 span,
             ));
         }
-        let importer = self
-            .module_program
-            .as_ref()
-            .and_then(|program| program.module_key());
+        let importer = self.running_module_key();
         let description = host
             .describe_module(importer, name)
             .map_err(|error| self.import_error(&error, span.clone()))?;
