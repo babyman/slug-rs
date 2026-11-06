@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Crawl's factions have leaders: a name and title in the people's style
+  ("Warlord Gruk Ashmaw", "Thane Dagna Flintbrow", "Chief Yip the Sly",
+  "Lich Morvane the Pale"; human titles are Marshal, Warden and Reeve).
+  A leader dies the likelier the longer they lead (most reigns are some 14
+  years), may fall when their side loses a battle of a war, and falls with
+  the faction's last land; a broken faction rises again under a new one.
+  A new leader brings their own temper, rolling the faction's boldness and
+  aggression afresh, which also ends the long peaces that set in once
+  every faction had calmed to the least aggressive; and a faction now
+  declares war on the other side at least 1% of seasons. Events carry their
+  leader: "Warlord Gruk Ashmaw led the Blacktusk Horde to war with ...",
+  "Wolfby fell to the Sootfang Warren, led by Chief Yip the Sly, in ...",
+  "Under Thane Brokk Greybrow, the Stonebrow Clan fought ...", and the
+  chronicle tells of successions ("... died; ... leads them now."). Townsfolk
+  name their ruler ("... rules us, and taxes us hard."), guards the enemy's
+  leader, and captains the leaders of the land below.
+- Crawl has battlefields. Every battle and siege is counted in its
+  territory's record (`empire.landOf` gives `battles` and `fought`), and
+  land fought over five times or more is strewn, as you come into each of
+  its chunks, with the remains of battle (`;`, `game.REMAINS`, a chunk's
+  `remains`): half a mark for each battle, up to eight a chunk, settlements
+  standing kept clear. Walking onto them says "Old bones and broken blades
+  lie here, where the Gnash Pack fought the Stonebrow Clan.", and coming
+  into the land "Many battles have been fought here." New: `lore.FIELD`,
+  `lore.battlefield`, `lore.remains`, `lore.ruler`, `empire.leaderOf`.
+  About a sixth of the land is a battlefield after a 100-year history, and
+  fewer settlements fall in it (none to four) as the factions fight each
+  other more.
+
 - Crawl's factions go to war. A faction at peace may declare war on a
   neighbour, the likelier if aggressive or boxed in with no wild land left,
   the less against its own side if orderly; while at war both sides fight

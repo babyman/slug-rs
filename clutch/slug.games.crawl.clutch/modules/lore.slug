@@ -40,7 +40,7 @@ export val distance = fn(a:str, b:str):num {
 }
 
 // How much each kind of event matters.
-val SIZE = {settled: 1, repelled: 2, death: 2, took: 3, held: 4, deed: 4, declared: 5, peace: 5, rose: 5, sacked: 6, broken: 6, siege: 6, war: 6}
+val SIZE = {settled: 1, repelled: 2, death: 2, took: 3, held: 4, deed: 4, declared: 5, peace: 5, rose: 5, succeeded: 3, sacked: 6, broken: 6, siege: 6, war: 6}
 
 // How far news travels, and legends.
 val NEWS_RANGE = 6
@@ -197,6 +197,30 @@ export val war = fn(seed:num, e:map, here:str):str|nil {
             foe: num => {
                 val w = filter(e.wars ?? [], fn(w) { w.by == i || w.against == i })[0]
                 "We're at war with " + empire.factionName(e, foe) + ", since " + empire.dateOf(w.began) + "."
+                    + (match empire.leaderOf(e, foe) {
+                        l: str => " " + l + " leads them."
+                        _ => ""
+                    })
+            }
+            _ => nil
+        }
+        _ => nil
+    }
+}
+
+/**
+ * Who rules the settlement at `here`, in the words of its people: "Reeve
+ * Edda Thorne of the Silver Concord of Ashmere rules us, and taxes us
+ * hard."; nil where no leader holds it.
+ */
+export val ruler = fn(seed:num, e:map, here:str):str|nil {
+    match e.holds[here] {
+        i: num => match empire.leaderOf(e, i) {
+            l: str => {
+                val t = e.factions[i].traits
+                val manner = if (t.greedy > 0) { ", and taxes us hard" } else if (t.greedy < 0) { ", and is generous with it" }
+                    else if (t.aggressive > 0) { ", and is spoiling for a fight" } else if (t.orderly > 0) { ", and keeps good order" } else { "" }
+                l + " of " + empire.factionName(e, i) + " rules us" + manner + "."
             }
             _ => nil
         }
@@ -219,6 +243,10 @@ export val bountyReason = fn(seed:num, e:map, here:str):str|nil {
     if (len(under) == 0) { return nil }
     val k = under[rng.below(len(under))]
     capital(e.factions[e.holds[k]].name) + " hold the land " + empire.placeName(seed, k)
+        + (match empire.leaderOf(e, e.holds[k]) {
+            l: str => ", under " + l
+            _ => ""
+        })
         + ". Every one of theirs you put down weakens them."
 }
 
@@ -279,6 +307,28 @@ export val fallen = fn(seed:num, e:map, n:num):list {
 // Places.
 
 /**
+ * How many battles make a territory a battlefield, where the remains of
+ * them lie about.
+ */
+export val FIELD = 5
+
+/**
+ * Whether territory `key` is a battlefield.
+ */
+export val battlefield = fn(e:map, key:str):bool { empire.landOf(e, key).battles >= FIELD }
+
+/**
+ * What remains of the battles in territory `key`: "Old bones and broken
+ * blades lie here, where the Gnash Pack fought the Stonebrow Clan."
+ */
+export val remains = fn(e:map, key:str):str {
+    match empire.landOf(e, key).fought {
+        [i, j] => "Old bones and broken blades lie here, where " + empire.factionName(e, i) + " fought " + empire.factionName(e, j) + "."
+        _ => "Old bones and broken blades lie here."
+    }
+}
+
+/**
  * How long the holder of territory `key` has held it: "since the autumn of
  * year 34", "for as long as anyone remembers", or nil if no one holds it.
  */
@@ -293,7 +343,8 @@ export val heldSince = fn(e:map, key:str):str|nil {
 /**
  * What a traveller learns coming into territory `key`, as "You are now in
  * the shallows under the Ashmoor, held by the Gnash Pack since the autumn
- * of year 34.", and, if it has changed hands more than once, how often.
+ * of year 34.", and, if it has changed hands more than once, how often, and
+ * if it is a battlefield, that it is.
  */
 export val arriving = fn(seed:num, e:map, key:str):str {
     val where = empire.placeName(seed, key)
@@ -304,6 +355,7 @@ export val arriving = fn(seed:num, e:map, key:str):str {
     val changes = empire.landOf(e, key).changes
     "You are now " + where + held + "."
         + (if (changes >= 2) { " It has changed hands " + empire.times(changes) + "." } else { "" })
+        + (if (battlefield(e, key)) { " Many battles have been fought here." } else { "" })
 }
 
 /**
@@ -333,7 +385,7 @@ export val settlementPast = fn(e:map, name:str, ruin:bool):str|nil {
  * Something a character in `role` at `here` says of the world, or nil:
  * innkeepers rumours, guards the threat from below or their walls,
  * captains the bounties, traders and quartermasters prices, townsfolk
- * their walls or news.
+ * their ruler, their walls or news.
  */
 export val talk = fn(role:str, seed:num, e:map, here:str):str|nil {
     match role {
@@ -341,7 +393,7 @@ export val talk = fn(role:str, seed:num, e:map, here:str):str|nil {
         "guard" => war(seed, e, here) ?? (if (rng.below(2) == 0) { ownWalls(seed, e, here) ?? threat(seed, e, here) } else { threat(seed, e, here) ?? ownWalls(seed, e, here) })
         "captain" => bountyReason(seed, e, here)
         "trader", "quartermaster" => prices(seed, e, here)
-        "townsperson" => if (rng.below(3) == 0) { ownWalls(seed, e, here) ?? news(seed, e, here) } else {
+        "townsperson" => if (rng.below(4) == 0) { ruler(seed, e, here) ?? news(seed, e, here) } else if (rng.below(3) == 0) { ownWalls(seed, e, here) ?? news(seed, e, here) } else {
             match heard(seed, e, here) {
                 h: str => "Did you hear? " + capital(h)
                 _ => ownWalls(seed, e, here)

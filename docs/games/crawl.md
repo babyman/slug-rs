@@ -195,6 +195,17 @@ what survived. Towns and forts never get monsters.
   the annals remember who won what. Usually a war or two is going on
   somewhere. A faction driven from all its land may rise again at its home
   depths a few years later.
+- Each faction has a leader with a name and title in its people's style:
+  "Warlord Gruk Ashmaw", "Thane Dagna Flintbrow", "Lich Morvane the Pale".
+  Leaders die of age, may fall in a battle their side loses, and fall with
+  their faction's last land; a new leader brings their own temper, how bold
+  and aggressive the faction is. The chronicle tells of successions, and
+  the annals of who led each war and siege. Townsfolk name their ruler,
+  guards the enemy's, and captains the leaders of the land below.
+- Land fought over five times or more is a battlefield: old bones and
+  broken blades (`;`) lie about its chunks, more the more battles, and
+  walking onto them tells who fought there. Coming into such land says
+  "Many battles have been fought here."
 - A people's monsters thrive where its faction holds the land and fade where
   another does, so the shallows under human land are quieter.
 - Your kills of a people's monsters weaken its faction where you make them:
@@ -213,7 +224,7 @@ A new world lives through 100 years, 400 seasons, of the empire layer
 before anyone comes. In those years the peoples below may besiege the settlements beside
 their land. Walls double a settlement's defence, but each siege it holds off
 wears them down; one that falls is a ruin from then on. Most worlds lose
-none to five settlements; the start town always stands. The dungeon under a
+none to four settlements; the start town always stands. The dungeon under a
 ruin, down to depth 3, holds what the fallen left behind.
 
 The world remembers. Every fight goes into a chronicle of the latest news,

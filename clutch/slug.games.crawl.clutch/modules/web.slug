@@ -99,7 +99,7 @@ val CLASSES = {
     "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
     ")": "weapon", "]": "armour",
     ",": "scrub", "&": "tree", "~": "water", "^": "rock", "=": "road",
-    "_": "grave",
+    "_": "grave", ";": "remains",
 }
 
 // How many messages the log keeps.

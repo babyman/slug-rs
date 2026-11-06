@@ -245,3 +245,47 @@ val killsCostAShareOfAFactionsStrength = fn() {
     val weak = e copy {factions: e.factions[:orcs] + [e.factions[orcs] copy {strength: 100}] + e.factions[orcs + 1:]}
     assertEqual(empire.bleed(reduce(range(3), weak, fn(x, _) { empire.killed(x, k, "orc") })).factions[orcs].strength, 97)
 }
+
+@test
+val factionsHaveLeadersWhoDieAndAreSucceeded = fn() {
+    val e0 = created(2)
+    assertTrue(all(range(len(e0.factions)), fn(i) { empire.leaderOf(e0, i) != nil }))
+    assertEqual(string.split(empire.leaderOf(e0, 4) ?? "", " ")[0], "Warlord")
+    val e = steps(e0, 2, 150)
+    val successions = filter(e.chronicle, fn(c) { c.kind == "succeeded" })
+    assertTrue(len(successions) > 0)
+    assertTrue(all(successions, fn(c) { c.who != c.leader }))
+    // What a faction does, its leader leads.
+    assertTrue(all(filter(e.chronicle, fn(c) { c.kind == "declared" }), fn(c) { c.leader != nil }))
+    assertTrue(all(filter(e.annals, fn(a) { a.kind == "war" }), fn(a) { a.leader != nil }))
+}
+
+@test
+val leadersAreToldOf = fn() {
+    val e = {factions: [{name: "the Gnash Pack"}, {name: "the Stonebrow Clan"}], annals: [], chronicle: []}
+    val tell = fn(event:map):str { empire.tell(7, e, {step: 4, by: 0, against: 1, at: "1,1,1"} + event) }
+    assertEqual(tell({kind: "declared", leader: "Chief Yip the Sly"}), "Chief Yip the Sly led the Gnash Pack to war with the Stonebrow Clan.")
+    assertEqual(tell({kind: "succeeded", who: "Chief Yip the Sly", leader: "Chief Nok the Bold", how: "died"}),
+        "Chief Yip the Sly of the Gnash Pack died; Chief Nok the Bold leads them now.")
+    assertEqual(tell({kind: "succeeded", who: "Chief Yip the Sly", leader: "Chief Nok the Bold", how: "fell"}),
+        "Chief Yip the Sly of the Gnash Pack fell in battle; Chief Nok the Bold leads them now.")
+    assertEqual(tell({kind: "war", gains: [1, 0], last: 9, leader: "Chief Yip the Sly"}),
+        "Under Chief Yip the Sly, the Gnash Pack fought the Stonebrow Clan until the summer of year 3, and took one land from them.")
+    assertEqual(tell({kind: "siege", name: "Elmby", held: 2, last: 9, fell: true, leader: "Chief Yip the Sly"}),
+        "The Gnash Pack, led by Chief Yip the Sly, besieged Elmby, which held twice before it fell.")
+    assertEqual(tell({kind: "rose", leader: "Chief Nok the Bold"}), "The Gnash Pack rose again " + empire.placeName(7, "1,1,1") + ", under Chief Nok the Bold.")
+    assertEqual(tell({kind: "broken", fallen: "Chief Yip the Sly"}),
+        "The Gnash Pack drove the Stonebrow Clan from the last of their land, " + empire.placeName(7, "1,1,1") + ". Chief Yip the Sly fell with it.")
+}
+
+@test
+val battlesAreCountedWhereTheyAreFought = fn() {
+    val e = steps(created(2), 2, 150)
+    val fought = filter(keys(e.lands), fn(k) { empire.landOf(e, k).battles > 0 })
+    assertTrue(len(fought) > 10)
+    assertTrue(all(fought, fn(k) {
+        val r = empire.landOf(e, k)
+        r.fought != nil && r.fought[0] != r.fought[1]
+    }))
+    assertEqual(empire.landOf(e, "99,99,0"), {since: nil, changes: 0, battles: 0, fought: nil})
+}

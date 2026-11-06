@@ -24,7 +24,7 @@ val aWorldHasNoHistoryUnlessAskedFor = fn() {
 
 @test
 val historyAgesTheWorldAndSomeSettlementsFall = fn() {
-    game.newGame(1, {history: 75})
+    game.newGame(6, {history: 75})
     val w = game.current().world
     assertEqual(w.empire.step, 300)
     assertEqual(len(w.empire.chronicle), 40)
@@ -38,7 +38,7 @@ val historyAgesTheWorldAndSomeSettlementsFall = fn() {
     game.join("a", "Ann")
     assertEqual([game.playerOf("a").cx, game.playerOf("a").cy], [w.settlements[0].cx, w.settlements[0].cy])
     // The same seed has the same history.
-    game.newGame(1, {history: 75})
+    game.newGame(6, {history: 75})
     assertEqual(game.current().world.empire, w.empire)
 }
 
@@ -59,11 +59,12 @@ val aRuinIsEmptyBrokenAndHasAWayDownInside = fn() {
 
 @test
 val theDungeonUnderARuinIsRicher = fn() {
-    game.newGame(1, {history: 75})
+    game.newGame(6, {history: 75})
     game.join("a", "Ann")
     val s = filter(game.current().world.settlements, fn(s) { s.kind == "ruin" })[0]
     val key = game.chunkKey(s.cx, s.cy, 0)
-    val ruin = town.build(1, level.generate(1, s.cx, s.cy, 0, 32), s)
+    val seed = game.current().world.seed
+    val ruin = town.build(seed, level.generate(seed, s.cx, s.cy, 0, 32), s)
     val snap = game.snapshot()
     game.load(snap copy {
         levels: snap.levels + {[key]: ruin},
@@ -71,7 +72,7 @@ val theDungeonUnderARuinIsRicher = fn() {
     })
     game.command("a", "enter", false)
     assertEqual(game.playerOf("a").depth, 1)
-    val plain = level.generate(1, s.cx, s.cy, 1, 32)
+    val plain = level.generate(seed, s.cx, s.cy, 1, 32)
     assertEqual(len(game.here("a").items), len(plain.items) + 5)
 }
 
@@ -103,7 +104,7 @@ val eventsAreToldInWords = fn() {
 
 @test
 val theAnnalsKeepTheGreatEventsForGood = fn() {
-    game.newGame(1, {history: 75})
+    game.newGame(6, {history: 75})
     val e = game.current().world.empire
     // The chronicle has only the latest; the annals keep every great event.
     assertTrue(all(e.annals, fn(a) { any(["siege", "broken", "rose", "war"], fn(k) { a.kind == k }) }))

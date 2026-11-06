@@ -62,6 +62,15 @@ val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armou
  */
 export val GRAVE = "_"
 
+/**
+ * The remains of old battles, bones and broken blades, as the map shows
+ * them when nothing lies on them.
+ */
+export val REMAINS = ";"
+
+// The most remains of old battles a chunk has.
+val MOST_REMAINS = 8
+
 // Monsters whose killing is remembered.
 val RENOWNED = ["dragon", "troll", "ogre", "wraith"]
 
@@ -441,11 +450,50 @@ val pickUp = fn() {
     }
 }
 
-// Reads the grave on the player's square, if there is one.
+// Reads the grave on the player's square, if there is one, or tells of the
+// remains of old battles there, unless the player is running.
 val readGrave = fn() {
     val graves = site().graves ?? []
     val i = indexAt(graves, player.x, player.y)
-    if (i >= 0) { say(lore.epitaph(graves[i])) }
+    if (i >= 0) { return say(lore.epitaph(graves[i])) }
+    if (!runStep && indexAt(site().remains ?? [], player.x, player.y) >= 0 && chronicled()) {
+        say(lore.remains(world.empire, empire.territoryOf(player.cx, player.cy, player.depth)))
+    }
+}
+
+// The chunk the acting player is in, if it lies on a battlefield, gets the
+// remains of its battles: more the more battles, up to MOST_REMAINS, on
+// open ground with nothing on it, drawn from the world's seed and the
+// chunk. Settlements standing are kept clear.
+val strewRemains = fn() {
+    if (!chronicled()) { return nil }
+    val p = player
+    val key = empire.territoryOf(p.cx, p.cy, p.depth)
+    if (!lore.battlefield(world.empire, key)) { return nil }
+    val lv = site()
+    val standing = match lv.place {
+        pl: map => pl.kind != "ruin"
+        _ => false
+    }
+    if (standing) { return nil }
+    val have = lv.remains ?? []
+    val want = math.min(MOST_REMAINS, math.div(empire.landOf(world.empire, key).battles, 2))
+    if (len(have) >= want) { return nil }
+    val open = [level.FLOOR, level.CORRIDOR, level.ROAD, level.SCRUB]
+    val free = fn(x:num, y:num, taken:list):bool {
+        contains(open, lv.map[y][x]) && indexAt(lv.items, x, y) < 0 && indexAt(lv.graves ?? [], x, y) < 0
+            && indexAt(taken, x, y) < 0 && indexAt(lv.characters ?? [], x, y) < 0
+    }
+    val strewn = rng.within(rng.mix([world.seed, 71, p.cx, p.cy, p.depth, len(have)]), fn() {
+        val go = fn(tries:num, taken:list):list {
+            if (tries == 0 || len(taken) >= want) { return taken }
+            val x = rng.below(level.WIDTH)
+            val y = rng.below(level.HEIGHT)
+            recur(tries - 1, if (free(x, y, taken)) { taken :+ {x: x, y: y} } else { taken })
+        }
+        go(400, have)
+    })
+    setHere(lv copy {remains: strewn})
 }
 
 // ---------------------------------------------------------------------------
@@ -562,11 +610,12 @@ val outdoorSight = fn():map {
 }
 
 // What is seen at (x, y) in chunk `lv`: the item there, or a grave, or the
-// terrain.
+// remains of old battles, or the terrain.
 val glyphAt = fn(lv:map, x:num, y:num):str {
     val i = indexAt(lv.items, x, y)
     if (i >= 0) { GLYPHS[lv.items[i].item.kind] }
     else if (indexAt(lv.graves ?? [], x, y) >= 0) { GRAVE }
+    else if (indexAt(lv.remains ?? [], x, y) >= 0) { REMAINS }
     else { lv.map[y][x] }
 }
 
@@ -949,6 +998,7 @@ val enter = fn(cx:num, cy:num, depth:num, place:fn) {
         chronicle({kind: "deed", deed: "descent", depth: depth})
         say("No one has come this deep before.")
     }
+    if (arriving) { strewRemains() }
     // Coming into new land, where it is and who holds it, in a world of
     // factions.
     val e = world.empire ?? {factions: []}

@@ -23,7 +23,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; padding: 0 4px; border: 1px sol
 .map .floor { color: #4a5263; } .map .corridor { color: #5e6676; } .map .wall { color: #9aa3b5; }
 .map .door { color: #c8904c; } .map .stairs { color: #f2d36b; font-weight: 700; }
 .map .ground { color: #3f5a34; } .map .scrub { color: #6f8a3c; } .map .tree { color: #2f8a46; font-weight: 700; }
-.map .water { color: #3b78c4; } .map .rock { color: #8a7f72; } .map .grave { color: #c9c2b4; font-weight: 700; }
+.map .water { color: #3b78c4; } .map .rock { color: #8a7f72; } .map .grave { color: #c9c2b4; font-weight: 700; } .map .remains { color: #8c8577; }
 .map .you { color: #fff; font-weight: 700; text-shadow: 0 0 6px #8fb8ff; }
 .map .monster { color: var(--red); font-weight: 700; cursor: help; }
 .map .ally { color: #8fb8ff; font-weight: 700; cursor: help; }

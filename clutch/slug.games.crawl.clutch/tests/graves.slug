@@ -184,3 +184,39 @@ val innkeepersKeepARollOfTheFallen = fn() {
     val heard = game.playerOf("a").messages + game.playerOf("a").more
     assertEqual(heard, [inn.name + " says: \"We remember them here:\""] + lore.fallen(w.seed, w.empire, 3))
 }
+
+@test
+val battlefieldsAreStrewnWithTheRemainsOfBattles = fn() {
+    game.newGame(2, {history: 10})
+    game.join("a", "Mara")
+    val home = game.playerOf("a")
+    // The land under the start town has seen ten battles.
+    val under = empire.territoryOf(home.cx, home.cy, 1)
+    val s = game.snapshot()
+    val e = s.world.empire
+    game.load(s copy {world: s.world copy {empire: e copy {lands: (e.lands ?? {}) + {[under]: {changes: 0, battles: 10, fought: [4, 2]}}}}})
+    val down = game.here("a").down
+    change("a", {x: down.x, y: down.y})
+    game.command("a", "enter", false)
+    val lv = levelOf("a")
+    assertEqual(len(lv.remains), 5)
+    // Walking onto remains tells of the battle; the map shows them.
+    val r = filter(lv.remains, fn(q) { lv.map[q.y][q.x - 1] == level.FLOOR && indexAtList(lv.items, q.x - 1, q.y) && indexAtList(lv.remains, q.x - 1, q.y) })[0]
+    change("a", {x: r.x - 1, y: r.y})
+    game.command("a", "l", false)
+    val w = game.current().world
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == lore.remains(w.empire, under) }))
+    assertEqual(lore.remains(w.empire, under), "Old bones and broken blades lie here, where " + empire.factionName(w.empire, 4) + " fought " + empire.factionName(w.empire, 2) + ".")
+    // Coming again strews no more than the battles call for.
+    val up = game.here("a").up
+    change("a", {x: up.x, y: up.y})
+    game.command("a", "enter", false)
+    // Arriving in town pages on with --More--.
+    val down2 = game.here("a").down
+    change("a", {x: down2.x, y: down2.y, more: [], messages: []})
+    game.command("a", "enter", false)
+    assertEqual(len(levelOf("a").remains), 5)
+}
+
+// Whether nothing in `xs` is at (x, y).
+val indexAtList = fn(xs:list, x:num, y:num):bool { !any(xs, fn(q) { q.x == x && q.y == y }) }

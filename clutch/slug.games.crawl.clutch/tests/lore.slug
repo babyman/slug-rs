@@ -165,6 +165,32 @@ val inAWarDealersAndGuardsSaySo = fn() {
 }
 
 @test
+val battlefieldsTellOfTheirBattles = fn() {
+    val field = world copy {lands: world.lands + {"2,1,1": {since: 40, changes: 1, battles: 5, fought: [0, 1]}}}
+    assertTrue(lore.battlefield(field, "2,1,1"))
+    assertTrue(!lore.battlefield(world, "2,1,1"))
+    assertEqual(lore.remains(field, "2,1,1"), "Old bones and broken blades lie here, where the Redaxe Horde fought the Iron Compact of Elmby.")
+    assertEqual(lore.remains(world, "1,1,0"), "Old bones and broken blades lie here.")
+    assertEqual(lore.arriving(SEED, field, "2,1,1"),
+        "You are now " + place("2,1,1") + ", held by the Redaxe Horde since the spring of year 11. Many battles have been fought here.")
+}
+
+@test
+val peopleNameTheirLeaders = fn() {
+    val led = world copy {factions: [
+        world.factions[0] + {leader: {name: "Warlord Gruk Ashmaw", since: 0}},
+        world.factions[1] + {leader: {name: "Reeve Edda Thorne", since: 0}},
+        world.factions[2],
+    ]}
+    assertEqual(lore.ruler(SEED, led, "1,1,0"), "Reeve Edda Thorne of the Iron Compact of Elmby rules us, and taxes us hard.")
+    assertEqual(lore.ruler(SEED, led, "5,5,0"), nil)
+    assertEqual(lore.bountyReason(SEED, led, "1,1,0"),
+        "The Redaxe Horde hold the land " + place("1,1,1") + ", under Warlord Gruk Ashmaw. Every one of theirs you put down weakens them.")
+    val warring = led copy {wars: [{by: 0, against: 1, began: 30, strength: [100, 100], gains: [0, 0], at: "2,1,1"}]}
+    assertEqual(lore.war(SEED, warring, "1,1,0"), "We're at war with the Redaxe Horde, since the autumn of year 8. Warlord Gruk Ashmaw leads them.")
+}
+
+@test
 val charactersTellOfTheWorldNearThem = fn() {
     assertEqual(lore.talk("captain", SEED, world, "1,1,0"), lore.bountyReason(SEED, world, "1,1,0"))
     assertEqual(lore.talk("trader", SEED, world, "1,1,0"), lore.prices(SEED, world, "1,1,0"))
