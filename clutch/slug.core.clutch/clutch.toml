@@ -4,13 +4,14 @@
 "slug.os.signal" = { source = "modules/signal.slug" }
 "slug.math" = { source = "modules/math.slug" }
 "slug.string" = { source = "modules/string.slug" }
+"slug.bytes" = { source = "modules/bytes.slug" }
 "slug.fmt.toml" = { source = "modules/toml.slug" }
 "slug.fmt.json" = { source = "modules/json.slug" }
 "slug.test" = { source = "modules/test.slug" }
 "slug.random" = { source = "modules/random.slug" }
 
 [tests]
-files = ["tests/std.slug", "tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
+files = ["tests/std.slug", "tests/math.slug", "tests/string.slug", "tests/bytes.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
 
 [native]
 profile = "events"
@@ -32,6 +33,10 @@ notifyRaw = { symbol = "slug_core_notify_signals", signature = "(i64 kinds, prod
 [native.functions."slug.math"]
 addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }
 sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }
+
+[native.functions."slug.bytes"]
+findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64" }
+findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64" }
 
 [native.functions."slug.fmt.json"]
 findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64" }

@@ -21,7 +21,8 @@
 
 val {ord, chr, sort, toBytes} = import("slug.string")
 
-// A typed native binding, declared in this clutch's manifest.
+// slug.bytes.findAny's native search, bound directly: going through the
+// module costs a call for every string written.
 foreign findAnyRaw = fn(data:bytes, set:bytes, from:num):num
 
 // The bytes a JSON string must escape: the quote, the backslash, and the

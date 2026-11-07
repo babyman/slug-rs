@@ -69,6 +69,7 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/signal.slug",
         "modules/math.slug",
         "modules/string.slug",
+        "modules/bytes.slug",
         "modules/toml.slug",
         "modules/test.slug",
         "native/source/core.c",
@@ -87,6 +88,7 @@ fn slug_home(directory: &TemporaryDirectory) {
          \"slug.os.signal\" = \"slug.core.clutch\"\n\
          \"slug.math\" = \"slug.core.clutch\"\n\
          \"slug.string\" = \"slug.core.clutch\"\n\
+         \"slug.bytes\" = \"slug.core.clutch\"\n\
          \"slug.fmt.toml\" = \"slug.core.clutch\"\n\
          \"slug.test\" = \"slug.core.clutch\"\n",
     )

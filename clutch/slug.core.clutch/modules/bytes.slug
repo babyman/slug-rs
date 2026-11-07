@@ -1,0 +1,61 @@
+/**
+ * Byte operations: searching bytes for a sequence or for any byte of a set,
+ * natively, so that a parser or a formatter can find what it is looking for
+ * without stepping through the bytes one at a time in Slug.
+ *
+ * Positions are byte offsets. A `from` outside the bytes throws an `Error`
+ * whose `type` is `bytes.range`.
+ */
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign findRaw = fn(data:bytes, needle:bytes, from:num):num
+foreign findAnyRaw = fn(data:bytes, set:bytes, from:num):num
+
+// What a native search's negative result means: -1 is not found, nil, and
+// -2 is a `from` outside the bytes, a range error. Checked only after the
+// search, so that finding something costs one comparison.
+val missing = fn(at:num, name:str):nil {
+    if (at == -1) { return nil }
+    throw Error {type: "bytes.range", msg: name + " requires from between 0 and the length of the bytes"}
+}
+
+/**
+ * Returns where `needle` first occurs in `data` at or after `from`, or nil
+ * when it does not: `find(0x"616263", 0x"63")` is 2. An empty needle is
+ * found at `from`.
+ *
+ * Throws a `bytes.range` error when `from` is negative or past the end of
+ * `data`.
+ */
+@testWith(
+    [0x"616263", 0x"63"], 2,
+    [0x"61626162", 0x"6162", 1], 2,
+    [0x"616263", 0x"64"], nil,
+    [0x"616263", 0x"", 1], 1,
+    [0x"616263", 0x"", 3], 3,
+    [0x"", 0x"61"], nil
+)
+export val find = fn(data:bytes, needle:bytes, from:num = 0):num|nil {
+    val at = findRaw(data, needle, from)
+    if (at >= 0) { at } else { missing(at, "find") }
+}
+
+/**
+ * Returns where a byte of `set` first occurs in `data` at or after `from`,
+ * or nil when none does: `findAny(0x"61225c", 0x"225c")` is 1. With an empty
+ * set, nothing is found.
+ *
+ * Throws a `bytes.range` error when `from` is negative or past the end of
+ * `data`.
+ */
+@testWith(
+    [0x"61225c", 0x"225c"], 1,
+    [0x"61225c", 0x"225c", 2], 2,
+    [0x"616263", 0x"0a0d"], nil,
+    [0x"616263", 0x""], nil,
+    [0x"616263", 0x"61", 3], nil
+)
+export val findAny = fn(data:bytes, set:bytes, from:num = 0):num|nil {
+    val at = findAnyRaw(data, set, from)
+    if (at >= 0) { at } else { missing(at, "findAny") }
+}

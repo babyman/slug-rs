@@ -213,7 +213,7 @@ void slug_core_to_bytes(const char *text, size_t text_length, const uint8_t **da
 
 int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *needle,
                        size_t needle_length, int64_t from) {
-  if (from < 0 || (uint64_t)from > data_length) return -1;
+  if (from < 0 || (uint64_t)from > data_length) return -2;
   size_t at = (size_t)from;
   if (needle_length == 0) return (int64_t)at;
   while (data_length - at >= needle_length) {
@@ -229,7 +229,7 @@ int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *n
 
 int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
                            size_t set_length, int64_t from) {
-  if (from < 0 || (uint64_t)from > data_length) return -1;
+  if (from < 0 || (uint64_t)from > data_length) return -2;
   bool member[256] = {false};
   for (size_t i = 0; i < set_length; i++) member[set[i]] = true;
   for (size_t at = (size_t)from; at < data_length; at++) {

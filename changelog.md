@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New core module `slug.bytes`: `find(data, needle, from = 0)` and
+  `findAny(data, set, from = 0)` search bytes natively for a sequence or
+  for any byte of a set, giving the offset or nil, and throw a
+  `bytes.range` error for a `from` outside the bytes. They are the native
+  searches `slug.string.split` and `slug.fmt.json` use, which keep their
+  own bindings to them: through the module, the extra call per search made
+  Crawl's history about 3% slower. The C searches now give -2 for a `from`
+  out of range, so the module checks it only when nothing is found.
+
 - `slug.fmt.json.stringify` writes a string with nothing to escape whole,
   found with a native byte search (`slug_core_find_any`), where it looked
   at every character in Slug. Crawl finds each chunk's players once while it

@@ -59,14 +59,14 @@ void slug_core_to_bytes(const char *text, size_t text_length, const uint8_t **da
                         size_t *length);
 
 /* The offset of the first occurrence of `needle` in `data` at or after
- * offset `from`, or -1 when there is none or `from` is out of range. An empty
- * needle is found at `from`. */
+ * offset `from`, -1 when there is none, or -2 when `from` is out of range.
+ * An empty needle is found at `from`. */
 int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *needle,
                        size_t needle_length, int64_t from);
 
 /* The offset of the first byte of `data` at or after offset `from` that is
- * one of the bytes of `set`, or -1 when there is none or `from` is out of
- * range. */
+ * one of the bytes of `set`, -1 when there is none, or -2 when `from` is
+ * out of range. */
 int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
                            size_t set_length, int64_t from);
 

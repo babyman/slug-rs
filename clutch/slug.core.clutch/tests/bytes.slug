@@ -1,0 +1,38 @@
+val bytes = import("slug.bytes")
+val {assertEqual, assertThrows} = import("slug.test")
+val {toBytes} = import("slug.string")
+
+// The thrown error's type and message.
+val failure = fn(work:fn):list {
+    val error = assertThrows(work)
+    [error.type, error.msg]
+}
+
+@test
+val fromOutsideTheBytesIsARangeError = fn() {
+    val message = "requires from between 0 and the length of the bytes"
+    assertEqual(failure(fn() { bytes.find(0x"6162", 0x"61", -1) }), ["bytes.range", "find " + message])
+    assertEqual(failure(fn() { bytes.find(0x"6162", 0x"61", 3) }), ["bytes.range", "find " + message])
+    assertEqual(failure(fn() { bytes.findAny(0x"6162", 0x"61", 3) }), ["bytes.range", "findAny " + message])
+}
+
+@test
+val findWalksEveryOccurrence = fn() {
+    val data = toBytes("a, b, c")
+    val needle = toBytes(", ")
+    val all = fn(from:num, found:list):list {
+        match bytes.find(data, needle, from) {
+            at: num => recur(at + 2, found :+ at)
+            _ => found
+        }
+    }
+    assertEqual(all(0, []), [1, 4])
+}
+
+@test
+val findAnyFindsEveryByteOfTheSet = fn() {
+    // Each byte of the set is found, the lowest and highest values included.
+    assertEqual(bytes.findAny(0x"410042", 0x"00"), 1)
+    assertEqual(bytes.findAny(0x"4142ff", 0x"ff00"), 2)
+    assertEqual(bytes.findAny(toBytes("é!"), 0x"21"), 2)
+}
