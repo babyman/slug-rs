@@ -1,0 +1,4 @@
+schema = 1
+outcome = "semantic-error"
+stderr_contains = ["sendable"]
+pending = "fork: phase 1 (docs/planning/fork-tasks.md)"

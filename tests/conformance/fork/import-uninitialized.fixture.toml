@@ -1,0 +1,4 @@
+schema = 1
+outcome = "runtime-error"
+stderr_contains = ["uninitialized", "fork"]
+pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

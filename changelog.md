@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Phase 0 of `fork`: the behavior of `fork` and `task var` is written down
+  as 30 conformance fixtures in `tests/conformance/fork/`, covering
+  snapshots, the write rule, sendable values, channels, nurseries, module
+  initialization, and imports, and as two VM tests for native functions and
+  resources. Fixture sidecars gain `pending`, which a fixture must keep
+  failing until its feature lands, and `stderr_contains`, which checks a
+  diagnostic's content without fixing its wording. The decision record now
+  says a closure that captures a `var` is not sendable.
+
 - Accepted a decision for parallel tasks: `fork { ... }` starts a task
   that sees a snapshot of its captures and every module's globals and may run
   on another core, while `spawn` keeps its meaning. A fork's writes to shared

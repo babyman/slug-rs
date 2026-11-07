@@ -1,0 +1,9 @@
+// A closure that captures a task handle is not sendable.
+val main = fn() {
+    val t = fork {
+        val inner = spawn { 1 }
+        fn() { inner }
+    }
+    select { await t }
+    println("unreachable")
+}

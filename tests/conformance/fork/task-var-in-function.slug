@@ -1,0 +1,4 @@
+val main = fn() {
+    task var x = 1
+    x
+}

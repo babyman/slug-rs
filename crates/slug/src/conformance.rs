@@ -33,8 +33,16 @@ impl FixtureRunner {
         let fixtures = fixture_sources(directory)?;
         let mut failures = Vec::new();
         for source in fixtures {
-            if let Err(error) = self.run_fixture(&source) {
-                failures.push(format!("{}: {error}", source.display()));
+            let pending = FixtureMetadata::load(&source.with_extension("fixture.toml"))
+                .ok()
+                .and_then(|metadata| metadata.pending);
+            match (self.run_fixture(&source), pending) {
+                (Err(error), None) => failures.push(format!("{}: {error}", source.display())),
+                (Ok(()), Some(reason)) => failures.push(format!(
+                    "{}: pending fixture now conforms ({reason}); remove `pending`",
+                    source.display()
+                )),
+                _ => {}
             }
         }
         if failures.is_empty() {
@@ -116,6 +124,13 @@ impl FixtureRunner {
             return Err(format!(
                 "stderr mismatch: expected {expected:?}, observed {stderr:?}"
             ));
+        }
+        for expected in &metadata.stderr_contains {
+            if !stderr.contains(expected.as_str()) {
+                return Err(format!(
+                    "stderr does not contain {expected:?}; observed {stderr:?}"
+                ));
+            }
         }
         if let Some(expected) = metadata.diagnostic.as_deref()
             && stderr != expected

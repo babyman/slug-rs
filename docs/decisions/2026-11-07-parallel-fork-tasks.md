@@ -225,8 +225,13 @@ Two cases follow from `val` cells being written at initialization:
 A value is sendable when it is nil, a boolean, a number, a string, bytes, an
 enum case, a struct schema, a channel, or a list, map, or struct whose
 contents are sendable. A closure is sendable when every value it captures is
-sendable; its code is immutable. Task handles, binding cells, and native
-resources are not sendable in the first version.
+sendable and it captures no `var`; its code is immutable. A captured `var`
+is a binding cell its creator can still change, so a closure over one, such
+as `val inc = fn() { n = n + 1 }`, is not sendable: a fork that calls it
+fails, whether it would read or write `n`. Module functions read module
+globals through the per-task cells above, not through captures, so they
+are sendable. Task handles, binding cells, and native resources are not
+sendable in the first version.
 
 ### Channels cross forks
 

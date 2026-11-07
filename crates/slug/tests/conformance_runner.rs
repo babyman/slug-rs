@@ -95,3 +95,71 @@ fn rejects_unclassified_fixture_sources() {
             .contains("cannot read")
     );
 }
+
+fn run_one(kind: &str, source: &str, metadata: &str) -> std::process::Output {
+    let root = root(kind);
+    fs::create_dir_all(&root).expect("create fixture directory");
+    fs::write(root.join("case.slug"), source).expect("write fixture source");
+    fs::write(root.join("case.fixture.toml"), metadata).expect("write fixture metadata");
+    let output = runner()
+        .arg(&root)
+        .arg("--slug")
+        .arg(slug())
+        .output()
+        .expect("run fixture runner");
+    fs::remove_dir_all(root).expect("remove fixture directory");
+    output
+}
+
+#[test]
+fn a_pending_fixture_that_still_fails_is_not_a_failure() {
+    let output = run_one(
+        "pending-fails",
+        "println(41)\n",
+        "schema = 1\noutcome = \"success\"\nstdout = \"42\\n\"\npending = \"not yet\"\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_pending_fixture_that_conforms_is_reported() {
+    let output = run_one(
+        "pending-passes",
+        "println(42)\n",
+        "schema = 1\noutcome = \"success\"\nstdout = \"42\\n\"\npending = \"not yet\"\n",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("pending fixture now conforms (not yet); remove `pending`")
+    );
+}
+
+#[test]
+fn stderr_contains_requires_every_listed_text() {
+    let metadata = |texts: &str| {
+        format!("schema = 1\noutcome = \"runtime-error\"\nstderr_contains = {texts}\n")
+    };
+    let matched = run_one("contains-ok", "???\n", &metadata("[\"not implemented\"]"));
+    assert!(
+        matched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&matched.stderr)
+    );
+    let missing = run_one(
+        "contains-missing",
+        "???\n",
+        &metadata("[\"not implemented\", \"fork\"]"),
+    );
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("stderr does not contain \"fork\"")
+    );
+}

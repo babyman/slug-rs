@@ -1,0 +1,7 @@
+// A write the checker cannot see at the fork fails when it runs.
+var total = 0
+val bump = fn() { total = total + 1 }
+val main = fn() {
+    val t = fork { bump() }
+    select { await t }
+}

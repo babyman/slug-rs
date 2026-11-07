@@ -1,0 +1,27 @@
+// Channels cross forks both ways.
+val main = fn() {
+    val requests:chan<num> = chan(1)
+    val replies:chan<num> = chan(1)
+    val worker = fork {
+        val serve = fn(total:num):num {
+            match select { recv requests } {
+                nil => total
+                n => {
+                    select { send replies, n * 2 /> fn(_) { nil } }
+                    recur(total + n)
+                }
+            }
+        }
+        serve(0)
+    }
+    val ask = fn(n:num) {
+        if (n <= 3) {
+            select { send requests, n /> fn(_) { nil } }
+            println(select { recv replies })
+            recur(n + 1)
+        }
+    }
+    ask(1)
+    close(requests)
+    println(select { await worker })
+}

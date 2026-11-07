@@ -39,7 +39,7 @@ Each phase lands on its own with tests green, a changelog entry, and the
 ESP32 check. Phases 2 and 3 touch hot paths and are validated with the PGO
 `bench-ab` against hold-outs.
 
-### Phase 0: the semantics, as tests
+### Phase 0: the semantics, as tests (done)
 
 Write the behavior first, as VM and CLI conformance tests that every later
 phase must keep passing on every build:
@@ -58,6 +58,12 @@ phase must keep passing on every build:
 - nursery membership, `await`, `select`, cancellation, and fail-fast behave
   as for `spawn`;
 - channels work between a fork and its spawner, both ways.
+
+Landed as `tests/conformance/fork/` (fixtures marked `pending` with their
+phase) and two ignored VM tests in `crates/slug-vm/tests/vm/concurrency.rs`
+for natives and resources. Writing them settled one more rule: a closure
+that captures a `var` is not sendable, since the fork would otherwise see
+its spawner's live cell through it.
 
 ### Phase 1: the language surface (frontend)
 

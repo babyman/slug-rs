@@ -1,0 +1,4 @@
+schema = 1
+outcome = "runtime-error"
+stderr_contains = ["`total`", "fork", "task var"]
+pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

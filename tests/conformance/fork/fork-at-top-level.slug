@@ -1,0 +1,3 @@
+// A module's top-level code cannot fork: the fork could see the module's
+// values filled in after it started.
+val t = fork { 1 }

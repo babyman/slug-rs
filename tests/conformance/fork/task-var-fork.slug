@@ -1,0 +1,16 @@
+// A fork may write a `task var`; its copy is its own, and a task it spawns
+// starts with the fork's value at the spawn.
+task var who = "declared"
+val show = fn():str { who }
+val main = fn() {
+    who = "spawner"
+    val child = fork {
+        val before = show()
+        who = "fork"
+        val inner = spawn { show() }
+        who = "fork again"
+        before + " / " + show() + " / " + select { await inner }
+    }
+    println(select { await child })
+    println(show())
+}

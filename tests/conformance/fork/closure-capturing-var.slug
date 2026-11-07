@@ -1,0 +1,8 @@
+// A closure that captures a `var` holds a binding cell, so it is not
+// sendable: a fork can hold it but fails when it calls it.
+val main = fn() {
+    var n = 0
+    val inc = fn() { n = n + 1 }
+    val t = fork { inc() }
+    select { await t }
+}

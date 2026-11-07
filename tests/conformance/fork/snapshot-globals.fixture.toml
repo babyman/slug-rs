@@ -1,0 +1,5 @@
+schema = 1
+outcome = "success"
+stdout = "1\n3\n2\n"
+stderr = ""
+pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

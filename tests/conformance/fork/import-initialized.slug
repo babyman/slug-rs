@@ -1,0 +1,6 @@
+// Importing an initialized module in a fork reads it.
+val helper = import("helper")
+val main = fn() {
+    val t = fork { import("helper").value }
+    println(select { await t })
+}
