@@ -9,6 +9,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -208,6 +209,22 @@ void slug_core_to_bytes(const char *text, size_t text_length, const uint8_t **da
   static const uint8_t empty[1] = {0};
   *data = text_length == 0 ? empty : (const uint8_t *)text;
   *length = text_length;
+}
+
+int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *needle,
+                       size_t needle_length, int64_t from) {
+  if (from < 0 || (uint64_t)from > data_length) return -1;
+  size_t at = (size_t)from;
+  if (needle_length == 0) return (int64_t)at;
+  while (data_length - at >= needle_length) {
+    /* The first byte by memchr, then the rest. */
+    const uint8_t *first = memchr(data + at, needle[0], data_length - at - needle_length + 1);
+    if (first == NULL) return -1;
+    at = (size_t)(first - data);
+    if (memcmp(first + 1, needle + 1, needle_length - 1) == 0) return (int64_t)at;
+    at += 1;
+  }
+  return -1;
 }
 
 /* --- Signals ------------------------------------------------------------

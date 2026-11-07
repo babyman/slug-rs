@@ -15,6 +15,7 @@ foreign ordRaw = fn(character:str):num
 foreign chrRaw = fn(code:num):list
 foreign fromBytesRaw = fn(data:bytes):list
 foreign toBytesRaw = fn(text:str):list
+foreign findRaw = fn(data:bytes, needle:bytes, from:num):num
 
 /**
  * Returns the Unicode scalar value of `character`, which must be a string of
@@ -82,25 +83,35 @@ val requireStrings = fn(values, operation) {
     check(0)
 }
 
-val merge = fn(left, right, i, j, out) {
-    if (i == len(left)) {
-        out + right[j:]
-    } else if (j == len(right)) {
-        out + left[i:]
-    } else if (right[j] < left[i]) {
-        recur(left, right, i, j + 1, out :+ right[j])
-    } else {
-        recur(left, right, i + 1, j, out :+ left[i])
+// `values` sorted, bottom up: each pass merges neighbouring sorted runs of
+// `width` into runs of twice that, with no slicing until a run's rest is
+// appended whole. Equal values keep their order.
+val mergeSort = fn(values:list):list {
+    val n = len(values)
+    val pass = fn(width:num, values:list):list {
+        val merge = fn(i:num, j:num, middle:num, end:num, out:list):list {
+            if (i == middle) {
+                out + values[j:end]
+            } else if (j == end) {
+                out + values[i:middle]
+            } else if (values[j] < values[i]) {
+                recur(i, j + 1, middle, end, out :+ values[j])
+            } else {
+                recur(i + 1, j, middle, end, out :+ values[i])
+            }
+        }
+        val runs = fn(start:num, out:list):list {
+            if (start >= n) { return out }
+            val middle = if (start + width < n) { start + width } else { n }
+            val end = if (start + 2 * width < n) { start + 2 * width } else { n }
+            recur(end, merge(start, middle, middle, end, out))
+        }
+        runs(0, [])
     }
-}
-
-val mergeSort = fn(values) {
-    if (len(values) <= 1) {
-        values
-    } else {
-        val middle = int(len(values) / 2)
-        merge(mergeSort(values[0:middle]), mergeSort(values[middle:]), 0, 0, [])
+    val go = fn(width:num, values:list):list {
+        if (width >= n) { values } else { recur(width * 2, pass(width, values)) }
     }
+    go(1, values)
 }
 
 /**
@@ -216,20 +227,23 @@ export val chars = fn(text:str):list<str> {
     [",x,", ","], ["", "x", ""]
 )
 export val split = fn(text:str, separator:str):list<str> {
-    val width = len(separator)
-    if (width == 0) {
+    if (len(separator) == 0) {
         throw Error {type: "string.range", msg: "split requires a non-empty separator"}
     }
-    val go = fn(i:num, start:num, parts:list<str>):list<str> {
-        if (i + width > len(text)) {
-            parts :+ text[start:]
-        } else if (text[i:i + width] == separator) {
-            recur(i + width, i + width, parts :+ text[start:i])
+    // Found in the UTF-8 bytes: a separator can only match where a character
+    // starts, so each part is whole characters.
+    val data = toBytes(text)
+    val needle = toBytes(separator)
+    val width = len(needle)
+    val go = fn(start:num, parts:list<str>):list<str> {
+        val at = findRaw(data, needle, start)
+        if (at < 0) {
+            parts :+ fromBytesRaw(data[start:])[1]
         } else {
-            recur(i + 1, start, parts)
+            recur(at + width, parts :+ fromBytesRaw(data[start:at])[1])
         }
     }
-    go(0, 0, [])
+    go(0, [])
 }
 
 /**

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug.string.split` finds its separator in native code: the core clutch's
+  library gains `slug_core_find`, a byte search, so splitting costs a few
+  native calls per part where it sliced and compared at every character.
+  `slug.string.sort` merges bottom up, without slicing at each level or
+  measuring both halves at every step, and runs about 2.5 times as fast.
+  Both give the same results as before. Crawl, with 100 players in the
+  starting town, ticks about 10% faster; it joins players about 15% faster.
+
 - Crawl's pages are sent only what changed: after each tick, the map, and
   each other part of the game (the line above the map, a menu, the end of
   a game, the log, what is in view, the stats, and the pack) when what it

@@ -102,6 +102,12 @@ val splitAndJoinRoundTrip = fn() {
     assertEqual(join(split(text, " "), " "), text)
     assertEqual(split("aaa", "aa"), ["", "a"])
     assertEqual(split("été|été", "|"), ["été", "été"])
+    // Separators of several bytes, and parts of several-byte characters.
+    assertEqual(split("a€b€€c€", "€"), ["a", "b", "", "c", ""])
+    assertEqual(split("日本→語→", "→"), ["日本", "語", ""])
+    assertEqual(split("é", "e"), ["é"])
+    assertEqual(split("abcabc", "abc"), ["", "", ""])
+    assertEqual(split("ab", "abc"), ["ab"])
 }
 
 @test
