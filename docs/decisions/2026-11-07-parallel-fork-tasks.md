@@ -2,14 +2,14 @@
 
 ## Status
 
-Proposed (draft for discussion; not implemented)
+Accepted. Not yet implemented.
 
 ## Amends
 
 The "Scale-out by isolation" paragraph of
 [Native interface profiles](2026-10-10-native-interface-profiles.md), which
 adopted multiple isolated VMs exchanging owned values as the direction for
-parallelism. On acceptance, that record gains a cross-reference here.
+parallelism. That record points here.
 
 It extends [cooperative task runtime](2026-08-23-cooperative-task-runtime.md)
 and [shared mutable captures](2026-08-16-shared-mutable-captures.md) with

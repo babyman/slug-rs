@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Proposed a decision for parallel tasks: `fork { ... }` starts a task
+- Accepted a decision for parallel tasks: `fork { ... }` starts a task
   that sees a snapshot of its captures and every module's globals and may run
   on another core, while `spawn` keeps its meaning. A fork's writes to shared
   `var`s are checked errors, except to a module's `task var`s, which every

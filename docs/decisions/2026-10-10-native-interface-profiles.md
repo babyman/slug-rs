@@ -72,6 +72,9 @@ parallelism is by multiple isolated VMs exchanging owned send values, not by
 sharing `Value`s across threads, with per-VM memory and instruction limits as
 the unit of control. This record adopts that direction; it does not implement
 it.
+Amended by [Parallel tasks fork a snapshot of the program](2026-11-07-parallel-fork-tasks.md):
+parallelism is by `fork` tasks within one VM sharing immutable values, with
+isolates kept for long-lived workers that should not see their spawner's state.
 
 **Cost is opt-in.** Capabilities above `core` compile out of builds that do not
 select them, using the existing Cargo features and `cfg` mechanism rather than
