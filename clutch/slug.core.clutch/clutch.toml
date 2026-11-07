@@ -33,6 +33,9 @@ notifyRaw = { symbol = "slug_core_notify_signals", signature = "(i64 kinds, prod
 addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }
 sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }
 
+[native.functions."slug.fmt.json"]
+findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64" }
+
 [native.functions."slug.string"]
 ordRaw = { symbol = "slug_core_ord", signature = "(str character) -> i64" }
 chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) -> bool" }

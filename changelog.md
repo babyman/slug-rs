@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `slug.fmt.json.stringify` writes a string with nothing to escape whole,
+  found with a native byte search (`slug_core_find_any`), where it looked
+  at every character in Slug. Crawl finds each chunk's players once while it
+  draws pages (`game.steady`), where it sorted them again for every player.
+  A player no longer looks around again when nothing they would see has
+  changed: what they remember holds terrain, items, graves, and remains,
+  so where they stand and a count of each nearby chunk's changes say when.
+  Whether a square holds a player no longer sorts every player in its
+  chunk, which made each player's arrival slower than the last. With 100
+  players in the starting town a tick takes about 0.22 s, from 0.35 s, and
+  200 players join in half the time; what pages are sent is unchanged byte
+  for byte.
+
 - `slug.string.split` finds its separator in native code: the core clutch's
   library gains `slug_core_find`, a byte search, so splitting costs a few
   native calls per part where it sliced and compared at every character.

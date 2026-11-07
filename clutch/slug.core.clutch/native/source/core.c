@@ -227,6 +227,17 @@ int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *n
   return -1;
 }
 
+int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
+                           size_t set_length, int64_t from) {
+  if (from < 0 || (uint64_t)from > data_length) return -1;
+  bool member[256] = {false};
+  for (size_t i = 0; i < set_length; i++) member[set[i]] = true;
+  for (size_t at = (size_t)from; at < data_length; at++) {
+    if (member[data[at]]) return (int64_t)at;
+  }
+  return -1;
+}
+
 /* --- Signals ------------------------------------------------------------
  *
  * Each call to slug_core_notify_signals adds a listener: the kinds it wants

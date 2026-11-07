@@ -235,7 +235,8 @@ val push = fn(present:list) {
             recur(i + 1)
         }
     }
-    each(0)
+    // Drawing changes nothing, so each chunk's company is found once.
+    game.steady(fn() { each(0) })
 }
 
 // Sends the player's page what changed since it was last sent anything, or

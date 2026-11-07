@@ -141,7 +141,17 @@ var runStep = false
 // each as a set, and the players whose memories were wiped.
 var dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
 
-val touchLevel = fn(key:str) { dirty = dirty copy {levels: dirty.levels + {[key]: true}} }
+val touchLevel = fn(key:str) {
+    dirty = dirty copy {levels: dirty.levels + {[key]: true}}
+    versions = versions + {[key]: (versions[key] ?? 0) + 1}
+}
+
+// How many times each chunk has changed, by key, since the game started or
+// was loaded; with `seenAt`, what lets `see` skip looking again.
+var versions = {}
+
+// What each player last looked around from, by id: see `sightStamp`.
+var seenAt = {}
 
 /**
  * The whole game: `world`, `levels` (the chunks generated so far, by
@@ -197,6 +207,8 @@ val BLANK_ROWS = (fn(i:num, rows:list):list {
 // Sets what the acting player remembers of the chunk with `key`.
 val remember = fn(key:str, rows:list) {
     if (player.memory[key] != rows) {
+        // Remembering anything else means looking again next time.
+        seenAt = seenAt - (acting ?? "")
         player = player copy {memory: player.memory + {[key]: rows}}
         dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
     }
@@ -210,6 +222,34 @@ val setMemory = fn(rows:list) { remember(playerKey(), rows) }
 // The living players in the chunk with `key`, the acting player among them,
 // as [id, player] pairs in id order.
 val companyIn = fn(key:str):list {
+    match companies {
+        found: map => match found[key] {
+            company: list => return company
+            _ => nil
+        }
+        _ => nil
+    }
+    val company = companyOf(key)
+    if (companies != nil) { companies = (companies ?? {}) + {[key]: company} }
+    company
+}
+
+// Each chunk's company, by key, while `steady` runs; nil otherwise.
+var companies = nil
+
+/**
+ * Runs `body` and returns what it does, finding the players in each chunk
+ * only once meanwhile: for drawing what players see, while no one moves.
+ * `body` must not change the game.
+ */
+export val steady = fn(body:fn) {
+    val outer = companies
+    companies = companies ?? {}
+    defer { companies = outer }
+    body()
+}
+
+val companyOf = fn(key:str):list {
     val all = keys(players)
     val playerOf = fn(id:str):map { if (id == acting) { player } else { players[id] } }
     // Only those in the chunk are sorted: everyone may be playing.
@@ -223,9 +263,12 @@ val companyIn = fn(key:str):list {
 
 // Whether a living player stands at (x, y) in the chunk with `key`.
 val playerIn = fn(key:str, x:num, y:num):bool {
-    val company = companyIn(key)
+    // The square first: the chunk's key is made only for those on it.
+    val all = keys(players)
     val go = fn(i:num):bool {
-        if (i == len(company)) { false } else if (company[i][1].x == x && company[i][1].y == y) { true } else { recur(i + 1) }
+        if (i == len(all)) { return false }
+        val p = if (all[i] == acting) { player } else { players[all[i]] }
+        if (p.x == x && p.y == y && !p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { true } else { recur(i + 1) }
     }
     go(0)
 }
@@ -624,8 +667,31 @@ val glyphAt = fn(lv:map, x:num, y:num):str {
 // terrain.
 val sight = fn(x:num, y:num):str { if (inBounds(x, y)) { glyphAt(site(), x, y) } else { level.BLANK } }
 
-// Records every visible square in the player's memory.
+// What the acting player's looking around depends on: where they stand,
+// whether they are blind, how much they remember, and the chunks around
+// theirs, which sight outdoors reaches into, as they are now.
+val sightStamp = fn():str {
+    val p = player
+    val near = fn(i:num, out:str):str {
+        if (i == 9) { return out }
+        val key = chunkKey(p.cx + i % 3 - 1, p.cy + int(i / 3) - 1, p.depth)
+        recur(i + 1, out + "," + (versions[key] ?? 0))
+    }
+    near(0, playerKey() + ":" + p.x + "," + p.y + "," + p.blind + "," + len(p.memory))
+}
+
+// Records every visible square in the player's memory; nothing to do when
+// nothing it depends on changed since they last looked: what they remember
+// holds terrain, items, graves, and remains, never who stands there.
 val see = fn() {
+    val id = acting ?? ""
+    val stamp = sightStamp()
+    if (seenAt[id] == stamp) { return nil }
+    lookAround()
+    seenAt = seenAt + {[id]: stamp}
+}
+
+val lookAround = fn() {
     if (site().outdoor == true) { return seeOutdoors() }
     var seen = memory()
     val look = fn(x:num, y:num) {
@@ -1189,6 +1255,8 @@ export val load = fn(saved:map) {
     populations = saved.populations ?? {}
     slots = {}
     sights = {}
+    versions = {}
+    seenAt = {}
     player = {}
     acting = nil
     dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
@@ -1246,6 +1314,8 @@ export val newGame = fn(seed:num, options:map = {}) {
     player = {}
     acting = nil
     sights = {}
+    versions = {}
+    seenAt = {}
     dirty = {levels: {}, players: {}, memories: {}, forgotten: {}, populations: {}}
 }
 
