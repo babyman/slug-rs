@@ -169,6 +169,36 @@ to apply.
 Starting strict is also the reversible choice: allowing a write that was an
 error breaks no program; making a silent write an error would.
 
+### A fork's snapshot copies the `var`s
+
+Every top-level name of a module is a binding cell, and an importer holds
+the exporter's cells. A `val`'s cell is written once, when its module
+initializes, and never changes after; a `var`'s cell changes whenever the
+program assigns it. A fork therefore shares every `val` cell, which covers
+nearly all global reads, functions among them, and takes a private cell for
+each `var`, holding the `var`'s value at the fork. Reads of a `val` in a
+fork go through the shared tables exactly as outside one.
+
+This is the mechanism `task var` needs for every task: a fork treats every
+`var` as per-task, and the write rule refuses the writes to those that are
+not `task var`s. One per-task cell mechanism serves both.
+
+The cost grows with the number of `var`s, not the size of the program.
+Measured on Crawl's server (`experiments/parallel/census.txt`), 25 modules
+hold 1365 global entries, 957 of them binding cells, and 28 `var`s. A
+snapshot of the `var`s takes at most about 1 µs, against about 14.5 ms to
+draw one player's page.
+
+Two cases follow from `val` cells being written at initialization:
+
+- **`fork` during module initialization is an error.** A fork started from a
+  module's top-level code could see that module's `val` cells filled after
+  it started.
+- **REPL redefinition is live.** The REPL redefines a name by writing its
+  existing cell, so a running fork sees the new value. The person at the
+  REPL is the spawner, and a redefinition is a deliberate change to the
+  program, not a write by it.
+
 ### Sendable values
 
 A value is sendable when it is nil, a boolean, a number, a string, bytes, an
@@ -210,12 +240,13 @@ an unsendable capture or result at the fork site where it can prove one.
   and their schemas, so struct identity, enum cases, and type matches agree
   across tasks. Isolated module instances would re-create schemas and break
   this, which is one reason isolates are not the primary model.
-- **Globals per task.** A fork resolves module globals through its own
-  snapshot of each module's global table, and every task resolves `task var`s
-  through its own slots. Closures it calls, including exported functions,
-  resolve the same way. Copy-on-write tables keep the snapshot cheap. A
-  global write checks whether the running task is a fork and the binding is a
-  `task var`; outside forks the check is a flag test.
+- **Globals per task.** Every task resolves `task var`s through its own
+  cells, and a fork resolves every `var` through its own cells; closures it
+  calls, including exported functions, resolve the same way. `val` reads are
+  unchanged. A `var` read or write checks whether the running task has its
+  own cell for it, and a write in a fork whether the binding is a
+  `task var`; outside forks and `task var`s the check is a flag test. Its
+  cost on `var` reads in a fork is measured when `fork` is built.
 - **Shared bytecode.** Programs are shared across threads, so per-instruction
   inline caches, such as map-key hints, must be thread-safe or kept per
   thread.
@@ -270,33 +301,25 @@ an unsendable capture or result at the fork site where it can prove one.
   explicitly, as Crawl's experiment worker did with `game.load`. Fork gives
   the same isolation of writes without these costs. Isolates remain possible
   for a long-lived worker that should not see the spawner's state.
-- **Copying instead of sharing.** It avoids the atomic-count cost, and it
-  was cheap for Crawl (4.5 ms). But a fork snapshots every global, and
-  copying them all at each fork grows with the program's whole state.
+- **Copying every global table at the fork.** About 15 µs for Crawl, which
+  is affordable, but it grows with the program's size and sends every
+  global read in a fork, including every function call, through the fork's
+  own tables.
+- **Sharing each global table copy-on-write.** About 0.06 µs at the fork,
+  but the spawner's first write to a module afterwards copies that module's
+  table (up to 3.3 µs for Crawl's `game`), and reads in a fork still go
+  through its own tables. A lazy snapshot, copying a module's table when the
+  fork first uses it, needs this sharing to see the fork-time version, so it
+  is the same option.
+- **Deep-copying values instead of sharing them.** It avoids the
+  atomic-count cost, and it was cheap for Crawl (4.5 ms). But it grows with
+  the program's whole state at every fork.
 - **Shared memory with locks.** Rejected: it conflicts with value semantics,
   costs every program, and does not fit `no_std` hosts.
 
 ## Open questions
 
-1. How a fork takes its snapshot of module globals, to be settled by
-   measurement. Each module's globals live today in one mutable table, and
-   module functions are entries in it alongside `var`s. The candidates:
-   - **Copy every table at the fork:** one count increment per global;
-     nothing changes for the spawner afterwards.
-   - **Share each table copy-on-write:** one increment per module at the
-     fork; the spawner's first write to a module afterwards copies that
-     module's table.
-   - **Copy only the `var`s:** split each table into its `val`s, which never
-     change and are shared freely, and its `var`s, which are copied at the
-     fork. The cost grows with the number of `var`s, not of globals.
-
-   A lazy snapshot, copying a module's table when the fork first uses it,
-   would have to see the fork-time version after the spawner has moved on,
-   which needs the copy-on-write sharing anyway, so it is not a separate
-   candidate. The measurements: forks started per second on a fork-heavy
-   microbenchmark, the spawner's write cost after a fork, and a Crawl tick
-   with drawing forked, all on the repository's real global counts.
-2. The primary surface for data parallelism (see "Built on it, later").
+1. The primary surface for data parallelism (see "Built on it, later").
 
 ## Migration
 

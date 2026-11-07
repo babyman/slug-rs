@@ -8,7 +8,8 @@
   `var`s are checked errors, except to a module's `task var`s, which every
   task, spawned or forked, owns a copy of. Channels cross forks. Forks behave
   the same on single-threaded hosts, and threads are the default build on
-  every multi-core target.
+  every multi-core target. A fork shares every `val` and copies only the
+  `var`s, measured at about 1 µs for Crawl's 28.
 
 - New core module `slug.bytes`: `find(data, needle, from = 0)` and
   `findAny(data, set, from = 0)` search bytes natively for a sequence or
