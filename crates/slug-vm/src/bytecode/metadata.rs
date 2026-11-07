@@ -195,10 +195,16 @@ pub struct ModuleTag {
 }
 
 /// Retained source metadata for a top-level declaration.
+// Each flag is a separate fact a source declaration states (`var`, `task`,
+// `export`, `foreign`), and `describe` reports them as such.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct ModuleDeclaration {
     pub bindings: Vec<String>,
     pub mutable: bool,
+    /// Whether a mutable declaration is a `task var`, which every task owns a
+    /// copy of.
+    pub task: bool,
     pub exported: bool,
     /// Whether this declaration must be supplied by the module-qualified host registry.
     pub foreign: bool,

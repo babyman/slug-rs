@@ -877,6 +877,7 @@ impl Program {
             Op::PipelineCallSelectedPooled(v) => (PackedOpcode::PipelineCallSelected, v.0, 0, 0),
             Op::ImportPooled(v) => (PackedOpcode::Import, v.0, 0, 0),
             Op::Spawn => (PackedOpcode::Spawn, 0, 0, 0),
+            Op::Fork => (PackedOpcode::Fork, 0, 0, 0),
             Op::Nursery { has_limit } => (PackedOpcode::Nursery, u32::from(*has_limit), 0, 0),
             Op::SelectPooled(v) => (PackedOpcode::Select, v.0, 0, 0),
             Op::SelectApply => (PackedOpcode::SelectApply, 0, 0, 0),
@@ -1061,6 +1062,7 @@ impl Program {
             }
             PackedOpcode::Import => Op::ImportPooled(CallArgumentsId(instruction.a)),
             PackedOpcode::Spawn => Op::Spawn,
+            PackedOpcode::Fork => Op::Fork,
             PackedOpcode::Nursery => Op::Nursery {
                 has_limit: instruction.a != 0,
             },
@@ -1937,6 +1939,7 @@ impl Program {
             | Op::Not
             | Op::BitNot
             | Op::Spawn
+            | Op::Fork
             | Op::SelectApply
             | Op::GetIndexConstant(_)
             | Op::ConstantBinary { .. } => (1, 1),

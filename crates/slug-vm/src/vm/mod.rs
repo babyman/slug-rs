@@ -2389,6 +2389,7 @@ impl Vm {
             }
             PackedOpcode::Import => self.import(program, CallArgumentsId::new(instruction.a))?,
             PackedOpcode::Spawn => self.spawn(program)?,
+            PackedOpcode::Fork => self.fork(program)?,
             PackedOpcode::Nursery => self.nursery(program, instruction.a != 0)?,
             PackedOpcode::Select => self.select(program, SelectCasesId::new(instruction.a))?,
             PackedOpcode::SelectApply => self.select_apply(program)?,
@@ -2989,6 +2990,19 @@ impl Vm {
             let _ = program;
             Err(self.runtime_capability_error("spawn"))
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fork(&mut self, program: &Program) -> VmResult<()> {
+        let _ = program;
+        #[cfg(feature = "concurrency")]
+        return Err(self.error_at(
+            RuntimeErrorKind::NotImplemented,
+            "`fork` is not implemented yet".into(),
+        ));
+        #[cfg(not(feature = "concurrency"))]
+        Err(self.runtime_capability_error("fork"))
     }
 
     #[cold]
@@ -4560,6 +4574,7 @@ impl Vm {
                     (Value::string("name"), Value::string(binding.as_str())),
                     (Value::string("exported"), Value::Bool(declaration.exported)),
                     (Value::string("mutable"), Value::Bool(declaration.mutable)),
+                    (Value::string("task"), Value::Bool(declaration.task)),
                     (Value::string("documentation"), documentation.clone()),
                     (Value::string("tags"), tags.clone()),
                     (Value::string("value"), value),

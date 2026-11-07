@@ -1,4 +1,4 @@
-// A closure that captures a task handle is not sendable.
+// A closure that captures a task handle cannot leave the fork.
 val main = fn() {
     val t = fork {
         val inner = spawn { 1 }

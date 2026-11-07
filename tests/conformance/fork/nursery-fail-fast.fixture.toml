@@ -1,5 +1,5 @@
 schema = 1
 outcome = "runtime-error"
 stdout = ""
-stderr_contains = ["boom"]
+stderr_contains = ["uncaught throw: boom"]
 pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

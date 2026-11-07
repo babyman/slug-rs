@@ -162,6 +162,9 @@ pub enum Op {
     Import(Vec<CallArgumentKind>),
     ImportPooled(CallArgumentsId),
     Spawn,
+    /// Starts a task that sees a snapshot of its captures and the module
+    /// variables, from the closure on the stack.
+    Fork,
     Nursery {
         has_limit: bool,
     },

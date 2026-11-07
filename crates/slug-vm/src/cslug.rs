@@ -670,7 +670,11 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     uleb(program.declarations().len(), &mut output);
     for declaration in program.declarations() {
         strings(&declaration.bindings, &mut output);
-        boolean(declaration.mutable, &mut output);
+        output.push(match (declaration.mutable, declaration.task) {
+            (false, _) => 0,
+            (true, false) => 1,
+            (true, true) => 2,
+        });
         boolean(declaration.exported, &mut output);
         boolean(declaration.foreign, &mut output);
         if declaration.foreign {
@@ -1489,7 +1493,16 @@ impl PendingDeclaration {
 
 fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Error> {
     let bindings = reader.strings("declaration bindings")?;
-    let mutable = reader.bool("declaration mutable")?;
+    let (mutable, task) = match reader.byte("declaration mutable")? {
+        0 => (false, false),
+        1 => (true, false),
+        2 => (true, true),
+        _ => {
+            return Err(Error::InvalidStructure(
+                "invalid declaration mutability".into(),
+            ));
+        }
+    };
     let exported = reader.bool("declaration exported")?;
     let foreign = reader.bool("declaration foreign")?;
     let (foreign_arity, foreign_identity) = if foreign {
@@ -1530,6 +1543,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         declaration: ModuleDeclaration {
             bindings,
             mutable,
+            task,
             exported,
             foreign,
             foreign_arity,

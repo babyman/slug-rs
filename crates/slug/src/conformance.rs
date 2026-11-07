@@ -63,6 +63,20 @@ impl FixtureRunner {
             .as_ref()
             .map_or_else(|| root.to_path_buf(), |path| root.join(path));
         let library_root = metadata.library_root.as_ref().map(|path| root.join(path));
+        // A diagnostic quotes its path and source lines, so a fragment found
+        // there would match whatever the error is.
+        if !metadata.stderr_contains.is_empty() {
+            let text = fs::read_to_string(source)
+                .map_err(|error| format!("cannot read fixture source: {error}"))?;
+            let path = source.display().to_string();
+            if let Some(fragment) = metadata.stderr_contains.iter().find(|fragment| {
+                text.contains(fragment.as_str()) || path.contains(fragment.as_str())
+            }) {
+                return Err(format!(
+                    "stderr_contains fragment {fragment:?} also appears in the fixture's source or path, which a diagnostic quotes"
+                ));
+            }
+        }
         let mut command = Command::new(&self.executable);
         command
             .arg(source)

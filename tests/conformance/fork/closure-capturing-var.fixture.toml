@@ -1,4 +1,4 @@
 schema = 1
 outcome = "runtime-error"
-stderr_contains = ["fork", "sendable"]
+stderr_contains = ["is not sendable", "`n`"]
 pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

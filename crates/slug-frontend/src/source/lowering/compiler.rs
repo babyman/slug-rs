@@ -192,6 +192,7 @@ impl Compiler {
         for expression in &self.expressions {
             if let ExprKind::Declare {
                 mutable,
+                task,
                 exported,
                 pattern,
                 ..
@@ -201,6 +202,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: names.clone(),
                     mutable: *mutable,
+                    task: *task,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -250,6 +252,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: true,
                     foreign_arity: Some(foreign_arity(signature)),
@@ -282,6 +285,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -309,6 +313,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -857,7 +862,7 @@ impl Compiler {
                     )
                     .with_extent(expression));
                 }
-                ExprKind::Spawn(body) => {
+                ExprKind::Spawn { body, fork } => {
                     let function = Expr::new(
                         ExprKind::Function {
                             type_parameters: Vec::new(),
@@ -869,7 +874,7 @@ impl Compiler {
                         expression.end,
                     );
                     self.expression(state, &function)?;
-                    state.emit(Op::Spawn, &expression.span);
+                    state.emit(if *fork { Op::Fork } else { Op::Spawn }, &expression.span);
                 }
                 ExprKind::Select(cases) => {
                     for case in cases {
@@ -2469,7 +2474,7 @@ fn contains_scoped_defer(expression: &Expr) -> bool {
             ExprKind::Assign { value, .. }
             | ExprKind::Return { value }
             | ExprKind::Throw { value }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
             ExprKind::Recur(values) => arguments(values),
             ExprKind::Nursery { limit, body } => {

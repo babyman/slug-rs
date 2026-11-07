@@ -31,19 +31,19 @@ startReaderRaw = { symbol = "slug_core_start_reader", signature = "(producer lin
 notifyRaw = { symbol = "slug_core_notify_signals", signature = "(i64 kinds, producer events) -> i32" }
 
 [native.functions."slug.math"]
-addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }
-sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }
+addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool", thread_safe = true }
+sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64", thread_safe = true }
 
 [native.functions."slug.bytes"]
-findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64" }
-findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64" }
+findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64", thread_safe = true }
+findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }
 
 [native.functions."slug.fmt.json"]
-findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64" }
+findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }
 
 [native.functions."slug.string"]
-ordRaw = { symbol = "slug_core_ord", signature = "(str character) -> i64" }
-chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) -> bool" }
-fromBytesRaw = { symbol = "slug_core_from_bytes", signature = "(bytes data, out str text) -> bool" }
-toBytesRaw = { symbol = "slug_core_to_bytes", signature = "(str text, out bytes data) -> void" }
-findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64" }
+ordRaw = { symbol = "slug_core_ord", signature = "(str character) -> i64", thread_safe = true }
+chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) -> bool", thread_safe = true }
+fromBytesRaw = { symbol = "slug_core_from_bytes", signature = "(bytes data, out str text) -> bool", thread_safe = true }
+toBytesRaw = { symbol = "slug_core_to_bytes", signature = "(str text, out bytes data) -> void", thread_safe = true }
+findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64", thread_safe = true }

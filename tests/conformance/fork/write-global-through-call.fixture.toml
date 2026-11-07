@@ -1,4 +1,4 @@
 schema = 1
 outcome = "runtime-error"
-stderr_contains = ["`total`", "fork", "task var"]
+stderr_contains = ["a fork cannot change `total`", "task var total"]
 pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

@@ -103,6 +103,7 @@ pub enum PackedOpcode {
     UpdateGlobal,
     CopyGlobal,
     CopyGlobalUpdate,
+    Fork,
 }
 
 impl PackedOpcode {
@@ -195,6 +196,7 @@ impl PackedOpcode {
             PackedOpcode::UpdateGlobal,
             PackedOpcode::CopyGlobal,
             PackedOpcode::CopyGlobalUpdate,
+            PackedOpcode::Fork,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

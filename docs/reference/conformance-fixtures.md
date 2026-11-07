@@ -34,7 +34,8 @@ timeout_ms = 1000
   non-success outcome.
 - `stderr_contains` is a list of strings that must each appear in stderr, for
   a diagnostic whose exact wording the fixture does not fix. It is valid only
-  for a non-success outcome.
+  for a non-success outcome. A fragment must not appear in the fixture's
+  source or path, which a diagnostic quotes.
 - `pending` gives the reason a fixture does not conform yet, such as the
   phase of a plan that implements it. The runner still runs a pending
   fixture: one that fails is not a failure, and one that conforms is, so its

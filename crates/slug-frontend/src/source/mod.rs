@@ -17,6 +17,8 @@ mod ast;
 mod compiler;
 #[path = "semantics/environment.rs"]
 pub(crate) mod environment;
+#[path = "semantics/forks.rs"]
+mod forks;
 mod interactive;
 #[path = "syntax/lexer.rs"]
 mod lexer;
@@ -109,6 +111,9 @@ pub enum SourceErrorCode {
     AmbiguousOverload,
     RepeatedMapKey,
     LostUpdate,
+    ForkWrite,
+    ForkDuringInitialization,
+    UnsendableValue,
     InvalidEntrypoint,
     InvalidAsset,
     Internal,
@@ -147,6 +152,9 @@ impl SourceErrorCode {
         Self::AmbiguousOverload,
         Self::RepeatedMapKey,
         Self::LostUpdate,
+        Self::ForkWrite,
+        Self::ForkDuringInitialization,
+        Self::UnsendableValue,
         Self::InvalidEntrypoint,
         Self::InvalidAsset,
         Self::Internal,
@@ -186,6 +194,9 @@ impl SourceErrorCode {
             Self::AmbiguousOverload => "ambiguous_overload",
             Self::RepeatedMapKey => "repeated_map_key",
             Self::LostUpdate => "lost_update",
+            Self::ForkWrite => "fork_write",
+            Self::ForkDuringInitialization => "fork_during_initialization",
+            Self::UnsendableValue => "unsendable_value",
             Self::InvalidEntrypoint => "invalid_entrypoint",
             Self::InvalidAsset => "invalid_asset",
             Self::Internal => "internal",
@@ -580,6 +591,7 @@ fn compile_expressions(
     stack::grow(|| {
         let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
         updates::check_lost_updates(&expressions)?;
+        forks::check_forks(&expressions)?;
         let mut compiler = Compiler::new(path, expressions, &analysis).with_assets(assets);
         if let Some(name) = module_name {
             compiler = compiler.with_module_name(name);

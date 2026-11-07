@@ -1,4 +1,4 @@
 schema = 1
 outcome = "runtime-error"
-stderr_contains = ["fork", "initializ"]
+stderr_contains = ["a fork cannot start while a module initializes"]
 pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

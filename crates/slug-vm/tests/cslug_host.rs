@@ -330,3 +330,25 @@ fn firmware_artifact_executes_implicit_and_explicit_builtin_calls() {
         Value::Int(5)
     );
 }
+
+#[test]
+fn a_task_var_declaration_survives_encoding() {
+    let artifact = host([])
+        .compile_artifact(
+            "entry.slug",
+            "task var who = \"main\"\nvar count = 0\nval fixed = 1\nval main = fn() { fixed }\n",
+        )
+        .expect("compile task var artifact");
+    let bytes = cslug::encode(&artifact).expect("encode artifact");
+    let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
+    let declarations = artifact.modules[artifact.root].program.declarations();
+    let flags = |name: &str| {
+        declarations
+            .iter()
+            .find(|declaration| declaration.bindings.iter().any(|binding| binding == name))
+            .map(|declaration| (declaration.mutable, declaration.task))
+    };
+    assert_eq!(flags("who"), Some((true, true)));
+    assert_eq!(flags("count"), Some((true, false)));
+    assert_eq!(flags("fixed"), Some((false, false)));
+}

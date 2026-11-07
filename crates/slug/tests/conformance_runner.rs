@@ -163,3 +163,18 @@ fn stderr_contains_requires_every_listed_text() {
             .contains("stderr does not contain \"fork\"")
     );
 }
+
+#[test]
+fn stderr_contains_rejects_a_fragment_the_source_contains() {
+    let output = run_one(
+        "contains-in-source",
+        "// not implemented\n???\n",
+        "schema = 1\noutcome = \"runtime-error\"\nstderr_contains = [\"not implemented\"]\n",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("also appears in the fixture's source or path")
+    );
+}

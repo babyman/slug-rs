@@ -1,4 +1,3 @@
 schema = 1
 outcome = "parse-error"
-stderr_contains = ["fork"]
-pending = "fork: phase 1 (docs/planning/fork-tasks.md)"
+stderr_contains = ["`fork` is a reserved word"]

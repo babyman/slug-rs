@@ -518,7 +518,7 @@ impl ParameterConstraints {
                 }
                 ExprKind::Assign { value, .. }
                 | ExprKind::Defer { value, .. }
-                | ExprKind::Spawn(value)
+                | ExprKind::Spawn { body: value, .. }
                 | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
                 ExprKind::Recur(arguments) => self.collect_arguments(arguments),
                 ExprKind::Nursery { limit, body } => {
@@ -885,7 +885,7 @@ impl ParameterConstraints {
             }
             ExprKind::Assign { value, .. }
             | ExprKind::Defer { value, .. }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. }
             | ExprKind::TypeApply { callee: value, .. } => {
                 self.collect_known_calls(value, environment)
@@ -1109,7 +1109,7 @@ impl ParameterConstraints {
             | ExprKind::Return { value }
             | ExprKind::Throw { value }
             | ExprKind::Defer { value, .. }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. }
             | ExprKind::TypeApply { callee: value, .. } => self.collect_nil_partitions(value),
             ExprKind::Call { callee, arguments } => {
@@ -2900,8 +2900,18 @@ fn check_expression_inner(
                 }
                 Ok(Type::Nil)
             }
-            ExprKind::Spawn(value) => {
+            ExprKind::Spawn { body: value, fork } => {
                 let result = check_expression(value, environment, type_parameters)?;
+                if *fork && certainly_unsendable(&result) {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::UnsendableValue,
+                        format!(
+                            "this fork's result is a {result}, which is not sendable: a task handle or native resource stays with the task that made it; return the values it produces instead"
+                        ),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
                 Ok(Type::Task(Some(Box::new(result.widen_unknown()))))
             }
             ExprKind::Nursery { limit, body } => {
@@ -5440,7 +5450,7 @@ fn validate_expression_inner(
         | ExprKind::Return { value }
         | ExprKind::Throw { value }
         | ExprKind::Defer { value, .. }
-        | ExprKind::Spawn(value)
+        | ExprKind::Spawn { body: value, .. }
         | ExprKind::Prefix { value, .. } => validate_expression(value, type_parameters),
         ExprKind::Recur(arguments) => validate_arguments(arguments, type_parameters),
         ExprKind::Nursery { limit, body } => {
@@ -5668,6 +5678,17 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => Ok(()),
     })
+}
+
+/// Whether every value of `value_type` is a task handle or a native resource,
+/// which a fork cannot return. Collections are not checked: a `list<task>`
+/// may be empty, and the runtime checks what a fork returns.
+fn certainly_unsendable(value_type: &Type) -> bool {
+    match value_type {
+        Type::Task(_) | Type::Resource(_) => true,
+        Type::Union(members) => !members.is_empty() && members.iter().all(certainly_unsendable),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

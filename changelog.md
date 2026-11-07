@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Phase 1 of `fork`: the language accepts `fork { ... }` and `task var`.
+  `fork` is a reserved word and compiles to its own instruction, which
+  reports that `fork` is not implemented yet until the runtime lands; `task`
+  is a modifier only directly before `var` at module top level, so it stays
+  usable as a name. The compiler reports what it can see: an assignment
+  inside a fork to a binding declared outside it, other than a `task var`
+  (`fork_write`); a fork in module top-level code
+  (`fork_during_initialization`); and a fork whose result is a task handle
+  or resource (`unsendable_value`). Module metadata and `.cslug` artifacts
+  record `task var`s, and a clutch manifest's native function can declare
+  `thread_safe = true`, as the core clutch's pure functions do. The
+  specification and grammar describe forks and `task var`. Seven of the
+  fork conformance fixtures now pass. The fixture runner rejects a
+  `stderr_contains` fragment that the fixture's own source or path
+  contains, since a diagnostic quotes both.
+
 - Phase 0 of `fork`: the behavior of `fork` and `task var` is written down
   as 30 conformance fixtures in `tests/conformance/fork/`, covering
   snapshots, the write rule, sendable values, channels, nurseries, module

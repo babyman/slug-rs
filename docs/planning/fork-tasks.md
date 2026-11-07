@@ -65,7 +65,17 @@ for natives and resources. Writing them settled one more rule: a closure
 that captures a `var` is not sendable, since the fork would otherwise see
 its spawner's live cell through it.
 
-### Phase 1: the language surface (frontend)
+### Phase 1: the language surface (frontend) (done)
+
+Landed with these choices: `Op::Fork` reports "not implemented" until
+phase 2; the write rule and the module-initialization rule are a lexical
+pass (`semantics/forks.rs`), and only the result check uses types; `.cslug`
+stores a `task var` as mutability byte 2, so existing artifacts still read;
+`thread_safe` is per function, not per clutch, since core's stdin reader and
+signal registration are not. Open: the REPL compiles each entry as module
+top-level code, so `fork` at the prompt is reported as forking during
+initialization.
+
 
 - **Lexer and parser:** `fork` becomes a reserved word (`TokenKind::Fork`)
   parsed like `spawn` into `ExprKind::Fork`. `task` is contextual before

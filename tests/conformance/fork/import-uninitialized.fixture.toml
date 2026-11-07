@@ -1,4 +1,4 @@
 schema = 1
 outcome = "runtime-error"
-stderr_contains = ["uninitialized", "fork"]
+stderr_contains = ["a fork cannot initialize", "`uninitialized`"]
 pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

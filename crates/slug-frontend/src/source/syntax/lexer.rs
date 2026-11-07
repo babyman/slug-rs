@@ -890,6 +890,7 @@ impl Lexer {
                         "recur" => TokenKind::Recur,
                         "nursery" => TokenKind::Nursery,
                         "spawn" => TokenKind::Spawn,
+                        "fork" => TokenKind::Fork,
                         "select" => TokenKind::Select,
                         "match" => TokenKind::Match,
                         "struct" => TokenKind::Struct,
