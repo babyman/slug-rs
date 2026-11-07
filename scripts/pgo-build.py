@@ -25,7 +25,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "crates/slug-frontend/benches/source")
-# `http-server` imports the staged slug.net.tcp clutch from this checkout.
+# `http-server` and the Crawl workloads import clutches from this checkout.
 ENVIRONMENT = {**os.environ, "SLUG_HOME": os.environ.get("SLUG_HOME", ROOT)}
 
 
@@ -44,12 +44,18 @@ def training_workloads():
 def training_digest():
     """A hash of every training program and the modules they import."""
     digest = hashlib.sha256()
-    for directory, _, files in sorted(os.walk(os.path.join(SOURCES, "slug"))):
-        for name in sorted(files):
-            path = os.path.join(directory, name)
-            digest.update(os.path.relpath(path, SOURCES).encode())
-            with open(path, "rb") as file:
-                digest.update(file.read())
+    # `http-server` and the Crawl workloads import clutches from this
+    # checkout, so their Slug modules train the build too.
+    clutches = os.path.join(ROOT, "clutch")
+    for top in (os.path.join(SOURCES, "slug"), clutches):
+        for directory, _, files in sorted(os.walk(top)):
+            for name in sorted(files):
+                if top == clutches and not name.endswith(".slug"):
+                    continue
+                path = os.path.join(directory, name)
+                digest.update(os.path.relpath(path, ROOT).encode())
+                with open(path, "rb") as file:
+                    digest.update(file.read())
     for path in training_workloads():
         digest.update(os.path.basename(path).encode())
     return digest.hexdigest()[:12]

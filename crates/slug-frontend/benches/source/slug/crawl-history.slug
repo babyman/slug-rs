@@ -1,0 +1,26 @@
+// Crawl, the slug.games.crawl clutch as it ships: the empires of seed 6 run
+// for 100 years before anyone comes, then one player joins and their first
+// screen is drawn.
+val game = import("slug.games.crawl")
+val { toBytes, join } = import("slug.string")
+val { filter } = import("slug.std")
+
+// FNV-1a over the screen's rows, 32-bit.
+val checksum = fn(rows:list):num {
+    val frame = toBytes(join(rows, "\n"))
+    val go = fn(i:num, hash:num):num {
+        if (i == len(frame)) { hash } else { recur(i + 1, ((hash ^ frame[i]) * 16777619) & 0xFFFFFFFF) }
+    }
+    go(0, 2166136261)
+}
+
+val main = fn() {
+    game.newGame(6, {history: 100})
+    game.join("a", "Ann")
+    val world = game.current().world
+    val ruins = len(filter(world.settlements, fn(s) { s.kind == "ruin" }))
+    val date = game.date().text
+    val sum = checksum(game.text("a"))
+    val settlements = len(world.settlements)
+    println("$date, $ruins of $settlements in ruins, $sum")
+}

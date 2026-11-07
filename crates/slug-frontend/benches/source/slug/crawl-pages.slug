@@ -1,0 +1,31 @@
+// Crawl, the slug.games.crawl clutch as it ships: its web front end starts a
+// world from seed 9, a player joins and walks for 60 ticks, and the page
+// HTMX would be sent is rendered through slug.text.mustache after each.
+val web = import("slug.games.crawl.web")
+val game = import("slug.games.crawl")
+val { toBytes } = import("slug.string")
+
+val TICKS = 60
+val KEYS = ["l", "l", "j", "j", "h", "k", "n", "b", "u", "y", "i", "escape"]
+
+// FNV-1a over a page's bytes, 32-bit, carried on from `hash`.
+val checksum = fn(page:str, hash:num):num {
+    val frame = toBytes(page)
+    val go = fn(i:num, hash:num):num {
+        if (i == len(frame)) { hash } else { recur(i + 1, ((hash ^ frame[i]) * 16777619) & 0xFFFFFFFF) }
+    }
+    go(0, hash)
+}
+
+val main = fn() {
+    web.start(9, {history: 0})
+    game.join("a", "Ann")
+    val walk = fn(i:num, hash:num, size:num):list {
+        if (i == TICKS) { return [hash, size] }
+        game.tick([{id: "a", key: KEYS[i % len(KEYS)]}], ["a"])
+        val page = web.gameHtml("a")
+        recur(i + 1, checksum(page, hash), size + len(page))
+    }
+    val [hash, size] = walk(0, 2166136261, 0)
+    println("$size $hash")
+}

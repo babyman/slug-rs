@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The source benchmarks run the Crawl clutch as it ships: `crawl-ticks`
+  plays two players through 300 ticks of a fresh world, `crawl-history`
+  runs 100 years of its empires' history, and the hold-out `crawl-pages`
+  renders the web front end's page through `slug.text.mustache` after each
+  of 60 ticks. Profile-guided builds are keyed on the checkout's clutch
+  modules too, since these workloads, like `http-server`, import them.
+
 - Compiling is about 5.7 times faster on a large program: the Crawl clutch
   (some 6,600 lines in 13 modules) compiles in 0.07 s, from 0.40 s, and
   starts that much sooner from source. Each imported module is compiled

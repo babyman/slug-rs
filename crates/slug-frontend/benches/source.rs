@@ -136,6 +136,24 @@ const WORKLOADS: &[Workload] = &[
         python: false,
     },
     Workload {
+        name: "crawl-ticks",
+        held_out: false,
+        expected_stdout: "300 12 12 0 873639071\n",
+        python: false,
+    },
+    Workload {
+        name: "crawl-history",
+        held_out: false,
+        expected_stdout: "Early spring, year 101, 4 of 10 in ruins, 3719966403\n",
+        python: false,
+    },
+    Workload {
+        name: "crawl-pages",
+        held_out: true,
+        expected_stdout: "483233 2509528753\n",
+        python: false,
+    },
+    Workload {
         name: "http-server",
         held_out: false,
         expected_stdout: "4228 619800\n",
@@ -373,7 +391,7 @@ fn measure(executable: &Path, source: &Path) -> Duration {
 
 fn run(executable: &Path, source: &Path) -> Output {
     let mut command = Command::new(executable);
-    // `http-server` imports the staged slug.net.tcp clutch from the checkout.
+    // `http-server` and the Crawl workloads import clutches from the checkout.
     if env::var_os("SLUG_HOME").is_none() {
         command.env("SLUG_HOME", workspace_root());
     }

@@ -1,0 +1,40 @@
+// Crawl, the slug.games.crawl clutch as it ships: two players join a fresh
+// world from seed 6 and walk it for 300 ticks, the monsters and regions
+// acting as they do when the web front end ticks, and the first player's
+// view of the surface around them is drawn.
+val game = import("slug.games.crawl")
+val { toBytes, join } = import("slug.string")
+val { filter } = import("slug.std")
+
+val TICKS = 300
+val KEYS = ["h", "j", "k", "l", "y", "u", "b", "n"]
+
+// FNV-1a over the rows, 32-bit.
+val checksum = fn(rows:list):num {
+    val frame = toBytes(join(rows, "\n"))
+    val go = fn(i:num, hash:num):num {
+        if (i == len(frame)) { hash } else { recur(i + 1, ((hash ^ frame[i]) * 16777619) & 0xFFFFFFFF) }
+    }
+    go(0, 2166136261)
+}
+
+val main = fn() {
+    game.newGame(6, {history: 0})
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    val walk = fn(i:num) {
+        if (i < TICKS) {
+            game.tick([{id: "a", key: KEYS[i % 8]}, {id: "b", key: KEYS[(i * 3) % 8]}], ["a", "b"])
+            recur(i + 1)
+        }
+    }
+    walk(0)
+    val a = game.playerOf("a")
+    val b = game.playerOf("b")
+    val sum = checksum(game.view("a", a.cx * 80 - 40, a.cy * 21 - 10, 160, 41))
+    val turn = game.current().world.turn
+    val hpA = a.hp
+    val hpB = b.hp
+    val depth = a.depth
+    println("$turn $hpA $hpB $depth $sum")
+}
