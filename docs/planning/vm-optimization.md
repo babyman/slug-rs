@@ -2530,3 +2530,31 @@ rows}}`, where `player.memory` is still held by `player` while it is merged,
 and row lists rebuilt through calls (`write`, `remember`) in `see`. Moving
 a nested field out of its parent before the update would need the
 compiler to recognise `g copy {f: g.f OP e}`; not done.
+
+### Nested field updates (2026-11-06)
+
+`CopyGlobalUpdate { name, fields, operator }` fuses a `copy` whose last
+field's value ends in `+`, `-`, or `:+` with that operator, for `player =
+player copy {memory: player.memory + entry}`. When the operator and the copy
+cannot fail, it drops the binding's value and, if the copied value is then
+unshared, takes the last field's value out of it (leaving `nil` in place, so
+a map keeps its entry order) before applying the operator; the copy writes
+it back. Only the last field qualifies: an earlier field's update would be
+followed by other fields' code, which could throw or read the variable.
+
+The three global-update opcodes share one out-of-line call in the dispatch
+loop. A separate arm for the new one made the plain release build's `fib`
+1.19x and `invaders-game` 1.27x.
+
+PGO, against `f76fe41`, four runs: `crawl-ticks` 0.89-0.93x,
+`crawl-history` 1.03-1.08x, others within their spread (full run: tuned
+1.01x, hold-out 1.01x, load 8 at the start). History never executes the new
+instructions (no samples in them), and a symbolized release build without
+PGO takes the same samples for it before and after (1755 vs 1744).
+Symbolized PGO builds show the cause: with `crawl-ticks` no longer merging,
+the training profile shifts, and the PGO build calls `numeric_binary` (from
+`numeric_in_place`), `Value::eq` (from `MapStorage::position`), and
+`drop_in_place<Value>` out of line (8 -> 36, 17 -> 39, 17 -> 39 samples).
+`#[inline(always)]` on `numeric_binary` alone did not recover history
+(1.06x) and was reverted. Accepted by the user; making the PGO build's
+inlining of hot helpers deliberate is separate work.

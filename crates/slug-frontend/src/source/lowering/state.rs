@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use slug_vm::{
-    BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, MatchPattern, Op, SourceSpan, Value,
+    BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, Instruction, MatchPattern, Op,
+    SourceSpan, Value,
 };
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
@@ -135,14 +136,40 @@ impl State {
     }
     /// Makes the `+`, `-`, `:+`, or `copy` just emitted for the value of an
     /// assignment to the module-level `name` assign it as well, so that the
-    /// collection it updates can change in place. No jump may land after the
-    /// operator, where the assignment's own instructions would have been.
+    /// collection it updates can change in place. A `copy` whose last field's
+    /// value ends in one of the others takes that operator in too, as in
+    /// `player = player copy {memory: player.memory + entry}`. No jump may
+    /// land after the instructions replaced, where the assignment's own
+    /// instructions would have been.
     pub(super) fn fuse_global_update(&mut self, name: &str) -> bool {
         let Some(index) = self.chunk.code.len().checked_sub(1) else {
             return false;
         };
         if self.last_jump_target > index {
             return false;
+        }
+        let nested = match &self.chunk.code[index].op {
+            Op::StructCopy(fields) if !fields.is_empty() => index
+                .checked_sub(1)
+                .filter(|operator| self.last_jump_target <= *operator)
+                .and_then(|operator| GlobalUpdate::of(&self.chunk.code[operator].op)),
+            _ => None,
+        };
+        if let Some(operator) = nested {
+            let Some(Instruction {
+                op: Op::StructCopy(fields),
+                ..
+            }) = self.chunk.code.pop()
+            else {
+                unreachable!("the last instruction is a copy");
+            };
+            // The fused instruction keeps the operator's span for its errors.
+            self.chunk.code[index - 1].op = Op::CopyGlobalUpdate {
+                name: name.into(),
+                fields,
+                operator,
+            };
+            return true;
         }
         let op = &mut self.chunk.code[index].op;
         let fused = match op {

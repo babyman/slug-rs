@@ -102,6 +102,7 @@ pub enum PackedOpcode {
     MatchLocals,
     UpdateGlobal,
     CopyGlobal,
+    CopyGlobalUpdate,
 }
 
 impl PackedOpcode {
@@ -193,6 +194,7 @@ impl PackedOpcode {
             PackedOpcode::MatchLocals,
             PackedOpcode::UpdateGlobal,
             PackedOpcode::CopyGlobal,
+            PackedOpcode::CopyGlobalUpdate,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

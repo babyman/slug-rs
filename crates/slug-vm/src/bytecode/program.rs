@@ -586,6 +586,15 @@ impl Program {
                 name: self.intern_global_name(mem::take(name)),
                 fields: self.push_struct_fields(mem::take(fields)),
             }),
+            Op::CopyGlobalUpdate {
+                name,
+                fields,
+                operator,
+            } => Some(Op::CopyGlobalUpdatePooled {
+                name: self.intern_global_name(mem::take(name)),
+                fields: self.push_struct_fields(mem::take(fields)),
+                operator: *operator,
+            }),
             Op::TryMatch {
                 pattern,
                 bindings,
@@ -783,6 +792,16 @@ impl Program {
             Op::CopyGlobalPooled { name, fields } => {
                 (PackedOpcode::CopyGlobal, name.0, fields.0, 0)
             }
+            Op::CopyGlobalUpdatePooled {
+                name,
+                fields,
+                operator,
+            } => (
+                PackedOpcode::CopyGlobalUpdate,
+                name.0,
+                fields.0,
+                operator.code(),
+            ),
             Op::GetIndex => (PackedOpcode::GetIndex, 0, 0, 0),
             Op::GetIndexConstant(v) => (PackedOpcode::GetIndexConstant, operand(*v), 0, 0),
             Op::GetSlice {
@@ -965,6 +984,13 @@ impl Program {
             PackedOpcode::CopyGlobal => Op::CopyGlobalPooled {
                 name: GlobalNameId(instruction.a),
                 fields: StructFieldsId(instruction.b),
+            },
+            PackedOpcode::CopyGlobalUpdate => Op::CopyGlobalUpdatePooled {
+                name: GlobalNameId(instruction.a),
+                fields: StructFieldsId(instruction.b),
+                operator: GlobalUpdate::from_code(instruction.c).ok_or_else(|| {
+                    String::from("packed instruction references missing update operator")
+                })?,
             },
             PackedOpcode::GetIndex => Op::GetIndex,
             PackedOpcode::GetIndexConstant => Op::GetIndexConstant(n(instruction.a)),
@@ -1379,6 +1405,7 @@ impl Program {
             | Op::CallGlobalPooled { name: id, .. }
             | Op::UpdateGlobalPooled { name: id, .. }
             | Op::CopyGlobalPooled { name: id, .. }
+            | Op::CopyGlobalUpdatePooled { name: id, .. }
                 if self.global_name(*id).is_none() =>
             {
                 Err(format!(
@@ -1415,12 +1442,18 @@ impl Program {
             Op::StructPooled(id)
             | Op::StructCopyPooled(id)
             | Op::CopyGlobalPooled { fields: id, .. }
+            | Op::CopyGlobalUpdatePooled { fields: id, .. }
                 if self.struct_fields(*id).is_none() =>
             {
                 Err(format!(
                     "{} references missing struct field metadata",
                     location()
                 ))
+            }
+            Op::CopyGlobalUpdatePooled { fields: id, .. }
+                if self.struct_fields(*id).is_some_and(<[String]>::is_empty) =>
+            {
+                Err(format!("{} updates no copied field", location()))
             }
             Op::InterpolatePooled(id) if self.interpolation(*id).is_none() => Err(format!(
                 "{} references missing interpolation metadata",
@@ -1556,7 +1589,8 @@ impl Program {
             | Op::Struct(_)
             | Op::StructCopy(_)
             | Op::UpdateGlobal { .. }
-            | Op::CopyGlobal { .. } => {
+            | Op::CopyGlobal { .. }
+            | Op::CopyGlobalUpdate { .. } => {
                 Err(format!("{} retains unpooled opcode metadata", location()))
             }
             _ => Ok(()),
@@ -1851,6 +1885,16 @@ impl Program {
                     .expect("validated struct field metadata")
                     .len()
                     + 1,
+                1,
+            ),
+            // The base, every replacement but the last, and the last's two
+            // operands.
+            Op::CopyGlobalUpdate { fields, .. } => (fields.len() + 2, 1),
+            Op::CopyGlobalUpdatePooled { fields: id, .. } => (
+                self.struct_fields(*id)
+                    .expect("validated struct field metadata")
+                    .len()
+                    + 2,
                 1,
             ),
             Op::CombineOverloads

@@ -960,6 +960,18 @@ pub struct StructValue {
 }
 
 impl StructValue {
+    /// Takes the value of field `name` out of a struct nothing else holds,
+    /// leaving `nil`; `None` when it is shared or has no such field.
+    pub(crate) fn take_field(value: &mut Rc<Self>, name: &str) -> Option<Value> {
+        let value = Rc::get_mut(value)?;
+        let index = value
+            .schema
+            .fields
+            .iter()
+            .position(|field| field.name.as_ref() == name)?;
+        Some(core::mem::replace(&mut value.values[index], Value::Nil))
+    }
+
     pub(crate) fn copy_fields(
         self: Rc<Self>,
         names: &[String],

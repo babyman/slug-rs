@@ -14,8 +14,8 @@ use alloc::string::String;
 
 use crate::{
     Value,
-    bytecode::{GlobalNameId, GlobalUpdate, StructFieldsId},
-    value::UNRESOLVED_GLOBAL,
+    bytecode::{GlobalNameId, GlobalUpdate, PackedInstruction, PackedOpcode, StructFieldsId},
+    value::{StructValue, UNRESOLVED_GLOBAL},
 };
 
 use super::{
@@ -24,52 +24,111 @@ use super::{
 };
 
 impl Vm {
+    /// Runs an `UpdateGlobal`, `CopyGlobal`, or `CopyGlobalUpdate`. The
+    /// dispatch loop has one call for the three, which decodes its own
+    /// operands, so that they add as little as possible to the loop.
+    #[inline(never)]
+    pub(super) fn fused_global_update(
+        &mut self,
+        program: &Program,
+        instruction: &PackedInstruction,
+    ) -> VmResult<()> {
+        let id = GlobalNameId::new(instruction.a);
+        let operator = |code| GlobalUpdate::from_code(code).expect("validated update operator");
+        match instruction.opcode {
+            PackedOpcode::UpdateGlobal => self.update_global(program, id, operator(instruction.b)),
+            PackedOpcode::CopyGlobal => {
+                self.copy_global(program, id, StructFieldsId::new(instruction.b))
+            }
+            _ => self.copy_global_update(
+                program,
+                id,
+                StructFieldsId::new(instruction.b),
+                operator(instruction.c),
+            ),
+        }
+    }
+
     /// Applies `operator` to the two values on the stack, assigns the result
     /// to the module-level `id`, and pushes it.
-    #[inline(never)]
-    pub(super) fn update_global(
+    fn update_global(
         &mut self,
         program: &Program,
         id: GlobalNameId,
         operator: GlobalUpdate,
     ) -> VmResult<()> {
         let (left, right) = self.pop_pair()?;
-        let infallible = match (operator, &left, &right) {
-            (GlobalUpdate::Add, Value::Map(_), Value::Map(_))
-            | (GlobalUpdate::Add, Value::List(_), Value::List(_))
-            | (GlobalUpdate::Add, Value::Str(_), _)
-            | (GlobalUpdate::Append, Value::List(_), _) => true,
-            (GlobalUpdate::Subtract, Value::Map(_), key) => is_map_key(key),
-            _ => false,
-        };
-        if infallible {
+        if update_cannot_fail(operator, &left, &right) {
             self.release_global(id);
         }
-        let value = match operator {
+        let value = self.apply_update(operator, left, right)?;
+        self.assign_global(program, id, value)
+    }
+
+    /// Copies the struct or map under the stack's `fields` replacements, the
+    /// last of them `operator` applied to the two values on top, assigns the
+    /// copy to the module-level `id`, and pushes it.
+    ///
+    /// In `player = player copy {memory: player.memory + entry}` both the
+    /// binding and the copied value hold `player.memory` while the merge
+    /// runs. When nothing can fail, the binding's value is dropped, and if
+    /// that leaves the copied value unshared, the field is taken out of it:
+    /// the copy replaces it anyway, and the merge then updates the map in
+    /// place.
+    fn copy_global_update(
+        &mut self,
+        program: &Program,
+        id: GlobalNameId,
+        fields: StructFieldsId,
+        operator: GlobalUpdate,
+    ) -> VmResult<()> {
+        let fields = program
+            .struct_fields(fields)
+            .expect("validated struct field metadata");
+        let last = fields.last().expect("validated updated field");
+        let (left, right) = self.pop_pair()?;
+        let mut replacements = self.pop_values(fields.len() - 1)?;
+        let mut base = self.pop()?;
+        if update_cannot_fail(operator, &left, &right) && copy_cannot_fail(&base, fields) {
+            self.release_global(id);
+            drop(match &mut base {
+                Value::Map(map) => map.take_string_field(last),
+                Value::Struct(value) => StructValue::take_field(value, last),
+                _ => None,
+            });
+        }
+        replacements.push(self.apply_update(operator, left, right)?);
+        #[cfg(feature = "metrics")]
+        self.record_copy(&base);
+        let value = copy_value(base, fields, &replacements)
+            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
+        self.assign_global(program, id, value)
+    }
+
+    fn apply_update(&self, operator: GlobalUpdate, left: Value, right: Value) -> VmResult<Value> {
+        match operator {
             GlobalUpdate::Add => {
                 #[cfg(feature = "metrics")]
                 self.record_add(&left, &right);
-                add(left, right).map_err(|(kind, message)| self.error_at(kind, message))?
+                add(left, right).map_err(|(kind, message)| self.error_at(kind, message))
             }
             GlobalUpdate::Subtract => {
                 #[cfg(feature = "metrics")]
                 self.record_subtract(&left);
-                subtract(left, right).map_err(|(kind, message)| self.error_at(kind, message))?
+                subtract(left, right).map_err(|(kind, message)| self.error_at(kind, message))
             }
             GlobalUpdate::Append => {
                 #[cfg(feature = "metrics")]
                 self.record_list_append(&left);
                 list_append(left, right)
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))
             }
-        };
-        self.assign_global(program, id, value)
+        }
     }
 
     /// Copies the struct or map under the stack's `fields` replacements with
     /// them, assigns the copy to the module-level `id`, and pushes it.
-    #[inline(never)]
-    pub(super) fn copy_global(
+    fn copy_global(
         &mut self,
         program: &Program,
         id: GlobalNameId,
@@ -130,6 +189,18 @@ impl Vm {
             Value::Binding { cell, .. } => Ok(cell.replace(value)),
             _ => Err(value),
         }
+    }
+}
+
+/// Whether applying `operator` to `left` and `right` always succeeds.
+fn update_cannot_fail(operator: GlobalUpdate, left: &Value, right: &Value) -> bool {
+    match (operator, left, right) {
+        (GlobalUpdate::Add, Value::Map(_), Value::Map(_))
+        | (GlobalUpdate::Add, Value::List(_), Value::List(_))
+        | (GlobalUpdate::Add, Value::Str(_), _)
+        | (GlobalUpdate::Append, Value::List(_), _) => true,
+        (GlobalUpdate::Subtract, Value::Map(_), key) => is_map_key(key),
+        _ => false,
     }
 }
 

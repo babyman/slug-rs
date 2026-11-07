@@ -242,6 +242,22 @@ pub enum Op {
         name: GlobalNameId,
         fields: StructFieldsId,
     },
+    /// `CopyGlobal` whose last replacement is `operator` applied to the two
+    /// values on top of the stack: the fused form of the operator and
+    /// `CopyGlobal`, for `player = player copy {memory: player.memory +
+    /// entry}`. When nothing can fail and nothing else holds the copied
+    /// value, the last field's value is taken out of it first, so that the
+    /// operator updates that collection in place too.
+    CopyGlobalUpdate {
+        name: String,
+        fields: Vec<String>,
+        operator: GlobalUpdate,
+    },
+    CopyGlobalUpdatePooled {
+        name: GlobalNameId,
+        fields: StructFieldsId,
+        operator: GlobalUpdate,
+    },
 }
 
 /// The operator of an `UpdateGlobal` instruction, which behaves exactly like

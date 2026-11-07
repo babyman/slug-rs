@@ -26,7 +26,7 @@ use crate::{
     VmHost,
     bytecode::{
         BinaryOperator, CallArgumentsId, CaptureListId, DeferMode, EntrypointArguments,
-        GlobalNameId, GlobalUpdate, InterpolationId, ListSpreadId, MOVE_LOCAL, MOVE_LOCAL_OPERAND,
+        GlobalNameId, InterpolationId, ListSpreadId, MOVE_LOCAL, MOVE_LOCAL_OPERAND,
         PackedInstruction, PackedOpcode, SchemaFieldsId, SelectCase, SelectCasesId, SelectedCallId,
         StructFieldsId,
     },
@@ -2143,18 +2143,9 @@ impl Vm {
             PackedOpcode::StructCopy => {
                 self.copy_struct(program, StructFieldsId::new(instruction.a))?;
             }
-            PackedOpcode::UpdateGlobal => {
-                let operator =
-                    GlobalUpdate::from_code(instruction.b).expect("validated update operator");
-                self.update_global(program, GlobalNameId::new(instruction.a), operator)?;
-            }
-            PackedOpcode::CopyGlobal => {
-                self.copy_global(
-                    program,
-                    GlobalNameId::new(instruction.a),
-                    StructFieldsId::new(instruction.b),
-                )?;
-            }
+            PackedOpcode::UpdateGlobal
+            | PackedOpcode::CopyGlobal
+            | PackedOpcode::CopyGlobalUpdate => self.fused_global_update(program, instruction)?,
             PackedOpcode::GetIndexConstant => {
                 self.get_index_constant(program, operand)?;
             }

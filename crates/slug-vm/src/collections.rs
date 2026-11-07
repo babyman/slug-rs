@@ -799,6 +799,18 @@ impl From<Vec<(Value, Value)>> for Map {
 }
 
 impl Map {
+    /// Takes the value of the string key `name` out of a map nothing else
+    /// holds, leaving `nil` in its entry, which keeps its place; `None` when
+    /// the map is shared or has no such key.
+    pub(crate) fn take_string_field(&mut self, name: &str) -> Option<Value> {
+        let storage = Rc::get_mut(&mut self.0)?;
+        let position = storage.position(&Value::string(name))?;
+        Some(core::mem::replace(
+            &mut storage.entries[position].1,
+            Value::Nil,
+        ))
+    }
+
     /// Builds a map from host-supplied entries; a repeated key keeps its last
     /// value.
     pub(crate) fn new(entries: Vec<(Value, Value)>) -> Self {

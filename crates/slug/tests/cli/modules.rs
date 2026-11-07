@@ -759,6 +759,72 @@ fn a_module_variable_updated_in_place_keeps_value_semantics() {
 }
 
 #[test]
+fn a_module_variable_field_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-module-field-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create field update fixture directory");
+    let program = root.join("main.slug");
+    // Each copy's last field updates that field of the variable, which the
+    // copy then holds alone. Values read before keep what they were, an
+    // update that fails in its operator or an earlier field leaves the
+    // variable as it was, and a copy of another value reads the variable's
+    // field without changing it.
+    fs::write(
+        &program,
+        "val id = fn(v) { v }\n\
+         val P = struct { name, memory, log }\n\
+         var p = id(P { name: \"a\", memory: {}, log: [] })\n\
+         var d:map = {players: {}, levels: {\"zz\": 0}, n: 0}\n\
+         val main = fn() {\n\
+             p = p copy {memory: p.memory + {k1: 1}}\n\
+             val keepP = p\n\
+             val keepMemory = p.memory\n\
+             p = p copy {memory: p.memory + {k2: 2}}\n\
+             p = p copy {name: \"b\", log: p.log :+ \"x\"}\n\
+             p = p copy {log: p.log + [\"y\"]}\n\
+             println(keepP, keepMemory, p)\n\
+             d = d copy {players: d.players + {a: true}}\n\
+             d = d copy {n: d.n + 1, levels: d.levels - \"zz\"}\n\
+             val keepD = d\n\
+             d = d copy {levels: d.levels + {\"0,0\": 1}}\n\
+             println(keepD, d)\n\
+             val fail = fn(update) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 update()\n\
+             }\n\
+             fail(fn() { p = p copy {memory: p.memory + id(1)} })\n\
+             fail(fn() { p = p copy {name: id(nil).x, memory: p.memory + {k3: 3}} })\n\
+             fail(fn() { d = d copy {players: d.players - id(fn() { 1 })} })\n\
+             fail(fn() { p = id(P { name: \"c\", memory: {}, log: [] }) copy {memory: p.memory + {k4: 4}} })\n\
+             println(p, d)\n\
+         }\n",
+    )
+    .expect("write field update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "struct {\"name\": \"a\", \"memory\": {\"k1\": 1}, \"log\": []} {\"k1\": 1} \
+             struct {\"name\": \"b\", \"memory\": {\"k1\": 1, \"k2\": 2}, \"log\": [\"x\", \"y\"]}\n\
+             {\"players\": {\"a\": true}, \"levels\": {}, \"n\": 1} \
+             {\"players\": {\"a\": true}, \"levels\": {\"0,0\": 1}, \"n\": 1}\n\
+             expected numbers, got map and num\n\
+             cannot index nil\n\
+             fn cannot be used as a map key\n\
+             struct {\"name\": \"c\", \"memory\": {\"k1\": 1, \"k2\": 2, \"k4\": 4}, \"log\": []} \
+             {\"players\": {\"a\": true}, \"levels\": {\"0,0\": 1}, \"n\": 1}\n"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove field update fixture");
+}
+
+#[test]
 fn an_import_in_a_function_resolves_from_the_module_that_made_it() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-import-in-function-{}",

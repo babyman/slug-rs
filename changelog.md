@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Assigning a module-level `var` a copy of itself whose last field updates
+  that field, as in `player = player copy {memory: player.memory + entry}`,
+  updates the field's collection in place when nothing else holds it, where
+  it copied the whole map or list. Crawl's ticks run 0.91x as long. Its
+  history, which never runs the new instruction, runs about 1.05x as long in
+  profile-guided builds: the changed training profile leaves a few hot
+  helpers out of the dispatch loop. Compiled artifacts use one more new
+  instruction; older `.cslug` files still load.
+
 - Assigning to a module-level `var` updates its collection in place:
   `players = players + {[id]: player}`, `items = items :+ item`, and
   `player = player copy {hp: 3}` copied the whole map, list, or struct,

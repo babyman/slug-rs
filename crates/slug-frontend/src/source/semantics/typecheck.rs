@@ -6258,7 +6258,8 @@ mod tests {
     #[test]
     fn module_variable_updates_assign_in_the_operator() {
         use slug_vm::PackedOpcode::{
-            Add, CopyGlobal, ListAppend, SetGlobal, StructCopy, Subtract, UpdateGlobal,
+            Add, CopyGlobal, CopyGlobalUpdate, ListAppend, SetGlobal, StructCopy, Subtract,
+            UpdateGlobal,
         };
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("source compiles");
@@ -6295,6 +6296,15 @@ mod tests {
                 "{source}: {opcodes:?}"
             );
         }
+        // A copy whose last field updates the same field takes its operator in.
+        let nested = opcodes(
+            "var p = {hp: 1, log: []}\nval f = fn(m) { p = p copy {hp: 2, log: p.log :+ m} }\nf(1)",
+        );
+        assert!(nested.contains(&CopyGlobalUpdate), "{nested:?}");
+        assert!(
+            !nested.contains(&ListAppend) && !nested.contains(&StructCopy),
+            "{nested:?}"
+        );
         // A jump past the operator would skip the assignment it now makes.
         let branched = opcodes(
             "var m = {}\nval f = fn(c) { m = if (c) { m + {a: 1} } else { m + {b: 2} } }\nf(true)",
