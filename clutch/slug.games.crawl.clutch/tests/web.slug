@@ -165,12 +165,22 @@ val eventsStreamTheGameAfterEachChange = fn() {
     val id = web.newPlayer()
     val events = get("/events", id)
     assertEqual(events.headers["Content-Type"], "text/event-stream")
+    // The stream starts with every part of the game, the map drawn too.
     val first = recv(events.body, 1000)
-    assertTrue(includes(first, "event: game\ndata: "))
+    assertTrue(includes(first, "event: parts\ndata: "))
     assertTrue(includes(first, "Welcome! The dungeon lies below."))
+    map(["top", "map", "menu", "over", "log", "foes", "stats", "pack"], fn(part) {
+        assertTrue(includes(first, "<div id=\"part-" + part + "\" class=\"part\">"))
+    })
+    assertTrue(includes(first, "<pre class=\"map\">"))
+    // Then only what changed: the question goes above the map, and the
+    // pack asks which item, but the stats are as they were.
     web.press(id, "e", false)
     web.tickOnce()
-    assertTrue(includes(recv(events.body, 1000), "Eat which item?"))
+    val asked = recv(events.body, 1000)
+    assertTrue(includes(asked, "Eat which item?"))
+    assertTrue(includes(asked, "id=\"part-pack\""))
+    assertTrue(!includes(asked, "id=\"part-stats\""))
     // A closed stream is dropped, and its player is away.
     close(events.body)
     web.tickOnce()

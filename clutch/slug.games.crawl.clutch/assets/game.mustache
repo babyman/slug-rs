@@ -1,83 +1,19 @@
-{{! The game, which HTMX swaps into #game after each command. }}
+{{! The game, which the page's #game holds. Each part is drawn on its own:
+    after the first page, the server sends a part again, in a parts event,
+    only when what it shows has changed, and the page swaps it in by id. }}
 <div class="play">
   <div class="board">
-    <div class="top{{#prompt}} prompt{{/prompt}}">{{#top}}<span>{{.}}</span> {{/top}}</div>
-    {{! Rows end with their own line feed, as the last does not. }}
-    {{^island}}<pre class="map">{{#rows}}{{#runs}}{{#cls}}<span class="{{cls}}"{{#title}} title="{{title}}"{{/title}}>{{text}}</span>{{/cls}}{{^cls}}{{text}}{{/cls}}{{/runs}}{{end}}{{/rows}}</pre>{{/island}}{{#island}}<crawl-map></crawl-map>{{/island}}
-    {{#menu}}
-    <div class="menu" role="dialog" aria-label="{{title}}">
-      <h2>{{title}}</h2>
-      <div class="choices">
-        {{#entries}}<button hx-post="/key" hx-vals='{"key": "{{key}}"}'><kbd>{{key}}</kbd> {{label}}</button>{{/entries}}
-        {{#talk}}<button type="button" class="say-something">Say something else… <kbd>/</kbd></button>{{/talk}}
-      </div>
-      <button class="cancel" hx-post="/key" hx-vals='{"key": "space"}'>{{back}} <kbd>space</kbd></button>
-    </div>
-    {{/menu}}
-    {{#over}}
-    <div class="end"><div>
-      <h1>{{title}}</h1>
-      <p>{{detail}}</p>
-      <button class="primary" hx-post="/key" hx-vals='{"key": "enter"}'>Start again <kbd>enter</kbd></button>
-    </div></div>
-    {{/over}}
+    {{>part-top}}
+    {{>part-map}}
+    {{>part-menu}}
+    {{>part-over}}
   </div>
-  <section class="log">
-    <h2>Log</h2>
-    <div class="scroll"><ol>{{#log}}<li>{{.}}</li>{{/log}}</ol></div>
-  </section>
+  {{>part-log}}
 </div>
 <aside>
-  <section class="foes">
-    <h2>In view</h2>
-    {{^foes}}<p class="none">Nothing in sight.</p>{{/foes}}
-    {{#hasFoes}}
-    <ul>
-      {{#foes}}
-      <li><i class="{{cls}}">{{letter}}</i><span>{{name}}{{#asleep}} <em>asleep</em>{{/asleep}}</span>{{^person}}<div class="bar {{bar}}"><div style="width:{{health}}%"></div></div>{{/person}}</li>
-      {{/foes}}
-    </ul>
-    {{/hasFoes}}
-  </section>
-  {{#stats}}
-  <section class="stats">
-    <div class="name">{{name}}</div>
-    <div class="hp"><span>Health</span><b>{{hp}} / {{maxHp}}</b></div>
-    <div class="bar {{band}}"><div style="width:{{health}}%"></div></div>
-    <div class="grid">
-      <div class="stat wide"><span>Depth</span><b>{{depth}} <small title="Where on this depth">at {{area}}</small></b></div>
-      <div class="stat wide"><span>Date</span><b class="date">{{date}}</b></div>
-      <div class="stat wide"><span>Held by</span><b class="land" title="The land {{place}}{{since}}">{{land}}</b></div>
-      <div class="stat"><span>Str</span><b>{{str}} / {{maxStr}}</b></div>
-      <div class="stat"><span>Armour</span><b>{{armour}}</b></div>
-      <div class="stat"><span>Level</span><b>{{level}}</b></div>
-      <div class="stat"><span>Exp</span><b>{{xp}}</b></div>
-      <div class="stat"><span>Gold</span><b>{{gold}}</b></div>
-    </div>
-    <div class="conditions">{{#conditions}}<span>{{.}}</span>{{/conditions}}</div>
-  </section>
-  {{/stats}}
-  {{#pack}}
-  <section class="pack">
-    {{#asking}}<h2>Choose an item</h2>{{/asking}}
-    {{^asking}}<h2>Pack <small>{{count}} / {{size}}</small></h2>{{/asking}}
-    <ul>
-      {{#items}}
-      <li>
-        {{#choose}}<button class="item choose" hx-post="/key" hx-vals='{"key": "{{letter}}"}'>{{>pack-item}}</button>{{/choose}}
-        {{#disabled}}<button class="item" disabled>{{>pack-item}}</button>{{/disabled}}
-        {{#use}}
-        <div class="item">{{>pack-item}}<span class="acts">
-          {{#verb}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "use"}'>{{verb}}</button>{{/verb}}
-          {{#drop}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "drop"}'>Drop</button>{{/drop}}
-        </span></div>
-        {{/use}}
-      </li>
-      {{/items}}
-    </ul>
-    {{#asking}}<button class="cancel" hx-post="/key" hx-vals='{"key": "space"}'>Cancel <kbd>space</kbd></button>{{/asking}}
-  </section>
-  {{/pack}}
+  {{>part-foes}}
+  {{>part-stats}}
+  {{>part-pack}}
   <section class="actions">
     <button hx-post="/key" hx-vals='{"key": "space"}'>Wait <kbd>space</kbd></button>
     <button hx-post="/key" hx-vals='{"key": "enter"}'>Stairs <kbd>enter</kbd></button>

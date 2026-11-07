@@ -1,0 +1,8 @@
+{{! The end of a game, over the map. }}
+<div id="part-over" class="part">{{#over}}
+    <div class="end"><div>
+      <h1>{{title}}</h1>
+      <p>{{detail}}</p>
+      <button class="primary" hx-post="/key" hx-vals='{"key": "enter"}'>Start again <kbd>enter</kbd></button>
+    </div></div>
+    {{/over}}</div>

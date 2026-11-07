@@ -12,7 +12,9 @@
  * engine's `tick`, and the world moves on whether anyone pressed a key or
  * not: monsters act every fourth tick by default, so a player can move a
  * few times for each move of theirs. Each open page listens on `/events`, a stream of server-sent events,
- * and the server pushes it the game's HTML after each tick that changed it.
+ * and after each tick the server pushes it the parts of the game that
+ * changed, each drawn only when what it shows did: the map as data for the
+ * page to draw (or, with `render: "server"`, as HTML), the rest as HTML.
  * A player whose page is closed is away: they stay in the world, but their
  * chunk stands still unless someone present is in it.
  *
@@ -125,10 +127,9 @@ var joined = 0
 // came; `text` is what the key "say" says.
 var queue = []
 
-// The open event streams by player id, each a list of channels, the HTML
-// each player was last sent, and how many ticks have run.
+// The open event streams by player id, each a list of channels, and how
+// many ticks have run.
 var streams = {}
-var shown = {}
 var ticks = 0
 
 // Each player's window size, `{cols, rows}`, as their page asked, and
@@ -222,35 +223,47 @@ export val tickOnce = fn() {
     push(present)
 }
 
-// Sends each present player's page their game's HTML when it changed, and
-// a keep-alive comment every HEARTBEAT ticks; drops streams that are closed.
+// Sends each present player's page the parts of their game that changed:
+// the map, as data or as HTML, and each other part whose data changed, drawn
+// only then; a keep-alive comment every HEARTBEAT ticks when nothing did.
+// Drops streams that are closed.
 val push = fn(present:list) {
     val each = fn(i:num) {
         if (i < len(present)) {
             val id = present[i]
-            if (clientMaps) {
-                val data = mapData(id, game.playerOf(id))
-                if (data != shownMaps[id]) {
-                    shownMaps = shownMaps + {[id]: data}
-                    broadcast(id, dataEvent("map", data))
-                }
-            }
-            val html = gameHtml(id)
-            if (html != shown[id]) {
-                shown = shown + {[id]: html}
-                broadcast(id, event(html))
-            } else if (ticks % HEARTBEAT == 0) {
-                broadcast(id, ": alive\n\n")
-            }
+            if (!sendChanges(id) && ticks % HEARTBEAT == 0) { broadcast(id, ": alive\n\n") }
             recur(i + 1)
         }
     }
     each(0)
 }
 
-// One server-sent event of type `game` carrying `html`.
-val event = fn(html:str):str {
-    "event: game\n" + join(map(split(html, "\n"), fn(line) { "data: " + line }), "\n") + "\n\n"
+// Sends the player's page what changed since it was last sent anything, or
+// with `everything`, all of it; returns whether anything was sent.
+val sendChanges = fn(id:str, everything:bool = false):bool {
+    val p = game.playerOf(id)
+    // The map's data is what it shows, so it tells whether it changed.
+    // The other players here, which the map and the list of what is in
+    // view both need: finding them sorts everyone.
+    val others = game.others(id)
+    val data = mapData(id, p, others)
+    val moved = everything || data != shownMaps[id]
+    shownMaps = shownMaps + {[id]: data}
+    if (moved && clientMaps) { broadcast(id, dataEvent("map", data)) }
+    val now = partsData(id, p, others)
+    val last = if (everything) { {} } else { shownParts[id] ?? {} }
+    shownParts = shownParts + {[id]: now}
+    val changed = filter(keys(now), fn(name) { now[name] != last[name] })
+    val drawn = map(changed, fn(name) { partHtml(name, now[name]) })
+    val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, others)) } else { drawn }
+    if (len(html) > 0) { broadcast(id, htmlEvent("parts", join(html, ""))) }
+    moved || len(html) > 0
+}
+
+// One server-sent event of type `kind` carrying `html`, a line of data for
+// each of its lines.
+val htmlEvent = fn(kind:str, html:str):str {
+    "event: " + kind + "\n" + join(map(split(html, "\n"), fn(line) { "data: " + line }), "\n") + "\n\n"
 }
 
 // Sends `text` to each of the player's streams, dropping closed ones; a
@@ -272,7 +285,25 @@ val broadcast = fn(id:str, text:str) {
 val GAME_TEXT = fromBytes(asset("game.mustache"))
 val PAGE = mustache.parse(fromBytes(asset("page.mustache")))
 val GAME = mustache.parse(GAME_TEXT)
-val PARTIALS = {game: GAME_TEXT, "pack-item": fromBytes(asset("pack-item.mustache"))}
+
+// The parts of the game, each drawn by its own template, `part-NAME`, in an
+// element with id `part-NAME`: the map, and the rest, which `partsData` gives.
+val PART_NAMES = ["top", "map", "menu", "over", "log", "foes", "stats", "pack"]
+val PART_TEXT = {
+    "part-top": fromBytes(asset("part-top.mustache")),
+    "part-map": fromBytes(asset("part-map.mustache")),
+    "part-menu": fromBytes(asset("part-menu.mustache")),
+    "part-over": fromBytes(asset("part-over.mustache")),
+    "part-log": fromBytes(asset("part-log.mustache")),
+    "part-foes": fromBytes(asset("part-foes.mustache")),
+    "part-stats": fromBytes(asset("part-stats.mustache")),
+    "part-pack": fromBytes(asset("part-pack.mustache")),
+}
+val PARTS = reduce(PART_NAMES, {}, fn(acc, name) { acc + {[name]: mustache.parse(PART_TEXT["part-" + name] ?? "")} })
+val PARTIALS = PART_TEXT + {game: GAME_TEXT, "pack-item": fromBytes(asset("pack-item.mustache"))}
+
+// The HTML of part `name` drawing `data`.
+val partHtml = fn(name:str, data:map):str { mustache.render(PARTS[name], data, PARTIALS) }
 
 // The window of the player with `id` at `p`: where it was, unless it is new,
 // on another depth, another size, or no longer holds them, in which case
@@ -329,7 +360,7 @@ val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
 // Who stands on each square of the chunk the player with `id` is in, by
 // `game.viewKey`, as the look of its `@`: other players first, in id order,
 // then townsfolk.
-val nearby = fn(id:str):map {
+val nearby = fn(id:str, others:list):map {
     val stand = fn(acc:map, x:num, y:num, look:map):map {
         val k = game.viewKey(x, y)
         if (acc[k] == nil) { acc + {[k]: look} } else { acc }
@@ -337,7 +368,7 @@ val nearby = fn(id:str):map {
     val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
         stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
     })
-    val near = reduce(game.others(id), {}, fn(acc, o) {
+    val near = reduce(others, {}, fn(acc, o) {
         stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
     })
     reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
@@ -355,11 +386,11 @@ val mapRow = fn(p:map, sight:map, near:map, cam:map, row:str, y:num, end:str):ma
 }
 
 // The player's window onto the map, row by row.
-val mapRows = fn(id:str, p:map):list {
+val mapRows = fn(id:str, p:map, others:list):list {
     val cam = camera(id, p)
     val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
     val sight = game.inView(id)
-    val everyone = nearby(id)
+    val everyone = nearby(id, others)
     val go = fn(y:num, out:list):list {
         if (y == cam.rows) { return out }
         recur(y + 1, out :+ mapRow(p, sight, everyone, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
@@ -414,8 +445,8 @@ val packView = fn(id:str, p:map):map {
 }
 
 // Who is in view: other players the player sees, then monsters.
-val foesView = fn(id:str, p:map):list {
-    val people = filter(game.others(id), fn(o) { game.visible(id, o[1].x, o[1].y) })
+val foesView = fn(id:str, p:map, others:list):list {
+    val people = filter(others, fn(o) { game.visible(id, o[1].x, o[1].y) })
     val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
     val folk = filter(game.here(id).characters ?? [], fn(c) { game.visible(id, c.x, c.y) })
     map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
@@ -434,27 +465,39 @@ val overView = fn(p:map) {
     }
 }
 
-// The data the game template draws: above the map, the prompt's question or
-// what the latest move said; below it, the older messages.
-val view = fn(id:str):map {
-    val p = game.playerOf(id)
+// The data each part of the game draws but the map, by part: above the map,
+// the prompt's question or what the latest move said; over it, an open menu
+// or the end of a game; below it, the older messages; and beside it, what
+// is in view, the stats, and the pack.
+val partsData = fn(id:str, p:map, others:list):map {
     val prompt = p.prompt != nil
-    val foes = foesView(id, p)
+    val foes = foesView(id, p, others)
     val l = logOf(id)
     {
-        prompt: prompt,
-        top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
-        rows: if (clientMaps) { [] } else { mapRows(id, p) },
-        island: clientMaps,
-        over: overView(p),
-        log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] }),
-        foes: foes,
-        hasFoes: len(foes) > 0,
-        name: p.name,
-        stats: statsView(id, p),
-        pack: packView(id, p),
-        menu: menuView(id),
+        top: {
+            prompt: prompt,
+            top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
+        },
+        menu: {menu: menuView(id)},
+        over: {over: overView(p)},
+        log: {log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] })},
+        foes: {foes: foes, hasFoes: len(foes) > 0},
+        stats: {stats: statsView(id, p)},
+        pack: {pack: packView(id, p)},
     }
+}
+
+// What the map part draws: the map, or the element that draws it on the page.
+val mapPart = fn(id:str, p:map, others:list):map {
+    if (clientMaps) { {island: true, rows: []} } else { {island: false, rows: mapRows(id, p, others)} }
+}
+
+// The data the whole game template draws: every part's.
+val view = fn(id:str):map {
+    val p = game.playerOf(id)
+    val others = game.others(id)
+    val parts = partsData(id, p, others)
+    reduce(keys(parts), mapPart(id, p, others) + {name: p.name}, fn(acc, part) { acc + parts[part] })
 }
 
 // The menu the player has open, drawn over the map: its entries as
@@ -486,6 +529,9 @@ var clientMaps = false
 // The map data last sent to each player, by id.
 var shownMaps = {}
 
+// The data of each part last sent to each player, by id.
+var shownParts = {}
+
 /**
  * Where maps are drawn: "client" sends each page its map as data, for
  * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
@@ -505,9 +551,9 @@ val LEGEND = json.stringify({width: level.WIDTH, height: level.HEIGHT, classes: 
 // coordinates; their chunk, depth, and square in it; the window's rows, as
 // `game.view` gives them; the `game.viewKey`s of the squares in their sight;
 // and `near`, the look of each `@` that is not them, as [key, class, title].
-val mapData = fn(id:str, p:map):str {
+val mapData = fn(id:str, p:map, others:list):str {
     val cam = camera(id, p)
-    val near = nearby(id)
+    val near = nearby(id, others)
     json.stringify({
         left: cam.left, top: cam.top, cx: p.cx, cy: p.cy, depth: p.depth, you: [p.x, p.y],
         rows: game.view(id, cam.left, cam.top, cam.cols, cam.rows),
@@ -620,16 +666,11 @@ val onEvents = fn(request:map):map {
         val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
         sizes = sizes + {[id]: {cols: cols, rows: rows}}
         val channel = chan(8)
-        if (clientMaps) {
-            val data = mapData(id, game.playerOf(id))
-            trySend(channel, dataEvent("legend", LEGEND))
-            trySend(channel, dataEvent("map", data))
-            shownMaps = shownMaps + {[id]: data}
-        }
-        val html = gameHtml(id)
-        trySend(channel, event(html))
+        if (clientMaps) { trySend(channel, dataEvent("legend", LEGEND)) }
+        // The page may have changed since it was served: everything, now,
+        // to every stream the player has open.
         streams = streams + {[id]: (streams[id] ?? []) :+ channel}
-        shown = shown + {[id]: html}
+        sendChanges(id, true)
         {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
     })
 }
@@ -661,8 +702,8 @@ val reset = fn(players:num) {
     logs = {}
     queue = []
     streams = {}
-    shown = {}
     shownMaps = {}
+    shownParts = {}
     sizes = {}
     cameras = {}
     ticks = 0
@@ -724,7 +765,7 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
         _ => fresh(options)
     }
     val saveEvery = options.save ?? 20
-    renderMaps(options.render ?? "server")
+    renderMaps(options.render ?? "client")
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150

@@ -1,0 +1,22 @@
+{{! The player's pack. }}
+<div id="part-pack" class="part">{{#pack}}
+  <section class="pack">
+    {{#asking}}<h2>Choose an item</h2>{{/asking}}
+    {{^asking}}<h2>Pack <small>{{count}} / {{size}}</small></h2>{{/asking}}
+    <ul>
+      {{#items}}
+      <li>
+        {{#choose}}<button class="item choose" hx-post="/key" hx-vals='{"key": "{{letter}}"}'>{{>pack-item}}</button>{{/choose}}
+        {{#disabled}}<button class="item" disabled>{{>pack-item}}</button>{{/disabled}}
+        {{#use}}
+        <div class="item">{{>pack-item}}<span class="acts">
+          {{#verb}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "use"}'>{{verb}}</button>{{/verb}}
+          {{#drop}}<button hx-post="/use" hx-vals='{"letter": "{{letter}}", "action": "drop"}'>Drop</button>{{/drop}}
+        </span></div>
+        {{/use}}
+      </li>
+      {{/items}}
+    </ul>
+    {{#asking}}<button class="cancel" hx-post="/key" hx-vals='{"key": "space"}'>Cancel <kbd>space</kbd></button>{{/asking}}
+  </section>
+  {{/pack}}</div>

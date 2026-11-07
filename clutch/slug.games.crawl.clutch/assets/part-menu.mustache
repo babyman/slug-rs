@@ -1,0 +1,11 @@
+{{! The menu the player has open, over the map. }}
+<div id="part-menu" class="part">{{#menu}}
+    <div class="menu" role="dialog" aria-label="{{title}}">
+      <h2>{{title}}</h2>
+      <div class="choices">
+        {{#entries}}<button hx-post="/key" hx-vals='{"key": "{{key}}"}'><kbd>{{key}}</kbd> {{label}}</button>{{/entries}}
+        {{#talk}}<button type="button" class="say-something">Say something else… <kbd>/</kbd></button>{{/talk}}
+      </div>
+      <button class="cancel" hx-post="/key" hx-vals='{"key": "space"}'>{{back}} <kbd>space</kbd></button>
+    </div>
+    {{/menu}}</div>

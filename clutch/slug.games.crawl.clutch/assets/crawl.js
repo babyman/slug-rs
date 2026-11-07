@@ -68,8 +68,9 @@ function mapSize() {
   return { cols: Math.max(20, Math.min(80, cols)), rows: Math.max(8, Math.min(22, rows)) };
 }
 
-// The server pushes the game's HTML after each tick that changes it, drawn
-// through a window the size of the page; a new size reopens the stream.
+// After each tick the server pushes what changed: the map, seen through a
+// window the size of the page, and the other parts of the game as HTML; a
+// new size reopens the stream.
 let events = null, size = "";
 function listen() {
   const s = mapSize(), next = s.cols + "x" + s.rows;
@@ -80,10 +81,17 @@ function listen() {
   // With maps drawn on the page, the server sends the map as data.
   events.addEventListener("legend", e => crawlMap.legend(JSON.parse(e.data)));
   events.addEventListener("map", e => crawlMap.update(JSON.parse(e.data)));
-  events.addEventListener("game", e => {
-    const game = document.getElementById("game");
-    game.innerHTML = e.data;
-    htmx.process(game);
+  // The parts of the game that changed, each in an element with the id of
+  // the one it replaces.
+  events.addEventListener("parts", e => {
+    const parts = document.createElement("template");
+    parts.innerHTML = e.data;
+    for (const part of [...parts.content.children]) {
+      const old = part.id && document.getElementById(part.id);
+      if (!old) continue;
+      old.replaceWith(part);
+      htmx.process(part);
+    }
   });
 }
 let resizing = null;

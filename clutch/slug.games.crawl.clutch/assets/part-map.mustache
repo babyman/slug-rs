@@ -1,0 +1,2 @@
+{{! The map: drawn here, or by crawl-map.js from map events. }}
+<div id="part-map" class="part">{{! Rows end with their own line feed, as the last does not. }}{{^island}}<pre class="map">{{#rows}}{{#runs}}{{#cls}}<span class="{{cls}}"{{#title}} title="{{title}}"{{/title}}>{{text}}</span>{{/cls}}{{^cls}}{{text}}{{/cls}}{{/runs}}{{end}}{{/rows}}</pre>{{/island}}{{#island}}<crawl-map></crawl-map>{{/island}}</div>

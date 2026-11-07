@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl's pages are sent only what changed: after each tick, the map, and
+  each other part of the game (the line above the map, a menu, the end of
+  a game, the log, what is in view, the stats, and the pack) when what it
+  shows changed, drawn only then. The page swaps each part in by its id.
+  The whole game's HTML was drawn and pushed for every player every tick.
+  Maps are drawn by the page by default now (`--render=server` sends them
+  as HTML). With 100 players in the starting town a tick takes about
+  0.4 s, from 0.9 s with whole pages.
+
 - Crawl's web front end can have each page draw its own map:
   `play.slug --render=client` (or `serve`'s `render` option, or
   `web.renderMaps("client")`) sends each player what they see as data, in
