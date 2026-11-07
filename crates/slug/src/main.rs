@@ -536,12 +536,22 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
     };
     program.set_module_name(entry_module);
     register_native_modules(&mut vm);
+    #[cfg(feature = "metrics")]
+    let profile_path = std::env::var_os("SLUG_PROFILE");
+    #[cfg(feature = "metrics")]
+    if profile_path.is_some() {
+        vm.enable_profile();
+    }
     let outcome = vm.run_program(&program);
     // Counting builds report the VM's internal counters, documented in
     // docs/engineering/benchmarking.md.
     #[cfg(feature = "metrics")]
     if std::env::var_os("SLUG_DUMP_METRICS").is_some() {
         eprintln!("{:#?}", vm.metrics());
+    }
+    #[cfg(feature = "metrics")]
+    if let (Some(path), Some(samples)) = (profile_path, vm.take_profile()) {
+        write_profile(&path, &samples);
     }
     match outcome {
         Ok(result) => {
@@ -554,6 +564,19 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
             eprint_runtime_error(&error, &resolved_path, &source, json);
             ExitCode::from(1)
         }
+    }
+}
+
+/// Writes sampled Slug stacks as folded stacks, one `stack count` a line.
+#[cfg(feature = "metrics")]
+fn write_profile(path: &std::ffi::OsStr, samples: &std::collections::BTreeMap<String, usize>) {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for (stack, count) in samples {
+        let _ = writeln!(text, "{stack} {count}");
+    }
+    if let Err(error) = std::fs::write(path, text) {
+        eprintln!("slug: cannot write profile: {error}");
     }
 }
 

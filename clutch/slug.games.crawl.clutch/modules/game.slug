@@ -210,14 +210,15 @@ val setMemory = fn(rows:list) { remember(playerKey(), rows) }
 // The living players in the chunk with `key`, the acting player among them,
 // as [id, player] pairs in id order.
 val companyIn = fn(key:str):list {
-    val ids = string.sort(keys(players))
+    val all = keys(players)
+    val playerOf = fn(id:str):map { if (id == acting) { player } else { players[id] } }
+    // Only those in the chunk are sorted: everyone may be playing.
     val go = fn(i:num, acc:list):list {
-        if (i == len(ids)) { return acc }
-        val id = ids[i]
-        val p = if (id == acting) { player } else { players[id] }
-        recur(i + 1, if (!p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { acc :+ [id, p] } else { acc })
+        if (i == len(all)) { return acc }
+        val p = playerOf(all[i])
+        recur(i + 1, if (!p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { acc :+ all[i] } else { acc })
     }
-    go(0, [])
+    map(string.sort(go(0, [])), fn(id) { [id, playerOf(id)] })
 }
 
 // Whether a living player stands at (x, y) in the chunk with `key`.

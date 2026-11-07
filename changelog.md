@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Counting builds (`--features metrics`) sample a Slug program's call
+  stacks when `SLUG_PROFILE` names a file, and write them there as folded
+  stacks for flame-graph tools, each function named by its module and line.
+  The benchmarking guide shows how.
+
+- Crawl draws each player's page in time proportional to the players in
+  view, where it grew with their square: every `@` on the map looked up
+  the other players again, sorting every player's id in Slug. With 100
+  players in the starting town, ticking takes about 40% fewer instructions,
+  and pages are unchanged. A `crawl-crowd` source benchmark ticks 30
+  players through the web front end without sockets.
+
 - A program whose tasks spawn more tasks after `main` returns, as a
   server's open connections do while it stops, no longer panics with
   `RefCell already borrowed`: waiting for the remaining tasks held the

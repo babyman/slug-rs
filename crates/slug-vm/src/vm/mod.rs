@@ -48,6 +48,8 @@ mod error;
 mod frames;
 mod installation;
 mod operations;
+#[cfg(feature = "metrics")]
+mod profile;
 mod progress;
 #[cfg(feature = "concurrency")]
 mod scheduler;
@@ -412,6 +414,8 @@ pub struct Vm {
     shutdown: bool,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
+    #[cfg(feature = "metrics")]
+    profile: profile::Samples,
 }
 
 /// Global bindings retained by one interactive session using a shared VM.
@@ -581,6 +585,8 @@ impl Default for Vm {
             shutdown: false,
             #[cfg(feature = "metrics")]
             metrics,
+            #[cfg(feature = "metrics")]
+            profile: profile::Samples::default(),
         }
     }
 }
@@ -1966,7 +1972,14 @@ impl Vm {
                 self.frames.last_mut().expect("active frame was checked").ip = ip;
                 #[cfg(feature = "metrics")]
                 {
-                    self.metrics.borrow_mut().instructions_executed += 1;
+                    let executed = {
+                        let mut metrics = self.metrics.borrow_mut();
+                        metrics.instructions_executed += 1;
+                        metrics.instructions_executed
+                    };
+                    if executed % profile::PERIOD == 0 {
+                        self.sample_stack();
+                    }
                 }
                 if let InstructionOutcome::Settled =
                     self.execute_instruction(program, chunk, instruction, &mut ip)?
@@ -3567,6 +3580,8 @@ impl Vm {
             shutdown: false,
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
+            #[cfg(feature = "metrics")]
+            profile: self.profile.clone(),
         };
         let argument_count = arguments.len();
         let (locals, reused) = vm.take_frame_locals(arguments, chunk.locals);

@@ -59,7 +59,7 @@ val data = import("slug.games.crawl.data")
 val bestiary = import("slug.games.crawl.bestiary")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
-val {map, filter, contains} = import("slug.std")
+val {map, filter, contains, reduce} = import("slug.std")
 val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
@@ -295,17 +295,13 @@ val camera = fn(id:str, p:map):map {
 // How the map draws `c` at (wx, wy) in world coordinates for the player with
 // `id` at `p`: its class, dimmed when the square is out of their sight (not
 // in `sight`, from `game.inView`), and for a monster or another player their
-// name; nil for a blank square.
-val cell = fn(id:str, p:map, sight:map, c:str, wx:num, wy:num):map {
+// name, from `near`; nil for a blank square.
+val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
     val x = wx - p.cx * level.WIDTH
     val y = wy - p.cy * level.HEIGHT
     if (c == "@") {
         if (x == p.x && y == p.y) { return {cls: "you", title: nil} }
-        val there = filter(game.others(id), fn(o) { o[1].x == x && o[1].y == y })
-        if (len(there) > 0) { return {cls: "ally", title: there[0][1].name} }
-        val people = filter(game.here(id).characters ?? [], fn(c) { c.x == x && c.y == y })
-        if (len(people) > 0) { return {cls: "character", title: town.title(people[0])} }
-        return {cls: "ally", title: nil}
+        return near[game.viewKey(x, y)] ?? {cls: "ally", title: nil}
     }
     if (c >= "A" && c <= "Z") {
         val named = filter(bestiary.monsters, fn(m) { m.letter == c })
@@ -323,14 +319,14 @@ val cell = fn(id:str, p:map, sight:map, c:str, wx:num, wy:num):map {
 }
 
 // One row of the map as runs of characters that look alike.
-val mapRow = fn(id:str, p:map, sight:map, cam:map, row:str, y:num, end:str):map {
+val mapRow = fn(p:map, sight:map, near:map, cam:map, row:str, y:num, end:str):map {
     val wy = cam.top + y
     val go = fn(x:num, start:num, look:map, out:list):list {
         if (x == len(row)) { return out :+ (look + {text: row[start:x]}) }
-        val next = cell(id, p, sight, row[x], cam.left + x, wy)
+        val next = cell(p, sight, near, row[x], cam.left + x, wy)
         if (next == look) { recur(x + 1, start, look, out) } else { recur(x + 1, x, next, out :+ (look + {text: row[start:x]})) }
     }
-    {runs: go(1, 0, cell(id, p, sight, row[0], cam.left, wy), []), end: end}
+    {runs: go(1, 0, cell(p, sight, near, row[0], cam.left, wy), []), end: end}
 }
 
 // The player's window onto the map, row by row.
@@ -338,9 +334,22 @@ val mapRows = fn(id:str, p:map):list {
     val cam = camera(id, p)
     val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
     val sight = game.inView(id)
+    // Who stands on each square of the player's chunk, by `game.viewKey`,
+    // for the `@`s: other players first, in id order, then townsfolk.
+    val stand = fn(acc:map, x:num, y:num, look:map):map {
+        val k = game.viewKey(x, y)
+        if (acc[k] == nil) { acc + {[k]: look} } else { acc }
+    }
+    val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
+        stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
+    })
+    val near = reduce(game.others(id), {}, fn(acc, o) {
+        stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
+    })
+    val everyone = reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
     val go = fn(y:num, out:list):list {
         if (y == cam.rows) { return out }
-        recur(y + 1, out :+ mapRow(id, p, sight, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
+        recur(y + 1, out :+ mapRow(p, sight, everyone, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
     }
     go(0, [])
 }

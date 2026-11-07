@@ -1,0 +1,58 @@
+// Crawl, the slug.games.crawl clutch as it ships, with a crowd: `players`
+// players (default 30) join a world from seed 6, each opens the page's event
+// stream through the web front end's handler, without sockets, and they play
+// `ticks` ticks (default 6), each pressing a key on every third tick as
+// someone playing quickly would. With `mode` "game" only the engine ticks,
+// with every player present, and no page is drawn.
+val web = import("slug.games.crawl.web")
+val game = import("slug.games.crawl")
+val { map, range, reduce } = import("slug.std")
+val { toBytes } = import("slug.string")
+
+val PLAYERS = cfg("players", 30)
+val TICKS = cfg("ticks", 6)
+val MODE = cfg("mode", "web")
+val KEYS = ["h", "j", "k", "l", "y", "u", "b", "n"]
+
+val id = fn(i:num):str { "p" + i }
+
+val request = fn(method:str, path:str, query:map, who:str, body:str):map {
+    {
+        method: method, path: path, query: query, params: {},
+        headers: {cookie: "crawl=" + who, "content-type": "application/x-www-form-urlencoded"},
+        body: toBytes(body),
+    }
+}
+
+val main = fn() {
+    web.start(6, {history: 0})
+    val handle = web.handler()
+    map(range(PLAYERS), fn(i) { game.join(id(i), "P" + i) })
+    if (MODE == "web") {
+        map(range(PLAYERS), fn(i) { handle(request("GET", "/events", {cols: "80", rows: "22"}, id(i), "")) })
+    }
+    val everyone = map(range(PLAYERS), id)
+    val play = fn(t:num) {
+        if (t < TICKS) {
+            val pressing = reduce(range(PLAYERS), [], fn(acc, i) {
+                if ((t + i) % 3 == 0) { acc :+ i } else { acc }
+            })
+            if (MODE == "web") {
+                map(pressing, fn(i) {
+                    handle(request("POST", "/key", {}, id(i), "key=" + KEYS[(t + i) % 8] + "&shift=false"))
+                })
+                web.tickOnce()
+            } else {
+                game.tick(map(pressing, fn(i) { {id: id(i), key: KEYS[(t + i) % 8]} }), everyone)
+            }
+            recur(t + 1)
+        }
+    }
+    play(0)
+    val turn = game.current().world.turn
+    val spread = reduce(everyone, 0, fn(acc, who) {
+        val p = game.playerOf(who)
+        acc + p.x * 3 + p.y * 7 + p.hp
+    })
+    println("$turn $spread")
+}
