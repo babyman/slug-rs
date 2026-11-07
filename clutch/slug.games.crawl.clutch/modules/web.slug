@@ -66,6 +66,7 @@ val mustache = import("slug.text.mustache")
 val secure = import("slug.random.secure")
 val {split, trim, join, toInt} = import("slug.string")
 val {trySend} = import("slug.channel")
+val json = import("slug.fmt.json")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
 // place of the map, which the page does not need.
@@ -227,6 +228,13 @@ val push = fn(present:list) {
     val each = fn(i:num) {
         if (i < len(present)) {
             val id = present[i]
+            if (clientMaps) {
+                val data = mapData(id, game.playerOf(id))
+                if (data != shownMaps[id]) {
+                    shownMaps = shownMaps + {[id]: data}
+                    broadcast(id, dataEvent("map", data))
+                }
+            }
             val html = gameHtml(id)
             if (html != shown[id]) {
                 shown = shown + {[id]: html}
@@ -318,6 +326,23 @@ val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
     }
 }
 
+// Who stands on each square of the chunk the player with `id` is in, by
+// `game.viewKey`, as the look of its `@`: other players first, in id order,
+// then townsfolk.
+val nearby = fn(id:str):map {
+    val stand = fn(acc:map, x:num, y:num, look:map):map {
+        val k = game.viewKey(x, y)
+        if (acc[k] == nil) { acc + {[k]: look} } else { acc }
+    }
+    val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
+        stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
+    })
+    val near = reduce(game.others(id), {}, fn(acc, o) {
+        stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
+    })
+    reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
+}
+
 // One row of the map as runs of characters that look alike.
 val mapRow = fn(p:map, sight:map, near:map, cam:map, row:str, y:num, end:str):map {
     val wy = cam.top + y
@@ -334,19 +359,7 @@ val mapRows = fn(id:str, p:map):list {
     val cam = camera(id, p)
     val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
     val sight = game.inView(id)
-    // Who stands on each square of the player's chunk, by `game.viewKey`,
-    // for the `@`s: other players first, in id order, then townsfolk.
-    val stand = fn(acc:map, x:num, y:num, look:map):map {
-        val k = game.viewKey(x, y)
-        if (acc[k] == nil) { acc + {[k]: look} } else { acc }
-    }
-    val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
-        stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
-    })
-    val near = reduce(game.others(id), {}, fn(acc, o) {
-        stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
-    })
-    val everyone = reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
+    val everyone = nearby(id)
     val go = fn(y:num, out:list):list {
         if (y == cam.rows) { return out }
         recur(y + 1, out :+ mapRow(p, sight, everyone, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
@@ -431,7 +444,8 @@ val view = fn(id:str):map {
     {
         prompt: prompt,
         top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
-        rows: mapRows(id, p),
+        rows: if (clientMaps) { [] } else { mapRows(id, p) },
+        island: clientMaps,
         over: overView(p),
         log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] }),
         foes: foes,
@@ -456,6 +470,54 @@ val menuView = fn(id:str):map|nil {
         _ => nil
     }
 }
+
+// --- The map as data ---------------------------------------------------------
+//
+// With maps drawn on the page (`renderMaps("client")`, or `serve`'s `render`
+// option), the game's HTML holds an empty `<crawl-map>`, which
+// `crawl-map.js` draws from `map` events: what the player sees, as data,
+// for the page to draw as `mapRow` and `cell` would. The server still
+// decides what each player sees; the page only draws it. A `legend` event
+// first gives what every map shares.
+
+// Whether pages draw their own maps.
+var clientMaps = false
+
+// The map data last sent to each player, by id.
+var shownMaps = {}
+
+/**
+ * Where maps are drawn: "client" sends each page its map as data, for
+ * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
+ */
+export val renderMaps = fn(where:str) { clientMaps = where == "client" }
+
+// The first-listed name of the monster each capital letter is.
+val MONSTER_NAMES = reduce(bestiary.monsters, {}, fn(acc, m) {
+    if (acc[m.letter] == nil) { acc + {[m.letter]: m.name} } else { acc }
+})
+
+// What every map shares, as JSON: the chunk's size, the class of each map
+// character, and the monster each capital letter is.
+val LEGEND = json.stringify({width: level.WIDTH, height: level.HEIGHT, classes: CLASSES, monsters: MONSTER_NAMES})
+
+// The player's window onto the map as JSON: its top left corner in world
+// coordinates; their chunk, depth, and square in it; the window's rows, as
+// `game.view` gives them; the `game.viewKey`s of the squares in their sight;
+// and `near`, the look of each `@` that is not them, as [key, class, title].
+val mapData = fn(id:str, p:map):str {
+    val cam = camera(id, p)
+    val near = nearby(id)
+    json.stringify({
+        left: cam.left, top: cam.top, cx: p.cx, cy: p.cy, depth: p.depth, you: [p.x, p.y],
+        rows: game.view(id, cam.left, cam.top, cam.cols, cam.rows),
+        sight: keys(game.inView(id)),
+        near: map(keys(near), fn(k) { [k, near[k].cls, near[k].title] }),
+    })
+}
+
+// A server-sent event of type `kind` carrying `data`, one line of JSON.
+val dataEvent = fn(kind:str, data:str):str { "event: " + kind + "\ndata: " + data + "\n\n" }
 
 /**
  * The game's HTML for the player with `id`, which the page's `#game`
@@ -558,6 +620,12 @@ val onEvents = fn(request:map):map {
         val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
         sizes = sizes + {[id]: {cols: cols, rows: rows}}
         val channel = chan(8)
+        if (clientMaps) {
+            val data = mapData(id, game.playerOf(id))
+            trySend(channel, dataEvent("legend", LEGEND))
+            trySend(channel, dataEvent("map", data))
+            shownMaps = shownMaps + {[id]: data}
+        }
         val html = gameHtml(id)
         trySend(channel, event(html))
         streams = streams + {[id]: (streams[id] ?? []) :+ channel}
@@ -577,6 +645,7 @@ export val handler = fn():fn {
         ["GET", "/htmx.js", fn(request) { file("htmx.js", asset("htmx.js")) }],
         ["GET", "/crawl.css", fn(request) { file("crawl.css", asset("crawl.css")) }],
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
+        ["GET", "/crawl-map.js", fn(request) { file("crawl-map.js", asset("crawl-map.js")) }],
         ["POST", "/key", onKey],
         ["POST", "/use", onUse],
         ["POST", "/say", onSay],
@@ -593,6 +662,7 @@ val reset = fn(players:num) {
     queue = []
     streams = {}
     shown = {}
+    shownMaps = {}
     sizes = {}
     cameras = {}
     ticks = 0
@@ -654,6 +724,7 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
         _ => fresh(options)
     }
     val saveEvery = options.save ?? 20
+    renderMaps(options.render ?? "server")
     monsterEvery = options.pace ?? 4
     serving = true
     val every = options.tick ?? 150

@@ -77,6 +77,9 @@ function listen() {
   size = next;
   if (events) events.close();
   events = new EventSource("/events?cols=" + s.cols + "&rows=" + s.rows);
+  // With maps drawn on the page, the server sends the map as data.
+  events.addEventListener("legend", e => crawlMap.legend(JSON.parse(e.data)));
+  events.addEventListener("map", e => crawlMap.update(JSON.parse(e.data)));
   events.addEventListener("game", e => {
     const game = document.getElementById("game");
     game.innerHTML = e.data;

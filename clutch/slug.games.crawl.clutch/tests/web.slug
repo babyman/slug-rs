@@ -3,6 +3,7 @@ val game = import("slug.games.crawl")
 val level = import("slug.games.crawl.level")
 val {toBytes, fromBytes, split, join} = import("slug.string")
 val {recv} = import("slug.channel")
+val json = import("slug.fmt.json")
 val {map, filter} = import("slug.std")
 val {assertEqual, assertTrue} = import("slug.test")
 
@@ -174,6 +175,38 @@ val eventsStreamTheGameAfterEachChange = fn() {
     close(events.body)
     web.tickOnce()
     web.tickOnce()
+}
+
+@test
+val pagesThatDrawTheirMapsAreSentItAsData = fn() {
+    web.start(1)
+    web.renderMaps("client")
+    defer web.renderMaps("server")
+    val id = web.newPlayer()
+    val events = get("/events", id, {cols: "40", rows: "12"})
+    val data = fn(event:str, kind:str):map {
+        assertTrue(includes(event, "event: " + kind + "\ndata: "))
+        json.parse(split(event, "\ndata: ")[1])
+    }
+    val legend = data(recv(events.body, 1000), "legend")
+    assertEqual([legend.width, legend.height, legend.classes["%"]], [level.WIDTH, level.HEIGHT, "stairs"])
+    val first = data(recv(events.body, 1000), "map")
+    val p = game.playerOf(id)
+    assertEqual(first.you, [p.x, p.y])
+    assertEqual(first.rows, game.view(id, first.left, first.top, 40, 12))
+    assertTrue(len(first.sight) > 0)
+    // The game's HTML holds the element that draws it, not the map.
+    val html = recv(events.body, 1000)
+    assertTrue(includes(html, "<crawl-map></crawl-map>"))
+    assertTrue(!includes(html, "<pre class=\"map\">"))
+    // A move sends the map again.
+    web.press(id, "l", false)
+    web.press(id, "j", false)
+    web.tickOnce()
+    web.tickOnce()
+    val moved = data(recv(events.body, 1000), "map")
+    assertTrue(moved.you != first.you || moved.rows != first.rows)
+    close(events.body)
 }
 
 @test

@@ -3,7 +3,8 @@
 // stream through the web front end's handler, without sockets, and they play
 // `ticks` ticks (default 6), each pressing a key on every third tick as
 // someone playing quickly would. With `mode` "game" only the engine ticks,
-// with every player present, and no page is drawn.
+// with every player present, and no page is drawn; with `render` "client"
+// pages are sent their maps as data.
 val web = import("slug.games.crawl.web")
 val game = import("slug.games.crawl")
 val { map, range, reduce } = import("slug.std")
@@ -12,6 +13,7 @@ val { toBytes } = import("slug.string")
 val PLAYERS = cfg("players", 30)
 val TICKS = cfg("ticks", 6)
 val MODE = cfg("mode", "web")
+val RENDER = cfg("render", "server")
 val KEYS = ["h", "j", "k", "l", "y", "u", "b", "n"]
 
 val id = fn(i:num):str { "p" + i }
@@ -26,6 +28,7 @@ val request = fn(method:str, path:str, query:map, who:str, body:str):map {
 
 val main = fn() {
     web.start(6, {history: 0})
+    web.renderMaps(RENDER)
     val handle = web.handler()
     map(range(PLAYERS), fn(i) { game.join(id(i), "P" + i) })
     if (MODE == "web") {

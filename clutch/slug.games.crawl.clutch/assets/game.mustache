@@ -3,7 +3,7 @@
   <div class="board">
     <div class="top{{#prompt}} prompt{{/prompt}}">{{#top}}<span>{{.}}</span> {{/top}}</div>
     {{! Rows end with their own line feed, as the last does not. }}
-    <pre class="map">{{#rows}}{{#runs}}{{#cls}}<span class="{{cls}}"{{#title}} title="{{title}}"{{/title}}>{{text}}</span>{{/cls}}{{^cls}}{{text}}{{/cls}}{{/runs}}{{end}}{{/rows}}</pre>
+    {{^island}}<pre class="map">{{#rows}}{{#runs}}{{#cls}}<span class="{{cls}}"{{#title}} title="{{title}}"{{/title}}>{{text}}</span>{{/cls}}{{^cls}}{{text}}{{/cls}}{{/runs}}{{end}}{{/rows}}</pre>{{/island}}{{#island}}<crawl-map></crawl-map>{{/island}}
     {{#menu}}
     <div class="menu" role="dialog" aria-label="{{title}}">
       <h2>{{title}}</h2>

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl's web front end can have each page draw its own map:
+  `play.slug --render=client` (or `serve`'s `render` option, or
+  `web.renderMaps("client")`) sends each player what they see as data, in
+  `map` events, and a `<crawl-map>` element in the new `crawl-map.js` draws
+  it, square for square as the server would; the rest of the game is still
+  HTML from the server, swapped in by HTMX. The server still decides what
+  each player sees. With 100 players in the starting town a tick takes
+  about 0.5 s, from 0.9 s. Server-drawn maps stay the default for now.
+
 - Counting builds (`--features metrics`) sample a Slug program's call
   stacks when `SLUG_PROFILE` names a file, and write them there as folded
   stacks for flame-graph tools, each function named by its module and line.
