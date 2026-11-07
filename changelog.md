@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Proposed a decision for parallel tasks: `fork { ... }` starts a task
+  that sees a snapshot of its captures and every module's globals and may run
+  on another core, while `spawn` keeps its meaning. A fork's writes to shared
+  `var`s are checked errors, except to a module's `task var`s, which every
+  task, spawned or forked, owns a copy of. Channels cross forks. Forks behave
+  the same on single-threaded hosts, and threads are the default build on
+  every multi-core target.
+
 - New core module `slug.bytes`: `find(data, needle, from = 0)` and
   `findAny(data, set, from = 0)` search bytes natively for a sequence or
   for any byte of a set, giving the offset or nil, and throw a
