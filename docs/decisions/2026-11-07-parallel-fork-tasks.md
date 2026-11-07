@@ -96,9 +96,16 @@ how forks run, never what they mean.
 
 ### `fork` is the language; `threads` is the default build
 
-`fork` is part of the language on every build. No program asks whether
-threads exist, and no build lacks `fork`; a build without threads simply
-runs forks one after another.
+`fork` is part of the language wherever tasks are. Every build with the
+`concurrency` capability has `fork` alongside `spawn`; a build without it
+has neither, and both are a capability error there, as `spawn` is today. No
+program asks whether threads exist: a build with tasks but without threads
+simply runs forks one after another.
+
+The ESP32-S3 firmware builds without `concurrency` today, because the
+scheduler and timers depend on `std`. Bringing tasks to `no_std` targets is
+part of implementing this record, so that multi-core embedded targets get
+both `spawn` and `fork`.
 
 The `threads` build capability, which gives forks worker threads, is the
 default on every target with more than one core: desktop and server hosts,
@@ -198,6 +205,20 @@ Two cases follow from `val` cells being written at initialization:
   existing cell, so a running fork sees the new value. The person at the
   REPL is the spawner, and a redefinition is a deliberate change to the
   program, not a write by it.
+
+### Native functions and imports in a fork
+
+- **Native functions declare thread safety.** A native library is not
+  necessarily safe to call from several threads. A clutch manifest declares
+  which of its native functions are, and calling an undeclared one in a fork
+  is an error on every build, so a program's behavior does not depend on
+  whether the build has threads. The core clutch's functions are declared.
+  Running undeclared calls on the owner thread instead is possible later
+  without changing any program that works.
+- **Imports read; initialization writes.** Importing a module that is
+  already initialized is allowed in a fork. Importing one that is not yet
+  initialized is an error, because initializing it runs top-level code that
+  writes its globals.
 
 ### Sendable values
 
