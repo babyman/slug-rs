@@ -4,7 +4,7 @@ val town = import("slug.games.crawl.town")
 val empire = import("slug.games.crawl.empire")
 val lore = import("slug.games.crawl.lore")
 val {assertEqual, assertTrue} = import("slug.test")
-val {filter, map, range, any, all} = import("slug.std")
+val {filter, map, range, any, all, reduce, contains} = import("slug.std")
 val math = import("slug.math")
 val string = import("slug.string")
 
@@ -118,6 +118,40 @@ val newCharactersStartInTheStartTownsStreets = fn() {
         assertEqual(game.here(id).map[p.y][p.x], level.ROAD)
     })
     assertTrue(any(game.playerOf("a").messages, fn(m) { m == "You come to " + home.name + "." }))
+}
+
+@test
+val newCharactersStartOutsideTheWallsWhenTheTownIsFull = fn() {
+    game.newGame(5)
+    game.join("a", "Ann")
+    val home = game.current().world.settlements[0]
+    val lv = game.here("a")
+    val w = lv.walls
+    val held = fn(x:num, y:num):bool {
+        any(lv.items + lv.characters, fn(t) { t.x == x && t.y == y })
+    }
+    // Everyone who ever came stays, so every street in town can be taken.
+    val streets = reduce(range(level.HEIGHT), [], fn(acc, y) {
+        acc + map(filter(range(level.WIDTH), fn(x) {
+            inside(w, x, y) && lv.map[y][x] == level.ROAD && !held(x, y)
+        }), fn(x) { [x, y] })
+    })
+    val s = game.snapshot()
+    val crowd = reduce(range(len(streets)), {}, fn(acc, i) {
+        val [x, y] = streets[i]
+        acc + {["c" + i]: s.players.a + {name: "c" + i, x: x, y: y}}
+    })
+    game.load(s copy {players: crowd})
+    game.join("b", "Bo")
+    game.join("d", "Di")
+    val b = game.playerOf("b")
+    val d = game.playerOf("d")
+    map([b, d], fn(p) {
+        assertEqual([p.cx, p.cy, p.depth], [home.cx, home.cy, 0])
+        assertTrue(!inside(w, p.x, p.y))
+        assertTrue(contains([level.FLOOR, level.SCRUB, level.ROAD], lv.map[p.y][p.x]))
+    })
+    assertTrue(b.x != d.x || b.y != d.y)
 }
 
 // Puts player "a" on an open square straight beside the character in `role`

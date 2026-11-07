@@ -17,6 +17,33 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn a_task_spawns_while_the_program_waits_for_it_to_finish() {
+    // `main` returns first; the root then waits for its task, which spawns
+    // another, as a server's connections do when it stops.
+    let path = fixture_path("spawn-while-settling");
+    fs::write(
+        &path,
+        "val main = fn() {\n    spawn {\n        select { after 10 /> fn(_) { nil } }\n        spawn { println(\"inner\") }\n    }\n    println(\"main done\")\n}\n",
+    )
+    .expect("write settling spawn source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run settling spawn source");
+    fs::remove_file(path).expect("remove settling spawn source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "main done\ninner\n"
+    );
+}
+
+#[test]
 fn repeated_awaits_return_one_cached_task_completion() {
     let path = fixture_path("repeated-await");
     fs::write(

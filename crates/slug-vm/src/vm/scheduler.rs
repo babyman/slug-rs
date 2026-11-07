@@ -173,7 +173,12 @@ impl Nursery {
         }
 
         let mut index = 0;
-        while let Some(task) = self.tasks.borrow().get(index).cloned() {
+        loop {
+            // Released before the task runs: a `while let` would hold the
+            // borrow through the body, and a task that spawns needs it.
+            let Some(task) = self.tasks.borrow().get(index).cloned() else {
+                break;
+            };
             while task.is_pending() && self.make_available_progress() {}
             if self.policy == SettlementPolicy::FailFast
                 && let Some(error) = self.first_unobserved_error()

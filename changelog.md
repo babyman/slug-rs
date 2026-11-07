@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A program whose tasks spawn more tasks after `main` returns, as a
+  server's open connections do while it stops, no longer panics with
+  `RefCell already borrowed`: waiting for the remaining tasks held the
+  scheduler's task list borrowed while they ran.
+
+- Crawl: a new character no longer freezes the server when the starting
+  town is full. Players who leave stay in the world, so with about a hundred
+  of them every street inside the walls was taken, and the search for a
+  free one never ended; with cooperative tasks, that stopped every page and
+  key. A new character now tries 50 random streets, then takes the open
+  square nearest the middle of the town, inside the walls or outside them,
+  then in the chunks around it, nearest first.
+
 - Assigning a module-level `var` a copy of itself whose last field updates
   that field, as in `player = player copy {memory: player.memory + entry}`,
   updates the field's collection in place when nothing else holds it, where

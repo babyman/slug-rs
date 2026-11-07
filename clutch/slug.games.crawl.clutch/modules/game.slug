@@ -1055,11 +1055,97 @@ val newCharacter = fn() {
     val cx = if (home != nil) { home.cx } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
     val cy = if (home != nil) { home.cy } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
     val key = chunkKey(cx, cy, 0)
-    val free = fn(lv:map):map {
+    // A few random squares first; players who leave stay in the world, so
+    // the town fills up, and then the nearest open square around it.
+    val tries = fn(lv:map, n:num):map|nil {
+        if (n == SPAWN_TRIES) { return nil }
         val spot = if (lv.walls != nil) { insideSpot(lv) } else { level.freeSpot(lv) }
-        if (playerIn(key, spot.x, spot.y)) { recur(lv) } else { spot }
+        if (playerIn(key, spot.x, spot.y)) { recur(lv, n + 1) } else { spot }
     }
-    enter(cx, cy, 0, free)
+    match tries(chunk(cx, cy, 0), 0) {
+        spot: map => enter(cx, cy, 0, fn(_) { spot })
+        _ => {
+            val [ox, oy, spot] = overflowSpot(cx, cy)
+            enter(ox, oy, 0, fn(_) { spot })
+        }
+    }
+}
+
+// How many random squares a new character tries in the town before taking
+// the nearest open one, in or around it.
+val SPAWN_TRIES = 50
+
+// The `j`th of the `ringLength(r)` points at Chebyshev distance `r` from
+// (ox, oy), as [x, y]: the top and bottom rows, then the left and right
+// sides between them.
+val ringPoint = fn(ox:num, oy:num, r:num, j:num):list {
+    val across = 2 * r + 1
+    if (r == 0) {
+        [ox, oy]
+    } else if (j < across) {
+        [ox - r + j, oy - r]
+    } else if (j < 2 * across) {
+        [ox - r + j - across, oy + r]
+    } else if (j < 2 * across + across - 2) {
+        [ox - r, oy - r + 1 + j - 2 * across]
+    } else {
+        [ox + r, oy - r + 1 + j - 3 * across + 2]
+    }
+}
+
+val ringLength = fn(r:num):num { if (r == 0) { 1 } else { 8 * r } }
+
+// The open square of surface chunk (cx, cy) nearest its middle (its walls'
+// middle in a settlement) with no one and nothing on it, or nil: a street
+// inside a settlement's walls (any open square in a fort's) or ground
+// outside them.
+val nearestOpen = fn(cx:num, cy:num):map|nil {
+    val lv = chunk(cx, cy, 0)
+    val key = chunkKey(cx, cy, 0)
+    val spotKey = fn(x:num, y:num):str { "" + x + "," + y }
+    val mark = fn(acc:map, t:map):map { acc + {[spotKey(t.x, t.y)]: true} }
+    val things = (lv.items ?? []) + (lv.characters ?? []) + (lv.monsters ?? [])
+    val taken = reduce(map(companyIn(key), fn(pair) { pair[1] }), reduce(things, {}, mark), mark)
+    val w = lv.walls
+    val open = fn(x:num, y:num):bool {
+        val c = lv.map[y][x]
+        val inside = w != nil && x > w.left && x < w.right && y > w.top && y < w.bottom
+        val ground = if (inside) {
+            c == level.ROAD || (lv.place.kind == "fort" && c == level.FLOOR)
+        } else {
+            c == level.FLOOR || c == level.SCRUB || c == level.ROAD
+        }
+        ground && taken[spotKey(x, y)] != true
+    }
+    val ox = if (w != nil) { math.div(w.left + w.right, 2) } else { math.div(level.WIDTH, 2) }
+    val oy = if (w != nil) { math.div(w.top + w.bottom, 2) } else { math.div(level.HEIGHT, 2) }
+    val search = fn(r:num, j:num):map|nil {
+        if (r > level.WIDTH) { return nil }
+        if (j == ringLength(r)) { return recur(r + 1, 0) }
+        val [x, y] = ringPoint(ox, oy, r, j)
+        if (inBounds(x, y) && open(x, y)) { {x: x, y: y} } else { recur(r, j + 1) }
+    }
+    search(0, 0)
+}
+
+// Where a new character starts when random tries found the town at (cx, cy)
+// full, as [cx, cy, spot]: the nearest open square in its chunk, inside the
+// walls or out, else in the chunks around it, nearest first. With the whole
+// surface full, a street in the town, shared.
+val overflowSpot = fn(cx:num, cy:num):list {
+    val search = fn(r:num, j:num):list {
+        if (r > (world.size ?? 0)) {
+            val lv = chunk(cx, cy, 0)
+            return [cx, cy, if (lv.walls != nil) { insideSpot(lv) } else { level.freeSpot(lv) }]
+        }
+        if (j == ringLength(r)) { return recur(r + 1, 0) }
+        val [x, y] = ringPoint(cx, cy, r, j)
+        match (if (inWorld(x, y)) { nearestOpen(x, y) } else { nil }) {
+            spot: map => [x, y, spot]
+            _ => recur(r, j + 1)
+        }
+    }
+    search(0, 0)
 }
 
 // A free square of street or yard inside settlement chunk `lv`'s walls.
