@@ -687,6 +687,78 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
 }
 
 #[test]
+fn a_module_variable_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-module-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // Each assignment updates the collection its module-level variable
+    // holds. A value read from it before keeps what it was, a call in the
+    // right operand that assigns the variable is overwritten as before, and
+    // an update that fails leaves the variable as it was.
+    fs::write(
+        &program,
+        "var m:map = {a: 1}\n\
+         var l:list = [1]\n\
+         var s = \"x\"\n\
+         val S = struct { x, y }\n\
+         val id = fn(v) { v }\n\
+         var r = id(S { x: 1, y: 2 })\n\
+         var c = id({hp: 3})\n\
+         val bump = fn() { m = m + {bumped: true}; {c: 3} }\n\
+         val main = fn() {\n\
+             val before = [m, l, r, c]\n\
+             m = m + {b: 2}\n\
+             val calls = [bump]\n\
+             m = m + calls[0]()\n\
+             m = m - \"a\"\n\
+             l = l :+ 2\n\
+             l = l + [3]\n\
+             s = s + \"y\" + 5\n\
+             r = r copy {y: 9}\n\
+             c = c copy {hp: c.hp - 1}\n\
+             println(before)\n\
+             println(m, l, s, r, c)\n\
+             val fail = fn(update) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 update()\n\
+             }\n\
+             fail(fn() { l = l + id(5) })\n\
+             fail(fn() { m = m - id(fn() { 1 }) })\n\
+             fail(fn() { r = r copy {z: 1} })\n\
+             fail(fn() { c = c + 1 })\n\
+             println(m, l, r, c)\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines[..2],
+            [
+                "[{\"a\": 1}, [1], struct {\"x\": 1, \"y\": 2}, {\"hp\": 3}]",
+                "{\"c\": 3, \"b\": 2} [1, 2, 3] xy5 struct {\"x\": 1, \"y\": 9} {\"hp\": 2}",
+            ],
+            "{stdout}"
+        );
+        assert_eq!(
+            lines[6], "{\"c\": 3, \"b\": 2} [1, 2, 3] struct {\"x\": 1, \"y\": 9} {\"hp\": 2}",
+            "{stdout}"
+        );
+        assert_eq!(lines.len(), 7, "{stdout}");
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
+}
+
+#[test]
 fn an_import_in_a_function_resolves_from_the_module_that_made_it() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-import-in-function-{}",

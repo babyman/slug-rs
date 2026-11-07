@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Assigning to a module-level `var` updates its collection in place:
+  `players = players + {[id]: player}`, `items = items :+ item`, and
+  `player = player copy {hp: 3}` copied the whole map, list, or struct,
+  because the variable still held it while the operator ran. The Crawl
+  clutch's 100 years of history run 0.94x as long; other programs are
+  unchanged. A value read from the variable before keeps what it was, and an
+  update that fails leaves the variable as it was. Compiled artifacts use two
+  new instructions; older `.cslug` files still load.
+
 - The source benchmarks run the Crawl clutch as it ships: `crawl-ticks`
   plays two players through 300 ticks of a fresh world, `crawl-history`
   runs 100 years of its empires' history, and the hold-out `crawl-pages`

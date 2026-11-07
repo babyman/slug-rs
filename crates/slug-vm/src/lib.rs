@@ -38,9 +38,9 @@ pub use bytecode::PackedOpcode;
 pub use bytecode::{
     BinaryOperator, BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture,
     CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
-    ForeignResourceSignature, GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId,
-    MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program,
-    ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
+    ForeignResourceSignature, GlobalNameId, GlobalUpdate, Instruction, MatchMapKey, MatchPattern,
+    MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
+    Program, ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
     StructFieldsId,
 };
 #[doc(hidden)]

@@ -775,20 +775,23 @@ impl Compiler {
                         .with_extent(expression));
                     }
                     self.expression(state, value)?;
-                    // Stores consume their operand, while assignment expressions evaluate to it.
-                    state.emit(Op::Duplicate, &expression.span);
-                    match binding {
-                        Binding::Global { .. } => {
-                            state.emit(Op::SetGlobal(name.clone()), &expression.span);
-                        }
-                        Binding::Local { slot, .. } => {
-                            state.emit(Op::SetLocal(slot), &expression.span);
-                        }
-                        Binding::Capture { slot, .. } => {
-                            state.emit(Op::SetCapture(slot), &expression.span);
-                        }
-                        Binding::Inherited { .. } => {
-                            unreachable!("inherited bindings are captured lazily")
+                    if !matches!(binding, Binding::Global { .. }) || !state.fuse_global_update(name)
+                    {
+                        // Stores consume their operand, while assignment expressions evaluate to it.
+                        state.emit(Op::Duplicate, &expression.span);
+                        match binding {
+                            Binding::Global { .. } => {
+                                state.emit(Op::SetGlobal(name.clone()), &expression.span);
+                            }
+                            Binding::Local { slot, .. } => {
+                                state.emit(Op::SetLocal(slot), &expression.span);
+                            }
+                            Binding::Capture { slot, .. } => {
+                                state.emit(Op::SetCapture(slot), &expression.span);
+                            }
+                            Binding::Inherited { .. } => {
+                                unreachable!("inherited bindings are captured lazily")
+                            }
                         }
                     }
                 }

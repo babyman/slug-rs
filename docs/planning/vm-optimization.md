@@ -2485,3 +2485,48 @@ to 1.76M and its time by about 1% (eleven rounds against `a50f21d`:
 `SetLocal` is a short, predictable handler; removing dispatches pays only
 when the removed handlers do real work, as with the value-context booleans
 earlier. The packed operand was not worth that.
+
+## Crawl as a workload, and module variables updated in place (2026-11-06)
+
+The Crawl clutch (about 6,600 lines in 13 modules) is now three source
+workloads that import it as it ships: `crawl-ticks` (two players, 300 ticks
+of a fresh world from seed 6), `crawl-history` (100 years of its empires'
+history, then one player's first screen), both tuned, and the hold-out
+`crawl-pages` (the web front end's page, rendered through
+`slug.text.mustache` after each of 60 ticks). `crawl-history` was briefly a
+hold-out but was profiled before its timing was taken, so it moved to the
+tuned group and `crawl-pages` was written instead. PGO builds are keyed on
+the checkout's clutch modules too.
+
+Both tuned profiles are flat: dispatch about 16%, value clone and drop
+about 15%. Crawl keeps its state in module-level `var`s and updates them as
+`players = players + {[id]: player}` or `player = player copy {...}` (34
+sites). A local's last read moves its value (`bytecode/liveness.rs`), but a
+module binding keeps its reference while the operator runs, so every such
+update copied the whole collection: merge, copy, and drop came to about 8%
+of `crawl-ticks` and 2% of `crawl-history`.
+
+`UpdateGlobal { name, operator }` (`+`, `-`, `:+`) and `CopyGlobal { name,
+fields }` replace the operator, `Duplicate`, and `SetGlobal` of an
+assignment to a module-level name when no jump lands after the operator.
+When the operation cannot fail (map plus map, list plus list, string plus
+anything, list `:+` anything, map minus a valid key, a copy whose names are
+distinct and, for a struct, its fields), the instruction drops the
+binding's value first, so an operand it shared with is updated in place;
+it then assigns the result through the cached binding cell. Dropping early
+is invisible: nothing runs between the drop and the assignment. A failing
+operation keeps the binding as it was. Both opcodes are appended, so older
+`.cslug` artifacts still load.
+
+Seven interleaved PGO rounds against `8c1a188`: `crawl-history` 0.94x
+(spread 3%/4%), `crawl-game` 0.96x, `crawl-ticks` 0.99x, everything else
+within its spread; tuned geomean 1.00x, hold-out 0.98x (`crawl-pages`
+0.98x, `text-wrap` 0.95x). No workload regressed.
+
+`crawl-ticks` gained little because its shared copies are elsewhere: about
+250k updates of shared collections copy 17M elements in all. Most are
+nested updates, `player = player copy {memory: player.memory + {[key]:
+rows}}`, where `player.memory` is still held by `player` while it is merged,
+and row lists rebuilt through calls (`write`, `remember`) in `see`. Moving
+a nested field out of its parent before the update would need the
+compiler to recognise `g copy {f: g.f OP e}`; not done.

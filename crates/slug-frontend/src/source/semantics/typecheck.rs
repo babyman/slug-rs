@@ -6256,6 +6256,56 @@ mod tests {
     }
 
     #[test]
+    fn module_variable_updates_assign_in_the_operator() {
+        use slug_vm::PackedOpcode::{
+            Add, CopyGlobal, ListAppend, SetGlobal, StructCopy, Subtract, UpdateGlobal,
+        };
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        for (source, absent) in [
+            (
+                "var m = {}\nval f = fn(k) { m = m + {[k]: 1} }\nf(\"a\")",
+                Add,
+            ),
+            (
+                "var m = {a: 1}\nval f = fn(k) { m = m - k }\nf(\"a\")",
+                Subtract,
+            ),
+            ("var l = []\nval f = fn(v) { l = l :+ v }\nf(1)", ListAppend),
+            (
+                "var p = {hp: 1}\nval f = fn() { p = p copy {hp: 2} }\nf()",
+                StructCopy,
+            ),
+        ] {
+            let opcodes = opcodes(source);
+            assert!(
+                opcodes.contains(&UpdateGlobal) || opcodes.contains(&CopyGlobal),
+                "{source}: {opcodes:?}"
+            );
+            assert!(
+                !opcodes.contains(&absent) && !opcodes.contains(&SetGlobal),
+                "{source}: {opcodes:?}"
+            );
+        }
+        // A jump past the operator would skip the assignment it now makes.
+        let branched = opcodes(
+            "var m = {}\nval f = fn(c) { m = if (c) { m + {a: 1} } else { m + {b: 2} } }\nf(true)",
+        );
+        assert!(branched.contains(&SetGlobal), "{branched:?}");
+        // A local updates in place by moving its last read instead.
+        let local = opcodes("val f = fn(xs) { var l = xs\n l = l :+ 1\n l }\nf([])");
+        assert!(!local.contains(&UpdateGlobal), "{local:?}");
+    }
+
+    #[test]
     fn module_function_calls_read_their_callee_after_the_arguments() {
         use slug_vm::PackedOpcode::{CallGlobal, CallPositional, GetGlobal};
         let counts = |source: &str| {

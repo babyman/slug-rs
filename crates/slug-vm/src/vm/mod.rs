@@ -26,7 +26,7 @@ use crate::{
     VmHost,
     bytecode::{
         BinaryOperator, CallArgumentsId, CaptureListId, DeferMode, EntrypointArguments,
-        GlobalNameId, InterpolationId, ListSpreadId, MOVE_LOCAL, MOVE_LOCAL_OPERAND,
+        GlobalNameId, GlobalUpdate, InterpolationId, ListSpreadId, MOVE_LOCAL, MOVE_LOCAL_OPERAND,
         PackedInstruction, PackedOpcode, SchemaFieldsId, SelectCase, SelectCasesId, SelectedCallId,
         StructFieldsId,
     },
@@ -54,6 +54,7 @@ mod scheduler;
 mod stack;
 #[cfg(feature = "concurrency")]
 pub(crate) mod timers;
+mod updates;
 
 #[cfg(feature = "concurrency")]
 use calls::ClosureCallOptions;
@@ -2142,6 +2143,18 @@ impl Vm {
             PackedOpcode::StructCopy => {
                 self.copy_struct(program, StructFieldsId::new(instruction.a))?;
             }
+            PackedOpcode::UpdateGlobal => {
+                let operator =
+                    GlobalUpdate::from_code(instruction.b).expect("validated update operator");
+                self.update_global(program, GlobalNameId::new(instruction.a), operator)?;
+            }
+            PackedOpcode::CopyGlobal => {
+                self.copy_global(
+                    program,
+                    GlobalNameId::new(instruction.a),
+                    StructFieldsId::new(instruction.b),
+                )?;
+            }
             PackedOpcode::GetIndexConstant => {
                 self.get_index_constant(program, operand)?;
             }
@@ -2224,16 +2237,7 @@ impl Vm {
             PackedOpcode::ListAppend => {
                 let (list, value) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
-                match &list {
-                    Value::List(values) => {
-                        self.record_list_view_materialization(values);
-                        self.record_collection_update(values.len(), values.is_uniquely_owned());
-                    }
-                    Value::Bytes(values) => {
-                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
-                    }
-                    _ => {}
-                }
+                self.record_list_append(&list);
                 self.stack.push(
                     list_append(list, value)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
@@ -2593,6 +2597,33 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "metrics")]
+    fn record_list_append(&self, list: &Value) {
+        match list {
+            Value::List(values) => {
+                self.record_list_view_materialization(values);
+                self.record_collection_update(values.len(), values.is_uniquely_owned());
+            }
+            Value::Bytes(values) => {
+                self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_copy(&self, value: &Value) {
+        match value {
+            Value::Map(value) => {
+                self.record_collection_update(value.len(), value.is_uniquely_owned());
+            }
+            Value::Struct(value) => {
+                self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+            }
+            _ => {}
+        }
+    }
+
     fn pooled_call_arguments<'a>(
         &self,
         program: &'a Program,
@@ -2917,15 +2948,7 @@ impl Vm {
         let replacements = self.pop_values(fields.len())?;
         let value = self.pop()?;
         #[cfg(feature = "metrics")]
-        match &value {
-            Value::Map(value) => {
-                self.record_collection_update(value.len(), value.is_uniquely_owned());
-            }
-            Value::Struct(value) => {
-                self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
-            }
-            _ => {}
-        }
+        self.record_copy(&value);
         self.stack.push(
             copy_value(value, fields, &replacements)
                 .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,

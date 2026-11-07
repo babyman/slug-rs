@@ -12,7 +12,7 @@ use super::{
         ModuleDeclaration, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
         SelectCasesId, SelectedCallId, SourceId, SourceSpan, SpanId, StructFieldsId,
     },
-    op::{BinaryOperator, CallArgumentKind, DeferMode, Instruction, Op},
+    op::{BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op},
 };
 
 /// What verification tracks at an instruction: the operand-stack height and
@@ -578,6 +578,14 @@ impl Program {
             Op::StructCopy(fields) => Some(Op::StructCopyPooled(
                 self.push_struct_fields(mem::take(fields)),
             )),
+            Op::UpdateGlobal { name, operator } => Some(Op::UpdateGlobalPooled {
+                name: self.intern_global_name(mem::take(name)),
+                operator: *operator,
+            }),
+            Op::CopyGlobal { name, fields } => Some(Op::CopyGlobalPooled {
+                name: self.intern_global_name(mem::take(name)),
+                fields: self.push_struct_fields(mem::take(fields)),
+            }),
             Op::TryMatch {
                 pattern,
                 bindings,
@@ -769,6 +777,12 @@ impl Program {
             Op::StructSchemaPooled(v) => (PackedOpcode::StructSchema, v.0, 0, 0),
             Op::StructPooled(v) => (PackedOpcode::Struct, v.0, 0, 0),
             Op::StructCopyPooled(v) => (PackedOpcode::StructCopy, v.0, 0, 0),
+            Op::UpdateGlobalPooled { name, operator } => {
+                (PackedOpcode::UpdateGlobal, name.0, operator.code(), 0)
+            }
+            Op::CopyGlobalPooled { name, fields } => {
+                (PackedOpcode::CopyGlobal, name.0, fields.0, 0)
+            }
             Op::GetIndex => (PackedOpcode::GetIndex, 0, 0, 0),
             Op::GetIndexConstant(v) => (PackedOpcode::GetIndexConstant, operand(*v), 0, 0),
             Op::GetSlice {
@@ -942,6 +956,16 @@ impl Program {
             PackedOpcode::StructSchema => Op::StructSchemaPooled(SchemaFieldsId(instruction.a)),
             PackedOpcode::Struct => Op::StructPooled(StructFieldsId(instruction.a)),
             PackedOpcode::StructCopy => Op::StructCopyPooled(StructFieldsId(instruction.a)),
+            PackedOpcode::UpdateGlobal => Op::UpdateGlobalPooled {
+                name: GlobalNameId(instruction.a),
+                operator: GlobalUpdate::from_code(instruction.b).ok_or_else(|| {
+                    String::from("packed instruction references missing update operator")
+                })?,
+            },
+            PackedOpcode::CopyGlobal => Op::CopyGlobalPooled {
+                name: GlobalNameId(instruction.a),
+                fields: StructFieldsId(instruction.b),
+            },
             PackedOpcode::GetIndex => Op::GetIndex,
             PackedOpcode::GetIndexConstant => Op::GetIndexConstant(n(instruction.a)),
             PackedOpcode::GetSlice => Op::GetSlice {
@@ -1353,6 +1377,8 @@ impl Program {
             | Op::DefineGlobalPooled(id)
             | Op::SetGlobalPooled(id)
             | Op::CallGlobalPooled { name: id, .. }
+            | Op::UpdateGlobalPooled { name: id, .. }
+            | Op::CopyGlobalPooled { name: id, .. }
                 if self.global_name(*id).is_none() =>
             {
                 Err(format!(
@@ -1386,7 +1412,9 @@ impl Program {
                 "{} references missing schema field metadata",
                 location()
             )),
-            Op::StructPooled(id) | Op::StructCopyPooled(id)
+            Op::StructPooled(id)
+            | Op::StructCopyPooled(id)
+            | Op::CopyGlobalPooled { fields: id, .. }
                 if self.struct_fields(*id).is_none() =>
             {
                 Err(format!(
@@ -1526,7 +1554,11 @@ impl Program {
             | Op::MakeClosure { .. }
             | Op::StructSchema(_)
             | Op::Struct(_)
-            | Op::StructCopy(_) => Err(format!("{} retains unpooled opcode metadata", location())),
+            | Op::StructCopy(_)
+            | Op::UpdateGlobal { .. }
+            | Op::CopyGlobal { .. } => {
+                Err(format!("{} retains unpooled opcode metadata", location()))
+            }
             _ => Ok(()),
         }
     }
@@ -1809,8 +1841,12 @@ impl Program {
                     .count(),
                 1,
             ),
-            Op::Struct(fields) | Op::StructCopy(fields) => (fields.len() + 1, 1),
-            Op::StructPooled(id) | Op::StructCopyPooled(id) => (
+            Op::Struct(fields) | Op::StructCopy(fields) | Op::CopyGlobal { fields, .. } => {
+                (fields.len() + 1, 1)
+            }
+            Op::StructPooled(id)
+            | Op::StructCopyPooled(id)
+            | Op::CopyGlobalPooled { fields: id, .. } => (
                 self.struct_fields(*id)
                     .expect("validated struct field metadata")
                     .len()
@@ -1819,6 +1855,8 @@ impl Program {
             ),
             Op::CombineOverloads
             | Op::GetIndex
+            | Op::UpdateGlobal { .. }
+            | Op::UpdateGlobalPooled { .. }
             | Op::Add
             | Op::AddNum
             | Op::Subtract

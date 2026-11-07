@@ -100,6 +100,8 @@ pub enum PackedOpcode {
     CallGlobal,
     ConstantBinary,
     MatchLocals,
+    UpdateGlobal,
+    CopyGlobal,
 }
 
 impl PackedOpcode {
@@ -189,6 +191,8 @@ impl PackedOpcode {
             PackedOpcode::CallGlobal,
             PackedOpcode::ConstantBinary,
             PackedOpcode::MatchLocals,
+            PackedOpcode::UpdateGlobal,
+            PackedOpcode::CopyGlobal,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

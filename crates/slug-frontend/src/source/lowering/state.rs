@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{BinaryOperator, Capture, Chunk, Constant, MatchPattern, Op, SourceSpan, Value};
+use slug_vm::{
+    BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, MatchPattern, Op, SourceSpan, Value,
+};
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
 /// `Local` is a slot of the enclosing function and a `Capture` is a slot of
@@ -129,6 +131,34 @@ impl State {
             return false;
         }
         self.chunk.code.truncate(end - 1);
+        true
+    }
+    /// Makes the `+`, `-`, `:+`, or `copy` just emitted for the value of an
+    /// assignment to the module-level `name` assign it as well, so that the
+    /// collection it updates can change in place. No jump may land after the
+    /// operator, where the assignment's own instructions would have been.
+    pub(super) fn fuse_global_update(&mut self, name: &str) -> bool {
+        let Some(index) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > index {
+            return false;
+        }
+        let op = &mut self.chunk.code[index].op;
+        let fused = match op {
+            Op::StructCopy(fields) => Op::CopyGlobal {
+                name: name.into(),
+                fields: std::mem::take(fields),
+            },
+            _ => match GlobalUpdate::of(op) {
+                Some(operator) => Op::UpdateGlobal {
+                    name: name.into(),
+                    operator,
+                },
+                None => return false,
+            },
+        };
+        *op = fused;
         true
     }
     /// Removes the `GetGlobal` just emitted for a call's callee and returns
