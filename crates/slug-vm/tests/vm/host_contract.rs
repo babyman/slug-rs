@@ -73,6 +73,10 @@ impl VmHost for RecordingHost {
         self.native_resources.clone()
     }
 
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
     fn configuration(&self) -> &dyn VmConfiguration {
         &self.configuration
     }

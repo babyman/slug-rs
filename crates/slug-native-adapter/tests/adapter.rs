@@ -750,6 +750,10 @@ impl VmHost for Host {
         self.0.resources.clone()
     }
 
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
     fn configuration(&self) -> &dyn VmConfiguration {
         &self.0.configuration
     }

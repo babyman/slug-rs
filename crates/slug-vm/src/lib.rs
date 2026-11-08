@@ -25,6 +25,7 @@ mod scheduler_signal;
 mod scheduler_signal;
 mod source_diagnostic;
 mod value;
+mod variables;
 mod vm;
 
 #[doc(hidden)]
@@ -37,7 +38,7 @@ pub use bytecode::PackedOpcode;
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
     BinaryOperator, BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture,
-    CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
+    CaptureDetail, CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
     ForeignResourceSignature, GlobalNameId, GlobalUpdate, Instruction, MatchMapKey, MatchPattern,
     MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
     Program, ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
@@ -65,6 +66,9 @@ pub use value::Task;
 pub use value::{
     Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value, ValueKind,
 };
+#[doc(hidden)]
+pub use variables::{BindingKind, BindingName};
+pub use variables::{ModuleVariables, module_variables};
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]
 pub use vm::InteractiveExecution;

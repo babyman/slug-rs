@@ -522,6 +522,10 @@ impl Vm {
                 let argument_count = arguments.len();
                 let (locals, reused) = self.take_frame_locals(arguments, chunk.locals);
                 self.record_frame_locals(locals.capacity(), argument_count, reused);
+                #[cfg(feature = "concurrency")]
+                if closure.domain != self.domain && self.refuses_fork_call(&closure) {
+                    return Err(self.fork_call_error(&closure));
+                }
                 self.push_frame(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
                     globals: closure

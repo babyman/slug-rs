@@ -905,7 +905,6 @@ mod minted_producers {
 // `docs/planning/fork-tasks.md`.
 
 #[test]
-#[ignore = "fork: phase 2 (docs/planning/fork-tasks.md)"]
 fn a_fork_cannot_call_a_native_function_not_declared_thread_safe() {
     fn answer(call: &mut NativeCall<'_>) -> NativeStatus {
         call.return_value(NativeOwnedValue::integer(42))
@@ -924,7 +923,7 @@ fn a_fork_cannot_call_a_native_function_not_declared_thread_safe() {
     )
     .expect("compile fork native source");
     let error = vm
-        .run_named(&program, "main")
+        .run_program(&program)
         .expect_err("a fork calling an undeclared native fails");
     assert!(
         error.message.contains("`answer`") && error.message.contains("thread-safe"),
@@ -934,7 +933,6 @@ fn a_fork_cannot_call_a_native_function_not_declared_thread_safe() {
 }
 
 #[test]
-#[ignore = "fork: phase 2 (docs/planning/fork-tasks.md)"]
 fn a_fork_can_hold_its_spawners_resource_but_cannot_return_it() {
     let closed = Rc::new(Cell::new(0));
     let destroyed = Rc::new(Cell::new(0));
@@ -946,14 +944,14 @@ fn a_fork_can_hold_its_spawners_resource_but_cannot_return_it() {
         "val main = fn() {\n    val r = make_resource()\n    val t = fork { val kept = r; 1 }\n    select { await t }\n}\n",
     )
     .expect("compile holding source");
-    assert_eq!(vm.run_named(&holds, "main").unwrap(), Value::Int(1));
+    assert_eq!(vm.run_program(&holds).unwrap(), Value::Int(1));
     let returns = compile(
         "fork-returns-resource.slug",
         "val main = fn() {\n    val r = make_resource()\n    val t = fork { r }\n    select { await t }\n}\n",
     )
     .expect("compile returning source");
     let error = vm
-        .run_named(&returns, "main")
+        .run_program(&returns)
         .expect_err("a resource is not sendable");
     assert!(error.message.contains("sendable"), "{}", error.message);
 }

@@ -2,4 +2,3 @@ schema = 1
 outcome = "success"
 stdout = "declared\nspawner then child\nspawner again\n"
 stderr = ""
-pending = "fork: phase 2 (docs/planning/fork-tasks.md)"

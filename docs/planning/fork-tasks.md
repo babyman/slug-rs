@@ -72,8 +72,10 @@ phase 2; the write rule and the module-initialization rule are a lexical
 pass (`semantics/forks.rs`), and only the result check uses types; `.cslug`
 stores a `task var` as mutability byte 2, so existing artifacts still read;
 `thread_safe` is per function, not per clutch, since core's stdin reader and
-signal registration are not. Open: the REPL compiles each entry as module
-top-level code, so `fork` at the prompt is reported as forking during
+signal registration are not. The REPL, which compiles each entry as module
+top-level code, runs the fork pass without the initialization rule (it ran
+no fork checks before), so `fork` may be typed at the prompt; phase 2's
+runtime rule must likewise not treat an interactive entry as module
 initialization.
 
 
@@ -92,7 +94,35 @@ initialization.
 - **Docs and tooling:** the language specification, `language-support.tsv`,
   the formatter, and the REPL's keyword list.
 
-### Phase 2: cooperative fork and `task var` (VM, one thread)
+### Phase 2: cooperative fork and `task var` (VM, one thread) (done)
+
+Landed in four steps (fork tasks; module `var` snapshots and `task var`;
+sendability; natives, imports, and initialization), with these choices:
+
+- **Views.** A task VM carries an optional `TaskView`: its fork context (a
+  domain id, the capture cells it snapshotted, its snapshot of every other
+  `var`) and its own copy of each `task var`. Ordinary tasks have none, so a
+  global read outside forks pays one branch. A nursery body shares its
+  task's view.
+- **Registry.** Each host shares a `ModuleVariables` registry, like its
+  native-resource registry, which also counts initializing modules and gives
+  fork domains. A module binding's kind lives in a shared `BindingName`, so
+  `Value` stays three words and importers see the kind set at install.
+- **Domains** stamp closures and task handles; using one from another
+  domain fails. Channels are marked once a fork uses them, and every later
+  send on one is checked; a fork's immediate receives and its result are
+  checked by a scan that stops at leaves.
+- **Captures.** Chunks record each capture's name and mutability, so a fork
+  can refuse a closure made outside it that captures a `var`.
+
+Known gaps, for later phases: `.cslug` does not yet carry capture details
+(decoded closures count as capturing no `var`; phase 5 adds them with a
+compatibility bump); a native resource made outside a fork is caught when
+returned or sent, but not when passed to a native declared thread-safe
+(none takes a resource today); REPL session variables are not registered, so
+a fork at the prompt reads them live; a value a woken fork receives is not
+checked, only sends on channels a fork has used.
+
 
 The full semantics on one thread, under `concurrency`. After this phase
 programs can use `fork` and agents can be evaluated on it; later phases

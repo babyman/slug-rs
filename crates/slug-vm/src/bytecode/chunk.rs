@@ -254,6 +254,8 @@ pub struct CompiledChunk {
     #[doc(hidden)]
     pub code: Vec<PackedInstruction>,
     pub(crate) invalid_instructions: HashMap<usize, String>,
+    /// What each capture slot holds, when the compiler recorded it.
+    pub(crate) captures: Vec<super::metadata::CaptureDetail>,
     /// For each constant, the map entry position where a `GetIndexConstant`
     /// with that key last found it: checked first, then refreshed by a full
     /// lookup when the key is not there. Lowering gives each occurrence of a
@@ -268,6 +270,7 @@ pub(crate) fn index_hints(constants: usize) -> alloc::boxed::Box<[core::cell::Ce
 }
 
 impl CompiledChunk {
+    #[allow(clippy::too_many_arguments)] // One per field the artifact records.
     pub(crate) fn from_cslug(
         name: String,
         arity: usize,
@@ -276,8 +279,10 @@ impl CompiledChunk {
         locals: usize,
         constants: Vec<Constant>,
         code: Vec<PackedInstruction>,
+        captures: Vec<super::metadata::CaptureDetail>,
     ) -> Self {
         Self {
+            captures,
             name,
             arity,
             binds_full_positional_calls: !parameters.iter().any(|parameter| parameter.variadic),
@@ -302,6 +307,7 @@ impl CompiledChunk {
         usize,
         &[Constant],
         &[PackedInstruction],
+        &[super::metadata::CaptureDetail],
     ) {
         (
             &self.name,
@@ -311,6 +317,7 @@ impl CompiledChunk {
             self.locals,
             &self.constants,
             &self.code,
+            &self.captures,
         )
     }
 }
@@ -327,6 +334,8 @@ pub struct Chunk {
     pub locals: usize,
     pub constants: Vec<Constant>,
     pub code: Vec<Instruction>,
+    /// What each capture slot holds, when the compiler recorded it.
+    pub captures: Vec<super::metadata::CaptureDetail>,
     pub(crate) spans: Vec<SourceSpan>,
     pub(crate) span_ids: HashMap<SourceSpan, SpanId>,
 }
@@ -342,6 +351,7 @@ impl Chunk {
             locals: arity,
             constants: Vec::new(),
             code: Vec::new(),
+            captures: Vec::new(),
             spans: Vec::new(),
             span_ids: HashMap::new(),
         }

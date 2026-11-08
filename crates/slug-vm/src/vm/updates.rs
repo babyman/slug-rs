@@ -176,6 +176,11 @@ impl Vm {
     /// closure has resolved its slot, returning the old value; otherwise
     /// hands `value` back.
     fn replace_cached_global(&self, id: GlobalNameId, value: Value) -> Result<Value, Value> {
+        // A task with its own view of the variables assigns through it.
+        #[cfg(feature = "concurrency")]
+        if self.view.is_some() {
+            return Err(value);
+        }
         let slot = self
             .frames
             .last()

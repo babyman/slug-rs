@@ -291,6 +291,7 @@ impl Program {
             index_hints: super::chunk::index_hints(chunk.constants.len()),
             code,
             invalid_instructions,
+            captures: chunk.captures.clone(),
         };
         let index = self.chunks.len();
         self.names.insert(compiled.name.clone(), index);
@@ -1118,6 +1119,7 @@ impl Program {
                 .iter()
                 .map(Self::unpack_instruction)
                 .collect::<Result<_, _>>()?,
+            captures: chunk.captures.clone(),
             spans: Vec::new(),
             span_ids: HashMap::new(),
         })

@@ -25,8 +25,15 @@ use super::{
 
 /// Returns an error for the first write inside a fork to a binding declared
 /// outside it, or the first fork in module top-level code.
-pub(super) fn check_forks(expressions: &[Expr]) -> Result<(), SourceError> {
-    let mut analysis = Analysis::default();
+///
+/// An interactive session's entries are top-level code too, but each runs
+/// after the earlier ones have finished, so a fork typed at the prompt
+/// cannot see a value set after it starts: `interactive` allows it.
+pub(super) fn check_forks(expressions: &[Expr], interactive: bool) -> Result<(), SourceError> {
+    let mut analysis = Analysis {
+        interactive,
+        ..Analysis::default()
+    };
     analysis.scopes.push(HashMap::new());
     analysis.predeclare(expressions);
     for expression in expressions {
@@ -53,6 +60,8 @@ struct Analysis {
     /// How many function bodies enclose the expression being walked; zero
     /// is module top-level code.
     functions: usize,
+    /// The expressions are an interactive session's entry.
+    interactive: bool,
 }
 
 impl Analysis {
@@ -197,7 +206,7 @@ impl Analysis {
                 if !fork {
                     return self.walk(body);
                 }
-                if self.functions == 0 {
+                if self.functions == 0 && !self.interactive {
                     return Err(SourceError::semantic(
                         SourceErrorCode::ForkDuringInitialization,
                         "a fork cannot start while a module initializes: it could see the module's values set after it started; start it from a function, such as `main`",

@@ -30,6 +30,10 @@ pub enum RuntimeErrorKind {
     /// An operation the host's user has not granted, such as describing a
     /// module's unexported declarations.
     Permission,
+    /// Something a `fork` cannot do: change state outside it, use or pass on
+    /// an unsendable value, call a native function not declared
+    /// thread-safe, or initialize a module.
+    Fork,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -327,5 +331,6 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
         RuntimeErrorKind::Permission => "permission",
+        RuntimeErrorKind::Fork => "fork",
     }
 }

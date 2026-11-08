@@ -553,6 +553,7 @@ pub fn runtime_code(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
         RuntimeErrorKind::Permission => "permission",
+        RuntimeErrorKind::Fork => "fork",
     }
 }
 

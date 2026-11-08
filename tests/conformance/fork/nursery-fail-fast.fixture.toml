@@ -2,4 +2,4 @@ schema = 1
 outcome = "runtime-error"
 stdout = ""
 stderr_contains = ["uncaught throw: boom"]
-pending = "fork: phase 2 (docs/planning/fork-tasks.md)"
+timeout_ms = 5000

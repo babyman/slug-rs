@@ -194,6 +194,14 @@ pub struct ModuleTag {
     pub arguments: Vec<Value>,
 }
 
+/// The binding a function captures in one capture slot: its name, and
+/// whether it is a `var`, which a fork cannot share with its spawner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureDetail {
+    pub name: String,
+    pub mutable: bool,
+}
+
 /// Retained source metadata for a top-level declaration.
 // Each flag is a separate fact a source declaration states (`var`, `task`,
 // `export`, `foreign`), and `describe` reports them as such.

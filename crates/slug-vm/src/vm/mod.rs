@@ -45,6 +45,8 @@ use crate::value::task_state_layout;
 mod calls;
 mod cleanup;
 mod error;
+#[cfg(feature = "concurrency")]
+mod fork;
 mod frames;
 mod installation;
 mod operations;
@@ -271,6 +273,8 @@ pub(crate) struct TaskExecution {
     vm: Vm,
     settle_nursery: bool,
     interactive_imported_globals: Option<Rc<RefCell<HashSet<String>>>>,
+    /// A fork's task, whose result must be sendable.
+    forked: bool,
 }
 
 #[cfg(feature = "concurrency")]
@@ -346,6 +350,10 @@ impl TaskExecution {
                 } else {
                     result
                 };
+                let result = match result {
+                    Ok(value) if self.forked => self.vm.sendable_result(value),
+                    result => result,
+                };
                 TaskRunOutcome::Settled(result)
             }
         }
@@ -402,6 +410,18 @@ pub struct Vm {
     direct_task_limit: Option<usize>,
     #[cfg(feature = "concurrency")]
     direct_task_count: Option<Rc<Cell<usize>>>,
+    /// What this VM's task sees of the module variables, when that is not
+    /// simply their values: inside a fork, or with `task var`s of its own.
+    /// A nursery body shares its task's view.
+    #[cfg(feature = "concurrency")]
+    view: Option<Rc<fork::TaskView>>,
+    /// The domain of the fork this VM's task runs in, or zero: its view's,
+    /// kept here so a call compares it with the callee's at no extra cost.
+    #[cfg(feature = "concurrency")]
+    domain: u32,
+    /// The module variables of every VM sharing this one's host.
+    #[cfg(feature = "concurrency")]
+    variables: crate::ModuleVariables,
     native_resources: NativeResourceRegistry,
     current_waiter: Option<Waiter>,
     suspension: Option<Suspension>,
@@ -492,7 +512,10 @@ impl InteractiveTask {
                         session_globals.insert(
                             name.clone(),
                             Value::Binding {
-                                name: name.clone().into(),
+                                name: Rc::new(crate::variables::BindingName::new(
+                                    name.clone(),
+                                    crate::variables::declared_kind(program, name),
+                                )),
                                 cell: binding_cell(value),
                             },
                         );
@@ -533,6 +556,8 @@ impl InteractiveTask {
                     global_slots: closure.program.as_deref().map(global_slots),
                     #[cfg(feature = "concurrency")]
                     capture_sources: closure.capture_sources.clone(),
+                    #[cfg(feature = "concurrency")]
+                    domain: closure.domain,
                 }))
             }
             Value::Overloads(values) => Value::Overloads(Rc::new(
@@ -575,6 +600,12 @@ impl Default for Vm {
             direct_task_limit: None,
             #[cfg(feature = "concurrency")]
             direct_task_count: None,
+            #[cfg(feature = "concurrency")]
+            view: None,
+            #[cfg(feature = "concurrency")]
+            domain: 0,
+            #[cfg(feature = "concurrency")]
+            variables: crate::module_variables(),
             native_resources: native_resource_registry(),
             current_waiter: None,
             suspension: None,
@@ -637,9 +668,13 @@ impl Vm {
     #[must_use]
     pub fn with_host(host: Rc<dyn VmHost>) -> Self {
         let native_resources = host.native_resources();
+        #[cfg(feature = "concurrency")]
+        let variables = host.module_variables();
         let mut vm = Self {
             host: Some(host),
             native_resources,
+            #[cfg(feature = "concurrency")]
+            variables,
             ..Self::default()
         };
         vm.install_configuration_builtins();
@@ -693,6 +728,8 @@ impl Vm {
         self.module_program = Some(program.program.clone());
         self.install_implicit_builtins(&program.program)?;
         self.bind_foreign_declarations(&program.program)?;
+        #[cfg(feature = "concurrency")]
+        let _initializing = self.variables.initializing();
         self.run_installed_execution(program)
     }
 
@@ -710,7 +747,11 @@ impl Vm {
         let program = self.install_compat_named(program, "main")?;
         self.install_implicit_builtins(&program.program)?;
         self.bind_foreign_declarations(&program.program)?;
+        #[cfg(feature = "concurrency")]
+        let initializing = self.variables.initializing();
         let top_level = self.run_installed_execution(&program)?;
+        #[cfg(feature = "concurrency")]
+        drop(initializing);
         let Some(entrypoint_specification) = program.program.entrypoint() else {
             return Ok(top_level);
         };
@@ -920,6 +961,7 @@ impl Vm {
             globals: Some(task_environment.globals.clone()),
             global_slots: Some(global_slots(&program)),
             capture_sources: Vec::new(),
+            domain: 0,
         });
         let imported_globals = Rc::new(RefCell::new(task_environment.imported_globals));
         let mut task_vm = self.module_closure_vm(
@@ -942,6 +984,7 @@ impl Vm {
                 vm: task_vm,
                 settle_nursery: false,
                 interactive_imported_globals: Some(imported_globals.clone()),
+                forked: false,
             },
             None,
             nursery.ready_queue(),
@@ -1062,7 +1105,10 @@ impl Vm {
                     destination_globals.insert(
                         name.clone(),
                         Value::Binding {
-                            name: name.clone().into(),
+                            name: Rc::new(crate::variables::BindingName::new(
+                                name.clone(),
+                                crate::variables::declared_kind(program, name),
+                            )),
                             cell: binding_cell(value.clone()),
                         },
                     );
@@ -1505,6 +1551,8 @@ impl Vm {
             metrics.verification_time += verification_started.elapsed();
         }
         program.share_string_constants();
+        #[cfg(feature = "concurrency")]
+        self.register_module_variables(&program);
         Ok(InstalledProgram {
             program: Rc::new(program),
             entry,
@@ -1622,6 +1670,8 @@ impl Vm {
                 global_slots: None,
                 #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
+                #[cfg(feature = "concurrency")]
+                domain: 0,
             }),
             call_span: None,
             ip: 0,
@@ -2029,6 +2079,8 @@ impl Vm {
                         global_slots: Some(self.shared_global_slots(program)),
                         #[cfg(feature = "concurrency")]
                         capture_sources: Vec::new(),
+                        #[cfg(feature = "concurrency")]
+                        domain: self.domain(),
                     })),
                     None => {
                         return Err(self.error_at(
@@ -2104,6 +2156,18 @@ impl Vm {
                             format!("capture {operand} does not exist"),
                         )
                     })?;
+                #[cfg(feature = "concurrency")]
+                if let Some(fork) = self.view.as_ref().and_then(|view| view.fork.as_ref())
+                    && fork.is_frozen(capture)
+                {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Fork,
+                        format!(
+                            "a fork cannot change a variable it captured from outside it: the fork{} sees a snapshot of it, so the change would never reach the code that declared it; return the value from the fork instead",
+                            fork.location()
+                        ),
+                    ));
+                }
                 *capture.borrow_mut() = value;
             }
             PackedOpcode::GetGlobal => {
@@ -2474,6 +2538,11 @@ impl Vm {
             .and_then(|slots| slots.get(id.index()))
             .map_or(UNRESOLVED_GLOBAL, core::cell::Cell::get);
         if slot != UNRESOLVED_GLOBAL {
+            // A task with its own view of the variables reads through it.
+            #[cfg(feature = "concurrency")]
+            if self.view.is_some() {
+                return self.global_value_by_name(program, id);
+            }
             // A module's top-level names are binding cells; read through an
             // initialized one and leave an uninitialized one to report.
             match self.globals.borrow().value(slot) {
@@ -2506,6 +2575,12 @@ impl Vm {
             .and_then(|slots| slots.get(id.index()))
         {
             cached.set(slot);
+        }
+        #[cfg(feature = "concurrency")]
+        if let Some(view) = &self.view
+            && let Some(value) = self.viewed_value(view, &globals, slot)
+        {
+            return Ok(value);
         }
         globals
             .value(slot)
@@ -2709,6 +2784,8 @@ impl Vm {
         {
             self.globals.borrow_mut().insert(name.into(), value);
         }
+        #[cfg(feature = "concurrency")]
+        self.register_defined_variable(program, name);
         Ok(())
     }
 
@@ -2722,6 +2799,10 @@ impl Vm {
             return Err(self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`")));
         }
         let value = self.pop()?;
+        #[cfg(feature = "concurrency")]
+        let Some(value) = self.set_viewed_global(name, value)? else {
+            return Ok(());
+        };
         if !self
             .globals
             .borrow()
@@ -2864,6 +2945,8 @@ impl Vm {
             global_slots: Some(self.shared_global_slots(program)),
             #[cfg(feature = "concurrency")]
             capture_sources: capture_sources.to_vec(),
+            #[cfg(feature = "concurrency")]
+            domain: self.domain(),
         })));
         Ok(())
     }
@@ -2984,7 +3067,7 @@ impl Vm {
     #[inline(never)]
     fn spawn(&mut self, program: &Program) -> VmResult<()> {
         #[cfg(feature = "concurrency")]
-        return self.spawn_task(program);
+        return self.start_task(program, false);
         #[cfg(not(feature = "concurrency"))]
         {
             let _ = program;
@@ -2995,14 +3078,13 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn fork(&mut self, program: &Program) -> VmResult<()> {
-        let _ = program;
         #[cfg(feature = "concurrency")]
-        return Err(self.error_at(
-            RuntimeErrorKind::NotImplemented,
-            "`fork` is not implemented yet".into(),
-        ));
+        return self.start_task(program, true);
         #[cfg(not(feature = "concurrency"))]
-        Err(self.runtime_capability_error("fork"))
+        {
+            let _ = program;
+            Err(self.runtime_capability_error("fork"))
+        }
     }
 
     #[cold]
@@ -3440,6 +3522,10 @@ impl Vm {
                 self.record_frame_locals(locals.capacity(), argument_count, reused);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
+                #[cfg(feature = "concurrency")]
+                if closure.domain != self.domain && self.refuses_fork_call(&closure) {
+                    return Err(self.fork_call_error(&closure));
+                }
                 self.push_frame(Frame {
                     program: frame_program.clone(),
                     globals: closure
@@ -3584,6 +3670,12 @@ impl Vm {
             direct_task_limit: options.direct_task_limit,
             #[cfg(feature = "concurrency")]
             direct_task_count: options.direct_task_count,
+            #[cfg(feature = "concurrency")]
+            view: self.view.clone(),
+            #[cfg(feature = "concurrency")]
+            domain: self.domain,
+            #[cfg(feature = "concurrency")]
+            variables: self.variables.clone(),
             native_resources: self.native_resources.clone(),
             current_waiter: None,
             suspension: None,
@@ -3620,13 +3712,20 @@ impl Vm {
         Ok(vm)
     }
 
+    /// Starts a task from the closure on the stack: a spawned task shares
+    /// its outer captures, and a fork (`forked`) sees a snapshot of all of
+    /// them, which it cannot assign.
     #[cfg(feature = "concurrency")]
-    fn spawn_task(&mut self, _program: &Program) -> VmResult<()> {
+    fn start_task(&mut self, _program: &Program, forked: bool) -> VmResult<()> {
         let closure = self.pop()?;
         let Value::Closure(closure) = closure else {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
-                "spawn expects a function or block".into(),
+                if forked {
+                    "fork expects a function or block".into()
+                } else {
+                    "spawn expects a function or block".into()
+                },
             ));
         };
         let admission = if let Some(limit) = self.direct_task_limit {
@@ -3643,15 +3742,22 @@ impl Vm {
         } else {
             None
         };
-        let captures = closure
+        let captures: Vec<_> = closure
             .captures
             .iter()
             .zip(&closure.capture_sources)
             .map(|(cell, source)| match source {
-                Capture::Local(_) => binding_cell(cell.borrow().clone()),
-                Capture::Capture(_) => cell.clone(),
+                Capture::Capture(_) if !forked => cell.clone(),
+                Capture::Local(_) | Capture::Capture(_) => binding_cell(cell.borrow().clone()),
             })
             .collect();
+        if forked && self.variables.any_initializing() {
+            return Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                "a fork cannot start while a module initializes: it could see the module's values set after it started; start it from a function, such as `main`".into(),
+            ));
+        }
+        let view = self.task_view(forked, &captures);
         let closure = Rc::new(Closure {
             chunk: closure.chunk,
             captures,
@@ -3659,9 +3765,13 @@ impl Vm {
             globals: closure.globals.clone(),
             global_slots: closure.global_slots.clone(),
             capture_sources: closure.capture_sources.clone(),
+            domain: view
+                .as_ref()
+                .and_then(|view| view.fork.as_ref())
+                .map_or(closure.domain, |fork| fork.domain),
         });
         let task_program = closure.program.clone().unwrap_or(self.active_program()?);
-        let vm = self.module_closure_vm(
+        let mut vm = self.module_closure_vm(
             task_program.clone(),
             closure,
             Vec::new(),
@@ -3673,16 +3783,21 @@ impl Vm {
                 nursery: self.nursery.clone(),
             },
         )?;
+        vm.domain = view
+            .as_ref()
+            .and_then(|view| view.fork.as_ref())
+            .map_or(0, |fork| fork.domain);
+        vm.view = view;
         let execution = TaskExecution {
             vm,
             settle_nursery: false,
             interactive_imported_globals: None,
+            forked,
         };
-        let task = Rc::new(Task::pending(
-            execution,
-            admission,
-            self.nursery.ready_queue(),
-        ));
+        let task = Rc::new(
+            Task::pending(execution, admission, self.nursery.ready_queue())
+                .in_domain(self.domain()),
+        );
         self.nursery.add_task(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
@@ -3779,6 +3894,7 @@ impl Vm {
             vm,
             settle_nursery: true,
             interactive_imported_globals: None,
+            forked: false,
         };
         let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
         nursery.enqueue(body.clone());
@@ -3847,6 +3963,17 @@ impl Vm {
                     ),
                 ));
             };
+            #[cfg(feature = "concurrency")]
+            if self.fork_context().is_some()
+                && host.module_initialized(importer, &name) == Some(false)
+            {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Fork,
+                    format!(
+                        "a fork cannot initialize `{name}`: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
+                    ),
+                ));
+            }
             let instance = host
                 .import_module(importer, &name)
                 .map_err(|error| self.import_error(&error, self.owned_span(None)))?;
@@ -4259,7 +4386,13 @@ impl Vm {
                     "closure references missing chunk".into(),
                 )
             })?;
-            if chunk.arity != count || !chunk.binds_full_positional_calls {
+            // A call across fork domains takes the general path, which
+            // checks it.
+            #[cfg(feature = "concurrency")]
+            let other_domain = closure.domain != self.domain;
+            #[cfg(not(feature = "concurrency"))]
+            let other_domain = false;
+            if chunk.arity != count || !chunk.binds_full_positional_calls || other_domain {
                 return Ok(Some(closure));
             }
             if chunk.locals < chunk.arity {
@@ -4676,6 +4809,10 @@ impl Vm {
                             format!("select recv expects chan, got {}", value.type_name()),
                         ));
                     };
+                    #[cfg(feature = "concurrency")]
+                    if self.fork_context().is_some() {
+                        channel.mark_crossed();
+                    }
                     RuntimeSelectCase::Receive { channel, handler }
                 }
                 SelectCase::Send { .. } => {
@@ -4691,6 +4828,10 @@ impl Vm {
                         return Err(
                             self.error_at(RuntimeErrorKind::Type, "send cannot send nil".into())
                         );
+                    }
+                    #[cfg(feature = "concurrency")]
+                    if self.view.is_some() || channel.crossed() {
+                        self.check_channel_send(&channel, &value)?;
                     }
                     RuntimeSelectCase::Send {
                         channel,
@@ -4738,6 +4879,12 @@ impl Vm {
                             format!("select await expects task, got {}", value.type_name()),
                         ));
                     };
+                    if task.domain() != self.domain() {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Fork,
+                            "this task handle is not sendable: only the task that started it, outside this fork, can await it".into(),
+                        ));
+                    }
                     RuntimeSelectCase::Await { task, handler }
                 }
                 #[cfg(not(feature = "concurrency"))]
@@ -4755,6 +4902,10 @@ impl Vm {
                 RuntimeSelectCase::Receive { channel, handler } => {
                     self.progress.track_native_channel(channel);
                     if let ChannelReceive::Ready(value) = channel.try_receive() {
+                        #[cfg(feature = "concurrency")]
+                        if self.fork_context().is_some() {
+                            self.check_sendable(&value, "a value received on a channel")?;
+                        }
                         self.push_select_result(value, handler.clone());
                         return Ok(());
                     }
@@ -4930,6 +5081,10 @@ impl Vm {
         resource_signature: Option<&ForeignResourceSignature>,
         span: Option<&SourceSpan>,
     ) -> VmResult<Value> {
+        #[cfg(feature = "concurrency")]
+        if self.view.is_some() {
+            self.check_fork_native(function)?;
+        }
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }

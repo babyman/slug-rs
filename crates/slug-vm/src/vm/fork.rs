@@ -1,0 +1,378 @@
+//! What a task sees of the module variables, and what a fork may not do.
+//!
+//! Every task owns a copy of each `task var`, taken from its spawner when it
+//! starts. A fork, a task started by `fork`, also sees a snapshot of its
+//! captures and of every other `var`, and cannot change what it did not
+//! make. Its context is shared by every task it spawns and nursery it opens,
+//! which are inside the fork too.
+
+use alloc::{rc::Rc, string::String};
+use core::cell::RefCell;
+
+use crate::{
+    SourceSpan, Value,
+    platform::{HashMap, HashSet},
+    value::BindingCell,
+    variables::{BindingKind, VarKey},
+};
+
+/// What one task sees of the module variables, when it does not simply see
+/// them: inside a fork, or with `task var`s of its own.
+pub(super) struct TaskView {
+    pub(super) fork: Option<Rc<ForkContext>>,
+    /// This task's copy of each `task var`.
+    own: RefCell<HashMap<VarKey, Value>>,
+}
+
+impl TaskView {
+    pub(super) fn new(fork: Option<Rc<ForkContext>>, own: HashMap<VarKey, Value>) -> Self {
+        Self {
+            fork,
+            own: RefCell::new(own),
+        }
+    }
+
+    /// The value this task sees for the variable `key` of `kind`, when it is
+    /// not the variable's own: its `task var` copy, or the fork's snapshot.
+    pub(super) fn value(&self, key: VarKey, kind: BindingKind) -> Option<Value> {
+        match kind {
+            BindingKind::Val => None,
+            BindingKind::TaskVar => self.own.borrow().get(&key).cloned(),
+            BindingKind::Var => self.fork.as_ref()?.vars.get(&key).cloned(),
+        }
+    }
+
+    /// The value of this task's copy of the `task var` `key`, if it has one.
+    pub(super) fn own_value(&self, key: VarKey) -> Option<Value> {
+        self.own.borrow().get(&key).cloned()
+    }
+
+    pub(super) fn set_own(&self, key: VarKey, value: Value) {
+        self.own.borrow_mut().insert(key, value);
+    }
+}
+
+pub(super) struct ForkContext {
+    /// What the fork and the tasks inside it make belongs to this domain.
+    pub(super) domain: u32,
+    /// Where the fork started, for errors.
+    span: Option<SourceSpan>,
+    /// The capture cells the fork's snapshot made, which it cannot assign.
+    frozen: HashSet<usize>,
+    /// Every module `var` but the `task var`s, as the fork started.
+    vars: HashMap<VarKey, Value>,
+}
+
+impl ForkContext {
+    pub(super) fn new(
+        domain: u32,
+        span: Option<SourceSpan>,
+        captures: &[BindingCell],
+        vars: HashMap<VarKey, Value>,
+    ) -> Self {
+        Self {
+            domain,
+            span,
+            frozen: captures.iter().map(cell_key).collect(),
+            vars,
+        }
+    }
+
+    /// Whether `cell` is a capture the fork's snapshot made.
+    pub(super) fn is_frozen(&self, cell: &BindingCell) -> bool {
+        self.frozen.contains(&cell_key(cell))
+    }
+
+    /// The fork's snapshot of the module `var` `key`.
+    pub(super) fn var(&self, key: VarKey) -> Option<Value> {
+        self.vars.get(&key).cloned()
+    }
+
+    /// ` at line:column`, or nothing when the fork has no source span.
+    pub(super) fn location(&self) -> String {
+        self.span.as_ref().map_or_else(String::new, |span| {
+            alloc::format!(" at {}:{}", span.line, span.column)
+        })
+    }
+}
+
+fn cell_key(cell: &BindingCell) -> usize {
+    Rc::as_ptr(cell).cast::<()>() as usize
+}
+
+use crate::{Program, value::GlobalTable, variables::declared_kind};
+
+use super::{RuntimeErrorKind, Vm, VmResult};
+
+impl Vm {
+    /// Marks and registers the module variables of `program`, whose names
+    /// this VM already holds as binding cells: a module's, before it runs,
+    /// so the modules that import a `var` share its kind.
+    pub(super) fn register_module_variables(&self, program: &Program) {
+        let mut globals = self.globals.borrow_mut();
+        for declaration in program
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.mutable)
+        {
+            let kind = BindingKind::of(true, declaration.task);
+            for name in &declaration.bindings {
+                let Some(slot) = globals.slot(name) else {
+                    continue;
+                };
+                if let Value::Binding { cell, .. } = globals.value(slot) {
+                    let cell = cell.clone();
+                    globals.mark(slot, kind);
+                    self.variables.register_cell(&cell, declaration.task);
+                }
+            }
+        }
+    }
+
+    /// Marks and registers `name` once `program` has defined it, when it is a
+    /// variable: an entry program's names are plain entries of its table.
+    pub(super) fn register_defined_variable(&self, program: &Program, name: &str) {
+        let slot = {
+            let globals = self.globals.borrow();
+            let Some(slot) = globals.slot(name) else {
+                return;
+            };
+            // A module's binding cells were registered when it installed.
+            if matches!(globals.value(slot), Value::Binding { .. }) {
+                return;
+            }
+            slot
+        };
+        let kind = declared_kind(program, name);
+        if kind == BindingKind::Val {
+            return;
+        }
+        self.globals.borrow_mut().mark(slot, kind);
+        self.variables
+            .register_slot(&self.globals, slot, kind == BindingKind::TaskVar);
+    }
+
+    /// The domain of the fork this VM's task runs in, or zero outside forks.
+    pub(super) fn domain(&self) -> u32 {
+        self.domain
+    }
+
+    pub(super) fn fork_context(&self) -> Option<&Rc<ForkContext>> {
+        self.view.as_ref().and_then(|view| view.fork.as_ref())
+    }
+
+    /// The identity and kind of the variable in `slot`.
+    fn variable_at(&self, globals: &GlobalTable, slot: u32) -> (VarKey, BindingKind) {
+        match globals.value(slot) {
+            Value::Binding { cell, name } => (VarKey::cell(cell), name.kind()),
+            _ => (VarKey::slot(&self.globals, slot), globals.kind(slot)),
+        }
+    }
+
+    /// What `view` sees in `slot`, when it is not the variable's own value.
+    pub(super) fn viewed_value(
+        &self,
+        view: &TaskView,
+        globals: &GlobalTable,
+        slot: u32,
+    ) -> Option<Value> {
+        let (key, kind) = self.variable_at(globals, slot);
+        view.value(key, kind)
+    }
+
+    /// Assigns `value` to the module-level `name` as this task sees it: its
+    /// own copy of a `task var`, or, in a fork, an error for any other
+    /// `var`. Hands `value` back when the assignment changes the variable
+    /// itself.
+    pub(super) fn set_viewed_global(&self, name: &str, value: Value) -> VmResult<Option<Value>> {
+        let Some(view) = &self.view else {
+            return Ok(Some(value));
+        };
+        let globals = self.globals.borrow();
+        let Some(slot) = globals.slot(name) else {
+            return Ok(Some(value));
+        };
+        let (key, kind) = self.variable_at(&globals, slot);
+        drop(globals);
+        match (kind, &view.fork) {
+            (BindingKind::TaskVar, _) => {
+                view.set_own(key, value);
+                Ok(None)
+            }
+            (BindingKind::Var, Some(fork)) => Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                alloc::format!(
+                    "a fork cannot change `{name}`, a module `var`: the fork{} sees a snapshot of it, so the change would never reach the rest of the program; return the value from the fork, or declare it `task var {name}` if each task's copy is its own",
+                    fork.location()
+                ),
+            )),
+            _ => Ok(Some(value)),
+        }
+    }
+
+    /// What a task started now sees: its own copy of each `task var`, as
+    /// this task sees it, and, for a fork (`forked`), a snapshot of every
+    /// other `var` and of `captures`; a task started inside a fork is inside
+    /// it too.
+    pub(super) fn task_view(&self, forked: bool, captures: &[BindingCell]) -> Option<Rc<TaskView>> {
+        let parent = self.view.as_ref();
+        let own = if self.variables.has_task_vars() {
+            self.variables
+                .snapshot(true, |key| parent.and_then(|view| view.own_value(key)))
+        } else {
+            HashMap::new()
+        };
+        let enclosing = parent.and_then(|view| view.fork.clone());
+        let fork = if forked {
+            let vars = self.variables.snapshot(false, |key| {
+                enclosing.as_ref().and_then(|fork| fork.var(key))
+            });
+            Some(Rc::new(ForkContext::new(
+                self.variables.next_domain(),
+                self.owned_span(None),
+                captures,
+                vars,
+            )))
+        } else {
+            enclosing
+        };
+        (fork.is_some() || !own.is_empty()).then(|| Rc::new(TaskView::new(fork, own)))
+    }
+}
+
+impl Vm {
+    /// Whether this task is a fork that cannot call `closure`: a function
+    /// made outside it that captures a `var`, which its creator can still
+    /// change.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn refuses_fork_call(&self, closure: &crate::Closure) -> bool {
+        self.fork_context().is_some()
+            && !closure.captures.is_empty()
+            && captured_var(closure).is_some()
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn fork_call_error(&self, closure: &crate::Closure) -> super::RuntimeError {
+        let name = captured_var(closure).unwrap_or_default();
+        self.error_at(
+            RuntimeErrorKind::Fork,
+            alloc::format!(
+                "a fork cannot call a function made outside it that captures `{name}`, a `var` its creator can still change, so the function is not sendable; pass the fork the values it needs instead"
+            ),
+        )
+    }
+
+    /// Checks a send on `channel`: from a fork, or on a channel a fork has
+    /// used, the value must be sendable.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn check_channel_send(
+        &self,
+        channel: &crate::Channel,
+        value: &Value,
+    ) -> VmResult<()> {
+        if self.fork_context().is_some() {
+            channel.mark_crossed();
+        } else if !channel.crossed() {
+            return Ok(());
+        }
+        self.check_sendable(value, "a value sent on a channel a fork uses")
+    }
+
+    /// `value`, a fork's result, when it is sendable.
+    pub(super) fn sendable_result(&self, value: Value) -> VmResult<Value> {
+        self.check_sendable(&value, "this fork's result")?;
+        Ok(value)
+    }
+
+    pub(super) fn check_sendable(&self, value: &Value, what: &str) -> VmResult<()> {
+        match unsendable(value) {
+            Some(reason) => Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                alloc::format!(
+                    "{what} is not sendable: it holds {reason}, which stays with the task that made it"
+                ),
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The name of a `var` that `closure` captures, if it captures one.
+fn captured_var(closure: &crate::Closure) -> Option<String> {
+    let chunk = closure.program.as_ref()?.chunk(closure.chunk)?;
+    chunk
+        .captures
+        .iter()
+        .take(closure.captures.len())
+        .find(|capture| capture.mutable)
+        .map(|capture| capture.name.clone())
+}
+
+/// Why `value` cannot cross between a fork and the rest of the program:
+/// what in it is a task handle, a native resource, or a function capturing
+/// a `var`.
+fn unsendable(value: &Value) -> Option<String> {
+    let mut pending = alloc::vec![value.clone()];
+    let mut closures = HashSet::new();
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Task(_) => return Some("a task handle".into()),
+            Value::NativeResource(_) => return Some("a native resource".into()),
+            Value::List(list) => pending.extend(list.iter().cloned()),
+            Value::Map(map) => {
+                for (key, value) in map.iter() {
+                    pending.push(key.clone());
+                    pending.push(value.clone());
+                }
+            }
+            Value::Struct(value) => pending.extend(value.values.iter().cloned()),
+            Value::Overloads(values) => pending.extend(values.iter().cloned()),
+            Value::Binding { cell, .. } => pending.push(cell.borrow().clone()),
+            Value::Closure(closure) => {
+                if !closures.insert(Rc::as_ptr(&closure).cast::<()>() as usize) {
+                    continue;
+                }
+                if let Some(name) = captured_var(&closure) {
+                    return Some(alloc::format!("a function that captures `{name}`, a `var`"));
+                }
+                pending.extend(closure.captures.iter().map(|cell| cell.borrow().clone()));
+            }
+            Value::Uninitialized
+            | Value::Nil
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::Float(_)
+            | Value::Str(_)
+            | Value::Bytes(_)
+            | Value::StructSchema(_)
+            | Value::Enum(_)
+            | Value::Channel(_)
+            | Value::Native(_)
+            | Value::DeclaredNative { .. }
+            | Value::Builtin(_) => {}
+        }
+    }
+    None
+}
+
+impl Vm {
+    /// A fork may call only a native function its clutch declares
+    /// thread-safe.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn check_fork_native(&self, function: &crate::NativeFunction) -> VmResult<()> {
+        if self.fork_context().is_none() || function.is_thread_safe() {
+            return Ok(());
+        }
+        Err(self.error_at(
+            RuntimeErrorKind::Fork,
+            alloc::format!(
+                "a fork cannot call `{}`: its clutch does not declare it thread-safe, so only tasks outside forks may call it",
+                function.name()
+            ),
+        ))
+    }
+}

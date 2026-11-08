@@ -2,4 +2,4 @@ schema = 1
 outcome = "success"
 stdout = "hi\ntimed out\n"
 stderr = ""
-pending = "fork: phase 2 (docs/planning/fork-tasks.md)"
+timeout_ms = 5000

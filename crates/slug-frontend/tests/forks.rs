@@ -126,3 +126,19 @@ fn a_fork_returning_a_task_handle_is_reported() {
     // A list of handles may be empty, so it is checked when it runs.
     accepts("val main = fn() {\n    fork { [spawn { 1 }] }\n}\n");
 }
+
+#[test]
+fn a_fork_typed_at_the_prompt_is_not_forking_during_initialization() {
+    let state = slug_frontend::InteractiveCompilerState::default();
+    slug_frontend::compile_interactive_forms("repl.slug", "fork { 1 }\n", &state)
+        .expect("a fork at the prompt compiles");
+    // The write rule still applies.
+    let Err(error) = slug_frontend::compile_interactive_forms(
+        "repl.slug",
+        "{\n    var n = 0\n    fork { n = 1 }\n}\n",
+        &state,
+    ) else {
+        panic!("a write to an outer binding compiled");
+    };
+    assert_eq!(error.code, SourceErrorCode::ForkWrite, "{}", error.message);
+}

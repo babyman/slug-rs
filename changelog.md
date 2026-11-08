@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Phase 2 of `fork`: forks run. A fork sees its captures and every module
+  `var` as they were when it started; changing either fails, as does
+  calling a function made outside it that captures a `var`, awaiting a task
+  handle from outside it, returning or sending a task handle, resource, or
+  such a function, calling a native function its clutch does not declare
+  thread-safe, initializing a module, or starting while a module
+  initializes, each a `fork` runtime error. Every task, spawned or forked,
+  owns a copy of each `task var`, taken from its spawner. Forks run one at a
+  time on the owning thread for now; all 30 fork conformance fixtures pass.
+  Chunks record what each capture holds; hosts share a registry of module
+  variables (`VmHost::module_variables`) and say whether a module has
+  initialized (`VmHost::module_initialized`). The CLI's and REPL's
+  builtins are declared thread-safe.
+
+- `fork` may be typed at the REPL prompt: an interactive entry runs after
+  the earlier ones have finished, so it is not reported as forking while a
+  module initializes. REPL entries now get the other compile-time fork
+  checks, which they skipped before.
+
 - Phase 1 of `fork`: the language accepts `fork { ... }` and `task var`.
   `fork` is a reserved word and compiles to its own instruction, which
   reports that `fork` is not implemented yet until the runtime lands; `task`

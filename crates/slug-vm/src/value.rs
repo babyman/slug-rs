@@ -51,6 +51,10 @@ pub struct Channel {
     /// Set when native code creates the channel, or when a producer is first
     /// minted from a Slug-created channel.
     native_producer: OnceCell<NativeChannelProducer>,
+    /// Set once a fork sends or receives on the channel: every value sent on
+    /// it is then checked as sendable.
+    #[cfg(feature = "concurrency")]
+    crossed: core::cell::Cell<bool>,
 }
 
 pub(crate) struct ChannelState {
@@ -358,6 +362,18 @@ impl RootWaiter {
 }
 
 impl Channel {
+    /// Whether a fork has used the channel, so what is sent on it may reach
+    /// one.
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn crossed(&self) -> bool {
+        self.crossed.get()
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn mark_crossed(&self) {
+        self.crossed.set(true);
+    }
+
     #[must_use]
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
@@ -369,6 +385,8 @@ impl Channel {
                 closed: false,
             })),
             native_producer: OnceCell::new(),
+            #[cfg(feature = "concurrency")]
+            crossed: core::cell::Cell::new(false),
         }
     }
 
@@ -384,6 +402,8 @@ impl Channel {
                     closed: false,
                 })),
                 native_producer: OnceCell::from(producer.receiver_handle()),
+                #[cfg(feature = "concurrency")]
+                crossed: core::cell::Cell::new(false),
             },
             producer,
         )
@@ -594,6 +614,9 @@ pub(crate) fn global_environment() -> GlobalEnvironment {
 pub(crate) struct GlobalTable {
     slots: NameMap<u32>,
     entries: Vec<(String, Value)>,
+    /// Per slot, whether a plain entry is a `val`, `var`, or `task var`; a
+    /// binding cell carries its own kind.
+    kinds: Vec<crate::variables::BindingKind>,
 }
 
 impl GlobalTable {
@@ -605,6 +628,25 @@ impl GlobalTable {
     #[inline]
     pub(crate) fn value(&self, slot: u32) -> &Value {
         &self.entries[slot as usize].1
+    }
+
+    /// Whether the plain entry in `slot` is a `val`, `var`, or `task var`.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    #[inline]
+    pub(crate) fn kind(&self, slot: u32) -> crate::variables::BindingKind {
+        self.kinds.get(slot as usize).copied().unwrap_or_default()
+    }
+
+    /// Marks the plain entry in `slot` as a variable of `kind`, or a binding
+    /// cell in it as one.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn mark(&mut self, slot: u32, kind: crate::variables::BindingKind) {
+        if let Some(entry) = self.kinds.get_mut(slot as usize) {
+            *entry = kind;
+        }
+        if let Some((_, Value::Binding { name, .. })) = self.entries.get(slot as usize) {
+            name.set_kind(kind);
+        }
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<&Value> {
@@ -623,6 +665,7 @@ impl GlobalTable {
             let slot = u32::try_from(self.entries.len()).expect("too many global bindings");
             self.slots.insert(name.clone(), slot);
             self.entries.push((name, value));
+            self.kinds.push(crate::variables::BindingKind::Val);
         }
     }
 
@@ -664,7 +707,10 @@ pub(crate) fn binding_cell(value: Value) -> BindingCell {
 }
 
 pub(crate) fn module_binding(name: impl Into<String>) -> Value {
-    let name = Rc::new(name.into());
+    let name = Rc::new(crate::variables::BindingName::new(
+        name.into(),
+        crate::variables::BindingKind::default(),
+    ));
     Value::Binding {
         name,
         cell: binding_cell(Value::Uninitialized),
@@ -683,6 +729,9 @@ pub struct Closure {
     pub(crate) global_slots: Option<GlobalSlots>,
     #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,
+    /// The fork domain of the task that made the closure, or zero.
+    #[cfg(feature = "concurrency")]
+    pub(crate) domain: u32,
 }
 
 /// A cached task completion. Tasks are runtime-owned and retain their outcome
@@ -691,6 +740,9 @@ pub struct Closure {
 #[derive(Clone)]
 pub struct Task {
     state: Rc<RefCell<TaskState>>,
+    /// The fork domain of the task that started this one, which alone may
+    /// use its handle; zero outside forks.
+    domain: u32,
 }
 
 #[cfg(feature = "concurrency")]
@@ -769,7 +821,18 @@ impl Task {
                 waiters: Vec::new(),
                 wait_registration: None,
             })),
+            domain: 0,
         }
+    }
+
+    /// This task, whose handle belongs to the fork `domain`.
+    pub(crate) fn in_domain(mut self, domain: u32) -> Self {
+        self.domain = domain;
+        self
+    }
+
+    pub(crate) fn domain(&self) -> u32 {
+        self.domain
     }
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
@@ -1065,7 +1128,9 @@ pub enum Value {
     Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
     Binding {
-        name: Rc<String>,
+        /// The binding's name and kind, shared by every module that imports
+        /// it.
+        name: Rc<crate::variables::BindingName>,
         cell: BindingCell,
     },
 }
@@ -1194,7 +1259,7 @@ impl Value {
     }
 
     pub(crate) fn resolve(&self) -> Result<Value, String> {
-        let Self::Binding { name, cell } = self else {
+        let Self::Binding { name, cell, .. } = self else {
             return Ok(self.clone());
         };
         let value = cell.borrow().clone();

@@ -252,6 +252,18 @@ pub trait VmHost {
     /// Native-resource lifetime registry shared by VMs for this host.
     fn native_resources(&self) -> NativeResourceRegistry;
 
+    /// Whether the module `name`, imported by `importer`, has initialized,
+    /// or `None` when the host cannot tell: a fork may import a module that
+    /// has, but not initialize one.
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let _ = (importer, name);
+        None
+    }
+
+    /// The module variables of every VM this host creates, which a task
+    /// copies when it starts: one registry, shared like `native_resources`.
+    fn module_variables(&self) -> crate::ModuleVariables;
+
     /// Immutable configuration callbacks visible to `cfg` and typed entrypoints.
     fn configuration(&self) -> &dyn VmConfiguration;
 

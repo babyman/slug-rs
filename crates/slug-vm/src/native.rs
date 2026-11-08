@@ -1150,6 +1150,8 @@ struct NativeFunctionInner {
     arity: NativeArity,
     member_key: Option<Rc<str>>,
     callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
+    /// Its clutch declares it safe to call from any thread, so a fork may.
+    thread_safe: core::cell::Cell<bool>,
 }
 
 impl NativeFunction {
@@ -1166,7 +1168,19 @@ impl NativeFunction {
             arity,
             member_key,
             callback,
+            thread_safe: core::cell::Cell::new(false),
         }))
+    }
+
+    /// Declares the function safe to call from any thread, as its clutch's
+    /// manifest says, so a fork may call it.
+    pub fn declare_thread_safe(&self) {
+        self.0.thread_safe.set(true);
+    }
+
+    #[must_use]
+    pub fn is_thread_safe(&self) -> bool {
+        self.0.thread_safe.get()
     }
 
     #[must_use]

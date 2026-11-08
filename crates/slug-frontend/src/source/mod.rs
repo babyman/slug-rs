@@ -591,7 +591,7 @@ fn compile_expressions(
     stack::grow(|| {
         let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
         updates::check_lost_updates(&expressions)?;
-        forks::check_forks(&expressions)?;
+        forks::check_forks(&expressions, false)?;
         let mut compiler = Compiler::new(path, expressions, &analysis).with_assets(assets);
         if let Some(name) = module_name {
             compiler = compiler.with_module_name(name);

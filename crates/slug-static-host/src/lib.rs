@@ -88,6 +88,7 @@ struct StaticHostState {
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_globals: RefCell<HashMap<String, Value>>,
     native_resources: NativeResourceRegistry,
+    module_variables: slug_vm::ModuleVariables,
     warnings: RefCell<Vec<String>>,
     simulation: SimulationState,
     gpio_functions: Vec<NativeFunction>,
@@ -135,6 +136,7 @@ impl StaticHost {
                 foreign_functions: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
+                module_variables: slug_vm::module_variables(),
                 warnings: RefCell::new(Vec::new()),
                 simulation,
                 gpio_functions,
@@ -269,6 +271,13 @@ impl ModuleGraphHost for StaticHost {
 }
 
 impl VmHost for StaticHost {
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let importer = importer.map(ModuleKey::new);
+        self.state
+            .graph
+            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -314,6 +323,10 @@ impl VmHost for StaticHost {
 
     fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        self.state.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {

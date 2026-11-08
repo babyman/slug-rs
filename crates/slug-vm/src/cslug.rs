@@ -272,6 +272,7 @@ struct ArtifactHostState {
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: NativeResourceRegistry,
+    module_variables: crate::ModuleVariables,
     warnings: RefCell<Vec<String>>,
 }
 
@@ -308,6 +309,7 @@ impl ArtifactHost {
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
+                module_variables: crate::module_variables(),
                 warnings: RefCell::new(Vec::new()),
             }),
         })
@@ -552,6 +554,10 @@ impl VmHost for ArtifactHost {
 
     fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> crate::ModuleVariables {
+        self.state.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {
@@ -1034,7 +1040,8 @@ fn encode_match_type(value: &MatchType, depth: usize, output: &mut Vec<u8>) -> R
 
 #[allow(dead_code)]
 fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error> {
-    let (name, arity, parameters, callable_identity, locals, constants, code) = chunk.cslug_parts();
+    let (name, arity, parameters, callable_identity, locals, constants, code, captures) =
+        chunk.cslug_parts();
     string(name, output);
     uleb(arity, output);
     uleb(parameters.len(), output);
@@ -1067,6 +1074,10 @@ fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error
         uleb(c as usize, output);
         uleb(span.map_or(0, |span| span.index() + 1), output);
     }
+    // Capture details are not recorded yet: a decoded chunk's captures are
+    // unknown, which forks treat as capturing no `var` (see
+    // docs/planning/fork-tasks.md, phase 5).
+    let _ = captures;
     Ok(())
 }
 
@@ -2002,6 +2013,7 @@ impl<'a> Reader<'a> {
             locals,
             constants,
             code,
+            Vec::new(),
         ))
     }
 

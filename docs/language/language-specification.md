@@ -1464,7 +1464,9 @@ differs is what it sees, which lets the runtime run it on another core:
   has initialized is allowed; importing one that has not is a runtime error,
   since initializing it runs code that writes its variables. A fork cannot
   start while a module initializes: a `fork` in module top-level code is a
-  static error, and one reached from it is a runtime error.
+  static error, and one reached from it is a runtime error. An interactive
+  session's entries are the exception: each runs after the earlier ones
+  have finished, so a `fork` may be typed at the prompt.
 
 A fork has the same meaning on every build that has tasks. A build without
 threads runs forks one at a time, cooperatively, with the same snapshot and

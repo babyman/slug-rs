@@ -43,6 +43,7 @@ struct ModuleRuntimeServices {
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: slug_vm::NativeResourceRegistry,
+    module_variables: slug_vm::ModuleVariables,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
 }
@@ -451,6 +452,17 @@ impl ModuleGraph {
         Ok(())
     }
 
+    /// Whether the module `request` names has an initialized instance, when
+    /// it can be resolved: a fork may import only such a module.
+    pub fn is_initialized<H: ModuleGraphHost>(
+        &self,
+        host: &H,
+        request: ModuleRequest<'_>,
+    ) -> Option<bool> {
+        let source = host.resolve(request).ok()?;
+        Some(self.state.instances.borrow().contains_key(&source.key))
+    }
+
     /// Resolves, compiles, and initializes one module instance.
     ///
     /// # Errors
@@ -717,6 +729,7 @@ impl ModuleHost {
                     native_globals: RefCell::new(HashMap::new()),
                     foreign_functions: RefCell::new(HashMap::new()),
                     native_resources: native_resource_registry(),
+                    module_variables: slug_vm::module_variables(),
                     warnings: RefCell::new(Vec::new()),
                     shutdown_errors: RefCell::new(Vec::new()),
                 },
@@ -948,6 +961,13 @@ impl ModuleGraphHost for ModuleHost {
 }
 
 impl VmHost for ModuleHost {
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let importer = importer.map(ModuleKey::new);
+        self.state
+            .graph
+            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -999,6 +1019,10 @@ impl VmHost for ModuleHost {
 
     fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
         self.native_resources()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        self.state.services.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {

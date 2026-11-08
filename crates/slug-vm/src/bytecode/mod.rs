@@ -12,10 +12,10 @@ mod program;
 
 pub use chunk::Chunk;
 pub use metadata::{
-    CallableIdentity, Capture, CaptureListId, Constant, ForeignResourceSignature, GlobalNameId,
-    MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag,
-    ParameterSignature, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
-    StructFieldsId,
+    CallableIdentity, Capture, CaptureDetail, CaptureListId, Constant, ForeignResourceSignature,
+    GlobalNameId, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
+    ModuleDeclaration, ModuleTag, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
+    SourceId, SourceSpan, SpanId, StructFieldsId,
 };
 pub use op::{BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op};
 pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
