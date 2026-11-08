@@ -208,6 +208,29 @@ entry in place. Pre-declaring its top-level names as binding cells, as
 modules' already are, would leave every table read-only once forks can run,
 except for REPL redefinition, which needs its own rule.
 
+Phase 3 outcome (2026-11-08): `Value` cannot be `Sync` by construction, since
+its task handles and native resources are not, and the language already
+refuses both at runtime as unsendable. A fork package's `Send` therefore
+rests on that runtime check, and on everything the package shares with its
+spawner being synchronized. The latter is not true yet, so the `unsafe impl
+Send` lands in phase 4 with the worker that uses it, once these are
+thread-safe:
+
+- the host (`Rc<dyn VmHost>`), the module-variable registry, the progress
+  driver, the nursery and its ready queue, the native resource registry,
+  and the metrics;
+- task state, waiters (`Rc<dyn Fn>` resumers), and select and root-waiter
+  state;
+- native callables and their library owners (`dyn Any`), which a
+  `thread_safe` declaration vouches for.
+
+Already thread-safe, and asserted at compile time under `threads`: binding
+names (their kind is an atomic), strings (their offset table is a
+`OnceLock`), binding cells and module tables (`SoloCell`), channel queues
+(`Lock`), inline caches (`Hint`), a native function's thread-safe flag, and
+a native module's registration sets. ThreadSanitizer is set up with the
+first worker, when there are threads for it to watch.
+
 ### Phase 4: worker threads (desktop and server)
 
 - **Pool.** One worker per available core. A fork's child VM moves to a

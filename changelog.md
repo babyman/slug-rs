@@ -20,7 +20,10 @@
   write them with no bookkeeping; debug builds still check borrows.
   Under `threads`, a channel's queues sit behind a mutex, its native
   producer slot is a `OnceLock`, and whether it has crossed into a fork is
-  an atomic flag; other builds keep their single-threaded cells.
+  an atomic flag; other builds keep their single-threaded cells. A
+  binding's recorded kind, a native function's thread-safe flag, and a
+  native module's registration sets are thread-safe too; a `threads` build
+  asserts at compile time that binding names and strings are `Send + Sync`.
 
 - Phase 2 of `fork`: forks run. A fork sees its captures and every module
   `var` as they were when it started; changing either fails, as does

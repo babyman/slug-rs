@@ -974,8 +974,8 @@ struct NativeModuleInner {
     id: usize,
     name: Rc<str>,
     state: Box<dyn Any>,
-    function_signatures: RefCell<HashSet<(String, NativeArity)>>,
-    resource_types: RefCell<HashSet<String>>,
+    function_signatures: crate::sync::Lock<HashSet<(String, NativeArity)>>,
+    resource_types: crate::sync::Lock<HashSet<String>>,
 }
 
 impl NativeModule {
@@ -1013,8 +1013,8 @@ impl NativeModule {
                 id: scope_id,
                 name,
                 state: Box::new(state),
-                function_signatures: RefCell::new(HashSet::new()),
-                resource_types: RefCell::new(HashSet::new()),
+                function_signatures: crate::sync::Lock::new(HashSet::new()),
+                resource_types: crate::sync::Lock::new(HashSet::new()),
             }),
         })
     }
@@ -1039,7 +1039,7 @@ impl NativeModule {
         if !self
             .inner
             .function_signatures
-            .borrow_mut()
+            .lock()
             .insert((name.to_string(), arity))
         {
             return Err(NativeDescriptorError::new(format!(
@@ -1108,7 +1108,7 @@ impl NativeModule {
         if !self
             .inner
             .resource_types
-            .borrow_mut()
+            .lock()
             .insert(name.to_string())
         {
             return Err(NativeDescriptorError::new(format!(
@@ -1137,7 +1137,7 @@ impl NativeModule {
     }
 
     fn resource_type_names(&self) -> HashSet<String> {
-        self.inner.resource_types.borrow().clone()
+        self.inner.resource_types.lock().clone()
     }
 }
 
@@ -1151,7 +1151,7 @@ struct NativeFunctionInner {
     member_key: Option<Rc<str>>,
     callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
     /// Its clutch declares it safe to call from any thread, so a fork may.
-    thread_safe: core::cell::Cell<bool>,
+    thread_safe: crate::sync::Flag,
 }
 
 impl NativeFunction {
@@ -1168,7 +1168,7 @@ impl NativeFunction {
             arity,
             member_key,
             callback,
-            thread_safe: core::cell::Cell::new(false),
+            thread_safe: crate::sync::Flag::new(false),
         }))
     }
 

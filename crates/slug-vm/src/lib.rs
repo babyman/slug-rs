@@ -88,3 +88,11 @@ pub use vm::{
     CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
     NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };
+// The value-side types a fork may share that are already thread-safe; the
+// rest wait on phase 4 (see `docs/planning/fork-tasks.md`).
+#[cfg(feature = "threads")]
+const _: () = {
+    const fn sync<T: Sync + Send>() {}
+    sync::<crate::variables::BindingName>();
+    sync::<crate::collections::Str>();
+};

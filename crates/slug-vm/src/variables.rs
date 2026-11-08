@@ -29,6 +29,7 @@ pub(crate) fn declared_kind(program: &Program, name: &str) -> BindingKind {
 /// Whether a module-level binding is a `val`, a `var`, or a `task var`.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
 pub enum BindingKind {
     #[default]
     Val,
@@ -53,25 +54,31 @@ impl BindingKind {
 #[derive(Debug)]
 pub struct BindingName {
     name: alloc::string::String,
-    kind: core::cell::Cell<BindingKind>,
+    /// Set when its module installs, before any fork can read it.
+    kind: core::sync::atomic::AtomicU8,
 }
 
 impl BindingName {
     pub(crate) fn new(name: alloc::string::String, kind: BindingKind) -> Self {
         Self {
             name,
-            kind: core::cell::Cell::new(kind),
+            kind: core::sync::atomic::AtomicU8::new(kind as u8),
         }
     }
 
     #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
     pub(crate) fn kind(&self) -> BindingKind {
-        self.kind.get()
+        match self.kind.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => BindingKind::Val,
+            1 => BindingKind::Var,
+            _ => BindingKind::TaskVar,
+        }
     }
 
     #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
     pub(crate) fn set_kind(&self, kind: BindingKind) {
-        self.kind.set(kind);
+        self.kind
+            .store(kind as u8, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
