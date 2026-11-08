@@ -8,7 +8,10 @@
   other threads. Builds without it, embedded ones among them, keep `Rc`.
   Hosts and tests name the type as `slug_vm::Shared`. Measured against the
   `Rc` build (11 interleaved PGO rounds): geomean 1.01x tuned, 1.00x
-  hold-out; Crawl's game 1.06x and closure-heavy code up to 1.06x. Compiled
+  hold-out; Crawl's game 1.06x and closure-heavy code up to 1.06x. The
+  inline caches in shared bytecode, each function's global slots and each
+  map-key lookup's hint, are relaxed atomics, which cost nothing measured
+  (0.99x on tuned workloads). Compiled
   chunks record a capture's name only when it is a `var`, the only name a
   fork's errors use.
 

@@ -261,12 +261,12 @@ pub struct CompiledChunk {
     /// lookup when the key is not there. Lowering gives each occurrence of a
     /// key its own constant, so this is in effect one hint per lookup site;
     /// sites that share a constant still look up correctly.
-    pub(crate) index_hints: alloc::boxed::Box<[core::cell::Cell<u32>]>,
+    pub(crate) index_hints: alloc::boxed::Box<[crate::sync::Hint]>,
 }
 
 /// One unused hint per constant.
-pub(crate) fn index_hints(constants: usize) -> alloc::boxed::Box<[core::cell::Cell<u32>]> {
-    (0..constants).map(|_| core::cell::Cell::new(0)).collect()
+pub(crate) fn index_hints(constants: usize) -> alloc::boxed::Box<[crate::sync::Hint]> {
+    (0..constants).map(|_| crate::sync::Hint::new(0)).collect()
 }
 
 impl CompiledChunk {

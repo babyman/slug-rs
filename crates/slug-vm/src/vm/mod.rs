@@ -2536,7 +2536,7 @@ impl Vm {
             .last()
             .and_then(|frame| frame.closure.global_slots.as_ref())
             .and_then(|slots| slots.get(id.index()))
-            .map_or(UNRESOLVED_GLOBAL, core::cell::Cell::get);
+            .map_or(UNRESOLVED_GLOBAL, crate::sync::Hint::get);
         if slot != UNRESOLVED_GLOBAL {
             // A task with its own view of the variables reads through it.
             #[cfg(feature = "concurrency")]

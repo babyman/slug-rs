@@ -886,7 +886,7 @@ impl Map {
 
     /// Looks `key` up, trying the entry at `hint` first and leaving the found
     /// entry's position there for the next lookup.
-    pub(crate) fn get_hinted(&self, key: &Value, hint: &core::cell::Cell<u32>) -> Option<&Value> {
+    pub(crate) fn get_hinted(&self, key: &Value, hint: &crate::sync::Hint) -> Option<&Value> {
         let entries = &self.0.entries;
         if let Some((candidate, value)) = entries.get(hint.get() as usize)
             && candidate == key

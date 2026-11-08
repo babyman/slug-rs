@@ -692,14 +692,14 @@ impl Extend<(String, Value)> for GlobalTable {
 
 /// One cached `GlobalTable` slot per global name of a program, filled on the
 /// first read of each name. Valid only for one program and one environment.
-pub(crate) type GlobalSlots = Rc<[core::cell::Cell<u32>]>;
+pub(crate) type GlobalSlots = Rc<[crate::sync::Hint]>;
 
 /// A `GlobalSlots` entry whose name has not been resolved yet.
 pub(crate) const UNRESOLVED_GLOBAL: u32 = u32::MAX;
 
 pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
     (0..program.global_name_count())
-        .map(|_| core::cell::Cell::new(UNRESOLVED_GLOBAL))
+        .map(|_| crate::sync::Hint::new(UNRESOLVED_GLOBAL))
         .collect()
 }
 
