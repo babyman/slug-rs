@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Fix: forks exchanging messages could both wait forever, reported as
+  blocked. A `select` checked its channels and then parked on them as two
+  steps, so a send and a receive on different threads could each see the
+  other absent and both park. A `select` about to wait now locks all its
+  channels, in one order, through its last check and its parking, and the
+  first wake to claim a `select` takes it, so no other case is taken as
+  well. A thread about to sleep also checks for work posted to it a moment
+  before, which the program's deadlock count could otherwise miss. Found by
+  a new fixture, `fork/channel-relay`, in which three producers, a relay,
+  and two consumers trade 6,000 messages. ThreadSanitizer finds no race in
+  the fork fixtures (CLI built with `-Zsanitizer=thread` and `build-std`).
+
 - Phase 4 of `fork`: forks run in parallel. Under `threads`, each fork its
   nursery admits moves to a worker thread as an island, a VM with its own
   scheduler; tasks it spawns run there with it. Workers are pooled, and a

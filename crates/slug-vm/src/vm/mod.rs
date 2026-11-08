@@ -4931,7 +4931,7 @@ impl Vm {
                     handler,
                 } => {
                     self.progress.track_native_channel(channel);
-                    match channel.try_send(value.clone()) {
+                    match channel.try_send(value) {
                         ChannelSend::Ready => {
                             self.push_select_result(Value::Nil, handler.clone());
                             return Ok(());
@@ -4973,16 +4973,93 @@ impl Vm {
             self.push_select_result(Value::Nil, handler);
             return Ok(());
         }
+        // Every channel of the select stays locked, in one order, from its
+        // last check through its parking, so no send or receive on another
+        // thread can slip between them and leave both sides waiting.
+        let mut channels = values
+            .iter()
+            .filter_map(|case| match case {
+                RuntimeSelectCase::Receive { channel, .. }
+                | RuntimeSelectCase::Send { channel, .. } => Some(channel.clone()),
+                #[cfg(feature = "concurrency")]
+                RuntimeSelectCase::After { .. } | RuntimeSelectCase::Await { .. } => None,
+                RuntimeSelectCase::Default { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        channels.sort_by_key(|channel| Rc::as_ptr(channel) as usize);
+        channels.dedup_by(|a, b| Rc::ptr_eq(a, b));
+        for channel in &channels {
+            channel.drain_native();
+        }
+        let mut states = channels
+            .iter()
+            .map(|channel| channel.lock_state())
+            .collect::<Vec<_>>();
+        let locked = |channel: &Rc<Channel>| {
+            channels
+                .iter()
+                .position(|candidate| Rc::ptr_eq(candidate, channel))
+                .expect("every channel of the select is locked")
+        };
+        let mut wakes = Vec::new();
+        let mut taken = None;
+        for case in &values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    if let Some(value) = channel.receive_locked(&mut states[locked(channel)], &mut wakes)
+                    {
+                        taken = Some(Some((value, handler.clone(), true)));
+                        break;
+                    }
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => match channel.send_locked(&mut states[locked(channel)], value, &mut wakes) {
+                    ChannelSend::Ready => {
+                        taken = Some(Some((Value::Nil, handler.clone(), false)));
+                        break;
+                    }
+                    ChannelSend::Closed => {
+                        taken = Some(None);
+                        break;
+                    }
+                    ChannelSend::Pending => {}
+                },
+                #[cfg(feature = "concurrency")]
+                RuntimeSelectCase::After { .. } | RuntimeSelectCase::Await { .. } => {}
+                RuntimeSelectCase::Default { .. } => {}
+            }
+        }
+        if let Some(taken) = taken {
+            drop(states);
+            crate::value::run_wakes(wakes);
+            let Some((value, handler, received)) = taken else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidCall,
+                    "send on a closed channel".into(),
+                ));
+            };
+            #[cfg(feature = "concurrency")]
+            if received && self.fork_context().is_some() {
+                self.check_sendable(&value, "a value received on a channel")?;
+            }
+            #[cfg(not(feature = "concurrency"))]
+            let _ = received;
+            self.push_select_result(value, handler);
+            return Ok(());
+        }
         let base = self.blocking_waiter()?;
         let select_state = WaitSet::select_state(base.clone());
         let mut registrations = Vec::new();
         for case in values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
-                    channel.park_receiver(Waiter::select(
-                        select_state.clone(),
-                        SelectWake::Value { handler },
-                    ));
+                    Channel::park_receiver(
+                        &mut states[locked(&channel)],
+                        Waiter::select(select_state.clone(), SelectWake::Value { handler }),
+                    );
                     registrations.push(WaitRegistration::ChannelReceive(channel));
                 }
                 RuntimeSelectCase::Send {
@@ -4996,7 +5073,7 @@ impl Vm {
                         RuntimeErrorKind::InvalidCall,
                         "send on a closed channel".into(),
                     ));
-                    channel.park_sender(waiter, value);
+                    Channel::park_sender(&mut states[locked(&channel)], waiter, value);
                     registrations.push(WaitRegistration::ChannelSend(channel));
                 }
                 #[cfg(feature = "concurrency")]
@@ -5027,6 +5104,7 @@ impl Vm {
                 RuntimeSelectCase::Default { .. } => {}
             }
         }
+        drop(states);
         let registrations = WaitSet::many(
             registrations,
             #[cfg(feature = "metrics")]

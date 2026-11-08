@@ -80,6 +80,9 @@ pub(crate) enum ChannelReceive {
 #[derive(Clone)]
 pub(crate) struct Waiter {
     identity: usize,
+    /// For one case of a `select`: the flag its cases share, which the first
+    /// wake to claim sets, so no other case is taken as well.
+    claim: Option<Arc<core::sync::atomic::AtomicBool>>,
     /// The thread whose scheduler owns the waiting execution: a wake from
     /// another thread is carried there to run.
     #[cfg(all(feature = "threads", not(target_os = "none")))]
@@ -116,7 +119,7 @@ impl SelectWake {
 
 pub(crate) struct SelectWaitState {
     waiter: Waiter,
-    selected: bool,
+    claimed: Arc<core::sync::atomic::AtomicBool>,
     registrations: Option<WaitSet>,
 }
 
@@ -125,6 +128,7 @@ impl Waiter {
         let identity = Rc::as_ptr(&root.state) as usize;
         Self {
             identity,
+            claim: None,
             resume: Rc::new({
                 let root = root.clone();
                 move |result| root.resume(result)
@@ -144,6 +148,7 @@ impl Waiter {
         let identity = Rc::as_ptr(&task.state) as usize;
         Self {
             identity,
+            claim: None,
             resume: Rc::new({
                 let task = task.clone();
                 move |result| task.resume(result)
@@ -160,17 +165,16 @@ impl Waiter {
 
     pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
         let identity = state.borrow().waiter.identity;
+        let claim = Some(state.borrow().claimed.clone());
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         let home = state.borrow().waiter.home.clone();
         let resume_state = state.clone();
         Self {
             identity,
+            claim,
+            // Runs once the wake has claimed the select.
             resume: Rc::new(move |result| {
                 let mut selected = resume_state.borrow_mut();
-                if selected.selected {
-                    return;
-                }
-                selected.selected = true;
                 let registrations = selected.registrations.take();
                 let waiter = selected.waiter.clone();
                 drop(selected);
@@ -194,7 +198,22 @@ impl Waiter {
         }
     }
 
+    /// Claims this waiter's select, when it has one; whether the claim is
+    /// this wake's, so the waiter is to be woken.
+    pub(crate) fn try_claim(&self) -> bool {
+        self.claim
+            .as_ref()
+            .is_none_or(|claim| !claim.swap(true, core::sync::atomic::Ordering::AcqRel))
+    }
+
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        if self.try_claim() {
+            self.resume_claimed(result);
+        }
+    }
+
+    /// Wakes a waiter whose claim this wake already holds.
+    pub(crate) fn resume_claimed(&self, result: Result<Value, crate::RuntimeError>) {
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         if !self.home.is_current() {
             let waiter = self.clone();
@@ -209,6 +228,12 @@ impl Waiter {
     }
 
     pub(crate) fn reject_closed_send(&self) {
+        if self.try_claim() {
+            self.reject_claimed();
+        }
+    }
+
+    pub(crate) fn reject_claimed(&self) {
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         if !self.home.is_current() {
             let waiter = self.clone();
@@ -308,7 +333,7 @@ impl WaitSet {
     pub(crate) fn select_state(waiter: Waiter) -> Rc<RefCell<SelectWaitState>> {
         Rc::new(RefCell::new(SelectWaitState {
             waiter,
-            selected: false,
+            claimed: Arc::new(core::sync::atomic::AtomicBool::new(false)),
             registrations: None,
         }))
     }
@@ -503,87 +528,102 @@ impl Channel {
         // A channel closed by an earlier drain is no progress; reporting it
         // as progress forever would keep the scheduler from running tasks.
         let changed = !values.is_empty() || (producer_closed && !state.closed);
-        let mut resumed = Vec::new();
-        let mut rejected_senders = Vec::new();
+        let mut wakes = Vec::new();
         for value in values {
-            if let Some(receiver) = state.receivers.pop_front() {
+            if let Some(receiver) = pop_receiver(&mut state) {
                 self.release_buffer_slot();
-                resumed.push((receiver, value.into_value()));
+                wakes.push(ChannelWake::Resume(receiver, value.into_value()));
             } else {
                 state.messages.push_back(value.into_value());
             }
         }
         if producer_closed {
             state.closed = true;
-            resumed.extend(
-                state
-                    .receivers
-                    .drain(..)
-                    .map(|receiver| (receiver, Value::Nil)),
-            );
-            rejected_senders.extend(state.senders.drain(..).map(|(sender, _)| sender));
+            close_waiters(&mut state, &mut wakes);
         }
         drop(state);
-        let changed = changed || !resumed.is_empty() || !rejected_senders.is_empty();
-        for (receiver, value) in resumed {
-            receiver.resume(Ok(value));
-        }
-        for sender in rejected_senders {
-            sender.reject_closed_send();
-        }
+        let changed = changed || !wakes.is_empty();
+        run_wakes(wakes);
         changed
     }
 
-    pub(crate) fn try_send(&self, value: Value) -> ChannelSend {
+    /// The channel's state, locked: a `select` about to wait holds the locks
+    /// of all its channels while it checks them once more and parks on
+    /// them, so no send or receive can slip between the check and the park.
+    pub(crate) fn lock_state(&self) -> crate::sync::LockGuard<'_, ChannelState> {
+        self.state.lock()
+    }
+
+    pub(crate) fn try_send(&self, value: &Value) -> ChannelSend {
         self.drain_native();
-        let mut state = self.state.lock();
+        let mut wakes = Vec::new();
+        let outcome = self.send_locked(&mut self.state.lock(), value, &mut wakes);
+        run_wakes(wakes);
+        outcome
+    }
+
+    /// Sends `value` on the locked `state`, if a receiver or buffer space
+    /// takes it, adding the wakes it owes to `wakes`.
+    pub(crate) fn send_locked(
+        &self,
+        state: &mut ChannelState,
+        value: &Value,
+        wakes: &mut Vec<ChannelWake>,
+    ) -> ChannelSend {
         if state.closed {
             return ChannelSend::Closed;
         }
-        if let Some(receiver) = state.receivers.pop_front() {
-            drop(state);
-            receiver.resume(Ok(value));
+        if let Some(receiver) = pop_receiver(state) {
+            wakes.push(ChannelWake::Resume(receiver, value.clone()));
             return ChannelSend::Ready;
         }
         if state.messages.len() < state.capacity && self.reserve_buffer_slot() {
-            state.messages.push_back(value);
+            state.messages.push_back(value.clone());
             return ChannelSend::Ready;
         }
         ChannelSend::Pending
     }
 
-    pub(crate) fn park_sender(&self, waiter: Waiter, value: Value) {
-        self.state.lock().senders.push_back((waiter, value));
+    pub(crate) fn park_sender(state: &mut ChannelState, waiter: Waiter, value: Value) {
+        state.senders.push_back((waiter, value));
     }
 
     pub(crate) fn try_receive(&self) -> ChannelReceive {
         self.drain_native();
-        let mut state = self.state.lock();
-        if let Some(value) = state.messages.pop_front() {
-            self.release_buffer_slot();
-            if !state.senders.is_empty()
-                && self.reserve_buffer_slot()
-                && let Some((sender, pending)) = state.senders.pop_front()
-            {
-                state.messages.push_back(pending);
-                drop(state);
-                sender.resume(Ok(Value::Nil));
-            }
-            return ChannelReceive::Ready(value);
-        }
-        if let Some((sender, value)) = state.senders.pop_front() {
-            drop(state);
-            sender.resume(Ok(Value::Nil));
-            return ChannelReceive::Ready(value);
-        }
-        if state.closed {
-            return ChannelReceive::Ready(Value::Nil);
-        }
-        ChannelReceive::Pending
+        let mut wakes = Vec::new();
+        let outcome = self.receive_locked(&mut self.state.lock(), &mut wakes);
+        run_wakes(wakes);
+        outcome.map_or(ChannelReceive::Pending, ChannelReceive::Ready)
     }
 
-    pub(crate) fn park_receiver(&self, waiter: Waiter) {
-        self.state.lock().receivers.push_back(waiter);
+    /// Receives from the locked `state`, if a message, a waiting sender, or
+    /// the channel's closing gives a value, adding the wakes it owes.
+    pub(crate) fn receive_locked(
+        &self,
+        state: &mut ChannelState,
+        wakes: &mut Vec<ChannelWake>,
+    ) -> Option<Value> {
+        if let Some(value) = state.messages.pop_front() {
+            self.release_buffer_slot();
+            if !state.senders.is_empty() && self.reserve_buffer_slot() {
+                if let Some((sender, pending)) = pop_sender(state) {
+                    state.messages.push_back(pending);
+                    wakes.push(ChannelWake::Resume(sender, Value::Nil));
+                } else {
+                    self.release_buffer_slot();
+                }
+            }
+            return Some(value);
+        }
+        if let Some((sender, value)) = pop_sender(state) {
+            wakes.push(ChannelWake::Resume(sender, Value::Nil));
+            return Some(value);
+        }
+        state.closed.then_some(Value::Nil)
+    }
+
+    pub(crate) fn park_receiver(state: &mut ChannelState, waiter: Waiter) {
+        state.receivers.push_back(waiter);
     }
 
     pub(crate) fn close(&self) {
@@ -593,18 +633,60 @@ impl Channel {
             return;
         }
         state.closed = true;
-        let receivers = state.receivers.drain(..).collect::<Vec<_>>();
-        let senders = state
-            .senders
-            .drain(..)
-            .map(|(sender, _)| sender)
-            .collect::<Vec<_>>();
+        let mut wakes = Vec::new();
+        close_waiters(&mut state, &mut wakes);
         drop(state);
-        for receiver in receivers {
-            receiver.resume(Ok(Value::Nil));
+        run_wakes(wakes);
+    }
+}
+
+/// A wake a channel owes a waiter it has claimed, run once its lock is
+/// released.
+pub(crate) enum ChannelWake {
+    Resume(Waiter, Value),
+    Reject(Waiter),
+}
+
+pub(crate) fn run_wakes(wakes: Vec<ChannelWake>) {
+    for wake in wakes {
+        match wake {
+            ChannelWake::Resume(waiter, value) => waiter.resume_claimed(Ok(value)),
+            ChannelWake::Reject(waiter) => waiter.reject_claimed(),
         }
-        for sender in senders {
-            sender.reject_closed_send();
+    }
+}
+
+/// The first parked receiver this channel can claim. One already claimed,
+/// by another case of its `select`, is stale and dropped.
+fn pop_receiver(state: &mut ChannelState) -> Option<Waiter> {
+    while let Some(receiver) = state.receivers.pop_front() {
+        if receiver.try_claim() {
+            return Some(receiver);
+        }
+    }
+    None
+}
+
+fn pop_sender(state: &mut ChannelState) -> Option<(Waiter, Value)> {
+    while let Some((sender, value)) = state.senders.pop_front() {
+        if sender.try_claim() {
+            return Some((sender, value));
+        }
+    }
+    None
+}
+
+/// Wakes every waiter a closing channel can claim: receivers with `nil`,
+/// senders with the closed-send error.
+fn close_waiters(state: &mut ChannelState, wakes: &mut Vec<ChannelWake>) {
+    for receiver in state.receivers.drain(..) {
+        if receiver.try_claim() {
+            wakes.push(ChannelWake::Resume(receiver, Value::Nil));
+        }
+    }
+    for (sender, _) in state.senders.drain(..) {
+        if sender.try_claim() {
+            wakes.push(ChannelWake::Reject(sender));
         }
     }
 }

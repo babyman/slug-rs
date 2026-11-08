@@ -265,8 +265,12 @@ and host calls cross through per-thread inboxes; a program's threads detect
 a deadlock together, so a blocked fork reports as a blocked task does. All
 33 fork fixtures pass, 400 times over, eight runs at a time for half of
 them. Open: cancelling a fork busy computing (it stops at its next wait),
-host calls served only when the spawner waits, islands' metrics,
-ThreadSanitizer (needs a nightly toolchain), and experiment 2.
+host calls served only when the spawner waits, islands' metrics, and
+experiment 2. ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
+`-Zbuild-std`, CLI in `target/tsan`) and is clean on the fork fixtures; it
+is not in CI yet. It found nothing that `fork/channel-relay` had not: a
+`select` that checked and then parked as two steps, now one under its
+channels' locks.
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run

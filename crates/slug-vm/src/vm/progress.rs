@@ -85,12 +85,15 @@ impl ProgressDriver {
         if root && self.group.deadlocked() {
             return false;
         }
-        if self.inbox.begin_sleep(&self.group) {
-            if root {
+        match self.inbox.begin_sleep(&self.group) {
+            // Work arrived: run it rather than sleep.
+            None => return true,
+            Some(true) if root => {
                 self.inbox.end_sleep();
                 return false;
             }
-            self.group.report_deadlock();
+            Some(true) => self.group.report_deadlock(),
+            Some(false) => {}
         }
         self.wait(observed, None);
         self.inbox.end_sleep();

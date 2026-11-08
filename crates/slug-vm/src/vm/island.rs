@@ -87,12 +87,27 @@ impl Inbox {
         }
     }
 
-    /// Marks this thread's driver asleep in `group` until woken. Returns
-    /// whether it was the last active thread of the group: a deadlock.
-    pub(crate) fn begin_sleep(&self, group: &Arc<Group>) -> bool {
+    /// Marks this thread's driver asleep in `group` until woken: `None` when
+    /// work was posted to it meanwhile, so it must not sleep, or else
+    /// whether it was the last active thread of the group, a deadlock.
+    ///
+    /// A post that arrives before the mark is in the queue, and one after it
+    /// counts the thread awake again, so the check below misses neither.
+    pub(crate) fn begin_sleep(&self, group: &Arc<Group>) -> Option<bool> {
         let mut sleeper = self.sleeper.lock().unwrap_or_else(PoisonError::into_inner);
         *sleeper = Some(group.clone());
-        group.active.fetch_sub(1, Ordering::AcqRel) == 1
+        let last = group.active.fetch_sub(1, Ordering::AcqRel) == 1;
+        let pending = !self
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty();
+        if pending {
+            *sleeper = None;
+            group.join();
+            return None;
+        }
+        Some(last)
     }
 
     /// Counts this thread's driver as awake again, unless a post already did.

@@ -1,0 +1,36 @@
+// Forks and the root trade many messages over shared channels, so a send
+// and a receive on different threads often meet while one is parking.
+val main = fn() {
+    val inbox:chan<num> = chan(4)
+    val outbox:chan<num> = chan(0)
+    val produce = fn(n:num) {
+        if (n > 0) {
+            select { send inbox, n /> fn(_) { nil } }
+            recur(n - 1)
+        }
+    }
+    val consume = fn(total:num):num {
+        match select { recv outbox } {
+            nil => total
+            n => recur(total + n)
+        }
+    }
+    val p1 = fork { produce(2000) }
+    val p2 = fork { produce(2000) }
+    val p3 = fork { produce(2000) }
+    val c1 = fork { consume(0) }
+    val c2 = fork { consume(0) }
+    val relay = fn(n:num) {
+        if (n > 0) {
+            val v = select { recv inbox }
+            select { send outbox, v /> fn(_) { nil } }
+            recur(n - 1)
+        }
+    }
+    relay(6000)
+    select { await p1 }
+    select { await p2 }
+    select { await p3 }
+    close(outbox)
+    println(select { await c1 } + select { await c2 })
+}

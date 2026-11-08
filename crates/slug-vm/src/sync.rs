@@ -240,6 +240,14 @@ impl<T> Lock<T> {
     }
 }
 
+/// A held [`Lock`].
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub(crate) type LockGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
+/// A held [`Lock`].
+#[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+pub(crate) type LockGuard<'a, T> = core::cell::RefMut<'a, T>;
+
 #[cfg(not(all(feature = "threads", not(target_os = "none"))))]
 #[derive(Debug, Default)]
 pub(crate) struct Lock<T>(core::cell::RefCell<T>);
