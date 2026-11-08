@@ -405,7 +405,7 @@ impl TaskExecution {
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
     host: Option<Rc<dyn VmHost>>,
-    module_program: Option<Rc<Program>>,
+    module_program: Option<crate::sync::Code<Program>>,
     globals: GlobalEnvironment,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
@@ -465,7 +465,7 @@ pub struct InteractiveEnvironment {
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]
 pub struct InteractiveExecution {
-    module_program: Option<Rc<Program>>,
+    module_program: Option<crate::sync::Code<Program>>,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
     stack: Vec<Value>,
@@ -557,9 +557,9 @@ impl InteractiveTask {
     ) -> Value {
         match value {
             Value::Closure(closure)
-                if Rc::ptr_eq(&closure.globals, task_globals) =>
+                if crate::sync::Code::ptr_eq(&closure.globals, task_globals) =>
             {
-                Value::Closure(Rc::new(Closure {
+                Value::Closure(crate::sync::Code::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
@@ -743,7 +743,10 @@ impl Vm {
         self.bind_foreign_declarations(&program.program)?;
         #[cfg(feature = "concurrency")]
         let _initializing = self.variables.initializing();
-        self.run_installed_execution(program)
+        let value = self.run_installed_execution(program)?;
+        #[cfg(feature = "concurrency")]
+        self.immortalize_code();
+        Ok(value)
     }
 
     /// Executes top-level code and then the program module's validated `main`.
@@ -763,6 +766,8 @@ impl Vm {
         #[cfg(feature = "concurrency")]
         let initializing = self.variables.initializing();
         let top_level = self.run_installed_execution(&program)?;
+        #[cfg(feature = "concurrency")]
+        self.immortalize_code();
         #[cfg(feature = "concurrency")]
         drop(initializing);
         let Some(entrypoint_specification) = program.program.entrypoint() else {
@@ -967,7 +972,7 @@ impl Vm {
         let installed = self.install_compat_named(program, entry)?;
         let program = installed.program;
         let entry = installed.entry;
-        let closure = Rc::new(Closure {
+        let closure = crate::sync::Code::new(Closure {
             chunk: entry,
             captures: Vec::new(),
             program: program.clone(),
@@ -1069,7 +1074,7 @@ impl Vm {
     pub fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
-            globals: Rc::new(crate::sync::SoloCell::new(environment.globals.borrow().clone())),
+            globals: crate::sync::Code::new(crate::sync::SoloCell::new(environment.globals.borrow().clone())),
             host_globals: environment.host_globals.clone(),
             local_bindings: environment.local_bindings.clone(),
             imported_globals: environment.imported_globals.clone(),
@@ -1148,9 +1153,9 @@ impl Vm {
     ) -> Value {
         match value {
             Value::Closure(closure)
-                if Rc::ptr_eq(&closure.globals, source) =>
+                if crate::sync::Code::ptr_eq(&closure.globals, source) =>
             {
-                Value::Closure(Rc::new(Closure {
+                Value::Closure(crate::sync::Code::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
@@ -1564,7 +1569,7 @@ impl Vm {
         #[cfg(feature = "concurrency")]
         self.register_module_variables(&program);
         Ok(InstalledProgram {
-            program: Rc::new(program),
+            program: crate::sync::Code::new(program),
             entry,
         })
     }
@@ -1670,7 +1675,7 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.push_frame(Frame {
-            closure: Rc::new(Closure {
+            closure: crate::sync::Code::new(Closure {
                 chunk: installed.entry,
                 captures: Vec::new(),
                 program: program.clone(),
@@ -1999,7 +2004,7 @@ impl Vm {
     }
 
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
-        let mut program: Option<Rc<Program>> = None;
+        let mut program: Option<crate::sync::Code<Program>> = None;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
@@ -2013,7 +2018,7 @@ impl Vm {
             // Most calls and returns stay within one program, so keep its
             // reference rather than cloning it again.
             match (&program, self.frames.last()) {
-                (Some(current), Some(frame)) if Rc::ptr_eq(current, frame.program()) => {}
+                (Some(current), Some(frame)) if crate::sync::Code::ptr_eq(current, frame.program()) => {}
                 _ => program = Some(self.active_program()?),
             }
             let program = program.as_ref().expect("active program was loaded");
@@ -2081,7 +2086,7 @@ impl Vm {
             PackedOpcode::Constant => {
                 let value = match chunk.constants.get(operand) {
                     Some(crate::Constant::Value(value)) => value.clone(),
-                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
+                    Some(crate::Constant::Function(function)) => Value::Closure(crate::sync::Code::new(Closure {
                         chunk: *function,
                         captures: Vec::new(),
                         program: self.active_program()?,
@@ -2964,7 +2969,7 @@ impl Vm {
                     }),
             })
             .collect::<VmResult<Vec<_>>>()?;
-        self.stack.push(Value::Closure(Rc::new(Closure {
+        self.stack.push(Value::Closure(crate::sync::Code::new(Closure {
             chunk,
             captures,
             program: self.active_program()?,
@@ -3370,7 +3375,7 @@ impl Vm {
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
         // Calls rarely cross global environments; skip the reference-count
         // round trip when they do not.
-        if !Rc::ptr_eq(&self.globals, frame.globals()) {
+        if !crate::sync::Code::ptr_eq(&self.globals, frame.globals()) {
             self.globals = frame.globals().clone();
         }
         self.frames.push(frame);
@@ -3381,7 +3386,7 @@ impl Vm {
         let frame = self.frames.pop();
         self.frames_changed();
         if let Some(active) = self.frames.last()
-            && !Rc::ptr_eq(&self.globals, active.globals())
+            && !crate::sync::Code::ptr_eq(&self.globals, active.globals())
         {
             self.globals = active.globals().clone();
         }
@@ -3469,7 +3474,7 @@ impl Vm {
         })
     }
 
-    fn active_program(&self) -> VmResult<Rc<Program>> {
+    fn active_program(&self) -> VmResult<crate::sync::Code<Program>> {
         self.frames
             .last()
             .map(|frame| frame.program().clone())
@@ -3642,8 +3647,8 @@ impl Vm {
     #[allow(clippy::needless_pass_by_value)]
     fn module_closure_vm(
         &self,
-        program: Rc<Program>,
-        closure: Rc<Closure>,
+        program: crate::sync::Code<Program>,
+        closure: crate::sync::Code<Closure>,
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
@@ -3773,7 +3778,7 @@ impl Vm {
             ));
         }
         let view = self.task_view(forked, &captures);
-        let closure = Rc::new(Closure {
+        let closure = crate::sync::Code::new(Closure {
             chunk: closure.chunk,
             captures,
             program: closure.program.clone(),
@@ -4380,10 +4385,10 @@ impl Vm {
     #[inline(always)]
     fn enter_positional_closure(
         &mut self,
-        closure: Rc<Closure>,
+        closure: crate::sync::Code<Closure>,
         stack_base: usize,
         count: usize,
-    ) -> VmResult<Option<Rc<Closure>>> {
+    ) -> VmResult<Option<crate::sync::Code<Closure>>> {
         let arguments = self.stack.len() - count;
         // Arguments move from the stack into the callee's locals. A live
         // module binding must be resolved first, which the general path does.

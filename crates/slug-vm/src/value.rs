@@ -705,10 +705,10 @@ impl Drop for Channel {
 
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<crate::sync::SoloCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<crate::sync::SoloCell<GlobalTable>>;
+pub(crate) type GlobalEnvironment = crate::sync::Code<crate::sync::SoloCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(crate::sync::SoloCell::new(GlobalTable::default()))
+    crate::sync::Code::new(crate::sync::SoloCell::new(GlobalTable::default()))
 }
 
 /// Global bindings stored in definition order behind a name index.
@@ -832,7 +832,7 @@ pub struct Closure {
     /// The program the closure's chunk belongs to, and the global table its
     /// names resolve in. A call's frame reads both from here, so entering a
     /// function counts neither: forks on other threads share them.
-    pub(crate) program: Rc<crate::Program>,
+    pub(crate) program: crate::sync::Code<crate::Program>,
     pub(crate) globals: GlobalEnvironment,
     /// Slots in `globals` already resolved for `program`'s global names,
     /// shared by closures created with the same program and environment.
@@ -1282,7 +1282,7 @@ pub enum Value {
     Struct(Rc<StructValue>),
     Enum(Rc<EnumValue>),
     Channel(Rc<Channel>),
-    Closure(Rc<Closure>),
+    Closure(crate::sync::Code<Closure>),
     #[cfg(feature = "concurrency")]
     Task(Rc<Task>),
     Native(NativeFunction),
@@ -1475,7 +1475,7 @@ impl PartialEq for Value {
             }
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
-            (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
+            (Self::Closure(a), Self::Closure(b)) => crate::sync::Code::ptr_eq(a, b),
             #[cfg(feature = "concurrency")]
             (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
             (Self::Native(a), Self::Native(b)) => a.same_function(b),

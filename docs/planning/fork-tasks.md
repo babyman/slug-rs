@@ -313,6 +313,13 @@ counting a callee every fork shares: 4M calls to a shared module function
 take 0.59 s on one fork and 1.75 s on eight, and to a builtin native 0.36 s
 and 0.91 s. That is the case immortal code objects (and natives) address.
 
+Immortal code (accepted record `2026-11-08-immortal-code-objects.md`):
+shared module functions now scale (4M calls: 0.55 s on one fork, 0.12 s on
+eight). Experiment 2: 16.7 s, 8.7 s, 5.0 s, 4.4 s on 1, 2, 4, 8 forks, 3.8x,
+against 3.9x for the original workers. Remaining: shared data is still
+counted, notably constants a call clones from its program (4M calls to
+`len("a")`: 0.36 s on one fork, 0.39 s on eight).
+
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
   cooperatively on its worker, sharing its snapshot.

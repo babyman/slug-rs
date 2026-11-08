@@ -3,7 +3,6 @@
 //! Frames retain the code owner, lexical locals, deferred scopes, and source
 //! location needed to preserve checked runtime errors across calls and cleanup.
 
-use crate::sync::Rc;
 use alloc::vec::Vec;
 
 use crate::{
@@ -17,7 +16,7 @@ use super::Deferred;
 pub(super) struct Frame {
     /// The function running in this frame. It also owns the frame's program
     /// and global table, which the frame borrows rather than counts.
-    pub(super) closure: Rc<Closure>,
+    pub(super) closure: crate::sync::Code<Closure>,
     pub(super) call_span: Option<CallSpan>,
     pub(super) ip: usize,
     pub(super) stack_base: usize,
@@ -37,7 +36,7 @@ impl Frame {
     /// An execution can cross program boundaries through closures, so this
     /// cannot be inferred from a VM-wide program owner.
     #[inline]
-    pub(super) fn program(&self) -> &Rc<Program> {
+    pub(super) fn program(&self) -> &crate::sync::Code<Program> {
         &self.closure.program
     }
 

@@ -1142,7 +1142,7 @@ impl NativeModule {
 }
 
 #[derive(Clone)]
-pub struct NativeFunction(Rc<NativeFunctionInner>);
+pub struct NativeFunction(crate::sync::Code<NativeFunctionInner>);
 
 struct NativeFunctionInner {
     module: NativeModule,
@@ -1162,7 +1162,7 @@ impl NativeFunction {
         member_key: Option<Rc<str>>,
         callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
     ) -> Self {
-        Self(Rc::new(NativeFunctionInner {
+        Self(crate::sync::Code::new(NativeFunctionInner {
             module,
             name,
             arity,
@@ -1174,6 +1174,13 @@ impl NativeFunction {
 
     /// Declares the function safe to call from any thread, as its clutch's
     /// manifest says, so a fork may call it.
+    /// Stops counting this function: its module has initialized, so it
+    /// lives until the program ends.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn immortalize(&self) {
+        crate::sync::immortalize(&self.0);
+    }
+
     pub fn declare_thread_safe(&self) {
         self.0.thread_safe.set(true);
     }
@@ -1206,7 +1213,7 @@ impl NativeFunction {
     #[doc(hidden)]
     #[must_use]
     pub fn same_function(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        crate::sync::Code::ptr_eq(&self.0, &other.0)
     }
 
     pub(crate) fn resource_scope_id(&self) -> usize {

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Code that forks share is never counted once its module has initialized
+  (`docs/decisions/2026-11-08-immortal-code-objects.md`). Under `threads`,
+  programs, closures, global tables, and native functions use
+  `slug_vm::Code`, a reference-counted pointer whose count stops when its
+  module finishes initializing: cloning or dropping it then only reads the
+  count, so forks on many cores call shared functions without contending
+  for their cache lines. 4M calls to a shared module function: 1.75 s on
+  eight forks before, 0.12 s now (0.55 s on one). Experiment 2: 16.7 s on
+  one fork, 8.7 s on two, 5.0 s on four, 4.4 s on eight, 3.8x, as against
+  3.9x for workers that each initialized their own modules. Builds without
+  `threads` keep `Rc`. Miri and ThreadSanitizer find nothing. Single
+  threads gain too, since an immortal object's clone and drop skip their
+  atomic operation (5 interleaved PGO rounds against 4509a8e: geomean 0.98x
+  tuned, 0.99x hold-out; Crawl's workloads 0.96-0.98x). A first version,
+  which inlined the freeing path into every drop, measured 1.03x and 1.04x.
+
 - A call no longer clones its closure's program to find the chunk it runs;
   it borrows it. The clone was an atomic count on the one program every
   fork shares, made on every call, so calls stopped scaling across threads

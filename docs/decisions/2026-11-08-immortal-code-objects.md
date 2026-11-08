@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted. Implemented on `feature/fork`: `slug_vm::Code` in
+`crates/slug-vm/src/sync.rs`, made immortal by `Vm::immortalize_code` when
+a module or entry program finishes initializing. Experiment 2 on eight
+forks went from 5.9 s to 4.4 s (3.8x one fork; the workers that initialized
+their own modules reached 3.9x). Shared data, such as a constant string a
+call clones from its program, is still counted: 4M calls to `len("a")` take
+0.36 s on one fork and 0.39 s on eight.
 
 ## Extends
 

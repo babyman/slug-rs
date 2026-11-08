@@ -349,7 +349,7 @@ fn unsendable(value: &Value) -> Option<String> {
             Value::Overloads(values) => pending.extend(values.iter().cloned()),
             Value::Binding { cell, .. } => pending.push(cell.borrow().clone()),
             Value::Closure(closure) => {
-                if !closures.insert(Rc::as_ptr(&closure).cast::<()>() as usize) {
+                if !closures.insert(crate::sync::Code::as_ptr(&closure).cast::<()>() as usize) {
                     continue;
                 }
                 if let Some(name) = captured_var(&closure) {
@@ -391,5 +391,39 @@ impl Vm {
                 function.name()
             ),
         ))
+    }
+}
+
+impl Vm {
+    /// Stops counting this module's code once it has initialized: its
+    /// global table, its program, and the closures and native functions its
+    /// `val`s hold. Forks on any core then call them without writing their
+    /// counts. A `var`'s value is left counted, since it changes.
+    ///
+    /// See `docs/decisions/2026-11-08-immortal-code-objects.md`.
+    pub(super) fn immortalize_code(&self) {
+        crate::sync::immortalize(&self.globals);
+        if let Some(program) = &self.module_program {
+            crate::sync::immortalize(program);
+        }
+        for (_, value) in self.globals.borrow().iter() {
+            immortalize_value(value);
+        }
+    }
+}
+
+fn immortalize_value(value: &Value) {
+    match value {
+        Value::Binding { name, cell } if name.kind() == BindingKind::Val => {
+            immortalize_value(&cell.borrow());
+        }
+        Value::Closure(closure) => {
+            crate::sync::immortalize(closure);
+            crate::sync::immortalize(&closure.program);
+            crate::sync::immortalize(&closure.globals);
+        }
+        Value::Native(function) => function.immortalize(),
+        Value::Overloads(values) => values.iter().for_each(immortalize_value),
+        _ => {}
     }
 }

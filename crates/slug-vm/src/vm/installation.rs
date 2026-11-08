@@ -1,7 +1,6 @@
 //! Immutable bytecode ownership after VM installation-time validation.
 
 use crate::Program;
-use crate::sync::Rc;
 
 /// Immutable, checked bytecode installed by a VM.
 ///
@@ -11,7 +10,7 @@ use crate::sync::Rc;
 /// bytecode. It is an in-process execution object, not a portable artifact.
 #[derive(Clone, Debug)]
 pub struct InstalledProgram {
-    pub(super) program: Rc<Program>,
+    pub(super) program: crate::sync::Code<Program>,
     pub(super) entry: usize,
 }
 
