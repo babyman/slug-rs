@@ -5,7 +5,7 @@ use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
 use core::{
-    cell::{OnceCell, RefCell},
+    cell::RefCell,
     fmt,
     fmt::Write as _,
 };
@@ -48,14 +48,14 @@ impl Builtin {
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
 pub struct Channel {
-    pub(crate) state: Rc<RefCell<ChannelState>>,
+    pub(crate) state: Rc<crate::sync::Lock<ChannelState>>,
     /// Set when native code creates the channel, or when a producer is first
     /// minted from a Slug-created channel.
-    native_producer: OnceCell<NativeChannelProducer>,
+    native_producer: crate::sync::Once<NativeChannelProducer>,
     /// Set once a fork sends or receives on the channel: every value sent on
     /// it is then checked as sendable.
     #[cfg(feature = "concurrency")]
-    crossed: core::cell::Cell<bool>,
+    crossed: crate::sync::Flag,
 }
 
 pub(crate) struct ChannelState {
@@ -217,7 +217,7 @@ impl WaitRegistration {
     ) {
         match self {
             Self::ChannelSend(channel) => {
-                let mut state = channel.state.borrow_mut();
+                let mut state = channel.state.lock();
                 #[cfg(feature = "metrics")]
                 {
                     let mut metrics = metrics.borrow_mut();
@@ -230,7 +230,7 @@ impl WaitRegistration {
                     .retain(|(candidate, _)| !candidate.is_same(waiter));
             }
             Self::ChannelReceive(channel) => {
-                let mut state = channel.state.borrow_mut();
+                let mut state = channel.state.lock();
                 #[cfg(feature = "metrics")]
                 {
                     let mut metrics = metrics.borrow_mut();
@@ -378,16 +378,16 @@ impl Channel {
     #[must_use]
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            state: Rc::new(RefCell::new(ChannelState {
+            state: Rc::new(crate::sync::Lock::new(ChannelState {
                 capacity,
                 messages: VecDeque::new(),
                 senders: VecDeque::new(),
                 receivers: VecDeque::new(),
                 closed: false,
             })),
-            native_producer: OnceCell::new(),
+            native_producer: crate::sync::Once::new(),
             #[cfg(feature = "concurrency")]
-            crossed: core::cell::Cell::new(false),
+            crossed: crate::sync::Flag::new(false),
         }
     }
 
@@ -395,16 +395,16 @@ impl Channel {
         let producer = NativeChannelProducer::bounded(capacity);
         (
             Self {
-                state: Rc::new(RefCell::new(ChannelState {
+                state: Rc::new(crate::sync::Lock::new(ChannelState {
                     capacity,
                     messages: VecDeque::new(),
                     senders: VecDeque::new(),
                     receivers: VecDeque::new(),
                     closed: false,
                 })),
-                native_producer: OnceCell::from(producer.receiver_handle()),
+                native_producer: crate::sync::Once::from(producer.receiver_handle()),
                 #[cfg(feature = "concurrency")]
-                crossed: core::cell::Cell::new(false),
+                crossed: crate::sync::Flag::new(false),
             },
             producer,
         )
@@ -415,7 +415,7 @@ impl Channel {
     /// so native and Slug sends share the channel's capacity. Returns `None`
     /// for an unbuffered channel, which no native send could ever enter.
     pub(crate) fn attach_native_producer(&self) -> Option<NativeChannelProducer> {
-        let state = self.state.borrow();
+        let state = self.state.lock();
         if state.capacity == 0 {
             return None;
         }
@@ -475,7 +475,7 @@ impl Channel {
         // every value it sent is then queued and drains with the others.
         let producer_closed = producer.is_closed();
         let values = producer.drain(usize::MAX);
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock();
         // A channel closed by an earlier drain is no progress; reporting it
         // as progress forever would keep the scheduler from running tasks.
         let changed = !values.is_empty() || (producer_closed && !state.closed);
@@ -512,7 +512,7 @@ impl Channel {
 
     pub(crate) fn try_send(&self, value: Value) -> ChannelSend {
         self.drain_native();
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock();
         if state.closed {
             return ChannelSend::Closed;
         }
@@ -529,12 +529,12 @@ impl Channel {
     }
 
     pub(crate) fn park_sender(&self, waiter: Waiter, value: Value) {
-        self.state.borrow_mut().senders.push_back((waiter, value));
+        self.state.lock().senders.push_back((waiter, value));
     }
 
     pub(crate) fn try_receive(&self) -> ChannelReceive {
         self.drain_native();
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock();
         if let Some(value) = state.messages.pop_front() {
             self.release_buffer_slot();
             if !state.senders.is_empty()
@@ -559,12 +559,12 @@ impl Channel {
     }
 
     pub(crate) fn park_receiver(&self, waiter: Waiter) {
-        self.state.borrow_mut().receivers.push_back(waiter);
+        self.state.lock().receivers.push_back(waiter);
     }
 
     pub(crate) fn close(&self) {
         self.revoke_native_producer();
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock();
         if state.closed {
             return;
         }

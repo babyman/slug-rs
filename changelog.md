@@ -18,6 +18,9 @@
   at once, which a `RefCell`'s borrow count would race on. Each is written
   by one thread or only before any fork exists, so release builds read and
   write them with no bookkeeping; debug builds still check borrows.
+  Under `threads`, a channel's queues sit behind a mutex, its native
+  producer slot is a `OnceLock`, and whether it has crossed into a fork is
+  an atomic flag; other builds keep their single-threaded cells.
 
 - Phase 2 of `fork`: forks run. A fork sees its captures and every module
   `var` as they were when it started; changing either fails, as does

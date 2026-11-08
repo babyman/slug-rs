@@ -215,3 +215,65 @@ impl<T> Drop for SoloMut<'_, T> {
             .store(0, core::sync::atomic::Ordering::Release);
     }
 }
+
+/// State that tasks on several threads change, such as a channel's queues.
+/// A `threads` build guards it with a mutex; other builds, which run every
+/// task on one thread, keep a `RefCell`. Holders keep a guard briefly and
+/// never resume a waiter while holding one.
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+#[derive(Debug, Default)]
+pub(crate) struct Lock<T>(std::sync::Mutex<T>);
+
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+impl<T> Lock<T> {
+    pub(crate) const fn new(value: T) -> Self {
+        Self(std::sync::Mutex::new(value))
+    }
+
+    /// The guarded value. A panic while it was held leaves it as it was, as
+    /// a `RefCell` would, so a poisoned lock is taken anyway.
+    #[inline]
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+#[derive(Debug, Default)]
+pub(crate) struct Lock<T>(core::cell::RefCell<T>);
+
+#[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+impl<T> Lock<T> {
+    pub(crate) const fn new(value: T) -> Self {
+        Self(core::cell::RefCell::new(value))
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn lock(&self) -> core::cell::RefMut<'_, T> {
+        self.0.borrow_mut()
+    }
+}
+
+/// A flag set once and read by tasks on any thread, such as whether a
+/// channel has crossed into a fork. Relaxed: it orders nothing else.
+#[derive(Debug, Default)]
+pub(crate) struct Flag(core::sync::atomic::AtomicBool);
+
+impl Flag {
+    pub(crate) const fn new(value: bool) -> Self {
+        Self(core::sync::atomic::AtomicBool::new(value))
+    }
+
+    #[inline]
+    pub(crate) fn get(&self) -> bool {
+        self.0.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub(crate) fn set(&self, value: bool) {
+        self.0.store(value, core::sync::atomic::Ordering::Relaxed);
+    }
+}
