@@ -176,11 +176,6 @@ impl Vm {
     /// closure has resolved its slot, returning the old value; otherwise
     /// hands `value` back.
     fn replace_cached_global(&self, id: GlobalNameId, value: Value) -> Result<Value, Value> {
-        // A task with its own view of the variables assigns through it.
-        #[cfg(feature = "concurrency")]
-        if self.view.is_some() {
-            return Err(value);
-        }
         let slot = self
             .frames
             .last()
@@ -191,7 +186,26 @@ impl Vm {
             return Err(value);
         }
         match self.globals.borrow().value(slot) {
-            Value::Binding { cell, .. } => Ok(cell.replace(value)),
+            Value::Binding { cell, name } => {
+                // A task with its own view of the variables assigns through
+                // it: its own copy of a `task var` in place, so that an
+                // update releasing the old value leaves the operand unshared;
+                // a fork's snapshot of any other `var` by name, which
+                // reports that the fork cannot change it.
+                #[cfg(feature = "concurrency")]
+                if let Some(view) = &self.view {
+                    match name.kind() {
+                        crate::variables::BindingKind::TaskVar => {
+                            return view.replace_own(crate::variables::VarKey::cell(cell), value);
+                        }
+                        crate::variables::BindingKind::Var if view.in_fork() => return Err(value),
+                        _ => {}
+                    }
+                }
+                #[cfg(not(feature = "concurrency"))]
+                let _ = name;
+                Ok(cell.replace(value))
+            }
             _ => Err(value),
         }
     }

@@ -234,6 +234,24 @@ fn converts_characters_and_unicode_scalar_values() {
     );
 }
 
+/// Forks on several threads call the same typed native bindings at once;
+/// the adapter's per-call state must not be shared unsafely between them.
+#[cfg(feature = "threads")]
+#[test]
+fn forks_call_typed_natives_at_once() {
+    let output = run_cli(
+        "val {ord, chr} = import(\"slug.string\")\n\
+         val {map, range, reduce} = import(\"slug.std\")\n\
+         val spin = fn(n:num):num { reduce(range(n), 0, fn(total, i) { total + ord(chr(65 + i % 26)) }) }\n\
+         val main = fn() {\n\
+             val forks = map(range(8), fn(_) { fork { spin(20000) } })\n\
+             println(reduce(forks, 0, fn(total, t) { total + select { await t } }))\n\
+         }\n",
+        b"",
+    );
+    assert_eq!(stdout(&output), "12399520\n");
+}
+
 /// Starts `source`, waits until it prints `ready`, sends it `signal` once
 /// for each of `waits` (pausing that long first), and returns its output.
 #[cfg(unix)]

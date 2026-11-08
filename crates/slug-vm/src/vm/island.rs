@@ -283,6 +283,7 @@ fn run(package: Package) {
         )) as Rc<dyn VmHost>
     });
     vm.variables = variables;
+    vm.cancel = Some(control.clone());
     let outcome = vm
         .run_island(&control)
         .map(|result| result.and_then(|value| vm.sendable_result(value)));
@@ -302,6 +303,25 @@ fn run(package: Package) {
 }
 
 impl Vm {
+    /// Fails once this island's spawner has cancelled it. Off an island it is
+    /// one branch.
+    #[inline]
+    pub(super) fn check_cancelled(&self) -> VmResult<()> {
+        match &self.cancel {
+            Some(control) if control.cancelled() => Err(self.cancelled_error()),
+            _ => Ok(()),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn cancelled_error(&self) -> super::RuntimeError {
+        self.error_at(
+            crate::RuntimeErrorKind::Fork,
+            "this fork was cancelled".into(),
+        )
+    }
+
     /// Runs this island's fork to settlement, as the root runs `main`, or
     /// `None` once its spawner cancels it.
     fn run_island(&mut self, control: &IslandControl) -> Option<VmResult<Value>> {

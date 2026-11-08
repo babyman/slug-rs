@@ -429,6 +429,10 @@ pub struct Vm {
     /// kept here so a call compares it with the callee's at no extra cost.
     #[cfg(feature = "concurrency")]
     domain: u32,
+    /// On a fork's island, the flag its spawner sets to cancel it, read at
+    /// every call, return, and `recur`, so a fork busy computing stops too.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    cancel: Option<alloc::sync::Arc<island::IslandControl>>,
     /// The module variables of every VM sharing this one's host.
     #[cfg(feature = "concurrency")]
     variables: crate::ModuleVariables,
@@ -614,6 +618,8 @@ impl Default for Vm {
             view: None,
             #[cfg(feature = "concurrency")]
             domain: 0,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel: None,
             #[cfg(feature = "concurrency")]
             variables: crate::module_variables(),
             native_resources: native_resource_registry(),
@@ -2006,6 +2012,8 @@ impl Vm {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            self.check_cancelled()?;
             // Calls, returns, and suspension change the active frame rarely
             // relative to instructions, so the active code is looked up only
             // when `frame_epoch` says it may have changed.
@@ -2515,10 +2523,14 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                #[cfg(all(feature = "threads", not(target_os = "none")))]
+                self.check_cancelled()?;
                 *ip = 0;
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
+                #[cfg(all(feature = "threads", not(target_os = "none")))]
+                self.check_cancelled()?;
                 *ip = 0;
             }
             PackedOpcode::Return => {
@@ -2548,15 +2560,24 @@ impl Vm {
             .and_then(|slots| slots.get(id.index()))
             .map_or(UNRESOLVED_GLOBAL, crate::sync::Hint::get);
         if slot != UNRESOLVED_GLOBAL {
-            // A task with its own view of the variables reads through it.
-            #[cfg(feature = "concurrency")]
-            if self.view.is_some() {
-                return self.global_value_by_name(program, id);
-            }
             // A module's top-level names are binding cells; read through an
             // initialized one and leave an uninitialized one to report.
+            // Every variable is a cell, so a plain entry is a `val`.
             match self.globals.borrow().value(slot) {
-                Value::Binding { cell, .. } => {
+                Value::Binding { cell, name } => {
+                    // A task with its own view of the variables reads a
+                    // variable through it; a `val` it reads as anyone does.
+                    #[cfg(feature = "concurrency")]
+                    if let Some(view) = &self.view {
+                        let kind = name.kind();
+                        if kind != crate::variables::BindingKind::Val
+                            && let Some(value) = view.value(crate::variables::VarKey::cell(cell), kind)
+                        {
+                            return Ok(value);
+                        }
+                    }
+                    #[cfg(not(feature = "concurrency"))]
+                    let _ = name;
                     let value = cell.borrow();
                     if !matches!(*value, Value::Uninitialized) {
                         return Ok(value.clone());
@@ -2578,11 +2599,15 @@ impl Vm {
         let slot = globals.slot(name).ok_or_else(|| {
             self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`"))
         })?;
+        // Written only when it changes: forks on other threads read the
+        // same cache, and a write each time would bounce its line between
+        // them.
         if let Some(cached) = self
             .frames
             .last()
             .and_then(|frame| frame.closure.global_slots.as_ref())
             .and_then(|slots| slots.get(id.index()))
+            && cached.get() != slot
         {
             cached.set(slot);
         }
@@ -3684,6 +3709,8 @@ impl Vm {
             view: self.view.clone(),
             #[cfg(feature = "concurrency")]
             domain: self.domain,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel: self.cancel.clone(),
             #[cfg(feature = "concurrency")]
             variables: self.variables.clone(),
             native_resources: self.native_resources.clone(),

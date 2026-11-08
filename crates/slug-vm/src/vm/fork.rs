@@ -48,6 +48,20 @@ impl TaskView {
         self.own.borrow().get(&key).cloned()
     }
 
+    /// Replaces this task's copy of the `task var` `key`, returning the old
+    /// value, or hands `value` back when it has no copy.
+    pub(super) fn replace_own(&self, key: VarKey, value: Value) -> Result<Value, Value> {
+        match self.own.borrow_mut().get_mut(&key) {
+            Some(slot) => Ok(core::mem::replace(slot, value)),
+            None => Err(value),
+        }
+    }
+
+    /// Whether this task is inside a fork.
+    pub(super) fn in_fork(&self) -> bool {
+        self.fork.is_some()
+    }
+
     pub(super) fn set_own(&self, key: VarKey, value: Value) {
         self.own.borrow_mut().insert(key, value);
     }

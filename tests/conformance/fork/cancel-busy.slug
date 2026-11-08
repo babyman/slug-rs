@@ -1,0 +1,19 @@
+// A fork busy computing is cancelled when its sibling fails, though it never
+// waits: the program carries on, and the fork does not.
+val spin = fn(n:num):num {
+    if (n == 20000000) { println("still running") }
+    recur(n + 1)
+}
+val guarded = fn():str {
+    defer onerror(err) { "caught" }
+    nursery {
+        fork { spin(0) }
+        fork { throw "boom" }
+    }
+    "not reached"
+}
+val main = fn() {
+    println(guarded())
+    select { after 2000 /> fn(_) { nil } }
+    println("done")
+}

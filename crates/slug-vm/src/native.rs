@@ -1463,7 +1463,7 @@ pub struct NativeCall<'call> {
     resources: Vec<Weak<NativeResource>>,
 }
 
-impl NativeCall<'_> {
+impl<'call> NativeCall<'call> {
     #[must_use]
     pub fn argument_count(&self) -> usize {
         self.arguments.len()
@@ -1483,8 +1483,10 @@ impl NativeCall<'_> {
             })
     }
 
+    /// The module's state, borrowed for the whole call, so a callback can
+    /// hold it while it also uses the call.
     #[must_use]
-    pub fn state<T: Any>(&self) -> Option<&T> {
+    pub fn state<T: Any>(&self) -> Option<&'call T> {
         self.module.inner.state.downcast_ref()
     }
 

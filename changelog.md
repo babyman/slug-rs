@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Fixes from rerunning experiment 2 (Crawl's pages drawn by real forks):
+  forks calling the same typed native at once could crash or corrupt
+  values, since the native adapter counted its per-binding state with
+  single-threaded `Rc`s on every call; it now borrows that state for the
+  call instead, which is also cheaper. A fork's own copy of a `task var` is
+  updated in place, as a `var` is, rather than copied whole on every
+  update (24 s to 14.7 s for one fork drawing 1000 players). A fork reads
+  a `val` through its global slot cache, and the cache is written only when
+  it changes. A fork busy computing is cancelled too: an island checks its
+  cancellation flag at every call, return, and `recur`, so a failed
+  sibling stops it and the forks it started (`fork/cancel-busy`,
+  `fork/cancel-nested`). New `typed_core` test
+  `forks_call_typed_natives_at_once`; new fixture `fork/task-var-update`.
+
 - Fix: forks exchanging messages could both wait forever, reported as
   blocked. A `select` checked its channels and then parked on them as two
   steps, so a send and a receive on different threads could each see the

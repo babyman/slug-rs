@@ -264,13 +264,35 @@ Progress (2026-11-08): islands run forks on pooled workers; wakes, results,
 and host calls cross through per-thread inboxes; a program's threads detect
 a deadlock together, so a blocked fork reports as a blocked task does. All
 33 fork fixtures pass, 400 times over, eight runs at a time for half of
-them. Open: cancelling a fork busy computing (it stops at its next wait),
-host calls served only when the spawner waits, islands' metrics, and
-experiment 2. ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
+them. Open: host calls served only when the spawner waits, islands' metrics, and
+scaling past four forks (below). ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
 `-Zbuild-std`, CLI in `target/tsan`) and is clean on the fork fixtures; it
 is not in CI yet. It found nothing that `fork/channel-relay` had not: a
 `select` that checked and then parked as two steps, now one under its
 channels' locks.
+
+Experiment 2 rerun (2026-11-08) with real forks: 1000 players, 3 ticks,
+each fork drawing every Nth player's page. The original drew with N worker
+VMs that each initialized their own modules; here every fork shares
+Crawl's modules. Crawl's read-only queries (`others`, `playerOf`, ...)
+assign module `var`s through `actAs`, so forks need `acting`, `player`,
+`players`, `dirty` (game), `gen` (rng), and `cameras` (web) as `task var`s
+(done in a scratch copy only; Crawl itself is unchanged). Drawing time:
+
+| forks | experiment 2 (own modules) | real fork |
+| --- | --- | --- |
+| 1 | 14.5 s | 14.7 s |
+| 2 | 7.4 s | 8.7 s |
+| 4 | 4.6 s | 5.9 s |
+| 8 | 3.7 s | 7.8 s |
+
+The rerun found the native adapter race and the copied `task var` updates
+(both fixed). Scaling past four forks is limited by contended reference
+counts: every call clones the frame's program, global table, and closure,
+and under `threads` those are atomic counts on objects all forks share. A
+microbenchmark of 4M calls to a shared module function takes 0.54 s on one
+fork and 1.86 s on eight (14.3 s of CPU). Open: how to call shared code
+without touching shared counts.
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
