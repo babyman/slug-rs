@@ -101,15 +101,17 @@ impl State {
         self.chunk.name = name.into();
         self.chunk.arity = arity;
         self.chunk.locals = self.next_local;
-        // What each capture slot holds, so a fork can tell a captured `var`.
+        // Which capture slots hold a `var`, by name, so a fork can tell one;
+        // other slots keep an empty name, which allocates nothing.
         let mut captures = vec![None; self.captures.len()];
         for (name, binding) in &self.outer {
             if let Binding::Capture { slot, mutable } = binding
+                && *mutable
                 && let Some(entry) = captures.get_mut(*slot)
             {
                 *entry = Some(slug_vm::CaptureDetail {
                     name: name.clone(),
-                    mutable: *mutable,
+                    mutable: true,
                 });
             }
         }

@@ -194,8 +194,8 @@ pub struct ModuleTag {
     pub arguments: Vec<Value>,
 }
 
-/// The binding a function captures in one capture slot: its name, and
-/// whether it is a `var`, which a fork cannot share with its spawner.
+/// The binding a function captures in one capture slot: whether it is a
+/// `var`, which a fork cannot share with its spawner, and if so its name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaptureDetail {
     pub name: String,
