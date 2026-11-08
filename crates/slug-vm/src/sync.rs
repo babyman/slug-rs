@@ -10,6 +10,15 @@ pub(crate) use alloc::sync::{Arc as Rc, Weak};
 #[cfg(not(feature = "threads"))]
 pub(crate) use alloc::rc::{Rc, Weak};
 
+/// A value computed on first use, such as a string's offset table. A
+/// `threads` build may race to fill it from several threads, so it uses
+/// `OnceLock`; other builds keep the cheaper `OnceCell`.
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub(crate) type Once<T> = std::sync::OnceLock<T>;
+
+#[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+pub(crate) type Once<T> = core::cell::OnceCell<T>;
+
 /// A cached position in shared bytecode, such as a global's slot or a map
 /// key's entry. Any thread may read or refresh it, and a stale one is only
 /// a missed hint, so relaxed loads and stores suffice: on the targets the VM
@@ -36,5 +45,173 @@ impl Hint {
 impl Clone for Hint {
     fn clone(&self) -> Self {
         Self::new(self.get())
+    }
+}
+
+/// A cell the VM reads without a lock: module binding cells and module
+/// global tables.
+///
+/// Every such cell is either written by one thread only, or written only
+/// before any fork can see it. A `val` cell and a module's table are filled
+/// while their module initializes, and no fork exists during initialization;
+/// a `var` cell is reached only by its own domain, since a fork reads
+/// variables from its snapshot, a write from a fork to anything outside it is
+/// refused, and a closure capturing a `var` cannot be sent. Phase 2's domain
+/// checks and the initialization rule enforce this.
+///
+/// Debug builds keep a borrow count and panic on a conflicting borrow, as a
+/// `RefCell` would; release builds read and write with no bookkeeping.
+#[doc(hidden)]
+pub struct SoloCell<T> {
+    value: core::cell::UnsafeCell<T>,
+    #[cfg(debug_assertions)]
+    borrows: core::sync::atomic::AtomicIsize,
+}
+
+// SAFETY: see the type's documentation. Readers on several threads share
+// `&T`, and a writer is alone: either on its value's own thread, or before
+// any other thread can reach the cell.
+#[cfg(feature = "threads")]
+#[allow(unsafe_code, reason = "the one Sync claim; see the type's documentation")]
+unsafe impl<T: Send + Sync> Sync for SoloCell<T> {}
+
+impl<T> SoloCell<T> {
+    pub(crate) const fn new(value: T) -> Self {
+        Self {
+            value: core::cell::UnsafeCell::new(value),
+            #[cfg(debug_assertions)]
+            borrows: core::sync::atomic::AtomicIsize::new(0),
+        }
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn borrow(&self) -> SoloRef<'_, T> {
+        #[cfg(debug_assertions)]
+        {
+            let previous = self
+                .borrows
+                .fetch_add(1, core::sync::atomic::Ordering::Acquire);
+            if previous < 0 {
+                self.borrows
+                    .fetch_sub(1, core::sync::atomic::Ordering::Release);
+                panic!("cell already mutably borrowed");
+            }
+        }
+        SoloRef { cell: self }
+    }
+
+    /// A shared borrow, or `None` in a debug build when a mutable one is out.
+    #[inline]
+    pub(crate) fn try_borrow(&self) -> Option<SoloRef<'_, T>> {
+        #[cfg(debug_assertions)]
+        {
+            let previous = self
+                .borrows
+                .fetch_add(1, core::sync::atomic::Ordering::Acquire);
+            if previous < 0 {
+                self.borrows
+                    .fetch_sub(1, core::sync::atomic::Ordering::Release);
+                return None;
+            }
+        }
+        Some(SoloRef { cell: self })
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn borrow_mut(&self) -> SoloMut<'_, T> {
+        #[cfg(debug_assertions)]
+        if self
+            .borrows
+            .compare_exchange(
+                0,
+                -1,
+                core::sync::atomic::Ordering::Acquire,
+                core::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            panic!("cell already borrowed");
+        }
+        SoloMut { cell: self }
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn replace(&self, value: T) -> T {
+        core::mem::replace(&mut *self.borrow_mut(), value)
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for SoloCell<T> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.try_borrow() {
+            Some(value) => formatter
+                .debug_struct("SoloCell")
+                .field("value", &*value)
+                .finish(),
+            None => formatter.write_str("SoloCell { <borrowed> }"),
+        }
+    }
+}
+
+/// A shared borrow of a [`SoloCell`].
+pub(crate) struct SoloRef<'a, T> {
+    cell: &'a SoloCell<T>,
+}
+
+impl<T> core::ops::Deref for SoloRef<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        // SAFETY: no writer is active while this borrow lives (see
+        // `SoloCell`); debug builds check it.
+        unsafe { &*self.cell.value.get() }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T> Drop for SoloRef<'_, T> {
+    fn drop(&mut self) {
+        self.cell
+            .borrows
+            .fetch_sub(1, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// The one mutable borrow of a [`SoloCell`].
+pub(crate) struct SoloMut<'a, T> {
+    cell: &'a SoloCell<T>,
+}
+
+impl<T> core::ops::Deref for SoloMut<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        // SAFETY: this is the only borrow of the cell (see `SoloCell`).
+        unsafe { &*self.cell.value.get() }
+    }
+}
+
+impl<T> core::ops::DerefMut for SoloMut<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        // SAFETY: this is the only borrow of the cell (see `SoloCell`).
+        unsafe { &mut *self.cell.value.get() }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T> Drop for SoloMut<'_, T> {
+    fn drop(&mut self) {
+        self.cell
+            .borrows
+            .store(0, core::sync::atomic::Ordering::Release);
     }
 }

@@ -598,11 +598,11 @@ impl Drop for Channel {
 }
 
 /// Shared storage for a lexical binding captured by one or more closures.
-pub(crate) type BindingCell = Rc<RefCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<RefCell<GlobalTable>>;
+pub(crate) type BindingCell = Rc<crate::sync::SoloCell<Value>>;
+pub(crate) type GlobalEnvironment = Rc<crate::sync::SoloCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(RefCell::new(GlobalTable::default()))
+    Rc::new(crate::sync::SoloCell::new(GlobalTable::default()))
 }
 
 /// Global bindings stored in definition order behind a name index.
@@ -704,7 +704,7 @@ pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
-    Rc::new(RefCell::new(value))
+    Rc::new(crate::sync::SoloCell::new(value))
 }
 
 pub(crate) fn module_binding(name: impl Into<String>) -> Value {

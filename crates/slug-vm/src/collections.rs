@@ -101,7 +101,7 @@ struct StrData {
     text: String,
     scalars: usize,
     /// The byte offset of every `OFFSET_STRIDE`th scalar, for non-ASCII text.
-    offsets: core::cell::OnceCell<Box<[usize]>>,
+    offsets: crate::sync::Once<Box<[usize]>>,
 }
 
 /// Scalars between recorded offsets: a lookup in non-ASCII text scans at most
@@ -114,7 +114,7 @@ impl StrData {
         Self {
             text,
             scalars,
-            offsets: core::cell::OnceCell::new(),
+            offsets: crate::sync::Once::new(),
         }
     }
 }
@@ -127,7 +127,7 @@ impl Str {
             let before = data.text.len();
             write!(data.text, "{text}").expect("writing to a String cannot fail");
             data.scalars += data.text[before..].chars().count();
-            data.offsets = core::cell::OnceCell::new();
+            data.offsets = crate::sync::Once::new();
             return self;
         }
         // A shared string is copied once into a buffer with room for the
@@ -140,7 +140,7 @@ impl Str {
         Self(Rc::new(StrData {
             text: buffer,
             scalars,
-            offsets: core::cell::OnceCell::new(),
+            offsets: crate::sync::Once::new(),
         }))
     }
 

@@ -13,7 +13,11 @@
   map-key lookup's hint, are relaxed atomics, which cost nothing measured
   (0.99x on tuned workloads). Compiled
   chunks record a capture's name only when it is a `var`, the only name a
-  fork's errors use.
+  fork's errors use. Module binding cells and global tables are
+  `SoloCell`s rather than `RefCell`s: forks on other threads may read them
+  at once, which a `RefCell`'s borrow count would race on. Each is written
+  by one thread or only before any fork exists, so release builds read and
+  write them with no bookkeeping; debug builds still check borrows.
 
 - Phase 2 of `fork`: forks run. A fork sees its captures and every module
   `var` as they were when it started; changing either fails, as does

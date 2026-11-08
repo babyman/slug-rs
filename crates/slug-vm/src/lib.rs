@@ -25,6 +25,8 @@ mod scheduler_signal;
 mod scheduler_signal;
 mod source_diagnostic;
 mod sync;
+#[doc(hidden)]
+pub use sync::SoloCell;
 mod value;
 mod variables;
 mod vm;

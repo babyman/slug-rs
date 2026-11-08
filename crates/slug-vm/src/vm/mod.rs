@@ -4,7 +4,9 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::{cell::RefCell, cmp, mem};
+#[cfg(any(feature = "concurrency", feature = "metrics"))]
+use core::cell::RefCell;
+use core::{cmp, mem};
 
 use crate::platform::HashSet;
 
@@ -1056,7 +1058,7 @@ impl Vm {
     pub fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
-            globals: Rc::new(RefCell::new(environment.globals.borrow().clone())),
+            globals: Rc::new(crate::sync::SoloCell::new(environment.globals.borrow().clone())),
             host_globals: environment.host_globals.clone(),
             local_bindings: environment.local_bindings.clone(),
             imported_globals: environment.imported_globals.clone(),

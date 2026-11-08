@@ -180,6 +180,34 @@ phase is measured on its own.
 Measure: `bench-ab`, `threads` against no `threads`, with hold-outs. The
 budget is the experiment's 1.03x geomean.
 
+Progress (2026-11-08): the `threads` feature and `slug_vm::Shared` landed
+(geomean 1.01x tuned, 1.00x hold-out against `Rc`), and the inline caches
+are relaxed atomics (0.99x). An audit asserting `Value` and `Program` are
+`Send + Sync` found about 30 interior-mutable types in the way, through task
+handles (a task's whole VM), channels, binding cells, global tables, and
+native resources. Borrowing a `RefCell` writes its flag, so even concurrent
+reads of one race.
+
+**Decision (2026-11-08): partition, do not lock.** Making every type
+thread-safe would put an atomic read-modify-write on every global and
+binding read. Instead, what threads share is kept small and made safe to
+read without locks: programs, `val` cells and module tables (written while a
+module initializes, then read-only), and data values; channels, nursery
+settlement, and the host registry are synchronized; everything else stays
+with one thread, as phase 2's domain checks already guarantee. Scoped
+`unsafe` is allowed at three sites, each in `slug-vm`'s `sync` module with
+its invariant documented, and ThreadSanitizer runs in CI: the binding cell,
+the module table (both `SoloCell`, which reads with no borrow count in
+release builds and checks borrows in debug ones), and the move of a fork's
+package to its worker (`unsafe impl Send`).
+
+Open before phase 4: the entry program's own table still changes while its
+top level runs, after a fork may have started. A later top-level
+definition inserts an entry, and assigning one of its `var`s writes a plain
+entry in place. Pre-declaring its top-level names as binding cells, as
+modules' already are, would leave every table read-only once forks can run,
+except for REPL redefinition, which needs its own rule.
+
 ### Phase 4: worker threads (desktop and server)
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
