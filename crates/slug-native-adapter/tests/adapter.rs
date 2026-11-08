@@ -675,7 +675,7 @@ impl Host {
             .graph
             .compile_source(self, "main.slug", &source)
             .unwrap_or_else(|error| panic!("compile `{body}`: {error}"));
-        Vm::with_host(Rc::new(self.clone())).run_named(&program, "main")
+        Vm::with_host(slug_vm::Shared::new(self.clone())).run_named(&program, "main")
     }
 }
 
@@ -699,7 +699,7 @@ impl ModuleGraphHost for Host {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }

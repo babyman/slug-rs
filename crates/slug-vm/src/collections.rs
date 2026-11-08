@@ -4,7 +4,8 @@
 //! collection redesign. This module is the only place that needs to know the
 //! concrete backing containers for ordinary collection transformations.
 
-use alloc::{borrow::Cow, boxed::Box, rc::Rc, string::String, vec, vec::Vec};
+use crate::sync::Rc;
+use alloc::{borrow::Cow, boxed::Box, string::String, vec, vec::Vec};
 use core::fmt;
 use core::hash::{BuildHasher, Hash, Hasher};
 
@@ -1040,7 +1041,7 @@ mod map_tests {
             1 if n % 8 == 1 => Value::Float(f64::from(u32::try_from(n - 1).unwrap())),
             1 => Value::Float(f64::from(u32::try_from(n).unwrap()) + 0.5),
             2 => Value::string(format!("key-{n}")),
-            _ => Value::Bytes(std::rc::Rc::new(n.to_le_bytes().to_vec())),
+            _ => Value::Bytes(crate::Shared::new(n.to_le_bytes().to_vec())),
         };
         let mut map = Map::new(Vec::new());
         let mut model: Vec<(Value, Value)> = Vec::new();

@@ -5,7 +5,7 @@
 //! variable. A module's variables are binding cells, shared with the modules
 //! that import them; an entry program's are entries of its global table.
 
-use alloc::rc::Rc;
+use crate::sync::Rc;
 use core::cell::RefCell;
 
 use crate::{

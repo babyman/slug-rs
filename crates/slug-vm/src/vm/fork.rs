@@ -6,7 +6,8 @@
 //! make. Its context is shared by every task it spawns and nursery it opens,
 //! which are inside the fork too.
 
-use alloc::{rc::Rc, string::String};
+use crate::sync::Rc;
+use alloc::string::String;
 use core::cell::RefCell;
 
 use crate::{

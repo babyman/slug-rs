@@ -3,10 +3,10 @@
 //! The codec stays adjacent to the VM because decoding is an executable
 //! validation boundary.
 
+use crate::sync::Rc;
 use alloc::{
     borrow::ToOwned,
     boxed::Box,
-    rc::Rc,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -1719,9 +1719,7 @@ impl<'a> Reader<'a> {
             5 => Ok(Value::string(self.string(context)?)),
             6 => {
                 let length = self.usize(context)?;
-                Ok(Value::Bytes(alloc::rc::Rc::new(
-                    self.bytes(length, context)?.to_vec(),
-                )))
+                Ok(Value::Bytes(Rc::new(self.bytes(length, context)?.to_vec())))
             }
             _ => Err(Error::UnsupportedValue("value tag".into())),
         }

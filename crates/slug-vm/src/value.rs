@@ -1,6 +1,7 @@
+use crate::sync::Rc;
 #[cfg(feature = "concurrency")]
 use alloc::boxed::Box;
-use alloc::{collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
 use core::{
@@ -12,7 +13,7 @@ use core::{
 use crate::platform::NameMap;
 
 #[cfg(feature = "concurrency")]
-use alloc::rc::Weak;
+use crate::sync::Weak;
 #[cfg(feature = "concurrency")]
 use core::cell::Cell;
 

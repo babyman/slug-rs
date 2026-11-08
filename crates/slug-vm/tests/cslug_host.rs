@@ -134,7 +134,7 @@ fn decoded_artifact_host_executes_closed_imports() {
     let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
 
     assert_eq!(
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+        cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
             .expect("valid artifact")
             .run()
             .expect("execute closed import"),
@@ -151,7 +151,7 @@ fn artifact_host_rejects_imports_absent_from_its_graph() {
         )
         .expect("compile artifact with dynamic import");
 
-    let error = cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+    let error = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact")
         .run()
         .expect_err("missing artifact edge is checked");
@@ -166,8 +166,8 @@ fn artifact_host_registers_static_module_qualified_foreign_functions() {
             "val gpio = import(\"slug.gpio\")\nval main = fn() { gpio.write() }\n",
         )
         .expect("compile artifact");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     let module = NativeModule::new("slug.gpio", ()).expect("valid native module");
     artifact
         .register_foreign(
@@ -193,14 +193,15 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
             )
             .expect("compile artifact")
     };
-    let missing = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+    let missing = cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact")
         .install_static_providers([])
         .expect_err("missing provider is rejected");
     assert!(matches!(missing, cslug::StaticProviderError::Missing(_)));
 
-    let extra_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
-        .expect("valid artifact");
+    let extra_host =
+        cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
+            .expect("valid artifact");
     let extra_module = NativeModule::new("slug.extra", ()).expect("valid module");
     let extra = extra_module
         .function("write", NativeArity::Exact(0), returns_seven)
@@ -210,8 +211,9 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
         Err(cslug::StaticProviderError::Extra(_))
     ));
 
-    let duplicate_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
-        .expect("valid artifact");
+    let duplicate_host =
+        cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
+            .expect("valid artifact");
     let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
     let first = gpio
         .function("write", NativeArity::Exact(0), returns_seven)
@@ -225,7 +227,7 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
         Err(cslug::StaticProviderError::Duplicate(_))
     ));
 
-    let host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+    let host = cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact");
     let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
     let write = gpio
@@ -277,8 +279,8 @@ fn firmware_light_walk_reaches_its_first_gpio_write() {
             include_str!("../../../firmware/slug-esp32-s3/programs/blink.slug"),
         )
         .expect("compile firmware light-walk graph");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     register_embedded_builtins(&artifact);
     let module = NativeModule::new("slug.gpio", ()).expect("valid native module");
     artifact
@@ -321,8 +323,8 @@ fn firmware_artifact_executes_implicit_and_explicit_builtin_calls() {
              }\n",
         )
         .expect("compile embedded builtin users");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     register_embedded_builtins(&artifact);
 
     assert_eq!(

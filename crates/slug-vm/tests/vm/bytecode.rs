@@ -273,7 +273,7 @@ fn overloaded_operator_bytecode_retains_checked_mixed_failures() {
         (
             Op::Add,
             Value::Int(1),
-            Value::Bytes(std::rc::Rc::new(vec![1])),
+            Value::Bytes(slug_vm::Shared::new(vec![1])),
         ),
         (Op::Subtract, Value::Int(1), Value::string("one")),
         (Op::Multiply, Value::string("one"), Value::string("two")),

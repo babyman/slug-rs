@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{HashMap, HashSet};
 
 use slug_vm::{
     CallArgumentKind, CallableIdentity, Capture, Chunk, Entrypoint, EntrypointArguments, EnumValue,
@@ -1211,7 +1208,7 @@ impl Compiler {
                     for case in cases {
                         let key = state.constant(Value::string(case.clone()));
                         state.emit(Op::Constant(key), &expression.span);
-                        let value = state.constant(Value::Enum(Rc::new(EnumValue {
+                        let value = state.constant(Value::Enum(slug_vm::Shared::new(EnumValue {
                             module: self
                                 .module_name
                                 .as_ref()

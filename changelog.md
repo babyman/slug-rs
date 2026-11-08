@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Phase 3 of `fork`, first step: a `threads` build feature, on by default
+  for the CLI, counts the VM's shared references atomically (`Arc`), so its
+  values, closures, programs, and channels can later be shared with forks on
+  other threads. Builds without it, embedded ones among them, keep `Rc`.
+  Hosts and tests name the type as `slug_vm::Shared`. Measured against the
+  `Rc` build (11 interleaved PGO rounds): geomean 1.01x tuned, 1.00x
+  hold-out; Crawl's game 1.06x and closure-heavy code up to 1.06x. Compiled
+  chunks record a capture's name only when it is a `var`, the only name a
+  fork's errors use.
+
 - Phase 2 of `fork`: forks run. A fork sees its captures and every module
   `var` as they were when it started; changing either fails, as does
   calling a function made outside it that captures a `var`, awaiting a task

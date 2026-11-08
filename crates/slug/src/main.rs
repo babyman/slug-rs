@@ -461,7 +461,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         program_arguments,
         entry_module,
     );
-    let host = match ArtifactHost::new(artifact, std::rc::Rc::new(configuration)) {
+    let host = match ArtifactHost::new(artifact, slug_vm::Shared::new(configuration)) {
         Ok(host) => host,
         Err(error) => {
             eprint_startup_error("artifact", "load", error.to_string(), json);

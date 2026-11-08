@@ -1,7 +1,7 @@
+use crate::sync::{Rc, Weak};
 use alloc::{
     boxed::Box,
     collections::VecDeque,
-    rc::{Rc, Weak},
     string::{String, ToString},
     sync::{Arc, Weak as SyncWeak},
     vec::Vec,

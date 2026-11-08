@@ -24,6 +24,7 @@ mod scheduler_signal;
 #[path = "scheduler_signal_embedded.rs"]
 mod scheduler_signal;
 mod source_diagnostic;
+mod sync;
 mod value;
 mod variables;
 mod vm;
@@ -69,6 +70,10 @@ pub use value::{
 #[doc(hidden)]
 pub use variables::{BindingKind, BindingName};
 pub use variables::{ModuleVariables, module_variables};
+
+/// The shared reference the values of the VM use: `Arc` in a build with
+/// `threads`, `Rc` otherwise.
+pub type Shared<T> = sync::Rc<T>;
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]
 pub use vm::InteractiveExecution;

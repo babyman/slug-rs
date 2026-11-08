@@ -1,4 +1,5 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Instant};
+use crate::sync::Rc;
+use std::{cell::RefCell, collections::VecDeque, time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;

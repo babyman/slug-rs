@@ -955,7 +955,7 @@ impl ModuleGraphHost for ModuleHost {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: std::rc::Rc<dyn VmHost> = std::rc::Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
@@ -1084,7 +1084,7 @@ mod tests {
         let bytes = cslug::encode(&artifact).expect("encode artifact");
         let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
         assert_eq!(
-            ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+            ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
                 .expect("valid artifact")
                 .run()
                 .expect("execute artifact"),
@@ -1100,7 +1100,7 @@ mod tests {
                 "val name = \"missing\"\nval main = fn() { import(name) }\n",
             )
             .expect("compile artifact");
-        let error = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+        let error = ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
             .expect("valid artifact")
             .run()
             .expect_err("missing artifact edge");

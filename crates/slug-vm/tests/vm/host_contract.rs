@@ -1,7 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
 };
 
 use slug_vm::{
@@ -105,7 +104,7 @@ fn host_callback_drives_live_imports_warnings_and_shutdown() {
     let mut builder = ProgramBuilder::new();
     builder.add_chunk(main);
     let program = builder.finish();
-    let host = Rc::new(RecordingHost::new());
+    let host = slug_vm::Shared::new(RecordingHost::new());
     let mut vm = Vm::with_host(host.clone());
 
     assert_eq!(

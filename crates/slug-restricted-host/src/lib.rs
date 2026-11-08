@@ -72,7 +72,7 @@ pub fn evaluate_with_configuration(
     let program = host
         .compile_source("memory:entry", source)
         .map_err(RestrictedHostError::Source)?;
-    Vm::with_host(Rc::new(host))
+    Vm::with_host(slug_vm::Shared::new(host))
         .run_named(&program, "main")
         .map_err(RestrictedHostError::Runtime)
 }

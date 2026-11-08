@@ -347,7 +347,7 @@ impl ModuleGraphHost for DesktopLoader {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
@@ -506,5 +506,5 @@ pub fn build_default_host_vm(
         ),
         configuration,
     );
-    Ok((Vm::with_host(Rc::new(loader.clone())), loader))
+    Ok((Vm::with_host(slug_vm::Shared::new(loader.clone())), loader))
 }

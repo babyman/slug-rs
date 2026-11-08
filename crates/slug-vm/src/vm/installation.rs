@@ -1,8 +1,7 @@
 //! Immutable bytecode ownership after VM installation-time validation.
 
-use alloc::rc::Rc;
-
 use crate::Program;
+use crate::sync::Rc;
 
 /// Immutable, checked bytecode installed by a VM.
 ///

@@ -32,7 +32,7 @@ trait VmWithModuleHost {
 
 impl VmWithModuleHost for Vm {
     fn with_module_loader(loader: ModuleHost) -> Self {
-        Self::with_host(Rc::new(loader))
+        Self::with_host(slug_vm::Shared::new(loader))
     }
 }
 

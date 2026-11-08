@@ -1,6 +1,6 @@
+use crate::sync::Rc;
 use alloc::{
     boxed::Box,
-    rc::Rc,
     string::{String, ToString},
     vec::Vec,
 };

@@ -8,7 +8,8 @@
 //! cannot. Instructions are not time: a native call or a large copy counts
 //! as one.
 
-use alloc::{collections::BTreeMap, rc::Rc, string::String};
+use crate::sync::Rc;
+use alloc::{collections::BTreeMap, string::String};
 use core::{cell::RefCell, fmt, fmt::Write as _};
 
 use super::Vm;

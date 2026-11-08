@@ -1,8 +1,5 @@
-use alloc::{
-    rc::{Rc, Weak},
-    sync::Arc,
-    vec::Vec,
-};
+use crate::sync::{Rc, Weak};
+use alloc::{sync::Arc, vec::Vec};
 use core::cell::RefCell;
 
 #[cfg(target_os = "none")]

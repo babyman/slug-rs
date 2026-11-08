@@ -161,7 +161,7 @@ impl StaticHost {
     /// Returns a checked source or runtime error from the selected program.
     pub fn run_source(&self, path: &str, source: &str) -> Result<Value, StaticHostError> {
         let program = self.compile_source(path, source)?;
-        Vm::with_host(Rc::new(self.clone()))
+        Vm::with_host(slug_vm::Shared::new(self.clone()))
             .run_named(&program, "main")
             .map_err(StaticHostError::Runtime)
     }
@@ -265,7 +265,7 @@ impl ModuleGraphHost for StaticHost {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
@@ -571,7 +571,7 @@ mod tests {
             .compile_source("memory:entry", "import(\"slug.time\")\n")
             .expect("compile dynamic import");
 
-        let error = Vm::with_host(Rc::new(host))
+        let error = Vm::with_host(slug_vm::Shared::new(host))
             .run_named(&program, "main")
             .expect_err("unselected module must fail");
         assert!(
