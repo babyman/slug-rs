@@ -304,6 +304,15 @@ closures, global tables, never counted once their module has initialized),
 since per-call counting on shared objects worsens with every core added.
 That needs a decision record before a custom reference-counted pointer.
 
+The contention hunt (2026-11-08) found one more shared count per call: the
+call path cloned the closure's program to look up its chunk. Borrowing it
+instead makes calls to a fork's own closures scale like code without calls
+(4M calls: 0.37 s on one fork, 0.08 s on eight). Experiment 2: 17.0 s on
+one fork, 9.3 s on two, 5.6 s on four, 5.9 s on eight. What remains is
+counting a callee every fork shares: 4M calls to a shared module function
+take 0.59 s on one fork and 1.75 s on eight, and to a builtin native 0.36 s
+and 0.91 s. That is the case immortal code objects (and natives) address.
+
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
   cooperatively on its worker, sharing its snapshot.

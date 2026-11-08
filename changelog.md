@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A call no longer clones its closure's program to find the chunk it runs;
+  it borrows it. The clone was an atomic count on the one program every
+  fork shares, made on every call, so calls stopped scaling across threads
+  even to a fork's own closures: 4M calls to such a closure took 0.37 s on
+  one fork and 0.43 s on eight, and now 0.08 s on eight. Experiment 2 on
+  eight forks: 7.0 s to 5.9 s.
+
 - A call no longer counts its program and global table: a closure always
   holds both, and its frame borrows them from it, so entering a function
   takes one reference (the closure) instead of three. Under `threads` those

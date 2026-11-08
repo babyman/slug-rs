@@ -493,7 +493,7 @@ impl Vm {
     ) -> VmResult<Option<Value>> {
         match action {
             Value::Closure(closure) => {
-                let frame_program = closure.program.clone();
+                let frame_program = &closure.program;
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,

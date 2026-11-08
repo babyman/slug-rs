@@ -3506,7 +3506,7 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         match callee {
             Value::Closure(closure) => {
-                let frame_program = closure.program.clone();
+                let frame_program = &closure.program;
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
@@ -4393,7 +4393,7 @@ impl Vm {
         {
             return Ok(Some(closure));
         }
-        let frame_program = closure.program.clone();
+        let frame_program = &closure.program;
         let local_count = {
             let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                 self.error_at(
