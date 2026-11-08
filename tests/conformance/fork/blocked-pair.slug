@@ -1,0 +1,15 @@
+// Two forks each waiting on the other are reported blocked.
+val main = fn() {
+    val left:chan<num> = chan(0)
+    val right:chan<num> = chan(0)
+    val a = fork {
+        select { recv left }
+        select { send right, 1 /> fn(_) { nil } }
+    }
+    val b = fork {
+        select { recv right }
+        select { send left, 1 /> fn(_) { nil } }
+    }
+    println(select { await a })
+    println(select { await b })
+}

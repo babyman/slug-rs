@@ -51,6 +51,8 @@ mod error;
 mod fork;
 mod frames;
 mod installation;
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub(crate) mod island;
 mod operations;
 #[cfg(feature = "metrics")]
 mod profile;
@@ -333,6 +335,12 @@ enum RuntimeSelectCase {
 
 #[cfg(feature = "concurrency")]
 impl TaskExecution {
+    /// Whether this is a fork's execution, which runs on an island.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn is_fork(&self) -> bool {
+        self.forked
+    }
+
     /// The error reporting that this suspended task can never resume, at the
     /// operation it is suspended in and with its own call frames.
     pub(crate) fn blocked_error(&self) -> RuntimeError {
@@ -2580,7 +2588,7 @@ impl Vm {
         }
         #[cfg(feature = "concurrency")]
         if let Some(view) = &self.view
-            && let Some(value) = self.viewed_value(view, &globals, slot)
+            && let Some(value) = Self::viewed_value(view, &globals, slot)
         {
             return Ok(value);
         }
@@ -3801,6 +3809,11 @@ impl Vm {
                 .in_domain(self.domain()),
         );
         self.nursery.add_task(task.clone());
+        // A fork its nursery admits runs on a worker from now on.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if forked {
+            island::ship(&task);
+        }
         self.stack.push(Value::Task(task));
         Ok(())
     }

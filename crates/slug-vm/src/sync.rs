@@ -277,3 +277,44 @@ impl Flag {
         self.0.store(value, core::sync::atomic::Ordering::Relaxed);
     }
 }
+
+/// What crosses between a fork's island and the thread that made it: the
+/// island itself, its result, and the wakes and host requests between them.
+///
+/// The VM's values are not `Send` by type, since a task handle or native
+/// resource cannot be shared, and its scheduler state is single-threaded.
+/// What is wrapped here may cross anyway, because:
+///
+/// - every value a fork can reach from outside is `val`-only data (programs,
+///   strings, collections, closures over `val`s, module tables, and binding
+///   cells), whose shared reference counts are atomic and whose interior
+///   state is thread-safe (`SoloCell`, `Lock`, `Once`, `Hint`); a value that
+///   is not (a task handle, a resource, a closure capturing a `var`) is
+///   refused by the sendable check or by the fork's domain checks before it
+///   can be used;
+/// - scheduler state (tasks, nurseries, waiters, timers, the progress driver,
+///   the host) is used only on its own thread: an island gets fresh ones on
+///   its worker, and a wake or host request for another thread is only
+///   carried to it here, then run there.
+///
+/// Dropping a wrapped value on the other thread only releases atomic counts,
+/// or frees state no other thread can still reach.
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub(crate) struct Sendable<T>(T);
+
+// SAFETY: see the type's documentation.
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+#[allow(unsafe_code, reason = "the fork package's one Send claim; see the type's documentation")]
+unsafe impl<T> Send for Sendable<T> {}
+
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+impl<T> Sendable<T> {
+    /// Wraps `value` to cross to another thread, under the type's rules.
+    pub(crate) fn new(value: T) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn into_inner(self) -> T {
+        self.0
+    }
+}

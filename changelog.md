@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Phase 4 of `fork`: forks run in parallel. Under `threads`, each fork its
+  nursery admits moves to a worker thread as an island, a VM with its own
+  scheduler; tasks it spawns run there with it. Workers are pooled, and a
+  new one starts when none is idle, so forks waiting on one another never
+  wait for a thread. A fork reaches its spawner only through its result,
+  channels (a wake for a task on another thread is carried there to run),
+  cancellation, and its host, whose calls are served on the spawner's
+  thread; one `Sendable` wrapper is the only claim that any of it may cross
+  threads. A fork nothing can wake is reported blocked, as a spawned task
+  is: the program's threads count those asleep, and when all are, the root
+  reports it. An entry program's `var`s are binding cells, as a module's
+  are, so no global table changes once forks run. Eight CPU-bound forks
+  run 5x faster than in sequence on an eight-core machine. Known gaps: a
+  fork busy computing is cancelled only at its next wait; a fork's host
+  calls wait until its spawner next waits; islands' metrics are not merged.
+
 - Phase 3 of `fork`, first step: a `threads` build feature, on by default
   for the CLI, counts the VM's shared references atomically (`Arc`), so its
   values, closures, programs, and channels can later be shared with forks on

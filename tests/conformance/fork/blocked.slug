@@ -1,0 +1,6 @@
+// A fork that nothing can wake is reported blocked, as a spawned task is.
+val main = fn() {
+    val never:chan<num> = chan(0)
+    val t = fork { select { recv never } }
+    println(select { await t })
+}

@@ -11,7 +11,7 @@ use core::cell::RefCell;
 use crate::{
     Program, Value,
     platform::HashMap,
-    value::{BindingCell, GlobalEnvironment},
+    value::BindingCell,
 };
 
 /// The kind of the module-level binding `name` that `program` declares.
@@ -88,13 +88,11 @@ impl core::fmt::Display for BindingName {
     }
 }
 
-/// The identity of one module variable: its binding cell, or its slot in an
-/// entry program's global table.
+/// The identity of one module variable: its binding cell.
 #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum VarKey {
     Cell(usize),
-    Slot(usize, u32),
 }
 
 #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
@@ -102,28 +100,16 @@ impl VarKey {
     pub(crate) fn cell(cell: &BindingCell) -> Self {
         Self::Cell(Rc::as_ptr(cell).cast::<()>() as usize)
     }
-
-    pub(crate) fn slot(globals: &GlobalEnvironment, slot: u32) -> Self {
-        Self::Slot(Rc::as_ptr(globals).cast::<()>() as usize, slot)
-    }
-}
-
-enum VarSource {
-    Cell(BindingCell),
-    Slot(GlobalEnvironment, u32),
 }
 
 struct ModuleVariable {
-    source: VarSource,
+    cell: BindingCell,
     task: bool,
 }
 
 impl ModuleVariable {
     fn current(&self) -> Value {
-        match &self.source {
-            VarSource::Cell(cell) => cell.borrow().clone(),
-            VarSource::Slot(globals, slot) => globals.borrow().value(*slot).clone(),
-        }
+        self.cell.borrow().clone()
     }
 }
 
@@ -147,9 +133,11 @@ struct Variables {
     initializing: usize,
     entries: HashMap<VarKey, ModuleVariable>,
     task_vars: usize,
-    /// The last domain id given to a fork; zero is outside every fork.
-    domains: u32,
 }
+
+/// The last domain id given to a fork; zero is outside every fork. Global, so
+/// forks on every island and host draw distinct ids.
+static DOMAINS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Creates an empty registry, for a host to share with the VMs it creates.
 #[must_use]
@@ -163,17 +151,7 @@ impl ModuleVariables {
         self.register(
             VarKey::cell(cell),
             ModuleVariable {
-                source: VarSource::Cell(cell.clone()),
-                task,
-            },
-        );
-    }
-
-    pub(crate) fn register_slot(&self, globals: &GlobalEnvironment, slot: u32, task: bool) {
-        self.register(
-            VarKey::slot(globals, slot),
-            ModuleVariable {
-                source: VarSource::Slot(globals.clone(), slot),
+                cell: cell.clone(),
                 task,
             },
         );
@@ -206,10 +184,41 @@ impl ModuleVariables {
     }
 
     /// A new id for a fork's domain: what it makes is its own.
-    pub(crate) fn next_domain(&self) -> u32 {
-        let mut variables = self.0.borrow_mut();
-        variables.domains = variables.domains.wrapping_add(1).max(1);
-        variables.domains
+    pub(crate) fn next_domain() -> u32 {
+        loop {
+            let domain = DOMAINS
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
+            if domain != 0 {
+                return domain;
+            }
+        }
+    }
+
+    /// A registry for a fork's island: the variables registered now, with no
+    /// module initializing, since a fork cannot initialize one. The island
+    /// reads values only through its snapshot, so this registry is never
+    /// shared with the thread that made it.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn island_copy(&self) -> Self {
+        let variables = self.0.borrow();
+        Self(Rc::new(RefCell::new(Variables {
+            initializing: 0,
+            entries: variables
+                .entries
+                .iter()
+                .map(|(key, variable)| {
+                    (
+                        *key,
+                        ModuleVariable {
+                            cell: variable.cell.clone(),
+                            task: variable.task,
+                        },
+                    )
+                })
+                .collect(),
+            task_vars: variables.task_vars,
+        })))
     }
 
     /// Whether any `task var` is registered, so a new task needs copies.

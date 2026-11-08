@@ -121,36 +121,37 @@ impl Vm {
                 let Some(slot) = globals.slot(name) else {
                     continue;
                 };
-                if let Value::Binding { cell, .. } = globals.value(slot) {
-                    let cell = cell.clone();
-                    globals.mark(slot, kind);
+                if matches!(globals.value(slot), Value::Binding { .. })
+                    && let Some(cell) = globals.bind_variable(slot, kind)
+                {
                     self.variables.register_cell(&cell, declaration.task);
                 }
             }
         }
     }
 
-    /// Marks and registers `name` once `program` has defined it, when it is a
-    /// variable: an entry program's names are plain entries of its table.
+    /// Registers `name` once `program` has defined it, when it is a
+    /// variable: an entry program's variable moves into a binding cell, as a
+    /// module's already is, so its table never changes after its top level.
     pub(super) fn register_defined_variable(&self, program: &Program, name: &str) {
-        let slot = {
-            let globals = self.globals.borrow();
-            let Some(slot) = globals.slot(name) else {
-                return;
-            };
-            // A module's binding cells were registered when it installed.
-            if matches!(globals.value(slot), Value::Binding { .. }) {
-                return;
-            }
-            slot
-        };
         let kind = declared_kind(program, name);
         if kind == BindingKind::Val {
             return;
         }
-        self.globals.borrow_mut().mark(slot, kind);
+        let mut globals = self.globals.borrow_mut();
+        let Some(slot) = globals.slot(name) else {
+            return;
+        };
+        // A module's binding cells were registered when it installed.
+        if matches!(globals.value(slot), Value::Binding { .. }) {
+            return;
+        }
+        let Some(cell) = globals.bind_variable(slot, kind) else {
+            return;
+        };
+        drop(globals);
         self.variables
-            .register_slot(&self.globals, slot, kind == BindingKind::TaskVar);
+            .register_cell(&cell, kind == BindingKind::TaskVar);
     }
 
     /// The domain of the fork this VM's task runs in, or zero outside forks.
@@ -163,21 +164,20 @@ impl Vm {
     }
 
     /// The identity and kind of the variable in `slot`.
-    fn variable_at(&self, globals: &GlobalTable, slot: u32) -> (VarKey, BindingKind) {
+    fn variable_at(globals: &GlobalTable, slot: u32) -> Option<(VarKey, BindingKind)> {
         match globals.value(slot) {
-            Value::Binding { cell, name } => (VarKey::cell(cell), name.kind()),
-            _ => (VarKey::slot(&self.globals, slot), globals.kind(slot)),
+            Value::Binding { cell, name } => Some((VarKey::cell(cell), name.kind())),
+            _ => None,
         }
     }
 
     /// What `view` sees in `slot`, when it is not the variable's own value.
     pub(super) fn viewed_value(
-        &self,
         view: &TaskView,
         globals: &GlobalTable,
         slot: u32,
     ) -> Option<Value> {
-        let (key, kind) = self.variable_at(globals, slot);
+        let (key, kind) = Self::variable_at(globals, slot)?;
         view.value(key, kind)
     }
 
@@ -193,7 +193,9 @@ impl Vm {
         let Some(slot) = globals.slot(name) else {
             return Ok(Some(value));
         };
-        let (key, kind) = self.variable_at(&globals, slot);
+        let Some((key, kind)) = Self::variable_at(&globals, slot) else {
+            return Ok(Some(value));
+        };
         drop(globals);
         match (kind, &view.fork) {
             (BindingKind::TaskVar, _) => {
@@ -229,7 +231,7 @@ impl Vm {
                 enclosing.as_ref().and_then(|fork| fork.var(key))
             });
             Some(Rc::new(ForkContext::new(
-                self.variables.next_domain(),
+                crate::ModuleVariables::next_domain(),
                 self.owned_span(None),
                 captures,
                 vars,

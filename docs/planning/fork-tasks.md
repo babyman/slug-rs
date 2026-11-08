@@ -233,6 +233,41 @@ first worker, when there are threads for it to watch.
 
 ### Phase 4: worker threads (desktop and server)
 
+**Decision (2026-11-08): islands, one pooled thread per live fork.** A
+fork's child VM moves to a worker thread with a scheduler of its own (root
+nursery, progress driver, timers), so nursery, task, timer, and waiter state
+never cross threads. It is linked to its spawner only through:
+
+- a thread-safe completion slot for its result, which signals the spawner's
+  `ProgressSignal` as a native producer does;
+- channels, whose waiters become wakers: resuming a task on another island
+  posts to that island's inbox and signals it, and the island runs the
+  resume on its own thread;
+- an atomic cancellation flag, read at calls and backward jumps;
+- host calls (importing an initialized module, configuration, initialization
+  queries), forwarded to the owning thread rather than requiring every
+  `VmHost` to be thread-safe. Thread-safe natives run on the worker.
+
+Each island has an empty native resource registry (a fork cannot use
+resources) and its own metrics, merged when it settles; the fork domain
+counter is a global atomic. The fork package's `unsafe impl Send` covers
+moving an island, whose shared values the sendable check vets.
+
+A blocked fork holds its thread and sleeps on its signal. The pool reuses
+idle threads and grows when all are busy, so forks waiting on one another
+cannot deadlock; the operating system spreads them across cores. One worker
+per core with parked islands moved between workers stays a follow-up, taken
+only if a measurement asks for it. The bullets below are the original
+outline; the decision above refines them.
+
+Progress (2026-11-08): islands run forks on pooled workers; wakes, results,
+and host calls cross through per-thread inboxes; a program's threads detect
+a deadlock together, so a blocked fork reports as a blocked task does. All
+33 fork fixtures pass, 400 times over, eight runs at a time for half of
+them. Open: cancelling a fork busy computing (it stops at its next wait),
+host calls served only when the spawner waits, islands' metrics,
+ThreadSanitizer (needs a nightly toolchain), and experiment 2.
+
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
   cooperatively on its worker, sharing its snapshot.

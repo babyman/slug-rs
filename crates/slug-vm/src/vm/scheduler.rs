@@ -221,6 +221,16 @@ impl Nursery {
             return true;
         }
         let deadline = self.timers.borrow().next_deadline();
+        // Only another thread can wake this one: sleep until it does, or
+        // until every thread of the program is asleep, which is a deadlock.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if deadline.is_none()
+            && !self.progress.has_live_native_source()
+            && self.progress.may_be_woken_elsewhere()
+        {
+            return self.progress.sleep_until_woken(observed)
+                || self.progress.make_available_progress();
+        }
         if deadline.is_none() && !self.progress.has_live_native_source() {
             // A producer may have sent, closed, and released since the drain
             // above; whatever it sent before closing is queued by now.
@@ -245,6 +255,11 @@ impl Nursery {
         let Some(next) = self.next_ready_task() else {
             return false;
         };
+        // A fork admitted only now starts on a worker.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if super::island::ship(&next) {
+            return true;
+        }
         let Some(run) = next.take_pending(&next) else {
             return true;
         };
@@ -263,7 +278,7 @@ impl Nursery {
         let candidates = ready.len();
         for _ in 0..candidates {
             let task = ready.pop_front().expect("ready queue length was checked");
-            if !task.is_pending() {
+            if !task.is_queued() {
                 continue;
             }
             if task.try_admit() {

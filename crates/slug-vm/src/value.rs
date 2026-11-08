@@ -80,6 +80,10 @@ pub(crate) enum ChannelReceive {
 #[derive(Clone)]
 pub(crate) struct Waiter {
     identity: usize,
+    /// The thread whose scheduler owns the waiting execution: a wake from
+    /// another thread is carried there to run.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    home: Arc<crate::vm::island::Inbox>,
     resume: Rc<dyn Fn(Result<Value, crate::RuntimeError>)>,
     reject_closed_send: Rc<dyn Fn()>,
     set_closed_send_error: Rc<dyn Fn(crate::RuntimeError)>,
@@ -130,6 +134,8 @@ impl Waiter {
                 move || root.reject_closed_send()
             }),
             set_closed_send_error: Rc::new(move |error| root.set_closed_send_error(error)),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         }
     }
 
@@ -147,11 +153,15 @@ impl Waiter {
                 move || task.reject_closed_send()
             }),
             set_closed_send_error: Rc::new(|_| {}),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         }
     }
 
     pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
         let identity = state.borrow().waiter.identity;
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        let home = state.borrow().waiter.home.clone();
         let resume_state = state.clone();
         Self {
             identity,
@@ -179,10 +189,18 @@ impl Waiter {
             set_closed_send_error: Rc::new(move |error| {
                 state.borrow().waiter.set_closed_send_error(error);
             }),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home,
         }
     }
 
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if !self.home.is_current() {
+            let waiter = self.clone();
+            self.home.post(move || (waiter.resume)(result));
+            return;
+        }
         (self.resume)(result);
     }
 
@@ -191,6 +209,12 @@ impl Waiter {
     }
 
     pub(crate) fn reject_closed_send(&self) {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if !self.home.is_current() {
+            let waiter = self.clone();
+            self.home.post(move || (waiter.reject_closed_send)());
+            return;
+        }
         (self.reject_closed_send)();
     }
 
@@ -615,9 +639,6 @@ pub(crate) fn global_environment() -> GlobalEnvironment {
 pub(crate) struct GlobalTable {
     slots: NameMap<u32>,
     entries: Vec<(String, Value)>,
-    /// Per slot, whether a plain entry is a `val`, `var`, or `task var`; a
-    /// binding cell carries its own kind.
-    kinds: Vec<crate::variables::BindingKind>,
 }
 
 impl GlobalTable {
@@ -631,23 +652,28 @@ impl GlobalTable {
         &self.entries[slot as usize].1
     }
 
-    /// Whether the plain entry in `slot` is a `val`, `var`, or `task var`.
-    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
-    #[inline]
-    pub(crate) fn kind(&self, slot: u32) -> crate::variables::BindingKind {
-        self.kinds.get(slot as usize).copied().unwrap_or_default()
-    }
 
-    /// Marks the plain entry in `slot` as a variable of `kind`, or a binding
-    /// cell in it as one.
-    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
-    pub(crate) fn mark(&mut self, slot: u32, kind: crate::variables::BindingKind) {
-        if let Some(entry) = self.kinds.get_mut(slot as usize) {
-            *entry = kind;
-        }
-        if let Some((_, Value::Binding { name, .. })) = self.entries.get(slot as usize) {
+    /// Moves the plain entry in `slot` into a binding cell of `kind`, so
+    /// assigning the variable later changes the cell and never the table,
+    /// which forks on other threads may be reading. A binding cell already
+    /// there is marked as `kind` and returned.
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn bind_variable(
+        &mut self,
+        slot: u32,
+        kind: crate::variables::BindingKind,
+    ) -> Option<BindingCell> {
+        let (name, value) = self.entries.get_mut(slot as usize)?;
+        if let Value::Binding { name, cell } = value {
             name.set_kind(kind);
+            return Some(cell.clone());
         }
+        let cell = binding_cell(core::mem::replace(value, Value::Nil));
+        *value = Value::Binding {
+            name: Rc::new(crate::variables::BindingName::new(name.clone(), kind)),
+            cell: cell.clone(),
+        };
+        Some(cell)
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<&Value> {
@@ -666,7 +692,6 @@ impl GlobalTable {
             let slot = u32::try_from(self.entries.len()).expect("too many global bindings");
             self.slots.insert(name.clone(), slot);
             self.entries.push((name, value));
-            self.kinds.push(crate::variables::BindingKind::Val);
         }
     }
 
@@ -766,6 +791,9 @@ pub(crate) fn task_state_layout() -> (usize, usize) {
 enum TaskPhase {
     Pending(Box<crate::vm::TaskExecution>),
     Running,
+    /// A fork running on its own island, on a worker thread.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    Remote(Arc<crate::vm::island::IslandControl>),
     Settled(Result<Value, crate::RuntimeError>),
 }
 
@@ -855,8 +883,57 @@ impl Task {
         matches!(self.state.borrow().phase, TaskPhase::Running)
     }
 
+    /// Whether the task has yet to settle and is not running here: queued,
+    /// suspended, or running on another island.
     pub(crate) fn is_pending(&self) -> bool {
+        match self.state.borrow().phase {
+            TaskPhase::Pending(_) => true,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            TaskPhase::Remote(_) => true,
+            TaskPhase::Running | TaskPhase::Settled(_) => false,
+        }
+    }
+
+    /// Whether the task waits here for its scheduler to run it.
+    pub(crate) fn is_queued(&self) -> bool {
         matches!(self.state.borrow().phase, TaskPhase::Pending(_))
+    }
+
+    /// Takes the execution of a fork its nursery has admitted, to run on an
+    /// island, leaving the task waiting on `control`.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn take_for_island(
+        &self,
+        control: &Arc<crate::vm::island::IslandControl>,
+    ) -> Option<crate::vm::TaskExecution> {
+        let mut state = self.state.borrow_mut();
+        if !state.admitted
+            || !matches!(&state.phase, TaskPhase::Pending(execution) if execution.is_fork())
+        {
+            return None;
+        }
+        let TaskPhase::Pending(execution) =
+            mem::replace(&mut state.phase, TaskPhase::Remote(control.clone()))
+        else {
+            unreachable!("the phase was checked");
+        };
+        Some(*execution)
+    }
+
+    /// Settles a fork whose island has finished, unless it was cancelled.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn complete_remote(&self, outcome: &Result<Value, crate::RuntimeError>) {
+        let mut state = self.state.borrow_mut();
+        if !matches!(state.phase, TaskPhase::Remote(_)) {
+            return;
+        }
+        state.phase = TaskPhase::Settled(outcome.clone());
+        release_admission(&mut state);
+        let waiters = mem::take(&mut state.waiters);
+        drop(state);
+        for waiter in waiters {
+            waiter.resume(outcome.clone());
+        }
     }
 
     pub(crate) fn try_admit(&self) -> bool {
@@ -946,7 +1023,7 @@ impl Task {
     pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
         match &self.state.borrow().phase {
             TaskPhase::Settled(outcome) => Some(outcome.clone()),
-            TaskPhase::Pending(_) | TaskPhase::Running => None,
+            _ => None,
         }
     }
 
@@ -955,16 +1032,23 @@ impl Task {
     pub(crate) fn blocked_error(&self) -> Option<crate::RuntimeError> {
         match &self.state.borrow().phase {
             TaskPhase::Pending(execution) => Some(execution.blocked_error()),
-            TaskPhase::Running | TaskPhase::Settled(_) => None,
+            _ => None,
         }
     }
 
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         let phase = mem::replace(&mut state.phase, TaskPhase::Running);
-        if !matches!(phase, TaskPhase::Pending(_)) {
-            state.phase = phase;
-            return;
+        match phase {
+            TaskPhase::Pending(_) => {}
+            // The island stops at its next scheduling point; its result,
+            // when it comes, is dropped.
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            TaskPhase::Remote(control) => control.cancel(),
+            phase => {
+                state.phase = phase;
+                return;
+            }
         }
         let wait_registration = state.wait_registration.take();
         let waiters = mem::take(&mut state.waiters);
@@ -990,7 +1074,7 @@ impl Task {
         } else {
             match &state.phase {
                 TaskPhase::Settled(Err(error)) => Some(error.clone()),
-                TaskPhase::Pending(_) | TaskPhase::Running | TaskPhase::Settled(Ok(_)) => None,
+                _ => None,
             }
         }
     }
