@@ -829,11 +829,13 @@ pub(crate) fn module_binding(name: impl Into<String>) -> Value {
 pub struct Closure {
     pub(crate) chunk: usize,
     pub(crate) captures: Vec<BindingCell>,
-    pub(crate) program: Option<Rc<crate::Program>>,
-    pub(crate) globals: Option<GlobalEnvironment>,
-    /// Slots in `globals` already resolved for `program`'s global names.
-    /// Present only when both are, and shared by closures created with the
-    /// same program and environment.
+    /// The program the closure's chunk belongs to, and the global table its
+    /// names resolve in. A call's frame reads both from here, so entering a
+    /// function counts neither: forks on other threads share them.
+    pub(crate) program: Rc<crate::Program>,
+    pub(crate) globals: GlobalEnvironment,
+    /// Slots in `globals` already resolved for `program`'s global names,
+    /// shared by closures created with the same program and environment.
     pub(crate) global_slots: Option<GlobalSlots>,
     #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,

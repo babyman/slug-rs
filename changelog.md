@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A call no longer counts its program and global table: a closure always
+  holds both, and its frame borrows them from it, so entering a function
+  takes one reference (the closure) instead of three. Under `threads` those
+  counts are atomic on objects every fork shares, so this is where forks
+  contended. Experiment 2 on eight forks: 8.2 s to 7.0 s (one fork
+  unchanged).
+
 - Fixes from rerunning experiment 2 (Crawl's pages drawn by real forks):
   forks calling the same typed native at once could crash or corrupt
   values, since the native adapter counted its per-binding state with

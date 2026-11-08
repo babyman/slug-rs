@@ -319,7 +319,7 @@ impl Vm {
 
 /// The name of a `var` that `closure` captures, if it captures one.
 fn captured_var(closure: &crate::Closure) -> Option<String> {
-    let chunk = closure.program.as_ref()?.chunk(closure.chunk)?;
+    let chunk = closure.program.chunk(closure.chunk)?;
     chunk
         .captures
         .iter()

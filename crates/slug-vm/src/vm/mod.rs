@@ -557,17 +557,14 @@ impl InteractiveTask {
     ) -> Value {
         match value {
             Value::Closure(closure)
-                if closure
-                    .globals
-                    .as_ref()
-                    .is_some_and(|globals| Rc::ptr_eq(globals, task_globals)) =>
+                if Rc::ptr_eq(&closure.globals, task_globals) =>
             {
                 Value::Closure(Rc::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
-                    globals: Some(session_globals.clone()),
-                    global_slots: closure.program.as_deref().map(global_slots),
+                    globals: session_globals.clone(),
+                    global_slots: Some(global_slots(&closure.program)),
                     #[cfg(feature = "concurrency")]
                     capture_sources: closure.capture_sources.clone(),
                     #[cfg(feature = "concurrency")]
@@ -973,8 +970,8 @@ impl Vm {
         let closure = Rc::new(Closure {
             chunk: entry,
             captures: Vec::new(),
-            program: Some(program.clone()),
-            globals: Some(task_environment.globals.clone()),
+            program: program.clone(),
+            globals: task_environment.globals.clone(),
             global_slots: Some(global_slots(&program)),
             capture_sources: Vec::new(),
             domain: 0,
@@ -1151,17 +1148,14 @@ impl Vm {
     ) -> Value {
         match value {
             Value::Closure(closure)
-                if closure
-                    .globals
-                    .as_ref()
-                    .is_some_and(|globals| Rc::ptr_eq(globals, source)) =>
+                if Rc::ptr_eq(&closure.globals, source) =>
             {
                 Value::Closure(Rc::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
-                    globals: Some(destination.clone()),
-                    global_slots: closure.program.as_deref().map(global_slots),
+                    globals: destination.clone(),
+                    global_slots: Some(global_slots(&closure.program)),
                 }))
             }
             Value::Overloads(values) => Value::Overloads(Rc::new(
@@ -1676,13 +1670,11 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.push_frame(Frame {
-            program: program.clone(),
-            globals: self.globals.clone(),
             closure: Rc::new(Closure {
                 chunk: installed.entry,
                 captures: Vec::new(),
-                program: None,
-                globals: None,
+                program: program.clone(),
+                globals: self.globals.clone(),
                 global_slots: None,
                 #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
@@ -2021,7 +2013,7 @@ impl Vm {
             // Most calls and returns stay within one program, so keep its
             // reference rather than cloning it again.
             match (&program, self.frames.last()) {
-                (Some(current), Some(frame)) if Rc::ptr_eq(current, &frame.program) => {}
+                (Some(current), Some(frame)) if Rc::ptr_eq(current, frame.program()) => {}
                 _ => program = Some(self.active_program()?),
             }
             let program = program.as_ref().expect("active program was loaded");
@@ -2092,8 +2084,8 @@ impl Vm {
                     Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
                         chunk: *function,
                         captures: Vec::new(),
-                        program: Some(self.active_program()?),
-                        globals: Some(self.globals.clone()),
+                        program: self.active_program()?,
+                        globals: self.globals.clone(),
                         global_slots: Some(self.shared_global_slots(program)),
                         #[cfg(feature = "concurrency")]
                         capture_sources: Vec::new(),
@@ -2975,8 +2967,8 @@ impl Vm {
         self.stack.push(Value::Closure(Rc::new(Closure {
             chunk,
             captures,
-            program: Some(self.active_program()?),
-            globals: Some(self.globals.clone()),
+            program: self.active_program()?,
+            globals: self.globals.clone(),
             global_slots: Some(self.shared_global_slots(program)),
             #[cfg(feature = "concurrency")]
             capture_sources: capture_sources.to_vec(),
@@ -3378,8 +3370,8 @@ impl Vm {
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
         // Calls rarely cross global environments; skip the reference-count
         // round trip when they do not.
-        if !Rc::ptr_eq(&self.globals, &frame.globals) {
-            self.globals = frame.globals.clone();
+        if !Rc::ptr_eq(&self.globals, frame.globals()) {
+            self.globals = frame.globals().clone();
         }
         self.frames.push(frame);
         self.frames_changed();
@@ -3389,9 +3381,9 @@ impl Vm {
         let frame = self.frames.pop();
         self.frames_changed();
         if let Some(active) = self.frames.last()
-            && !Rc::ptr_eq(&self.globals, &active.globals)
+            && !Rc::ptr_eq(&self.globals, active.globals())
         {
-            self.globals = active.globals.clone();
+            self.globals = active.globals().clone();
         }
         frame
     }
@@ -3480,7 +3472,7 @@ impl Vm {
     fn active_program(&self) -> VmResult<Rc<Program>> {
         self.frames
             .last()
-            .map(|frame| frame.program.clone())
+            .map(|frame| frame.program().clone())
             .ok_or_else(|| {
                 self.error(
                     RuntimeErrorKind::InvalidBytecode,
@@ -3514,11 +3506,7 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         match callee {
             Value::Closure(closure) => {
-                let frame_program = closure
-                    .program
-                    .clone()
-                    .or_else(|| self.module_program.clone())
-                    .unwrap_or_else(|| Rc::new(program.clone()));
+                let frame_program = closure.program.clone();
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
@@ -3562,11 +3550,6 @@ impl Vm {
                     return Err(self.fork_call_error(&closure));
                 }
                 self.push_frame(Frame {
-                    program: frame_program.clone(),
-                    globals: closure
-                        .globals
-                        .clone()
-                        .unwrap_or_else(|| self.globals.clone()),
                     closure,
                     call_span: self.frame_call_span(),
                     ip: 0,
@@ -3688,10 +3671,7 @@ impl Vm {
         let mut vm = Self {
             host: self.host.clone(),
             module_program: Some(program.clone()),
-            globals: closure
-                .globals
-                .clone()
-                .unwrap_or_else(|| self.globals.clone()),
+            globals: closure.globals.clone(),
             imported_globals: HashSet::new(),
             module_metadata: Vec::new(),
             stack: Vec::new(),
@@ -3732,8 +3712,6 @@ impl Vm {
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.push_frame(Frame {
-            program: program.clone(),
-            globals: vm.globals.clone(),
             closure,
             call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
             ip: 0,
@@ -3807,7 +3785,7 @@ impl Vm {
                 .and_then(|view| view.fork.as_ref())
                 .map_or(closure.domain, |fork| fork.domain),
         });
-        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
+        let task_program = closure.program.clone();
         let mut vm = self.module_closure_vm(
             task_program.clone(),
             closure,
@@ -3919,7 +3897,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
-        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
+        let task_program = closure.program.clone();
         let vm = self.module_closure_vm(
             task_program.clone(),
             closure,
@@ -4066,7 +4044,7 @@ impl Vm {
     fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
         match value.resolve().ok()? {
             Value::Closure(closure) => {
-                let program = closure.program.as_deref()?;
+                let program = &closure.program;
                 program
                     .chunk(closure.chunk)
                     .map(|chunk| CallableRuntimeSignature {
@@ -4094,12 +4072,12 @@ impl Vm {
     fn has_callable_identity(value: &Value, selected: &CallableIdentity) -> bool {
         match value {
             Value::Closure(closure) => {
-                closure.program.as_deref().and_then(|program| {
-                    program
-                        .chunk(closure.chunk)?
-                        .callable_identity
-                        .and_then(|identity| program.callable_identity(identity))
-                }) == Some(selected)
+                let program = &closure.program;
+                program
+                    .chunk(closure.chunk)
+                    .and_then(|chunk| chunk.callable_identity)
+                    .and_then(|identity| program.callable_identity(identity))
+                    == Some(selected)
             }
             Value::DeclaredNative { declaration, .. } => &declaration.identity == selected,
             Value::Binding { .. } => value
@@ -4302,7 +4280,7 @@ impl Vm {
         })?;
         let callee = match callee {
             Value::Closure(closure) => {
-                match self.enter_positional_closure(program, closure, base, count)? {
+                match self.enter_positional_closure(closure, base, count)? {
                     None => {
                         #[cfg(feature = "metrics")]
                         self.record_exact_positional_closure_call();
@@ -4352,7 +4330,7 @@ impl Vm {
     /// callee value before this path can run.
     fn call_positional_closure(
         &mut self,
-        program: &Program,
+        _program: &Program,
         count: usize,
         selected: Option<&CallableIdentity>,
     ) -> VmResult<bool> {
@@ -4389,7 +4367,7 @@ impl Vm {
             return Ok(false);
         };
         Ok(self
-            .enter_positional_closure(program, closure, base, count)?
+            .enter_positional_closure(closure, base, count)?
             .is_none())
     }
 
@@ -4402,7 +4380,6 @@ impl Vm {
     #[inline(always)]
     fn enter_positional_closure(
         &mut self,
-        program: &Program,
         closure: Rc<Closure>,
         stack_base: usize,
         count: usize,
@@ -4416,11 +4393,7 @@ impl Vm {
         {
             return Ok(Some(closure));
         }
-        let frame_program = closure
-            .program
-            .clone()
-            .or_else(|| self.module_program.clone())
-            .unwrap_or_else(|| Rc::new(program.clone()));
+        let frame_program = closure.program.clone();
         let local_count = {
             let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                 self.error_at(
@@ -4457,11 +4430,6 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(local_count);
         self.push_frame(Frame {
-            program: frame_program,
-            globals: closure
-                .globals
-                .clone()
-                .unwrap_or_else(|| self.globals.clone()),
             closure,
             call_span: self.frame_call_span(),
             ip: 0,
@@ -4648,7 +4616,7 @@ impl Vm {
     fn running_module_key(&self) -> Option<&str> {
         self.frames
             .last()
-            .and_then(|frame| frame.program.module_key())
+            .and_then(|frame| frame.program().module_key())
             .or_else(|| {
                 self.module_program
                     .as_ref()
@@ -5375,7 +5343,7 @@ impl Vm {
 
     fn bind_call_arguments(
         &self,
-        program: &Program,
+        _program: &Program,
         callee: &Value,
         mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
@@ -5394,7 +5362,7 @@ impl Vm {
                 "native functions do not accept named arguments".into(),
             ));
         };
-        let closure_program = closure.program.as_deref().unwrap_or(program);
+        let closure_program = &*closure.program;
         let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -5746,7 +5714,7 @@ impl Vm {
     fn executing_span(frame: &Frame) -> Option<SpanId> {
         let index = frame.ip.checked_sub(1)?;
         frame
-            .program
+            .program()
             .chunk(frame.closure.chunk)?
             .code
             .get(index)?
@@ -5757,7 +5725,7 @@ impl Vm {
         let span = self
             .frames
             .last()
-            .and_then(|frame| frame.program.span(Self::executing_span(frame)?));
+            .and_then(|frame| frame.program().span(Self::executing_span(frame)?));
         #[cfg(feature = "metrics")]
         if span.is_some() {
             self.metrics.borrow_mut().source_span_lookups += 1;

@@ -291,8 +291,18 @@ The rerun found the native adapter race and the copied `task var` updates
 counts: every call clones the frame's program, global table, and closure,
 and under `threads` those are atomic counts on objects all forks share. A
 microbenchmark of 4M calls to a shared module function takes 0.54 s on one
-fork and 1.86 s on eight (14.3 s of CPU). Open: how to call shared code
-without touching shared counts.
+fork and 1.86 s on eight (14.3 s of CPU).
+
+Step 2a (2026-11-08): frames borrow their program and global table from
+their closure, so a call counts one shared reference instead of three.
+Paired runs of experiment 2 (same build settings, alternating binaries, on
+a busier machine than the table above): one fork 17.3 s before and after;
+eight forks 8.2 s to 7.0 s, scaling 2.1x to 2.5x. The callee closure and
+shared data are still counted on every call and read. Kept in view, as the
+user asked, whatever 2a measures: immortal code objects (programs,
+closures, global tables, never counted once their module has initialized),
+since per-call counting on shared objects worsens with every core added.
+That needs a decision record before a custom reference-counted pointer.
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run

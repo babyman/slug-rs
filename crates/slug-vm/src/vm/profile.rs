@@ -43,7 +43,7 @@ impl Vm {
         };
         let mut stack = String::new();
         let line = |frame: &super::frames::Frame, at: Option<usize>| -> Option<u32> {
-            let chunk = frame.program.chunk(frame.closure.chunk)?;
+            let chunk = frame.program().chunk(frame.closure.chunk)?;
             let instruction = match at {
                 Some(index) => chunk.code.get(index)?,
                 None => chunk
@@ -51,7 +51,7 @@ impl Vm {
                     .iter()
                     .find(|instruction| instruction.span.is_some())?,
             };
-            Some(frame.program.span(instruction.span?)?.line)
+            Some(frame.program().span(instruction.span?)?.line)
         };
         for frame in &self.frames {
             if !stack.is_empty() {
@@ -61,7 +61,7 @@ impl Vm {
             let _ = write!(
                 stack,
                 "{}:{}",
-                frame.program.module_name(),
+                frame.program().module_name(),
                 Line(line(frame, None))
             );
         }
@@ -71,7 +71,7 @@ impl Vm {
             let _ = write!(
                 stack,
                 ";{}:{}",
-                frame.program.module_name(),
+                frame.program().module_name(),
                 Line(line(frame, frame.ip.checked_sub(1)))
             );
         }

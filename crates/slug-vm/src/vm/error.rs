@@ -227,14 +227,14 @@ impl Vm {
                 .filter(|(_, frame)| !frame.cleanup_action)
                 .map(|(index, frame)| CallFrame {
                     function: frame
-                        .program
+                        .program()
                         .chunk(frame.closure.chunk)
                         .map_or_else(|| "<invalid frame>".to_owned(), |chunk| chunk.name.clone()),
                     span: match &frame.call_span {
                         Some(super::frames::CallSpan::Instruction(span)) => self
                             .frames
                             .get(index.saturating_sub(1))
-                            .and_then(|caller| caller.program.span(*span))
+                            .and_then(|caller| caller.program().span(*span))
                             .cloned(),
                         #[cfg(feature = "concurrency")]
                         Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
