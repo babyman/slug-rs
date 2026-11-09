@@ -2,15 +2,6 @@
 
 ## Unreleased
 
-- The data a module's `val`s hold is never counted either, once the module
-  has initialized: lists and maps use `slug_vm::Code`, and the walk that
-  makes a module's code immortal also visits the strings, lists, and maps
-  its `val`s and constants reach (structs and enums stay counted). 4M reads
-  of `len(table.a)` from a `val` map took 0.48 s on eight forks and now
-  0.08 s (0.41 s on one). Experiment 2 on eight forks, paired runs: 4.03 s
-  to 3.94 s, 4.3x one fork; Crawl's `val`s are nearly all functions. Against
-  ba167b8 (5 interleaved PGO rounds): geomean 0.98x tuned, 1.00x hold-out.
-
 - A program's string constants are never counted either, once its module
   has initialized: strings use `slug_vm::Code`, and each program is walked
   once when it becomes immortal. A constant pushed on every call no longer

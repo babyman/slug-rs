@@ -357,21 +357,6 @@ pub(crate) fn immortalize<T>(code: &Code<T>) {
     code.immortalize();
 }
 
-/// Whether `code` is already immortal, so a walk need not visit it again.
-/// Without `threads` nothing is counted atomically, and every value reads
-/// as immortal, so no walk descends.
-#[cfg(not(feature = "threads"))]
-#[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
-pub(crate) fn is_immortal<T>(_code: &Code<T>) -> bool {
-    true
-}
-
-#[cfg(feature = "threads")]
-#[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
-pub(crate) fn is_immortal<T>(code: &Code<T>) -> bool {
-    Code::strong_count(code) == usize::MAX
-}
-
 #[cfg(feature = "threads")]
 struct CodeInner<T> {
     /// The count of references, or [`IMMORTAL`] set once counting stops.
@@ -444,24 +429,6 @@ impl<T> Code<T> {
         unsafe {
             Some(&mut this.inner.as_mut().value)
         }
-    }
-
-    /// The value, when this is its only reference; otherwise `this` back.
-    /// An immortal value always reads as shared, so it is never taken.
-    pub fn try_unwrap(this: Self) -> Result<T, Self> {
-        // Acquire pairs with the Release of every other reference's drop,
-        // as in `get_mut`. With one reference, owned here, no other thread
-        // can clone it meanwhile.
-        if this.inner().count.load(core::sync::atomic::Ordering::Acquire) != 1 {
-            return Err(this);
-        }
-        let this = core::mem::ManuallyDrop::new(this);
-        #[allow(unsafe_code, reason = "Code's allocation; see its documentation")]
-        // SAFETY: the count is one and `this` owns that reference, which
-        // `ManuallyDrop` keeps from being released twice. The allocation
-        // came from `Box::leak` in `new`.
-        let inner = unsafe { alloc::boxed::Box::from_raw(this.inner.as_ptr()) };
-        Ok(inner.value)
     }
 
     /// How many references there are, or `usize::MAX` once immortal.
@@ -604,24 +571,6 @@ mod code_tests {
         drop(code);
         drop(copy);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn only_the_sole_reference_unwraps_its_value() {
-        let drops = AtomicUsize::new(0);
-        let code = Code::new(Counted(&drops));
-        let copy = code.clone();
-        let code = Code::try_unwrap(code).err().expect("a copy shares it");
-        drop(copy);
-        let value = Code::try_unwrap(code).ok().expect("the sole reference");
-        assert_eq!(drops.load(Ordering::Relaxed), 0);
-        drop(value);
-        assert_eq!(drops.load(Ordering::Relaxed), 1);
-
-        let immortal = Code::new(Counted(&drops));
-        immortalize(&immortal);
-        assert!(Code::try_unwrap(immortal).is_err());
-        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 
     #[test]

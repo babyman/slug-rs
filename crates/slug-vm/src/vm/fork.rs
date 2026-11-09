@@ -433,43 +433,25 @@ fn immortalize_constants(program: &crate::Program) {
             continue;
         };
         for constant in &chunk.constants {
-            if let crate::Constant::Value(value) = constant {
-                immortalize_value(value);
+            if let crate::Constant::Value(Value::Str(text)) = constant {
+                text.immortalize();
             }
         }
     }
 }
 
-/// Stops counting `value` and what it reaches: the code a module binds and
-/// the data its `val`s hold, which live until the program ends. A `var`'s
-/// value can be replaced, so it stays counted. The walk keeps its own stack,
-/// so deeply nested data cannot overflow the thread's, and skips storage
-/// already immortal, which it has visited.
 fn immortalize_value(value: &Value) {
-    let mut pending = alloc::vec![value.clone()];
-    while let Some(value) = pending.pop() {
-        match &value {
-            Value::Binding { name, cell } if name.kind() == BindingKind::Val => {
-                pending.push(cell.borrow().clone());
-            }
-            Value::Closure(closure) => {
-                if !crate::sync::is_immortal(closure) {
-                    crate::sync::immortalize(closure);
-                    immortalize_program(&closure.program);
-                    crate::sync::immortalize(&closure.globals);
-                }
-            }
-            Value::Native(function) => function.immortalize(),
-            Value::Overloads(values) => pending.extend(values.iter().cloned()),
-            Value::Str(text) => text.immortalize(),
-            Value::List(list) => pending.extend(list.immortalize().iter().cloned()),
-            Value::Map(map) => {
-                for (key, value) in map.immortalize() {
-                    pending.push(key.clone());
-                    pending.push(value.clone());
-                }
-            }
-            _ => {}
+    match value {
+        Value::Binding { name, cell } if name.kind() == BindingKind::Val => {
+            immortalize_value(&cell.borrow());
         }
+        Value::Closure(closure) => {
+            crate::sync::immortalize(closure);
+            immortalize_program(&closure.program);
+            crate::sync::immortalize(&closure.globals);
+        }
+        Value::Native(function) => function.immortalize(),
+        Value::Overloads(values) => values.iter().for_each(immortalize_value),
+        _ => {}
     }
 }
