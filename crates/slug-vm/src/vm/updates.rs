@@ -181,12 +181,31 @@ impl Vm {
             .last()
             .and_then(|frame| frame.closure.global_slots.as_ref())
             .and_then(|slots| slots.get(id.index()))
-            .map_or(UNRESOLVED_GLOBAL, core::cell::Cell::get);
+            .map_or(UNRESOLVED_GLOBAL, crate::sync::Hint::get);
         if slot == UNRESOLVED_GLOBAL {
             return Err(value);
         }
         match self.globals.borrow().value(slot) {
-            Value::Binding { cell, .. } => Ok(cell.replace(value)),
+            Value::Binding { cell, name } => {
+                // A task with its own view of the variables assigns through
+                // it: its own copy of a `task var` in place, so that an
+                // update releasing the old value leaves the operand unshared;
+                // a fork's snapshot of any other `var` by name, which
+                // reports that the fork cannot change it.
+                #[cfg(feature = "concurrency")]
+                if let Some(view) = &self.view {
+                    match name.kind() {
+                        crate::variables::BindingKind::TaskVar => {
+                            return view.replace_own(crate::variables::VarKey::cell(cell), value);
+                        }
+                        crate::variables::BindingKind::Var if view.in_fork() => return Err(value),
+                        _ => {}
+                    }
+                }
+                #[cfg(not(feature = "concurrency"))]
+                let _ = name;
+                Ok(cell.replace(value))
+            }
             _ => Err(value),
         }
     }

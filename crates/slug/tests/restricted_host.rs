@@ -10,7 +10,7 @@ fn in_memory_nil_host_evaluates_without_desktop_capabilities() {
     let program = loader
         .compile_source("memory:entry", "40 + 2\n")
         .expect("compile in-memory entry source");
-    let mut vm = Vm::with_host(Rc::new(loader));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader));
 
     assert_eq!(
         vm.run_named(&program, "main")
@@ -25,7 +25,7 @@ fn in_memory_nil_host_rejects_external_imports_as_checked_errors() {
     let program = loader
         .compile_source("memory:entry", "import(\"outside.module\")\n")
         .expect("compile unresolved runtime import");
-    let mut vm = Vm::with_host(Rc::new(loader));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader));
 
     let error = vm
         .run_named(&program, "main")

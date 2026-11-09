@@ -76,6 +76,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Immutable configuration store and source precedence | implemented | `crates/slug/tests/configuration.rs` |
 | `cfg` builtin | implemented | `crates/slug/tests/configuration.rs` |
 | Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `crates/slug/tests/cli.rs` |
+| Fork tasks (`fork`) and `task var`: snapshots, the write rule, sendable values, channels, natives, imports, and initialization; forks run on worker threads in `threads` builds and cooperatively otherwise; embedded multi-core pending | partial | `tests/conformance/fork/` and `crates/slug-vm/tests/vm.rs` |
 | Builtin `chan` construction and `close`, plus bounded FIFO channel operations through the `slug.channel` module and bounded thread-safe native producers | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Shared standard-input line stream and interactive helpers through core-Clutch `slug.io.stdin` | implemented | `crates/slug/tests/cli.rs` |
 | Interrupt and terminate requests delivered on channels through core-Clutch `slug.os.signal` | implemented | `crates/slug/tests/typed_core.rs` |

@@ -1,0 +1,13 @@
+// A fork sees module variables as they were when it started; a spawned task
+// sees them live. A later fork sees the later value.
+var count = 1
+val main = fn() {
+    val forked = fork { count }
+    val spawned = spawn { count }
+    count = 2
+    val later = fork { count }
+    count = 3
+    println(select { await forked })
+    println(select { await spawned })
+    println(select { await later })
+}

@@ -88,6 +88,7 @@ struct StaticHostState {
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_globals: RefCell<HashMap<String, Value>>,
     native_resources: NativeResourceRegistry,
+    module_variables: slug_vm::ModuleVariables,
     warnings: RefCell<Vec<String>>,
     simulation: SimulationState,
     gpio_functions: Vec<NativeFunction>,
@@ -135,6 +136,7 @@ impl StaticHost {
                 foreign_functions: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
+                module_variables: slug_vm::module_variables(),
                 warnings: RefCell::new(Vec::new()),
                 simulation,
                 gpio_functions,
@@ -159,7 +161,7 @@ impl StaticHost {
     /// Returns a checked source or runtime error from the selected program.
     pub fn run_source(&self, path: &str, source: &str) -> Result<Value, StaticHostError> {
         let program = self.compile_source(path, source)?;
-        Vm::with_host(Rc::new(self.clone()))
+        Vm::with_host(slug_vm::Shared::new(self.clone()))
             .run_named(&program, "main")
             .map_err(StaticHostError::Runtime)
     }
@@ -263,12 +265,19 @@ impl ModuleGraphHost for StaticHost {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
 
 impl VmHost for StaticHost {
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let importer = importer.map(ModuleKey::new);
+        self.state
+            .graph
+            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -314,6 +323,10 @@ impl VmHost for StaticHost {
 
     fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        self.state.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {
@@ -558,7 +571,7 @@ mod tests {
             .compile_source("memory:entry", "import(\"slug.time\")\n")
             .expect("compile dynamic import");
 
-        let error = Vm::with_host(Rc::new(host))
+        let error = Vm::with_host(slug_vm::Shared::new(host))
             .run_named(&program, "main")
             .expect_err("unselected module must fail");
         assert!(

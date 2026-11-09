@@ -17,6 +17,7 @@ statement = tag_prefixed_decl
           | resource_decl
           | enum_decl
           | type_alias_decl
+          | task_var_decl
           | return_stmt
           | throw_stmt
           | defer_stmt
@@ -24,13 +25,18 @@ statement = tag_prefixed_decl
           | expression_stmt
           ;
 
-tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | foreign_decl | resource_decl | enum_decl ) ;
+tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | task_var_decl | foreign_decl | resource_decl | enum_decl ) ;
 tag_prefix = tag , { { statement_sep } , tag } , { statement_sep } ;
 documented_decl = DOC_COMMENT , { statement_sep } ,
-                   ( tag_prefixed_decl | export_decl | var_expr | val_expr | foreign_decl | resource_decl | enum_decl ) ;
+                   ( tag_prefixed_decl | export_decl | var_expr | val_expr | task_var_decl | foreign_decl | resource_decl | enum_decl ) ;
 
 (* export declarations and nominal-type declarations are valid only at module top level. *)
-export_decl = "export" , ( var_expr | val_expr | foreign_decl | resource_decl | enum_decl | type_alias_decl ) ;
+export_decl = "export" , ( var_expr | val_expr | task_var_decl | foreign_decl | resource_decl | enum_decl | type_alias_decl ) ;
+
+(* `task` is a modifier only directly before `var`, and only at module top
+   level; it is an ordinary name elsewhere. Every task owns a copy of a
+   `task var`. *)
+task_var_decl = "task" , var_expr ;
 
 return_stmt = "return" , expression ;
 throw_stmt = "throw" , expression ;
@@ -102,6 +108,7 @@ primary = literal
         | recur_expr
         | nursery_expr
         | spawn_expr
+        | fork_expr
         | var_expr
         | val_expr
         ;
@@ -117,6 +124,10 @@ recur_expr = "recur" , "(" , [ call_args ] , ")" ;
 nursery_expr = "nursery" , [ "limit" , expression ] , ( function_literal | block ) ;
 
 spawn_expr = "spawn" , ( block | prefix ) ;
+
+(* A fork starts a task that sees a snapshot of its captures and the module
+   variables, and may run on another core. *)
+fork_expr = "fork" , ( block | prefix ) ;
 
 select_expr = "select" , "{" , [ select_case , { case_sep , select_case } ] , "}" ;
 select_case = select_header , [ "/>" , expression ] ;

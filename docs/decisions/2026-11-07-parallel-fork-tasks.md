@@ -212,7 +212,10 @@ Two cases follow from `val` cells being written at initialization:
   necessarily safe to call from several threads. A clutch manifest declares
   which of its native functions are, and calling an undeclared one in a fork
   is an error on every build, so a program's behavior does not depend on
-  whether the build has threads. The core clutch's functions are declared.
+  whether the build has threads. A function entry declares it with
+  `thread_safe = true`; it does not change the generated shim. The core
+  clutch's pure functions are declared, and its stdin reader and signal
+  registration, which start threads and change process state, are not.
   Running undeclared calls on the owner thread instead is possible later
   without changing any program that works.
 - **Imports read; initialization writes.** Importing a module that is
@@ -225,8 +228,13 @@ Two cases follow from `val` cells being written at initialization:
 A value is sendable when it is nil, a boolean, a number, a string, bytes, an
 enum case, a struct schema, a channel, or a list, map, or struct whose
 contents are sendable. A closure is sendable when every value it captures is
-sendable; its code is immutable. Task handles, binding cells, and native
-resources are not sendable in the first version.
+sendable and it captures no `var`; its code is immutable. A captured `var`
+is a binding cell its creator can still change, so a closure over one, such
+as `val inc = fn() { n = n + 1 }`, is not sendable: a fork that calls it
+fails, whether it would read or write `n`. Module functions read module
+globals through the per-task cells above, not through captures, so they
+are sendable. Task handles, binding cells, and native resources are not
+sendable in the first version.
 
 ### Channels cross forks
 

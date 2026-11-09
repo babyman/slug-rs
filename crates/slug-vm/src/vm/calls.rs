@@ -4,7 +4,7 @@
 //! live-binding validation, and frame creation must remain traceable together.
 
 #[cfg(feature = "concurrency")]
-use alloc::rc::Rc;
+use crate::sync::Rc;
 use alloc::{string::String, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::cell::Cell;

@@ -1,0 +1,19 @@
+// Many forks at once each return their own result, in the order awaited.
+val sum = fn(n:num):num {
+    val go = fn(i:num, total:num):num {
+        if (i > n) { total } else { recur(i + 1, total + i) }
+    }
+    go(1, 0)
+}
+val main = fn() {
+    val a = fork { sum(10000) }
+    val b = fork { sum(20000) }
+    val c = fork { sum(30000) }
+    val d = fork { sum(40000) }
+    val e = fork { sum(50000) }
+    val f = fork { sum(60000) }
+    val g = fork { sum(70000) }
+    val h = fork { sum(80000) }
+    val i = fork { sum(90000) }
+    println([select { await i }, select { await h }, select { await g }, select { await f }, select { await e }, select { await d }, select { await c }, select { await b }, select { await a }])
+}

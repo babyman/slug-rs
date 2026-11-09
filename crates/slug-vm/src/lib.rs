@@ -24,7 +24,11 @@ mod scheduler_signal;
 #[path = "scheduler_signal_embedded.rs"]
 mod scheduler_signal;
 mod source_diagnostic;
+mod sync;
+#[doc(hidden)]
+pub use sync::{Code, SoloCell};
 mod value;
+mod variables;
 mod vm;
 
 #[doc(hidden)]
@@ -37,7 +41,7 @@ pub use bytecode::PackedOpcode;
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
     BinaryOperator, BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture,
-    CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
+    CaptureDetail, CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
     ForeignResourceSignature, GlobalNameId, GlobalUpdate, Instruction, MatchMapKey, MatchPattern,
     MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
     Program, ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
@@ -65,6 +69,13 @@ pub use value::Task;
 pub use value::{
     Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value, ValueKind,
 };
+#[doc(hidden)]
+pub use variables::{BindingKind, BindingName};
+pub use variables::{ModuleVariables, module_variables};
+
+/// The shared reference the values of the VM use: `Arc` in a build with
+/// `threads`, `Rc` otherwise.
+pub type Shared<T> = sync::Rc<T>;
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]
 pub use vm::InteractiveExecution;
@@ -76,4 +87,12 @@ pub use vm::VmMetrics;
 pub use vm::{
     CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
     NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
+};
+// The value-side types a fork may share that are already thread-safe; the
+// rest wait on phase 4 (see `docs/planning/fork-tasks.md`).
+#[cfg(feature = "threads")]
+const _: () = {
+    const fn sync<T: Sync + Send>() {}
+    sync::<crate::variables::BindingName>();
+    sync::<crate::collections::Str>();
 };

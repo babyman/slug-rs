@@ -1,0 +1,4 @@
+val main = fn() {
+    val t = fork { spawn { 1 } }
+    select { await t }
+}

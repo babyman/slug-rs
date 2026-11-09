@@ -3,7 +3,6 @@ use std::fs;
 use slug::{Configuration, ConfigurationValue, DesktopLoader};
 use slug_frontend::compile;
 use slug_vm::{Value, Vm};
-use std::rc::Rc;
 
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-configuration-{kind}-{}", std::process::id()))
@@ -126,7 +125,7 @@ fn exposes_cfg_to_program_and_imported_modules() {
     )
     .expect("compile configuration program");
     program.set_module_name("app");
-    let mut vm = Vm::with_host(Rc::new(loader));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader));
 
     assert!(vm.global("argv").is_none());
     assert!(vm.global("argm").is_none());

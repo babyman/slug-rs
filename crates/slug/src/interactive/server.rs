@@ -890,17 +890,20 @@ impl Server {
             let function = module
                 .function(name, NativeArity::Variadic { minimum: 0 }, callback)
                 .expect("static interactive output function is valid");
+            function.declare_thread_safe();
             self.define_session_builtin(function)
                 .expect("interactive output binding is unique");
         }
         let length = module
             .function("len", NativeArity::Exact(1), native_len)
             .expect("static interactive length function is valid");
+        length.declare_thread_safe();
         self.define_session_builtin(length)
             .expect("interactive length binding is unique");
         let keys = module
             .function("keys", NativeArity::Exact(1), native_keys)
             .expect("static interactive keys function is valid");
+        keys.declare_thread_safe();
         self.define_session_builtin(keys)
             .expect("interactive keys binding is unique");
         let channel = module
@@ -913,11 +916,13 @@ impl Server {
                 native_channel,
             )
             .expect("static interactive channel function is valid");
+        channel.declare_thread_safe();
         self.define_session_builtin(channel)
             .expect("interactive channel binding is unique");
         let close = module
             .function("close", NativeArity::Exact(1), native_close)
             .expect("static interactive close function is valid");
+        close.declare_thread_safe();
         self.define_session_builtin(close)
             .expect("interactive close binding is unique");
     }

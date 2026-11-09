@@ -177,6 +177,8 @@ fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
 
 fn register_native_modules(vm: &mut Vm) {
     for function in builtin_functions() {
+        // Printing, lengths, keys, and channels are safe from any thread.
+        function.declare_thread_safe();
         vm.define_builtin(function)
             .expect("static builtin binding is unique");
     }
@@ -459,7 +461,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         program_arguments,
         entry_module,
     );
-    let host = match ArtifactHost::new(artifact, std::rc::Rc::new(configuration)) {
+    let host = match ArtifactHost::new(artifact, slug_vm::Shared::new(configuration)) {
         Ok(host) => host,
         Err(error) => {
             eprint_startup_error("artifact", "load", error.to_string(), json);

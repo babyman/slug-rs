@@ -1,0 +1,6 @@
+// `task` is contextual: it stays usable as a name.
+val task = 3
+val main = fn() {
+    val { task } = {task: 4}
+    println(task + 1)
+}

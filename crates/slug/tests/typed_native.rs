@@ -8,7 +8,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    rc::Rc,
     sync::{
         LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -137,7 +136,7 @@ fn run(
             &source,
         )
         .map_err(|error| error.to_string())?;
-    Vm::with_host(Rc::new(loader))
+    Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&program, "main")
         .map_err(|error| match &error.native {
             Some(native) => format!("{}: {error}", native.code),
@@ -363,7 +362,7 @@ fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
     let directory = TemporaryDirectory::new();
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository.clone());
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     let first = slug_path(&directory.path().join("first.txt"));
     let unwinding = compile_files_program(
         &directory,
@@ -393,7 +392,7 @@ fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
     // The escaped handle keeps the library loaded, so a new loader shares
     // its release count.
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
-    let mut replacement = Vm::with_host(Rc::new(loader.clone()));
+    let mut replacement = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     let count = compile_files_program(&directory, &loader, "files.closedCount()");
     assert_eq!(
         replacement.run_named(&count, "main").unwrap().to_string(),
@@ -408,8 +407,8 @@ fn typed_functions_are_inactive_after_shutdown() {
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let program = compile_files_program(&directory, &loader, "files.add(1, 2)");
-    let mut first = Vm::with_host(Rc::new(loader.clone()));
-    let mut second = Vm::with_host(Rc::new(loader.clone()));
+    let mut first = Vm::with_host(slug_vm::Shared::new(loader.clone()));
+    let mut second = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     assert_eq!(first.run_named(&program, "main").unwrap().to_string(), "3");
     assert_eq!(second.run_named(&program, "main").unwrap().to_string(), "3");
 
@@ -576,7 +575,7 @@ fn typed_scalar_add_benchmark() {
     let directory = TemporaryDirectory::new();
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     print_bench_configuration("typed");
     report_scalar_samples(
         "typed-production",
@@ -618,7 +617,7 @@ fn scalar_call_controls() {
     )
     .expect("write control module source");
     let loader = ModuleLoader::new(directory.path(), None);
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     vm.define_foreign(
         NativeModule::new("slug.scalar", ())
             .expect("static scalar module is valid")
@@ -676,7 +675,7 @@ fn a_module_importing_its_sibling_during_initialization_shares_the_activation() 
             "val more = import(\"fixture.more\")\nmore.both()\n",
         )
         .expect("compile sibling-import program");
-    let value = Vm::with_host(Rc::new(loader))
+    let value = Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&program, "main")
         .expect("run sibling-import program");
     assert_eq!(value.to_string(), "[3, 7]");

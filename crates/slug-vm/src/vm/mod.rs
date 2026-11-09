@@ -1,10 +1,12 @@
+use crate::sync::Rc;
 use alloc::{
     boxed::Box,
-    rc::Rc,
     string::{String, ToString},
     vec::Vec,
 };
-use core::{cell::RefCell, cmp, mem};
+#[cfg(any(feature = "concurrency", feature = "metrics"))]
+use core::cell::RefCell;
+use core::{cmp, mem};
 
 use crate::platform::HashSet;
 
@@ -45,8 +47,12 @@ use crate::value::task_state_layout;
 mod calls;
 mod cleanup;
 mod error;
+#[cfg(feature = "concurrency")]
+mod fork;
 mod frames;
 mod installation;
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub(crate) mod island;
 mod operations;
 #[cfg(feature = "metrics")]
 mod profile;
@@ -258,6 +264,129 @@ pub struct VmMetrics {
     pub program_clone_bytes: usize,
 }
 
+#[cfg(all(feature = "metrics", feature = "threads", not(target_os = "none")))]
+impl VmMetrics {
+    /// Adds the counters of `other`, a fork's island, into these: counts and
+    /// times add up, and peaks keep the larger. Every field is named, so a
+    /// new counter cannot be left out.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one line per counter, each named so none is left out"
+    )]
+    pub(crate) fn merge(&mut self, other: &Self) {
+        let Self {
+            instructions_executed,
+            instruction_clones,
+            source_span_clones,
+            source_span_lookups,
+            frames_created,
+            local_binding_cells_created,
+            frame_local_vectors_created,
+            frame_local_vectors_reused,
+            frame_local_capacity_total,
+            argument_values_copied_to_locals,
+            closure_argument_vectors_created,
+            exact_positional_temporary_argument_vectors_created,
+            exact_positional_stack_local_initializations,
+            provided_argument_bitmaps_created,
+            provided_argument_bitmap_capacity_total,
+            defer_scope_stacks_created,
+            defer_scope_entries_materialized,
+            recur_local_vectors_reused,
+            recur_local_vectors_replaced,
+            exact_positional_recur_restarts,
+            generic_recur_argument_bindings,
+            exact_positional_closure_calls,
+            generic_call_argument_bindings,
+            collection_constructions,
+            collection_elements_constructed,
+            collection_lookups,
+            collection_slices,
+            map_entries_examined,
+            collection_updates,
+            collection_elements_copied,
+            collection_unique_owner_updates,
+            collection_shared_owner_updates,
+            list_views_created,
+            list_views_materialized,
+            list_view_elements_materialized,
+            timer_registrations,
+            timer_deadline_lookups,
+            timer_wakeups,
+            wait_registration_removals,
+            timer_deadline_entries_examined,
+            timer_wakeup_entries_examined,
+            channel_waiter_entries_examined,
+            task_waiter_entries_examined,
+            timer_waiter_entries_examined,
+            peak_timer_waiters,
+            peak_ready_queue,
+            peak_channel_waiters,
+            peak_task_waiters,
+            scheduler_wait_time,
+            verification_time,
+            program_validations,
+            program_clones,
+            program_clone_bytes,
+        } = other.clone();
+        self.instructions_executed += instructions_executed;
+        self.instruction_clones += instruction_clones;
+        self.source_span_clones += source_span_clones;
+        self.source_span_lookups += source_span_lookups;
+        self.frames_created += frames_created;
+        self.local_binding_cells_created += local_binding_cells_created;
+        self.frame_local_vectors_created += frame_local_vectors_created;
+        self.frame_local_vectors_reused += frame_local_vectors_reused;
+        self.frame_local_capacity_total += frame_local_capacity_total;
+        self.argument_values_copied_to_locals += argument_values_copied_to_locals;
+        self.closure_argument_vectors_created += closure_argument_vectors_created;
+        self.exact_positional_temporary_argument_vectors_created +=
+            exact_positional_temporary_argument_vectors_created;
+        self.exact_positional_stack_local_initializations +=
+            exact_positional_stack_local_initializations;
+        self.provided_argument_bitmaps_created += provided_argument_bitmaps_created;
+        self.provided_argument_bitmap_capacity_total += provided_argument_bitmap_capacity_total;
+        self.defer_scope_stacks_created += defer_scope_stacks_created;
+        self.defer_scope_entries_materialized += defer_scope_entries_materialized;
+        self.recur_local_vectors_reused += recur_local_vectors_reused;
+        self.recur_local_vectors_replaced += recur_local_vectors_replaced;
+        self.exact_positional_recur_restarts += exact_positional_recur_restarts;
+        self.generic_recur_argument_bindings += generic_recur_argument_bindings;
+        self.exact_positional_closure_calls += exact_positional_closure_calls;
+        self.generic_call_argument_bindings += generic_call_argument_bindings;
+        self.collection_constructions += collection_constructions;
+        self.collection_elements_constructed += collection_elements_constructed;
+        self.collection_lookups += collection_lookups;
+        self.collection_slices += collection_slices;
+        self.map_entries_examined += map_entries_examined;
+        self.collection_updates += collection_updates;
+        self.collection_elements_copied += collection_elements_copied;
+        self.collection_unique_owner_updates += collection_unique_owner_updates;
+        self.collection_shared_owner_updates += collection_shared_owner_updates;
+        self.list_views_created += list_views_created;
+        self.list_views_materialized += list_views_materialized;
+        self.list_view_elements_materialized += list_view_elements_materialized;
+        self.timer_registrations += timer_registrations;
+        self.timer_deadline_lookups += timer_deadline_lookups;
+        self.timer_wakeups += timer_wakeups;
+        self.wait_registration_removals += wait_registration_removals;
+        self.timer_deadline_entries_examined += timer_deadline_entries_examined;
+        self.timer_wakeup_entries_examined += timer_wakeup_entries_examined;
+        self.channel_waiter_entries_examined += channel_waiter_entries_examined;
+        self.task_waiter_entries_examined += task_waiter_entries_examined;
+        self.timer_waiter_entries_examined += timer_waiter_entries_examined;
+        self.peak_timer_waiters = self.peak_timer_waiters.max(peak_timer_waiters);
+        self.peak_ready_queue = self.peak_ready_queue.max(peak_ready_queue);
+        self.peak_channel_waiters = self.peak_channel_waiters.max(peak_channel_waiters);
+        self.peak_task_waiters = self.peak_task_waiters.max(peak_task_waiters);
+        self.scheduler_wait_time += scheduler_wait_time;
+        self.verification_time += verification_time;
+        self.program_validations += program_validations;
+        self.program_clones += program_clones;
+        self.program_clone_bytes += program_clone_bytes;
+    }
+}
+
 /// Reported when no task can make progress while one is still waiting.
 const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
 
@@ -271,6 +400,8 @@ pub(crate) struct TaskExecution {
     vm: Vm,
     settle_nursery: bool,
     interactive_imported_globals: Option<Rc<RefCell<HashSet<String>>>>,
+    /// A fork's task, whose result must be sendable.
+    forked: bool,
 }
 
 #[cfg(feature = "concurrency")]
@@ -327,6 +458,12 @@ enum RuntimeSelectCase {
 
 #[cfg(feature = "concurrency")]
 impl TaskExecution {
+    /// Whether this is a fork's execution, which runs on an island.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn is_fork(&self) -> bool {
+        self.forked
+    }
+
     /// The error reporting that this suspended task can never resume, at the
     /// operation it is suspended in and with its own call frames.
     pub(crate) fn blocked_error(&self) -> RuntimeError {
@@ -345,6 +482,10 @@ impl TaskExecution {
                     self.vm.settle_tasks(&result)
                 } else {
                     result
+                };
+                let result = match result {
+                    Ok(value) if self.forked => self.vm.sendable_result(value),
+                    result => result,
                 };
                 TaskRunOutcome::Settled(result)
             }
@@ -387,7 +528,7 @@ impl TaskExecution {
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
     host: Option<Rc<dyn VmHost>>,
-    module_program: Option<Rc<Program>>,
+    module_program: Option<crate::sync::Code<Program>>,
     globals: GlobalEnvironment,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
@@ -402,6 +543,27 @@ pub struct Vm {
     direct_task_limit: Option<usize>,
     #[cfg(feature = "concurrency")]
     direct_task_count: Option<Rc<Cell<usize>>>,
+    /// What this VM's task sees of the module variables, when that is not
+    /// simply their values: inside a fork, or with `task var`s of its own.
+    /// A nursery body shares its task's view.
+    #[cfg(feature = "concurrency")]
+    view: Option<Rc<fork::TaskView>>,
+    /// The domain of the fork this VM's task runs in, or zero: its view's,
+    /// kept here so a call compares it with the callee's at no extra cost.
+    #[cfg(feature = "concurrency")]
+    domain: u32,
+    /// On a fork's island, the flag its spawner sets to cancel it, read at
+    /// every call, return, and `recur`, so a fork busy computing stops too.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    cancel: Option<alloc::sync::Arc<island::IslandControl>>,
+    /// This thread's inbox, whose attention flag every call, return, and
+    /// `recur` reads: to serve forks' host calls while this VM is busy, and
+    /// to stop a cancelled fork.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    attention: alloc::sync::Arc<island::Inbox>,
+    /// The module variables of every VM sharing this one's host.
+    #[cfg(feature = "concurrency")]
+    variables: crate::ModuleVariables,
     native_resources: NativeResourceRegistry,
     current_waiter: Option<Waiter>,
     suspension: Option<Suspension>,
@@ -431,7 +593,7 @@ pub struct InteractiveEnvironment {
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]
 pub struct InteractiveExecution {
-    module_program: Option<Rc<Program>>,
+    module_program: Option<crate::sync::Code<Program>>,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
     stack: Vec<Value>,
@@ -492,7 +654,10 @@ impl InteractiveTask {
                         session_globals.insert(
                             name.clone(),
                             Value::Binding {
-                                name: name.clone().into(),
+                                name: Rc::new(crate::variables::BindingName::new(
+                                    name.clone(),
+                                    crate::variables::declared_kind(program, name),
+                                )),
                                 cell: binding_cell(value),
                             },
                         );
@@ -520,19 +685,18 @@ impl InteractiveTask {
     ) -> Value {
         match value {
             Value::Closure(closure)
-                if closure
-                    .globals
-                    .as_ref()
-                    .is_some_and(|globals| Rc::ptr_eq(globals, task_globals)) =>
+                if crate::sync::Code::ptr_eq(&closure.globals, task_globals) =>
             {
-                Value::Closure(Rc::new(Closure {
+                Value::Closure(crate::sync::Code::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
-                    globals: Some(session_globals.clone()),
-                    global_slots: closure.program.as_deref().map(global_slots),
+                    globals: session_globals.clone(),
+                    global_slots: Some(global_slots(&closure.program)),
                     #[cfg(feature = "concurrency")]
                     capture_sources: closure.capture_sources.clone(),
+                    #[cfg(feature = "concurrency")]
+                    domain: closure.domain,
                 }))
             }
             Value::Overloads(values) => Value::Overloads(Rc::new(
@@ -575,6 +739,16 @@ impl Default for Vm {
             direct_task_limit: None,
             #[cfg(feature = "concurrency")]
             direct_task_count: None,
+            #[cfg(feature = "concurrency")]
+            view: None,
+            #[cfg(feature = "concurrency")]
+            domain: 0,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel: None,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention: island::Inbox::current(),
+            #[cfg(feature = "concurrency")]
+            variables: crate::module_variables(),
             native_resources: native_resource_registry(),
             current_waiter: None,
             suspension: None,
@@ -637,9 +811,13 @@ impl Vm {
     #[must_use]
     pub fn with_host(host: Rc<dyn VmHost>) -> Self {
         let native_resources = host.native_resources();
+        #[cfg(feature = "concurrency")]
+        let variables = host.module_variables();
         let mut vm = Self {
             host: Some(host),
             native_resources,
+            #[cfg(feature = "concurrency")]
+            variables,
             ..Self::default()
         };
         vm.install_configuration_builtins();
@@ -693,7 +871,12 @@ impl Vm {
         self.module_program = Some(program.program.clone());
         self.install_implicit_builtins(&program.program)?;
         self.bind_foreign_declarations(&program.program)?;
-        self.run_installed_execution(program)
+        #[cfg(feature = "concurrency")]
+        let _initializing = self.variables.initializing();
+        let value = self.run_installed_execution(program)?;
+        #[cfg(feature = "concurrency")]
+        self.immortalize_code();
+        Ok(value)
     }
 
     /// Executes top-level code and then the program module's validated `main`.
@@ -710,7 +893,13 @@ impl Vm {
         let program = self.install_compat_named(program, "main")?;
         self.install_implicit_builtins(&program.program)?;
         self.bind_foreign_declarations(&program.program)?;
+        #[cfg(feature = "concurrency")]
+        let initializing = self.variables.initializing();
         let top_level = self.run_installed_execution(&program)?;
+        #[cfg(feature = "concurrency")]
+        self.immortalize_code();
+        #[cfg(feature = "concurrency")]
+        drop(initializing);
         let Some(entrypoint_specification) = program.program.entrypoint() else {
             return Ok(top_level);
         };
@@ -913,13 +1102,14 @@ impl Vm {
         let installed = self.install_compat_named(program, entry)?;
         let program = installed.program;
         let entry = installed.entry;
-        let closure = Rc::new(Closure {
+        let closure = crate::sync::Code::new(Closure {
             chunk: entry,
             captures: Vec::new(),
-            program: Some(program.clone()),
-            globals: Some(task_environment.globals.clone()),
+            program: program.clone(),
+            globals: task_environment.globals.clone(),
             global_slots: Some(global_slots(&program)),
             capture_sources: Vec::new(),
+            domain: 0,
         });
         let imported_globals = Rc::new(RefCell::new(task_environment.imported_globals));
         let mut task_vm = self.module_closure_vm(
@@ -942,6 +1132,7 @@ impl Vm {
                 vm: task_vm,
                 settle_nursery: false,
                 interactive_imported_globals: Some(imported_globals.clone()),
+                forked: false,
             },
             None,
             nursery.ready_queue(),
@@ -1013,7 +1204,9 @@ impl Vm {
     pub fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
-            globals: Rc::new(RefCell::new(environment.globals.borrow().clone())),
+            globals: crate::sync::Code::new(crate::sync::SoloCell::new(
+                environment.globals.borrow().clone(),
+            )),
             host_globals: environment.host_globals.clone(),
             local_bindings: environment.local_bindings.clone(),
             imported_globals: environment.imported_globals.clone(),
@@ -1062,7 +1255,10 @@ impl Vm {
                     destination_globals.insert(
                         name.clone(),
                         Value::Binding {
-                            name: name.clone().into(),
+                            name: Rc::new(crate::variables::BindingName::new(
+                                name.clone(),
+                                crate::variables::declared_kind(program, name),
+                            )),
                             cell: binding_cell(value.clone()),
                         },
                     );
@@ -1088,18 +1284,13 @@ impl Vm {
         destination: &GlobalEnvironment,
     ) -> Value {
         match value {
-            Value::Closure(closure)
-                if closure
-                    .globals
-                    .as_ref()
-                    .is_some_and(|globals| Rc::ptr_eq(globals, source)) =>
-            {
-                Value::Closure(Rc::new(Closure {
+            Value::Closure(closure) if crate::sync::Code::ptr_eq(&closure.globals, source) => {
+                Value::Closure(crate::sync::Code::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
-                    globals: Some(destination.clone()),
-                    global_slots: closure.program.as_deref().map(global_slots),
+                    globals: destination.clone(),
+                    global_slots: Some(global_slots(&closure.program)),
                 }))
             }
             Value::Overloads(values) => Value::Overloads(Rc::new(
@@ -1505,8 +1696,10 @@ impl Vm {
             metrics.verification_time += verification_started.elapsed();
         }
         program.share_string_constants();
+        #[cfg(feature = "concurrency")]
+        self.register_module_variables(&program);
         Ok(InstalledProgram {
-            program: Rc::new(program),
+            program: crate::sync::Code::new(program),
             entry,
         })
     }
@@ -1612,16 +1805,16 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.push_frame(Frame {
-            program: program.clone(),
-            globals: self.globals.clone(),
-            closure: Rc::new(Closure {
+            closure: crate::sync::Code::new(Closure {
                 chunk: installed.entry,
                 captures: Vec::new(),
-                program: None,
-                globals: None,
+                program: program.clone(),
+                globals: self.globals.clone(),
                 global_slots: None,
                 #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
+                #[cfg(feature = "concurrency")]
+                domain: 0,
             }),
             call_span: None,
             ip: 0,
@@ -1941,11 +2134,13 @@ impl Vm {
     }
 
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
-        let mut program: Option<Rc<Program>> = None;
+        let mut program: Option<crate::sync::Code<Program>> = None;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            self.check_attention()?;
             // Calls, returns, and suspension change the active frame rarely
             // relative to instructions, so the active code is looked up only
             // when `frame_epoch` says it may have changed.
@@ -1953,7 +2148,8 @@ impl Vm {
             // Most calls and returns stay within one program, so keep its
             // reference rather than cloning it again.
             match (&program, self.frames.last()) {
-                (Some(current), Some(frame)) if Rc::ptr_eq(current, &frame.program) => {}
+                (Some(current), Some(frame))
+                    if crate::sync::Code::ptr_eq(current, frame.program()) => {}
                 _ => program = Some(self.active_program()?),
             }
             let program = program.as_ref().expect("active program was loaded");
@@ -2021,15 +2217,19 @@ impl Vm {
             PackedOpcode::Constant => {
                 let value = match chunk.constants.get(operand) {
                     Some(crate::Constant::Value(value)) => value.clone(),
-                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
-                        chunk: *function,
-                        captures: Vec::new(),
-                        program: Some(self.active_program()?),
-                        globals: Some(self.globals.clone()),
-                        global_slots: Some(self.shared_global_slots(program)),
-                        #[cfg(feature = "concurrency")]
-                        capture_sources: Vec::new(),
-                    })),
+                    Some(crate::Constant::Function(function)) => {
+                        Value::Closure(crate::sync::Code::new(Closure {
+                            chunk: *function,
+                            captures: Vec::new(),
+                            program: self.active_program()?,
+                            globals: self.globals.clone(),
+                            global_slots: Some(self.shared_global_slots(program)),
+                            #[cfg(feature = "concurrency")]
+                            capture_sources: Vec::new(),
+                            #[cfg(feature = "concurrency")]
+                            domain: self.domain(),
+                        }))
+                    }
                     None => {
                         return Err(self.error_at(
                             RuntimeErrorKind::InvalidBytecode,
@@ -2104,6 +2304,18 @@ impl Vm {
                             format!("capture {operand} does not exist"),
                         )
                     })?;
+                #[cfg(feature = "concurrency")]
+                if let Some(fork) = self.view.as_ref().and_then(|view| view.fork.as_ref())
+                    && fork.is_frozen(capture)
+                {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Fork,
+                        format!(
+                            "a fork cannot change a variable it captured from outside it: the fork{} sees a snapshot of it, so the change would never reach the code that declared it; return the value from the fork instead",
+                            fork.location()
+                        ),
+                    ));
+                }
                 *capture.borrow_mut() = value;
             }
             PackedOpcode::GetGlobal => {
@@ -2389,6 +2601,7 @@ impl Vm {
             }
             PackedOpcode::Import => self.import(program, CallArgumentsId::new(instruction.a))?,
             PackedOpcode::Spawn => self.spawn(program)?,
+            PackedOpcode::Fork => self.fork(program)?,
             PackedOpcode::Nursery => self.nursery(program, instruction.a != 0)?,
             PackedOpcode::Select => self.select(program, SelectCasesId::new(instruction.a))?,
             PackedOpcode::SelectApply => self.select_apply(program)?,
@@ -2440,10 +2653,14 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                #[cfg(all(feature = "threads", not(target_os = "none")))]
+                self.check_attention()?;
                 *ip = 0;
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
+                #[cfg(all(feature = "threads", not(target_os = "none")))]
+                self.check_attention()?;
                 *ip = 0;
             }
             PackedOpcode::Return => {
@@ -2471,12 +2688,27 @@ impl Vm {
             .last()
             .and_then(|frame| frame.closure.global_slots.as_ref())
             .and_then(|slots| slots.get(id.index()))
-            .map_or(UNRESOLVED_GLOBAL, core::cell::Cell::get);
+            .map_or(UNRESOLVED_GLOBAL, crate::sync::Hint::get);
         if slot != UNRESOLVED_GLOBAL {
             // A module's top-level names are binding cells; read through an
             // initialized one and leave an uninitialized one to report.
+            // Every variable is a cell, so a plain entry is a `val`.
             match self.globals.borrow().value(slot) {
-                Value::Binding { cell, .. } => {
+                Value::Binding { cell, name } => {
+                    // A task with its own view of the variables reads a
+                    // variable through it; a `val` it reads as anyone does.
+                    #[cfg(feature = "concurrency")]
+                    if let Some(view) = &self.view {
+                        let kind = name.kind();
+                        if kind != crate::variables::BindingKind::Val
+                            && let Some(value) =
+                                view.value(crate::variables::VarKey::cell(cell), kind)
+                        {
+                            return Ok(value);
+                        }
+                    }
+                    #[cfg(not(feature = "concurrency"))]
+                    let _ = name;
                     let value = cell.borrow();
                     if !matches!(*value, Value::Uninitialized) {
                         return Ok(value.clone());
@@ -2498,13 +2730,23 @@ impl Vm {
         let slot = globals.slot(name).ok_or_else(|| {
             self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`"))
         })?;
+        // Written only when it changes: forks on other threads read the
+        // same cache, and a write each time would bounce its line between
+        // them.
         if let Some(cached) = self
             .frames
             .last()
             .and_then(|frame| frame.closure.global_slots.as_ref())
             .and_then(|slots| slots.get(id.index()))
+            && cached.get() != slot
         {
             cached.set(slot);
+        }
+        #[cfg(feature = "concurrency")]
+        if let Some(view) = &self.view
+            && let Some(value) = Self::viewed_value(view, &globals, slot)
+        {
+            return Ok(value);
         }
         globals
             .value(slot)
@@ -2708,6 +2950,8 @@ impl Vm {
         {
             self.globals.borrow_mut().insert(name.into(), value);
         }
+        #[cfg(feature = "concurrency")]
+        self.register_defined_variable(program, name);
         Ok(())
     }
 
@@ -2721,6 +2965,10 @@ impl Vm {
             return Err(self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`")));
         }
         let value = self.pop()?;
+        #[cfg(feature = "concurrency")]
+        let Some(value) = self.set_viewed_global(name, value)? else {
+            return Ok(());
+        };
         if !self
             .globals
             .borrow()
@@ -2855,15 +3103,18 @@ impl Vm {
                     }),
             })
             .collect::<VmResult<Vec<_>>>()?;
-        self.stack.push(Value::Closure(Rc::new(Closure {
-            chunk,
-            captures,
-            program: Some(self.active_program()?),
-            globals: Some(self.globals.clone()),
-            global_slots: Some(self.shared_global_slots(program)),
-            #[cfg(feature = "concurrency")]
-            capture_sources: capture_sources.to_vec(),
-        })));
+        self.stack
+            .push(Value::Closure(crate::sync::Code::new(Closure {
+                chunk,
+                captures,
+                program: self.active_program()?,
+                globals: self.globals.clone(),
+                global_slots: Some(self.shared_global_slots(program)),
+                #[cfg(feature = "concurrency")]
+                capture_sources: capture_sources.to_vec(),
+                #[cfg(feature = "concurrency")]
+                domain: self.domain(),
+            })));
         Ok(())
     }
 
@@ -2983,11 +3234,23 @@ impl Vm {
     #[inline(never)]
     fn spawn(&mut self, program: &Program) -> VmResult<()> {
         #[cfg(feature = "concurrency")]
-        return self.spawn_task(program);
+        return self.start_task(program, false);
         #[cfg(not(feature = "concurrency"))]
         {
             let _ = program;
             Err(self.runtime_capability_error("spawn"))
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn fork(&mut self, program: &Program) -> VmResult<()> {
+        #[cfg(feature = "concurrency")]
+        return self.start_task(program, true);
+        #[cfg(not(feature = "concurrency"))]
+        {
+            let _ = program;
+            Err(self.runtime_capability_error("fork"))
         }
     }
 
@@ -3247,8 +3510,8 @@ impl Vm {
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
         // Calls rarely cross global environments; skip the reference-count
         // round trip when they do not.
-        if !Rc::ptr_eq(&self.globals, &frame.globals) {
-            self.globals = frame.globals.clone();
+        if !crate::sync::Code::ptr_eq(&self.globals, frame.globals()) {
+            self.globals = frame.globals().clone();
         }
         self.frames.push(frame);
         self.frames_changed();
@@ -3258,9 +3521,9 @@ impl Vm {
         let frame = self.frames.pop();
         self.frames_changed();
         if let Some(active) = self.frames.last()
-            && !Rc::ptr_eq(&self.globals, &active.globals)
+            && !crate::sync::Code::ptr_eq(&self.globals, active.globals())
         {
-            self.globals = active.globals.clone();
+            self.globals = active.globals().clone();
         }
         frame
     }
@@ -3346,10 +3609,10 @@ impl Vm {
         })
     }
 
-    fn active_program(&self) -> VmResult<Rc<Program>> {
+    fn active_program(&self) -> VmResult<crate::sync::Code<Program>> {
         self.frames
             .last()
-            .map(|frame| frame.program.clone())
+            .map(|frame| frame.program().clone())
             .ok_or_else(|| {
                 self.error(
                     RuntimeErrorKind::InvalidBytecode,
@@ -3383,11 +3646,7 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         match callee {
             Value::Closure(closure) => {
-                let frame_program = closure
-                    .program
-                    .clone()
-                    .or_else(|| self.module_program.clone())
-                    .unwrap_or_else(|| Rc::new(program.clone()));
+                let frame_program = &closure.program;
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
@@ -3426,12 +3685,11 @@ impl Vm {
                 self.record_frame_locals(locals.capacity(), argument_count, reused);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
+                #[cfg(feature = "concurrency")]
+                if closure.domain != self.domain && self.refuses_fork_call(&closure) {
+                    return Err(self.fork_call_error(&closure));
+                }
                 self.push_frame(Frame {
-                    program: frame_program.clone(),
-                    globals: closure
-                        .globals
-                        .clone()
-                        .unwrap_or_else(|| self.globals.clone()),
                     closure,
                     call_span: self.frame_call_span(),
                     ip: 0,
@@ -3524,8 +3782,8 @@ impl Vm {
     #[allow(clippy::needless_pass_by_value)]
     fn module_closure_vm(
         &self,
-        program: Rc<Program>,
-        closure: Rc<Closure>,
+        program: crate::sync::Code<Program>,
+        closure: crate::sync::Code<Closure>,
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
@@ -3553,10 +3811,7 @@ impl Vm {
         let mut vm = Self {
             host: self.host.clone(),
             module_program: Some(program.clone()),
-            globals: closure
-                .globals
-                .clone()
-                .unwrap_or_else(|| self.globals.clone()),
+            globals: closure.globals.clone(),
             imported_globals: HashSet::new(),
             module_metadata: Vec::new(),
             stack: Vec::new(),
@@ -3570,6 +3825,16 @@ impl Vm {
             direct_task_limit: options.direct_task_limit,
             #[cfg(feature = "concurrency")]
             direct_task_count: options.direct_task_count,
+            #[cfg(feature = "concurrency")]
+            view: self.view.clone(),
+            #[cfg(feature = "concurrency")]
+            domain: self.domain,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel: self.cancel.clone(),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention: self.attention.clone(),
+            #[cfg(feature = "concurrency")]
+            variables: self.variables.clone(),
             native_resources: self.native_resources.clone(),
             current_waiter: None,
             suspension: None,
@@ -3589,8 +3854,6 @@ impl Vm {
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.push_frame(Frame {
-            program: program.clone(),
-            globals: vm.globals.clone(),
             closure,
             call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
             ip: 0,
@@ -3606,13 +3869,20 @@ impl Vm {
         Ok(vm)
     }
 
+    /// Starts a task from the closure on the stack: a spawned task shares
+    /// its outer captures, and a fork (`forked`) sees a snapshot of all of
+    /// them, which it cannot assign.
     #[cfg(feature = "concurrency")]
-    fn spawn_task(&mut self, _program: &Program) -> VmResult<()> {
+    fn start_task(&mut self, _program: &Program, forked: bool) -> VmResult<()> {
         let closure = self.pop()?;
         let Value::Closure(closure) = closure else {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
-                "spawn expects a function or block".into(),
+                if forked {
+                    "fork expects a function or block".into()
+                } else {
+                    "spawn expects a function or block".into()
+                },
             ));
         };
         let admission = if let Some(limit) = self.direct_task_limit {
@@ -3629,25 +3899,36 @@ impl Vm {
         } else {
             None
         };
-        let captures = closure
+        let captures: Vec<_> = closure
             .captures
             .iter()
             .zip(&closure.capture_sources)
             .map(|(cell, source)| match source {
-                Capture::Local(_) => binding_cell(cell.borrow().clone()),
-                Capture::Capture(_) => cell.clone(),
+                Capture::Capture(_) if !forked => cell.clone(),
+                Capture::Local(_) | Capture::Capture(_) => binding_cell(cell.borrow().clone()),
             })
             .collect();
-        let closure = Rc::new(Closure {
+        if forked && self.variables.any_initializing() {
+            return Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                "a fork cannot start while a module initializes: it could see the module's values set after it started; start it from a function, such as `main`".into(),
+            ));
+        }
+        let view = self.task_view(forked, &captures);
+        let closure = crate::sync::Code::new(Closure {
             chunk: closure.chunk,
             captures,
             program: closure.program.clone(),
             globals: closure.globals.clone(),
             global_slots: closure.global_slots.clone(),
             capture_sources: closure.capture_sources.clone(),
+            domain: view
+                .as_ref()
+                .and_then(|view| view.fork.as_ref())
+                .map_or(closure.domain, |fork| fork.domain),
         });
-        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
-        let vm = self.module_closure_vm(
+        let task_program = closure.program.clone();
+        let mut vm = self.module_closure_vm(
             task_program.clone(),
             closure,
             Vec::new(),
@@ -3659,17 +3940,27 @@ impl Vm {
                 nursery: self.nursery.clone(),
             },
         )?;
+        vm.domain = view
+            .as_ref()
+            .and_then(|view| view.fork.as_ref())
+            .map_or(0, |fork| fork.domain);
+        vm.view = view;
         let execution = TaskExecution {
             vm,
             settle_nursery: false,
             interactive_imported_globals: None,
+            forked,
         };
-        let task = Rc::new(Task::pending(
-            execution,
-            admission,
-            self.nursery.ready_queue(),
-        ));
+        let task = Rc::new(
+            Task::pending(execution, admission, self.nursery.ready_queue())
+                .in_domain(self.domain()),
+        );
         self.nursery.add_task(task.clone());
+        // A fork its nursery admits runs on a worker from now on.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if forked {
+            island::ship(&task);
+        }
         self.stack.push(Value::Task(task));
         Ok(())
     }
@@ -3748,7 +4039,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
-        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
+        let task_program = closure.program.clone();
         let vm = self.module_closure_vm(
             task_program.clone(),
             closure,
@@ -3765,6 +4056,7 @@ impl Vm {
             vm,
             settle_nursery: true,
             interactive_imported_globals: None,
+            forked: false,
         };
         let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
         nursery.enqueue(body.clone());
@@ -3833,6 +4125,17 @@ impl Vm {
                     ),
                 ));
             };
+            #[cfg(feature = "concurrency")]
+            if self.fork_context().is_some()
+                && host.module_initialized(importer, &name) == Some(false)
+            {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Fork,
+                    format!(
+                        "a fork cannot initialize `{name}`: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
+                    ),
+                ));
+            }
             let instance = host
                 .import_module(importer, &name)
                 .map_err(|error| self.import_error(&error, self.owned_span(None)))?;
@@ -3883,7 +4186,7 @@ impl Vm {
     fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
         match value.resolve().ok()? {
             Value::Closure(closure) => {
-                let program = closure.program.as_deref()?;
+                let program = &closure.program;
                 program
                     .chunk(closure.chunk)
                     .map(|chunk| CallableRuntimeSignature {
@@ -3911,12 +4214,12 @@ impl Vm {
     fn has_callable_identity(value: &Value, selected: &CallableIdentity) -> bool {
         match value {
             Value::Closure(closure) => {
-                closure.program.as_deref().and_then(|program| {
-                    program
-                        .chunk(closure.chunk)?
-                        .callable_identity
-                        .and_then(|identity| program.callable_identity(identity))
-                }) == Some(selected)
+                let program = &closure.program;
+                program
+                    .chunk(closure.chunk)
+                    .and_then(|chunk| chunk.callable_identity)
+                    .and_then(|identity| program.callable_identity(identity))
+                    == Some(selected)
             }
             Value::DeclaredNative { declaration, .. } => &declaration.identity == selected,
             Value::Binding { .. } => value
@@ -4119,7 +4422,7 @@ impl Vm {
         })?;
         let callee = match callee {
             Value::Closure(closure) => {
-                match self.enter_positional_closure(program, closure, base, count)? {
+                match self.enter_positional_closure(closure, base, count)? {
                     None => {
                         #[cfg(feature = "metrics")]
                         self.record_exact_positional_closure_call();
@@ -4169,7 +4472,7 @@ impl Vm {
     /// callee value before this path can run.
     fn call_positional_closure(
         &mut self,
-        program: &Program,
+        _program: &Program,
         count: usize,
         selected: Option<&CallableIdentity>,
     ) -> VmResult<bool> {
@@ -4206,7 +4509,7 @@ impl Vm {
             return Ok(false);
         };
         Ok(self
-            .enter_positional_closure(program, closure, base, count)?
+            .enter_positional_closure(closure, base, count)?
             .is_none())
     }
 
@@ -4219,11 +4522,10 @@ impl Vm {
     #[inline(always)]
     fn enter_positional_closure(
         &mut self,
-        program: &Program,
-        closure: Rc<Closure>,
+        closure: crate::sync::Code<Closure>,
         stack_base: usize,
         count: usize,
-    ) -> VmResult<Option<Rc<Closure>>> {
+    ) -> VmResult<Option<crate::sync::Code<Closure>>> {
         let arguments = self.stack.len() - count;
         // Arguments move from the stack into the callee's locals. A live
         // module binding must be resolved first, which the general path does.
@@ -4233,11 +4535,7 @@ impl Vm {
         {
             return Ok(Some(closure));
         }
-        let frame_program = closure
-            .program
-            .clone()
-            .or_else(|| self.module_program.clone())
-            .unwrap_or_else(|| Rc::new(program.clone()));
+        let frame_program = &closure.program;
         let local_count = {
             let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                 self.error_at(
@@ -4245,7 +4543,15 @@ impl Vm {
                     "closure references missing chunk".into(),
                 )
             })?;
-            if chunk.arity != count || !chunk.binds_full_positional_calls {
+            // A call across fork domains to a closure with captures takes
+            // the general path, which checks that none is a `var`. One
+            // without captures, such as every module function a fork calls,
+            // has nothing to check.
+            #[cfg(feature = "concurrency")]
+            let other_domain = closure.domain != self.domain && !closure.captures.is_empty();
+            #[cfg(not(feature = "concurrency"))]
+            let other_domain = false;
+            if chunk.arity != count || !chunk.binds_full_positional_calls || other_domain {
                 return Ok(Some(closure));
             }
             if chunk.locals < chunk.arity {
@@ -4268,11 +4574,6 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(local_count);
         self.push_frame(Frame {
-            program: frame_program,
-            globals: closure
-                .globals
-                .clone()
-                .unwrap_or_else(|| self.globals.clone()),
             closure,
             call_span: self.frame_call_span(),
             ip: 0,
@@ -4459,7 +4760,7 @@ impl Vm {
     fn running_module_key(&self) -> Option<&str> {
         self.frames
             .last()
-            .and_then(|frame| frame.program.module_key())
+            .and_then(|frame| frame.program().module_key())
             .or_else(|| {
                 self.module_program
                     .as_ref()
@@ -4560,6 +4861,7 @@ impl Vm {
                     (Value::string("name"), Value::string(binding.as_str())),
                     (Value::string("exported"), Value::Bool(declaration.exported)),
                     (Value::string("mutable"), Value::Bool(declaration.mutable)),
+                    (Value::string("task"), Value::Bool(declaration.task)),
                     (Value::string("documentation"), documentation.clone()),
                     (Value::string("tags"), tags.clone()),
                     (Value::string("value"), value),
@@ -4661,6 +4963,10 @@ impl Vm {
                             format!("select recv expects chan, got {}", value.type_name()),
                         ));
                     };
+                    #[cfg(feature = "concurrency")]
+                    if self.fork_context().is_some() {
+                        channel.mark_crossed();
+                    }
                     RuntimeSelectCase::Receive { channel, handler }
                 }
                 SelectCase::Send { .. } => {
@@ -4676,6 +4982,10 @@ impl Vm {
                         return Err(
                             self.error_at(RuntimeErrorKind::Type, "send cannot send nil".into())
                         );
+                    }
+                    #[cfg(feature = "concurrency")]
+                    if self.view.is_some() || channel.crossed() {
+                        self.check_channel_send(&channel, &value)?;
                     }
                     RuntimeSelectCase::Send {
                         channel,
@@ -4723,6 +5033,12 @@ impl Vm {
                             format!("select await expects task, got {}", value.type_name()),
                         ));
                     };
+                    if task.domain() != self.domain() {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Fork,
+                            "this task handle is not sendable: only the task that started it, outside this fork, can await it".into(),
+                        ));
+                    }
                     RuntimeSelectCase::Await { task, handler }
                 }
                 #[cfg(not(feature = "concurrency"))]
@@ -4740,6 +5056,10 @@ impl Vm {
                 RuntimeSelectCase::Receive { channel, handler } => {
                     self.progress.track_native_channel(channel);
                     if let ChannelReceive::Ready(value) = channel.try_receive() {
+                        #[cfg(feature = "concurrency")]
+                        if self.fork_context().is_some() {
+                            self.check_sendable(&value, "a value received on a channel")?;
+                        }
                         self.push_select_result(value, handler.clone());
                         return Ok(());
                     }
@@ -4750,7 +5070,7 @@ impl Vm {
                     handler,
                 } => {
                     self.progress.track_native_channel(channel);
-                    match channel.try_send(value.clone()) {
+                    match channel.try_send(value) {
                         ChannelSend::Ready => {
                             self.push_select_result(Value::Nil, handler.clone());
                             return Ok(());
@@ -4792,16 +5112,94 @@ impl Vm {
             self.push_select_result(Value::Nil, handler);
             return Ok(());
         }
+        // Every channel of the select stays locked, in one order, from its
+        // last check through its parking, so no send or receive on another
+        // thread can slip between them and leave both sides waiting.
+        let mut channels = values
+            .iter()
+            .filter_map(|case| match case {
+                RuntimeSelectCase::Receive { channel, .. }
+                | RuntimeSelectCase::Send { channel, .. } => Some(channel.clone()),
+                #[cfg(feature = "concurrency")]
+                RuntimeSelectCase::After { .. } | RuntimeSelectCase::Await { .. } => None,
+                RuntimeSelectCase::Default { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        channels.sort_by_key(|channel| Rc::as_ptr(channel) as usize);
+        channels.dedup_by(|a, b| Rc::ptr_eq(a, b));
+        for channel in &channels {
+            channel.drain_native();
+        }
+        let mut states = channels
+            .iter()
+            .map(|channel| channel.lock_state())
+            .collect::<Vec<_>>();
+        let locked = |channel: &Rc<Channel>| {
+            channels
+                .iter()
+                .position(|candidate| Rc::ptr_eq(candidate, channel))
+                .expect("every channel of the select is locked")
+        };
+        let mut wakes = Vec::new();
+        let mut taken = None;
+        for case in &values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    if let Some(value) =
+                        channel.receive_locked(&mut states[locked(channel)], &mut wakes)
+                    {
+                        taken = Some(Some((value, handler.clone(), true)));
+                        break;
+                    }
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => match channel.send_locked(&mut states[locked(channel)], value, &mut wakes) {
+                    ChannelSend::Ready => {
+                        taken = Some(Some((Value::Nil, handler.clone(), false)));
+                        break;
+                    }
+                    ChannelSend::Closed => {
+                        taken = Some(None);
+                        break;
+                    }
+                    ChannelSend::Pending => {}
+                },
+                #[cfg(feature = "concurrency")]
+                RuntimeSelectCase::After { .. } | RuntimeSelectCase::Await { .. } => {}
+                RuntimeSelectCase::Default { .. } => {}
+            }
+        }
+        if let Some(taken) = taken {
+            drop(states);
+            crate::value::run_wakes(wakes);
+            let Some((value, handler, received)) = taken else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidCall,
+                    "send on a closed channel".into(),
+                ));
+            };
+            #[cfg(feature = "concurrency")]
+            if received && self.fork_context().is_some() {
+                self.check_sendable(&value, "a value received on a channel")?;
+            }
+            #[cfg(not(feature = "concurrency"))]
+            let _ = received;
+            self.push_select_result(value, handler);
+            return Ok(());
+        }
         let base = self.blocking_waiter()?;
         let select_state = WaitSet::select_state(base.clone());
         let mut registrations = Vec::new();
         for case in values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
-                    channel.park_receiver(Waiter::select(
-                        select_state.clone(),
-                        SelectWake::Value { handler },
-                    ));
+                    Channel::park_receiver(
+                        &mut states[locked(&channel)],
+                        Waiter::select(select_state.clone(), SelectWake::Value { handler }),
+                    );
                     registrations.push(WaitRegistration::ChannelReceive(channel));
                 }
                 RuntimeSelectCase::Send {
@@ -4815,7 +5213,7 @@ impl Vm {
                         RuntimeErrorKind::InvalidCall,
                         "send on a closed channel".into(),
                     ));
-                    channel.park_sender(waiter, value);
+                    Channel::park_sender(&mut states[locked(&channel)], waiter, value);
                     registrations.push(WaitRegistration::ChannelSend(channel));
                 }
                 #[cfg(feature = "concurrency")]
@@ -4846,6 +5244,7 @@ impl Vm {
                 RuntimeSelectCase::Default { .. } => {}
             }
         }
+        drop(states);
         let registrations = WaitSet::many(
             registrations,
             #[cfg(feature = "metrics")]
@@ -4915,6 +5314,10 @@ impl Vm {
         resource_signature: Option<&ForeignResourceSignature>,
         span: Option<&SourceSpan>,
     ) -> VmResult<Value> {
+        #[cfg(feature = "concurrency")]
+        if self.view.is_some() {
+            self.check_fork_native(function)?;
+        }
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
@@ -5085,7 +5488,7 @@ impl Vm {
 
     fn bind_call_arguments(
         &self,
-        program: &Program,
+        _program: &Program,
         callee: &Value,
         mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
@@ -5104,7 +5507,7 @@ impl Vm {
                 "native functions do not accept named arguments".into(),
             ));
         };
-        let closure_program = closure.program.as_deref().unwrap_or(program);
+        let closure_program = &*closure.program;
         let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -5456,7 +5859,7 @@ impl Vm {
     fn executing_span(frame: &Frame) -> Option<SpanId> {
         let index = frame.ip.checked_sub(1)?;
         frame
-            .program
+            .program()
             .chunk(frame.closure.chunk)?
             .code
             .get(index)?
@@ -5467,7 +5870,7 @@ impl Vm {
         let span = self
             .frames
             .last()
-            .and_then(|frame| frame.program.span(Self::executing_span(frame)?));
+            .and_then(|frame| frame.program().span(Self::executing_span(frame)?));
         #[cfg(feature = "metrics")]
         if span.is_some() {
             self.metrics.borrow_mut().source_span_lookups += 1;

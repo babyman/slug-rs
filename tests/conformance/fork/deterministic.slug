@@ -1,0 +1,14 @@
+// Forks awaited in a fixed order give the sequential result.
+val sum = fn(from:num, to:num, acc:num):num {
+    if (from > to) { acc } else { recur(from + 1, to, acc + from) }
+}
+val main = fn() {
+    val start = fn(i:num, acc:list):list {
+        if (i == 8) { acc } else { recur(i + 1, acc :+ fork { sum(i * 1000, i * 1000 + 999, 0) }) }
+    }
+    val forks = start(0, [])
+    val collect = fn(i:num, total:num):num {
+        if (i == len(forks)) { total } else { recur(i + 1, total + select { await forks[i] }) }
+    }
+    println(collect(0, 0))
+}

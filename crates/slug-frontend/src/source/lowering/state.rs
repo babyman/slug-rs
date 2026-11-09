@@ -101,6 +101,29 @@ impl State {
         self.chunk.name = name.into();
         self.chunk.arity = arity;
         self.chunk.locals = self.next_local;
+        // Which capture slots hold a `var`, by name, so a fork can tell one;
+        // other slots keep an empty name, which allocates nothing.
+        let mut captures = vec![None; self.captures.len()];
+        for (name, binding) in &self.outer {
+            if let Binding::Capture { slot, mutable } = binding
+                && *mutable
+                && let Some(entry) = captures.get_mut(*slot)
+            {
+                *entry = Some(slug_vm::CaptureDetail {
+                    name: name.clone(),
+                    mutable: true,
+                });
+            }
+        }
+        self.chunk.captures = captures
+            .into_iter()
+            .map(|capture| {
+                capture.unwrap_or(slug_vm::CaptureDetail {
+                    name: String::new(),
+                    mutable: false,
+                })
+            })
+            .collect();
         self.chunk
     }
     pub(super) fn is_module_scope(&self) -> bool {

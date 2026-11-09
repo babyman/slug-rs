@@ -20,7 +20,7 @@ trait VmWithModuleLoader {
 
 impl VmWithModuleLoader for Vm {
     fn with_module_loader(loader: ModuleLoader) -> Self {
-        Self::with_host(Rc::new(loader))
+        Self::with_host(slug_vm::Shared::new(loader))
     }
 }
 
@@ -1345,7 +1345,7 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
             "val {*} = import(\"math\")\nexport val result = double(21)\n",
         )
         .expect("compile through the in-memory resolver");
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute runtime import through the same resolver");
@@ -1373,7 +1373,7 @@ fn compiling_a_module_preserves_an_opaque_resolver_key_for_runtime_imports() {
     let program = loader
         .compile(None, "parent")
         .expect("compile parent module through opaque resolver");
-    let mut vm = Vm::with_host(Rc::new(loader));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader));
 
     vm.run_named(&program, "main")
         .expect("runtime import uses resolver key rather than diagnostic name");
@@ -1438,7 +1438,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
             "val a = import(\"a\")\nexport val output = a.a()\n",
         )
         .expect("compile an in-memory cycle");
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute the in-memory cycle");
@@ -1466,7 +1466,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
     let missing = loader
         .compile_source("memory:missing", "import(\"missing\")\n")
         .expect("missing imports compile until runtime");
-    let error = Vm::with_host(Rc::new(loader))
+    let error = Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&missing, "main")
         .expect_err("missing in-memory imports must be checked runtime errors");
     assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
@@ -3035,9 +3035,12 @@ fn compiled_artifacts_carry_assets_without_their_clutch() {
     fs::remove_dir_all(&root).expect("remove the clutch before running");
     let artifact =
         slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()).expect("decode artifact");
-    let result = slug_frontend::ArtifactHost::new(artifact, Rc::new(slug_vm::EmptyVmConfiguration))
-        .expect("valid artifact")
-        .run()
-        .expect("run artifact");
+    let result = slug_frontend::ArtifactHost::new(
+        artifact,
+        slug_vm::Shared::new(slug_vm::EmptyVmConfiguration),
+    )
+    .expect("valid artifact")
+    .run()
+    .expect("run artifact");
     assert_eq!(result.to_string(), "0x\"7661722068746d783d313b0a\"");
 }

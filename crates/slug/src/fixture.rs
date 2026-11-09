@@ -22,6 +22,12 @@ pub struct FixtureMetadata {
     pub library_root: Option<PathBuf>,
     pub timeout_ms: Option<u64>,
     pub diagnostic: Option<String>,
+    /// Text that must each appear in stderr, for a diagnostic whose exact
+    /// wording the fixture does not fix.
+    pub stderr_contains: Vec<String>,
+    /// Why the fixture does not conform yet. A pending fixture must fail;
+    /// one that conforms is reported, so its `pending` is removed.
+    pub pending: Option<String>,
 }
 
 /// A checked failure while reading portable fixture metadata.
@@ -83,6 +89,14 @@ impl FixtureMetadata {
         if outcome == FixtureOutcome::Success && diagnostic.is_some() {
             return Err(error("success fixtures cannot declare a diagnostic"));
         }
+        let stderr_contains = optional_strings(&mut fields, "stderr_contains")?;
+        if outcome == FixtureOutcome::Success && !stderr_contains.is_empty() {
+            return Err(error("success fixtures cannot declare stderr_contains"));
+        }
+        let pending = optional_string(&mut fields, "pending")?;
+        if pending.as_deref().is_some_and(str::is_empty) {
+            return Err(error("pending must give a reason"));
+        }
         if let Some(field) = fields.keys().next() {
             return Err(error(format!("unknown fixture metadata field `{field}`")));
         }
@@ -94,6 +108,8 @@ impl FixtureMetadata {
             library_root,
             timeout_ms,
             diagnostic,
+            stderr_contains,
+            pending,
         })
     }
 }
@@ -149,6 +165,26 @@ fn optional_string(
                 .ok_or_else(|| error(format!("fixture metadata field `{name}` must be a string")))
         })
         .transpose()
+}
+
+fn optional_strings(
+    fields: &mut toml::map::Map<String, toml::Value>,
+    name: &str,
+) -> Result<Vec<String>, FixtureMetadataError> {
+    let Some(value) = fields.remove(name) else {
+        return Ok(Vec::new());
+    };
+    let invalid = || {
+        error(format!(
+            "fixture metadata field `{name}` must be a list of strings"
+        ))
+    };
+    value
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned).ok_or_else(invalid))
+        .collect()
 }
 
 fn optional_path(

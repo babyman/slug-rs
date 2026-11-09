@@ -509,3 +509,37 @@ fn producer_arguments_need_the_events_profile_and_match_channels() {
         assert!(error.contains(message), "{signature}: {error}");
     }
 }
+
+#[test]
+fn a_function_is_thread_safe_only_when_declared() {
+    let manifest = NativeManifest::from_clutch_source(&native(
+        "[native.functions.\"m\"]\npure = { symbol = \"m_pure\", signature = \"(i64 x) -> i64\", thread_safe = true }\nplain = { symbol = \"m_plain\", signature = \"(i64 x) -> i64\" }\n",
+    ))
+    .expect("valid manifest");
+    let safety = manifest
+        .bindings()
+        .map(|binding| (binding.name.as_str(), binding.thread_safe))
+        .collect::<Vec<_>>();
+    assert!(safety.contains(&("pure", true)), "{safety:?}");
+    assert!(safety.contains(&("plain", false)), "{safety:?}");
+    // It does not change the shim, so it does not make a staged one stale.
+    let canonical = |name: &str| {
+        manifest
+            .bindings()
+            .find(|binding| binding.name == name)
+            .map(|binding| {
+                binding
+                    .canonical_signature()
+                    .replace(name, "f")
+                    .replace("m_pure", "s")
+                    .replace("m_plain", "s")
+            })
+    };
+    assert_eq!(canonical("pure"), canonical("plain"));
+
+    let (location, message) = rejection(&native(
+        "[native.functions.\"m\"]\nf = { symbol = \"m_f\", signature = \"() -> void\", thread_safe = \"yes\" }\n",
+    ));
+    assert_eq!(location, "native.functions.\"m\".f.thread_safe");
+    assert_eq!(message, "must be a boolean");
+}

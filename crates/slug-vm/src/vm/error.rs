@@ -30,6 +30,10 @@ pub enum RuntimeErrorKind {
     /// An operation the host's user has not granted, such as describing a
     /// module's unexported declarations.
     Permission,
+    /// Something a `fork` cannot do: change state outside it, use or pass on
+    /// an unsendable value, call a native function not declared
+    /// thread-safe, or initialize a module.
+    Fork,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -223,14 +227,14 @@ impl Vm {
                 .filter(|(_, frame)| !frame.cleanup_action)
                 .map(|(index, frame)| CallFrame {
                     function: frame
-                        .program
+                        .program()
                         .chunk(frame.closure.chunk)
                         .map_or_else(|| "<invalid frame>".to_owned(), |chunk| chunk.name.clone()),
                     span: match &frame.call_span {
                         Some(super::frames::CallSpan::Instruction(span)) => self
                             .frames
                             .get(index.saturating_sub(1))
-                            .and_then(|caller| caller.program.span(*span))
+                            .and_then(|caller| caller.program().span(*span))
                             .cloned(),
                         #[cfg(feature = "concurrency")]
                         Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
@@ -327,5 +331,6 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
         RuntimeErrorKind::Permission => "permission",
+        RuntimeErrorKind::Fork => "fork",
     }
 }

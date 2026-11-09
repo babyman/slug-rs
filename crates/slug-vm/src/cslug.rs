@@ -3,10 +3,10 @@
 //! The codec stays adjacent to the VM because decoding is an executable
 //! validation boundary.
 
+use crate::sync::Rc;
 use alloc::{
     borrow::ToOwned,
     boxed::Box,
-    rc::Rc,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -272,6 +272,7 @@ struct ArtifactHostState {
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: NativeResourceRegistry,
+    module_variables: crate::ModuleVariables,
     warnings: RefCell<Vec<String>>,
 }
 
@@ -308,6 +309,7 @@ impl ArtifactHost {
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
+                module_variables: crate::module_variables(),
                 warnings: RefCell::new(Vec::new()),
             }),
         })
@@ -554,6 +556,10 @@ impl VmHost for ArtifactHost {
         self.state.native_resources.clone()
     }
 
+    fn module_variables(&self) -> crate::ModuleVariables {
+        self.state.module_variables.clone()
+    }
+
     fn configuration(&self) -> &dyn VmConfiguration {
         self.state.configuration.as_ref()
     }
@@ -670,7 +676,11 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     uleb(program.declarations().len(), &mut output);
     for declaration in program.declarations() {
         strings(&declaration.bindings, &mut output);
-        boolean(declaration.mutable, &mut output);
+        output.push(match (declaration.mutable, declaration.task) {
+            (false, _) => 0,
+            (true, false) => 1,
+            (true, true) => 2,
+        });
         boolean(declaration.exported, &mut output);
         boolean(declaration.foreign, &mut output);
         if declaration.foreign {
@@ -1030,7 +1040,8 @@ fn encode_match_type(value: &MatchType, depth: usize, output: &mut Vec<u8>) -> R
 
 #[allow(dead_code)]
 fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error> {
-    let (name, arity, parameters, callable_identity, locals, constants, code) = chunk.cslug_parts();
+    let (name, arity, parameters, callable_identity, locals, constants, code, captures) =
+        chunk.cslug_parts();
     string(name, output);
     uleb(arity, output);
     uleb(parameters.len(), output);
@@ -1063,6 +1074,10 @@ fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error
         uleb(c as usize, output);
         uleb(span.map_or(0, |span| span.index() + 1), output);
     }
+    // Capture details are not recorded yet: a decoded chunk's captures are
+    // unknown, which forks treat as capturing no `var` (see
+    // docs/planning/fork-tasks.md, phase 5).
+    let _ = captures;
     Ok(())
 }
 
@@ -1489,7 +1504,16 @@ impl PendingDeclaration {
 
 fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Error> {
     let bindings = reader.strings("declaration bindings")?;
-    let mutable = reader.bool("declaration mutable")?;
+    let (mutable, task) = match reader.byte("declaration mutable")? {
+        0 => (false, false),
+        1 => (true, false),
+        2 => (true, true),
+        _ => {
+            return Err(Error::InvalidStructure(
+                "invalid declaration mutability".into(),
+            ));
+        }
+    };
     let exported = reader.bool("declaration exported")?;
     let foreign = reader.bool("declaration foreign")?;
     let (foreign_arity, foreign_identity) = if foreign {
@@ -1530,6 +1554,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         declaration: ModuleDeclaration {
             bindings,
             mutable,
+            task,
             exported,
             foreign,
             foreign_arity,
@@ -1694,9 +1719,7 @@ impl<'a> Reader<'a> {
             5 => Ok(Value::string(self.string(context)?)),
             6 => {
                 let length = self.usize(context)?;
-                Ok(Value::Bytes(alloc::rc::Rc::new(
-                    self.bytes(length, context)?.to_vec(),
-                )))
+                Ok(Value::Bytes(Rc::new(self.bytes(length, context)?.to_vec())))
             }
             _ => Err(Error::UnsupportedValue("value tag".into())),
         }
@@ -1988,6 +2011,7 @@ impl<'a> Reader<'a> {
             locals,
             constants,
             code,
+            Vec::new(),
         ))
     }
 

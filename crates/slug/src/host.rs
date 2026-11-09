@@ -34,6 +34,7 @@ struct DesktopLoaderState {
     configuration: Configuration,
     native_globals: RefCell<HashMap<String, Value>>,
     native_resources: NativeResourceRegistry,
+    module_variables: slug_vm::ModuleVariables,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
     /// What the user running slug granted, such as `describe.unexported`.
@@ -101,6 +102,7 @@ impl DesktopLoader {
                 configuration,
                 native_globals: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
+                module_variables: slug_vm::module_variables(),
                 warnings: RefCell::new(Vec::new()),
                 shutdown_errors: RefCell::new(Vec::new()),
                 permissions: RefCell::new(HashSet::new()),
@@ -345,7 +347,7 @@ impl ModuleGraphHost for DesktopLoader {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
@@ -367,6 +369,13 @@ impl DesktopLoader {
 }
 
 impl VmHost for DesktopLoader {
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let importer = importer.map(ModuleKey::new);
+        self.state
+            .graph
+            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -426,6 +435,10 @@ impl VmHost for DesktopLoader {
 
     fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        self.state.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {
@@ -493,5 +506,5 @@ pub fn build_default_host_vm(
         ),
         configuration,
     );
-    Ok((Vm::with_host(Rc::new(loader.clone())), loader))
+    Ok((Vm::with_host(slug_vm::Shared::new(loader.clone())), loader))
 }

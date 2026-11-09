@@ -1,0 +1,4 @@
+schema = 1
+outcome = "success"
+stdout = "2000\n0\n"
+stderr = ""

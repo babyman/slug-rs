@@ -1,0 +1,9 @@
+// Values sent on a channel from a fork must be sendable.
+val main = fn() {
+    val out:chan<fn> = chan(1)
+    val t = fork {
+        val inner = spawn { 1 }
+        select { send out, fn() { inner } /> fn(_) { nil } }
+    }
+    select { await t }
+}

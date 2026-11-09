@@ -1,4 +1,5 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
+use crate::sync::Rc;
+use std::{cell::RefCell, collections::HashMap, time::Instant};
 
 #[cfg(feature = "metrics")]
 use super::VmMetrics;

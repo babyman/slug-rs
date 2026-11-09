@@ -1,0 +1,5 @@
+schema = 1
+outcome = "success"
+stdout = "caught\ndone\n"
+stderr = ""
+timeout_ms = 10000

@@ -1,0 +1,5 @@
+val main = fn() {
+    var n = 0
+    val t = fork { n = n + 1 }
+    select { await t }
+}

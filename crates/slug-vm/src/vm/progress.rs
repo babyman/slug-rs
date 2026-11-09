@@ -1,8 +1,5 @@
-use alloc::{
-    rc::{Rc, Weak},
-    sync::Arc,
-    vec::Vec,
-};
+use crate::sync::{Rc, Weak};
+use alloc::{sync::Arc, vec::Vec};
 use core::cell::RefCell;
 
 #[cfg(target_os = "none")]
@@ -18,10 +15,24 @@ pub(super) struct ProgressDriver {
     signal: Arc<ProgressSignal>,
     #[cfg(not(target_os = "none"))]
     blocking_waiter: BlockingProgressWaiter,
+    /// This thread's inbox, whose signal this driver waits on.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    inbox: Arc<super::island::Inbox>,
+    /// Set for a fork's island, which another thread may always wake.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    island: Option<Arc<super::island::IslandControl>>,
+    /// The threads running this program's forks, to tell a deadlock.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    group: Arc<super::island::Group>,
 }
 
 impl ProgressDriver {
     pub(super) fn new() -> Self {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        let inbox = super::island::Inbox::current();
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        let signal = inbox.signal().clone();
+        #[cfg(not(all(feature = "threads", not(target_os = "none"))))]
         let signal = Arc::new(ProgressSignal::new());
         #[cfg(not(target_os = "none"))]
         let blocking_waiter = signal.blocking_waiter();
@@ -30,7 +41,63 @@ impl ProgressDriver {
             signal,
             #[cfg(not(target_os = "none"))]
             blocking_waiter,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            group: Arc::new(super::island::Group::new(inbox.clone())),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            inbox,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            island: None,
         }
+    }
+
+    /// The driver of a fork's island, on its worker thread.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(super) fn island(
+        control: Arc<super::island::IslandControl>,
+        group: Arc<super::island::Group>,
+    ) -> Self {
+        Self {
+            island: Some(control),
+            group,
+            ..Self::new()
+        }
+    }
+
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(super) fn group(&self) -> &Arc<super::island::Group> {
+        &self.group
+    }
+
+    /// Whether another thread may wake this one: it started a fork that has
+    /// not reported back, or it is a fork's island.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(super) fn may_be_woken_elsewhere(&self) -> bool {
+        self.island.is_some() || self.inbox.has_remote()
+    }
+
+    /// Sleeps until another thread wakes this one. Returns false, without
+    /// sleeping, once every thread of the program sleeps so: none can wake
+    /// another, and the root reports itself blocked. An island that finds
+    /// the deadlock tells the root, and sleeps until it is cancelled.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(super) fn sleep_until_woken(&self, observed: u64) -> bool {
+        let root = self.island.is_none();
+        if root && self.group.deadlocked() {
+            return false;
+        }
+        match self.inbox.begin_sleep(&self.group) {
+            // Work arrived: run it rather than sleep.
+            None => return true,
+            Some(true) if root => {
+                self.inbox.end_sleep();
+                return false;
+            }
+            Some(true) => self.group.report_deadlock(),
+            Some(false) => {}
+        }
+        self.wait(observed, None);
+        self.inbox.end_sleep();
+        !(root && self.group.deadlocked())
     }
 
     pub(super) fn clear(&self) {
@@ -63,7 +130,10 @@ impl ProgressDriver {
     /// Performs the shared, non-blocking portion of a host progress round.
     /// Scheduler task dispatch and timer policy deliberately live elsewhere.
     pub(super) fn make_available_progress(&self) -> bool {
-        self.drain_native_channels()
+        let native = self.drain_native_channels();
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        let native = self.inbox.drain() | native;
+        native
     }
 
     #[cfg(not(target_os = "none"))]

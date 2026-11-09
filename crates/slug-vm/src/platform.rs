@@ -29,6 +29,36 @@ pub(crate) type MapHasher = std::collections::hash_map::RandomState;
 #[cfg(target_os = "none")]
 pub(crate) type MapHasher = core::hash::BuildHasherDefault<Fnv1a>;
 
+/// Hashes the address of a module variable's cell, the key of every task's
+/// view of the variables, read on each access to a `task var` or, in a
+/// fork, a `var`. The VM chooses these keys, never input, and they are
+/// distinct, so one multiply spreads them; `SipHash` buys nothing here.
+#[derive(Default)]
+#[cfg_attr(target_os = "none", allow(dead_code))]
+pub(crate) struct AddressHasher(u64);
+
+impl core::hash::Hasher for AddressHasher {
+    fn finish(&self) -> u64 {
+        // The multiply leaves aligned addresses' low bits zero, and the
+        // table picks a bucket from the low bits: fold the high bits down.
+        self.0 ^ (self.0 >> 32)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_u64(u64::from(*byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0 ^ value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
 pub(crate) struct Fnv1a(u64);
 
 impl Default for Fnv1a {

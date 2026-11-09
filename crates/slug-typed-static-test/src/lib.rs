@@ -30,7 +30,7 @@ pub fn run() -> Result<String, String> {
         entries_per_table: 1_024,
     };
     let artifact = cslug::decode(PROGRAM, limits).map_err(|error| error.to_string())?;
-    let host = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+    let host = ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
         .map_err(|error| error.to_string())?;
     let owner: Rc<dyn Any> = Rc::new(());
     let functions = typed_provider_functions(&owner).map_err(|error| error.to_string())?;

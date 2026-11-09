@@ -1,0 +1,6 @@
+// A fork can hold a task handle from its spawner but fails when it uses it.
+val main = fn() {
+    val outside = spawn { 1 }
+    val t = fork { select { await outside } }
+    select { await t }
+}

@@ -146,20 +146,22 @@ pub(crate) fn call_binding(call: &mut NativeCall<'_>) -> NativeStatus {
     let Some((binding, resources)) = binding(call) else {
         return call.report_contract_violation("typed native binding has no adapter state");
     };
-    match run(call, &binding, &resources) {
+    match run(call, binding, resources) {
         Ok(value) => call.return_value(value),
         Err(Failure::Boundary(error)) => call.raise(error),
         Err(Failure::Contract(message)) => call.report_contract_violation(message),
     }
 }
 
-fn binding(call: &NativeCall<'_>) -> Option<(Rc<RuntimeBinding>, Rc<[ResourceSlot]>)> {
+/// The binding and resource slots of this call, borrowed from the module
+/// state rather than counted: forks on several threads call the same binding
+/// at once, and the state is only read after install.
+fn binding<'call>(
+    call: &NativeCall<'call>,
+) -> Option<(&'call RuntimeBinding, &'call [ResourceSlot])> {
     let state = call.state::<ModuleState>()?;
     let index = call.member_key()?.parse::<usize>().ok()?;
-    Some((
-        state.bindings.get(index)?.clone(),
-        state.resources.get()?.clone(),
-    ))
+    Some((state.bindings.get(index)?, state.resources.get()?))
 }
 
 fn run(

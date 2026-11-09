@@ -2,10 +2,198 @@
 
 ## Unreleased
 
+- `make ci` passes with `threads`: the workspace allows clippy's
+  `arc_with_non_send_sync`, since `slug_vm::Shared` is `Arc` there while
+  values and hosts stay unsendable by type (the sendable check and
+  `sync::Sendable` vet what crosses threads); the fork work is formatted, and
+  the language support matrix says forks run on worker threads.
+
 - The `slug.os.signal` tests run in builds without `concurrency` too: a
   program that keeps running after a signal now spins in `recur` rather than
   waiting on a timer, which those builds lack, so `select { after }` ended
   it with an error before the signal could (CI's slim run on Linux).
+
+- `--metrics` and `--profile` count what forks do. A fork's island kept
+  counters of its own that were dropped when it settled, and did not sample
+  call stacks at all; now it samples when its spawner does, and both join
+  the spawner's when the fork settles (counts and times add, peaks keep the
+  larger). A fork's loop now counts as the same loop in a spawned task does
+  (140 027 instructions, where the fork's used to show 19).
+
+- A fork's host calls (importing an initialized module, configuration,
+  warnings) no longer wait for their spawner to wait. Each thread's inbox
+  has an attention flag, raised when a fork queues a host call or the
+  thread's own fork is cancelled; every call, return, and `recur` of any VM
+  on the thread reads it, in place of the cancellation check, and serves
+  the queued calls. A spawner busy in a loop used to stall its forks until
+  it next waited. Against bcc7e4c (5 interleaved PGO rounds): geomean 1.00x
+  tuned, 1.01x hold-out; the outliers re-measured over 11 rounds at 1.00x.
+
+- Debug builds check the rule that lets threads read binding cells and
+  module tables without a lock: a cell another thread has reached panics if
+  it is written while any fork runs, at the write, whether or not the two
+  overlap in time (`slug_vm::sync::solo_check`). A panic on a fork's thread
+  becomes that fork's error rather than leaving its spawner waiting.
+  `scripts/tsan-forks.py` runs the fork fixtures under ThreadSanitizer, and
+  CI runs it on a pinned nightly.
+
+- A fork calls module functions as fast as the main thread does. Every call
+  to a closure from outside the fork took the general call path to check
+  its captures, even with none to check, and its copied arguments made `+`
+  copy strings it could have appended to; only closures with captures take
+  it now. Task views hash variables by address with one multiply instead of
+  SipHash. Experiment 2 on one fork: 16.8 s to 14.5 s, against 13.9 s on
+  the main thread; on eight forks 4.12 s to 3.7 s, as fast as the workers
+  that initialized their own modules (3.7 s). Against f7c695a (5
+  interleaved PGO rounds): geomean 1.01x tuned, 1.03x hold-out; the
+  outliers re-measured over 11 rounds at 1.00x.
+
+- A program's string constants are never counted either, once its module
+  has initialized: strings use `slug_vm::Code`, and each program is walked
+  once when it becomes immortal. A constant pushed on every call no longer
+  contends across forks: 4M calls to `len("a")` took 0.39 s on eight forks
+  and now 0.08 s (0.36 s on one). Experiment 2 on eight forks, paired runs:
+  4.36 s to 4.12 s, 4.1x one fork. Against 35b7abe (5 interleaved PGO
+  rounds): geomean 1.00x tuned, 0.99x hold-out.
+
+- Code that forks share is never counted once its module has initialized
+  (`docs/decisions/2026-11-08-immortal-code-objects.md`). Under `threads`,
+  programs, closures, global tables, and native functions use
+  `slug_vm::Code`, a reference-counted pointer whose count stops when its
+  module finishes initializing: cloning or dropping it then only reads the
+  count, so forks on many cores call shared functions without contending
+  for their cache lines. 4M calls to a shared module function: 1.75 s on
+  eight forks before, 0.12 s now (0.55 s on one). Experiment 2: 16.7 s on
+  one fork, 8.7 s on two, 5.0 s on four, 4.4 s on eight, 3.8x, as against
+  3.9x for workers that each initialized their own modules. Builds without
+  `threads` keep `Rc`. Miri and ThreadSanitizer find nothing. Single
+  threads gain too, since an immortal object's clone and drop skip their
+  atomic operation (5 interleaved PGO rounds against 4509a8e: geomean 0.98x
+  tuned, 0.99x hold-out; Crawl's workloads 0.96-0.98x). A first version,
+  which inlined the freeing path into every drop, measured 1.03x and 1.04x.
+
+- A call no longer clones its closure's program to find the chunk it runs;
+  it borrows it. The clone was an atomic count on the one program every
+  fork shares, made on every call, so calls stopped scaling across threads
+  even to a fork's own closures: 4M calls to such a closure took 0.37 s on
+  one fork and 0.43 s on eight, and now 0.08 s on eight. Experiment 2 on
+  eight forks: 7.0 s to 5.9 s.
+
+- A call no longer counts its program and global table: a closure always
+  holds both, and its frame borrows them from it, so entering a function
+  takes one reference (the closure) instead of three. Under `threads` those
+  counts are atomic on objects every fork shares, so this is where forks
+  contended. Experiment 2 on eight forks: 8.2 s to 7.0 s (one fork
+  unchanged).
+
+- Fixes from rerunning experiment 2 (Crawl's pages drawn by real forks):
+  forks calling the same typed native at once could crash or corrupt
+  values, since the native adapter counted its per-binding state with
+  single-threaded `Rc`s on every call; it now borrows that state for the
+  call instead, which is also cheaper. A fork's own copy of a `task var` is
+  updated in place, as a `var` is, rather than copied whole on every
+  update (24 s to 14.7 s for one fork drawing 1000 players). A fork reads
+  a `val` through its global slot cache, and the cache is written only when
+  it changes. A fork busy computing is cancelled too: an island checks its
+  cancellation flag at every call, return, and `recur`, so a failed
+  sibling stops it and the forks it started (`fork/cancel-busy`,
+  `fork/cancel-nested`). New `typed_core` test
+  `forks_call_typed_natives_at_once`; new fixture `fork/task-var-update`.
+
+- Fix: forks exchanging messages could both wait forever, reported as
+  blocked. A `select` checked its channels and then parked on them as two
+  steps, so a send and a receive on different threads could each see the
+  other absent and both park. A `select` about to wait now locks all its
+  channels, in one order, through its last check and its parking, and the
+  first wake to claim a `select` takes it, so no other case is taken as
+  well. A thread about to sleep also checks for work posted to it a moment
+  before, which the program's deadlock count could otherwise miss. Found by
+  a new fixture, `fork/channel-relay`, in which three producers, a relay,
+  and two consumers trade 6,000 messages. ThreadSanitizer finds no race in
+  the fork fixtures (CLI built with `-Zsanitizer=thread` and `build-std`).
+
+- Phase 4 of `fork`: forks run in parallel. Under `threads`, each fork its
+  nursery admits moves to a worker thread as an island, a VM with its own
+  scheduler; tasks it spawns run there with it. Workers are pooled, and a
+  new one starts when none is idle, so forks waiting on one another never
+  wait for a thread. A fork reaches its spawner only through its result,
+  channels (a wake for a task on another thread is carried there to run),
+  cancellation, and its host, whose calls are served on the spawner's
+  thread; one `Sendable` wrapper is the only claim that any of it may cross
+  threads. A fork nothing can wake is reported blocked, as a spawned task
+  is: the program's threads count those asleep, and when all are, the root
+  reports it. An entry program's `var`s are binding cells, as a module's
+  are, so no global table changes once forks run. Eight CPU-bound forks
+  run 5x faster than in sequence on an eight-core machine. Known gaps: a
+  fork busy computing is cancelled only at its next wait; a fork's host
+  calls wait until its spawner next waits; islands' metrics are not merged.
+
+- Phase 3 of `fork`, first step: a `threads` build feature, on by default
+  for the CLI, counts the VM's shared references atomically (`Arc`), so its
+  values, closures, programs, and channels can later be shared with forks on
+  other threads. Builds without it, embedded ones among them, keep `Rc`.
+  Hosts and tests name the type as `slug_vm::Shared`. Measured against the
+  `Rc` build (11 interleaved PGO rounds): geomean 1.01x tuned, 1.00x
+  hold-out; Crawl's game 1.06x and closure-heavy code up to 1.06x. The
+  inline caches in shared bytecode, each function's global slots and each
+  map-key lookup's hint, are relaxed atomics, which cost nothing measured
+  (0.99x on tuned workloads). Compiled
+  chunks record a capture's name only when it is a `var`, the only name a
+  fork's errors use. Module binding cells and global tables are
+  `SoloCell`s rather than `RefCell`s: forks on other threads may read them
+  at once, which a `RefCell`'s borrow count would race on. Each is written
+  by one thread or only before any fork exists, so release builds read and
+  write them with no bookkeeping; debug builds still check borrows.
+  Under `threads`, a channel's queues sit behind a mutex, its native
+  producer slot is a `OnceLock`, and whether it has crossed into a fork is
+  an atomic flag; other builds keep their single-threaded cells. A
+  binding's recorded kind, a native function's thread-safe flag, and a
+  native module's registration sets are thread-safe too; a `threads` build
+  asserts at compile time that binding names and strings are `Send + Sync`.
+
+- Phase 2 of `fork`: forks run. A fork sees its captures and every module
+  `var` as they were when it started; changing either fails, as does
+  calling a function made outside it that captures a `var`, awaiting a task
+  handle from outside it, returning or sending a task handle, resource, or
+  such a function, calling a native function its clutch does not declare
+  thread-safe, initializing a module, or starting while a module
+  initializes, each a `fork` runtime error. Every task, spawned or forked,
+  owns a copy of each `task var`, taken from its spawner. Forks run one at a
+  time on the owning thread for now; all 30 fork conformance fixtures pass.
+  Chunks record what each capture holds; hosts share a registry of module
+  variables (`VmHost::module_variables`) and say whether a module has
+  initialized (`VmHost::module_initialized`). The CLI's and REPL's
+  builtins are declared thread-safe.
+
+- `fork` may be typed at the REPL prompt: an interactive entry runs after
+  the earlier ones have finished, so it is not reported as forking while a
+  module initializes. REPL entries now get the other compile-time fork
+  checks, which they skipped before.
+
+- Phase 1 of `fork`: the language accepts `fork { ... }` and `task var`.
+  `fork` is a reserved word and compiles to its own instruction, which
+  reports that `fork` is not implemented yet until the runtime lands; `task`
+  is a modifier only directly before `var` at module top level, so it stays
+  usable as a name. The compiler reports what it can see: an assignment
+  inside a fork to a binding declared outside it, other than a `task var`
+  (`fork_write`); a fork in module top-level code
+  (`fork_during_initialization`); and a fork whose result is a task handle
+  or resource (`unsendable_value`). Module metadata and `.cslug` artifacts
+  record `task var`s, and a clutch manifest's native function can declare
+  `thread_safe = true`, as the core clutch's pure functions do. The
+  specification and grammar describe forks and `task var`. Seven of the
+  fork conformance fixtures now pass. The fixture runner rejects a
+  `stderr_contains` fragment that the fixture's own source or path
+  contains, since a diagnostic quotes both.
+
+- Phase 0 of `fork`: the behavior of `fork` and `task var` is written down
+  as 30 conformance fixtures in `tests/conformance/fork/`, covering
+  snapshots, the write rule, sendable values, channels, nurseries, module
+  initialization, and imports, and as two VM tests for native functions and
+  resources. Fixture sidecars gain `pending`, which a fixture must keep
+  failing until its feature lands, and `stderr_contains`, which checks a
+  diagnostic's content without fixing its wording. The decision record now
+  says a closure that captures a `var` is not sendable.
 
 - Accepted a decision for parallel tasks: `fork { ... }` starts a task
   that sees a snapshot of its captures and every module's globals and may run

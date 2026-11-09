@@ -1,0 +1,18 @@
+// Results cross by value: data, structs and enums keep their identity, and
+// a closure that captures only data is sendable.
+val PointSchema = struct { x:num, y:num }
+type Point = struct<PointSchema>
+enum Shape { Dot, Line }
+val main = fn() {
+    val base = 10
+    val t = fork {
+        val scale = 2
+        {point: PointSchema { x: 1, y: 2 }, shape: Shape.Line, items: [1, 2, 3], times: fn(v:num):num { v * scale + base }}
+    }
+    val r = select { await t }
+    println(r.point.x + r.point.y)
+    println(match r.point { p: Point => "point"; _ => "other" })
+    println(r.shape == Shape.Line)
+    println(len(r.items))
+    println(r.times(5))
+}

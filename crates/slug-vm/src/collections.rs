@@ -4,7 +4,8 @@
 //! collection redesign. This module is the only place that needs to know the
 //! concrete backing containers for ordinary collection transformations.
 
-use alloc::{borrow::Cow, boxed::Box, rc::Rc, string::String, vec, vec::Vec};
+use crate::sync::Rc;
+use alloc::{borrow::Cow, boxed::Box, string::String, vec, vec::Vec};
 use core::fmt;
 use core::hash::{BuildHasher, Hash, Hasher};
 
@@ -93,14 +94,14 @@ impl MapKey {
 /// table of byte offsets on its first positional access.
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct Str(Rc<StrData>);
+pub struct Str(crate::sync::Code<StrData>);
 
 #[derive(Clone)]
 struct StrData {
     text: String,
     scalars: usize,
     /// The byte offset of every `OFFSET_STRIDE`th scalar, for non-ASCII text.
-    offsets: core::cell::OnceCell<Box<[usize]>>,
+    offsets: crate::sync::Once<Box<[usize]>>,
 }
 
 /// Scalars between recorded offsets: a lookup in non-ASCII text scans at most
@@ -113,7 +114,7 @@ impl StrData {
         Self {
             text,
             scalars,
-            offsets: core::cell::OnceCell::new(),
+            offsets: crate::sync::Once::new(),
         }
     }
 }
@@ -122,11 +123,11 @@ impl Str {
     /// Appends `text`, copying this string first only if it is shared.
     pub(crate) fn append(mut self, text: impl fmt::Display) -> Self {
         use core::fmt::Write;
-        if let Some(data) = Rc::get_mut(&mut self.0) {
+        if let Some(data) = crate::sync::Code::get_mut(&mut self.0) {
             let before = data.text.len();
             write!(data.text, "{text}").expect("writing to a String cannot fail");
             data.scalars += data.text[before..].chars().count();
-            data.offsets = core::cell::OnceCell::new();
+            data.offsets = crate::sync::Once::new();
             return self;
         }
         // A shared string is copied once into a buffer with room for the
@@ -136,10 +137,10 @@ impl Str {
         let before = buffer.len();
         write!(buffer, "{text}").expect("writing to a String cannot fail");
         let scalars = self.0.scalars + buffer[before..].chars().count();
-        Self(Rc::new(StrData {
+        Self(crate::sync::Code::new(StrData {
             text: buffer,
             scalars,
-            offsets: core::cell::OnceCell::new(),
+            offsets: crate::sync::Once::new(),
         }))
     }
 
@@ -188,14 +189,21 @@ impl Str {
 
     #[cfg(any(feature = "metrics", test))]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
-        Rc::strong_count(&self.0) == 1
+        crate::sync::Code::strong_count(&self.0) == 1
+    }
+
+    /// Stops counting this string: a constant of a program whose module has
+    /// initialized, which lives until the program ends.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn immortalize(&self) {
+        crate::sync::immortalize(&self.0);
     }
 }
 
 impl PartialEq for Str {
     fn eq(&self, other: &Self) -> bool {
         // Shared string constants make equal keys the same allocation.
-        Rc::ptr_eq(&self.0, &other.0) || self.0.text == other.0.text
+        crate::sync::Code::ptr_eq(&self.0, &other.0) || self.0.text == other.0.text
     }
 }
 
@@ -253,43 +261,43 @@ impl fmt::Debug for Str {
 
 impl From<String> for Str {
     fn from(value: String) -> Self {
-        Self(Rc::new(StrData::new(value)))
+        Self(crate::sync::Code::new(StrData::new(value)))
     }
 }
 
 impl From<&str> for Str {
     fn from(value: &str) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 
 impl From<&String> for Str {
     fn from(value: &String) -> Self {
-        Self(Rc::new(StrData::new(value.clone())))
+        Self(crate::sync::Code::new(StrData::new(value.clone())))
     }
 }
 
 impl From<Box<str>> for Str {
     fn from(value: Box<str>) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 
 impl From<Rc<str>> for Str {
     fn from(value: Rc<str>) -> Self {
-        Self(Rc::new(StrData::new(value.as_ref().into())))
+        Self(crate::sync::Code::new(StrData::new(value.as_ref().into())))
     }
 }
 
 impl From<Cow<'_, str>> for Str {
     fn from(value: Cow<'_, str>) -> Self {
-        Self(Rc::new(StrData::new(value.into_owned())))
+        Self(crate::sync::Code::new(StrData::new(value.into_owned())))
     }
 }
 
 impl From<char> for Str {
     fn from(value: char) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 
@@ -885,7 +893,7 @@ impl Map {
 
     /// Looks `key` up, trying the entry at `hint` first and leaving the found
     /// entry's position there for the next lookup.
-    pub(crate) fn get_hinted(&self, key: &Value, hint: &core::cell::Cell<u32>) -> Option<&Value> {
+    pub(crate) fn get_hinted(&self, key: &Value, hint: &crate::sync::Hint) -> Option<&Value> {
         let entries = &self.0.entries;
         if let Some((candidate, value)) = entries.get(hint.get() as usize)
             && candidate == key
@@ -1040,7 +1048,7 @@ mod map_tests {
             1 if n % 8 == 1 => Value::Float(f64::from(u32::try_from(n - 1).unwrap())),
             1 => Value::Float(f64::from(u32::try_from(n).unwrap()) + 0.5),
             2 => Value::string(format!("key-{n}")),
-            _ => Value::Bytes(std::rc::Rc::new(n.to_le_bytes().to_vec())),
+            _ => Value::Bytes(crate::Shared::new(n.to_le_bytes().to_vec())),
         };
         let mut map = Map::new(Vec::new());
         let mut model: Vec<(Value, Value)> = Vec::new();

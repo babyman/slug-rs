@@ -1,0 +1,19 @@
+// `select` in a fork waits on its spawner's channels and on timers.
+val main = fn() {
+    val ch:chan<str> = chan(1)
+    val waiting = fork {
+        select {
+            recv ch /> fn(v) { v }
+            after 1000 /> fn(_) { "timed out" }
+        }
+    }
+    val idle = fork {
+        select {
+            recv chan(1) /> fn(v) { v }
+            after 10 /> fn(_) { "timed out" }
+        }
+    }
+    select { send ch, "hi" /> fn(_) { nil } }
+    println(select { await waiting })
+    println(select { await idle })
+}

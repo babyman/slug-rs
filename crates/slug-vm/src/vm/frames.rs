@@ -3,7 +3,7 @@
 //! Frames retain the code owner, lexical locals, deferred scopes, and source
 //! location needed to preserve checked runtime errors across calls and cleanup.
 
-use alloc::{rc::Rc, vec::Vec};
+use alloc::vec::Vec;
 
 use crate::{
     Program, SpanId, Value,
@@ -14,13 +14,9 @@ use super::Deferred;
 
 #[derive(Clone)]
 pub(super) struct Frame {
-    /// The code unit that owns this frame's instruction pointer and chunk.
-    ///
-    /// An execution can cross program boundaries through closures, so this
-    /// cannot be inferred from a VM-wide program owner.
-    pub(super) program: Rc<Program>,
-    pub(super) globals: GlobalEnvironment,
-    pub(super) closure: Rc<Closure>,
+    /// The function running in this frame. It also owns the frame's program
+    /// and global table, which the frame borrows rather than counts.
+    pub(super) closure: crate::sync::Code<Closure>,
     pub(super) call_span: Option<CallSpan>,
     pub(super) ip: usize,
     pub(super) stack_base: usize,
@@ -32,6 +28,22 @@ pub(super) struct Frame {
     /// Lexical scope depth, including the function's root scope.
     pub(super) scope_depth: u32,
     pub(super) cleanup_owner_depth: Option<usize>,
+}
+
+impl Frame {
+    /// The code unit that owns this frame's instruction pointer and chunk.
+    ///
+    /// An execution can cross program boundaries through closures, so this
+    /// cannot be inferred from a VM-wide program owner.
+    #[inline]
+    pub(super) fn program(&self) -> &crate::sync::Code<Program> {
+        &self.closure.program
+    }
+
+    #[inline]
+    pub(super) fn globals(&self) -> &GlobalEnvironment {
+        &self.closure.globals
+    }
 }
 
 /// The call site retained for an eventual stack trace.

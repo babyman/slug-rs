@@ -1,0 +1,4 @@
+schema = 1
+outcome = "success"
+stdout = "3\npoint\ntrue\n3\n20\n"
+stderr = ""

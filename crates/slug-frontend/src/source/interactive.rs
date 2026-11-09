@@ -124,6 +124,7 @@ pub(crate) fn compile_interactive_forms_with_resolver(
         let assets = super::assets::load(&expressions, super::no_assets)?;
         let analysis =
             typecheck::analyze_with_imports_and_session(&expressions, imports, &state.semantic)?;
+        super::forks::check_forks(&expressions, true)?;
         let compiled = Compiler::with_globals(
             path,
             expressions,

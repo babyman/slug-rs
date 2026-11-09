@@ -1,4 +1,5 @@
-use alloc::{borrow::ToOwned, rc::Rc, string::String, vec::Vec};
+use crate::sync::Rc;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::cmp::Ordering;
 
 #[cfg(feature = "metrics")]

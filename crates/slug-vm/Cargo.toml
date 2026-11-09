@@ -11,8 +11,10 @@ repository = "https://github.com/babyman/slug-rs"
 name = "slug_vm"
 
 [features]
-default = ["concurrency"]
+default = ["concurrency", "threads"]
 concurrency = []
+# Atomic reference counts, so forks can run on other threads.
+threads = ["concurrency"]
 metrics = []
 
 [lints]
