@@ -198,8 +198,11 @@ fn typed_clutch_reports_checked_boundary_failures() {
             "native.interior_nul",
         ),
     ] {
-        let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
-        let error = run(&directory, repository, &body).expect_err(&body);
+        // A fresh directory each time: the last run's library stays loaded
+        // (see `typed_clutch_rejects_null_text_for_a_str_result`).
+        let staging = TemporaryDirectory::new();
+        let repository = typed_clutch(&staging, &MODULE, &MANIFEST, &MANIFEST);
+        let error = run(&staging, repository, &body).expect_err(&body);
         assert!(error.starts_with(expected), "{body}: {error}");
         if expected == "native.resource_closed" {
             assert!(error.contains("native resource is closed"), "{error}");
@@ -333,8 +336,12 @@ fn typed_clutch_rejects_null_text_for_a_str_result() {
     .expect("labels");
     assert_eq!(value.to_string(), "[\"positive\", \"positive\", nil]");
 
-    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
-    let error = run(&directory, repository, "files.label(-1)").expect_err("NULL for `str`");
+    // A native library stays loaded once its module has initialized (see
+    // docs/decisions/2026-11-08-immortal-code-objects.md), and Windows cannot
+    // replace a loaded library, so the second clutch is staged elsewhere.
+    let staging = TemporaryDirectory::new();
+    let repository = typed_clutch(&staging, &MODULE, &MANIFEST, &MANIFEST);
+    let error = run(&staging, repository, "files.label(-1)").expect_err("NULL for `str`");
     assert!(error.starts_with("native.type"), "{error}");
     assert!(
         error.contains("`fixture.files.label` returned NULL for a `str` result"),

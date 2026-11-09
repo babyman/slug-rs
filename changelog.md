@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- ThreadSanitizer builds keep the system allocator (`--cfg slug_sanitized`,
+  set by `scripts/tsan-forks.py`): TSan sees only the `malloc` and `free` it
+  intercepts, so memory mimalloc freed on one thread and reused on another,
+  as a fork's posted work is, read as a race on Linux CI. The typed native
+  tests stage each clutch they rebuild in a directory of its own: a native
+  library now stays loaded once its module initializes, and Windows cannot
+  replace a loaded library.
+
 - `make ci` passes with `threads`: the workspace allows clippy's
   `arc_with_non_send_sync`, since `slug_vm::Shared` is `Arc` there while
   values and hosts stay unsendable by type (the sendable check and

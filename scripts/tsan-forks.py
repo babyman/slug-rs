@@ -35,7 +35,8 @@ def host_triple():
 def build(triple):
     environment = {
         **os.environ,
-        "RUSTFLAGS": "-Zsanitizer=thread",
+        # slug_sanitized keeps the system allocator, which TSan intercepts.
+        "RUSTFLAGS": "-Zsanitizer=thread --cfg slug_sanitized",
         "CARGO_INCREMENTAL": "0",
     }
     subprocess.run(

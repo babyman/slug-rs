@@ -14,7 +14,12 @@ use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Value, Vm,
 };
 
-// See docs/decisions/2026-10-25-desktop-allocator.md.
+// See docs/decisions/2026-10-25-desktop-allocator.md. ThreadSanitizer builds
+// (`--cfg slug_sanitized`, set by scripts/tsan-forks.py) keep the system
+// allocator: TSan sees only the `malloc` and `free` it intercepts, not
+// mimalloc's own handoff of freed memory between threads, so memory freed on
+// one thread and reused on another would read as a race.
+#[cfg(not(slug_sanitized))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

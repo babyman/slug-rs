@@ -31,6 +31,8 @@ opt-level = "z"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# Set by scripts/tsan-forks.py for ThreadSanitizer builds.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(slug_sanitized)"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
