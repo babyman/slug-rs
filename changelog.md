@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The `slug.os.signal` tests run in builds without `concurrency` too: a
+  program that keeps running after a signal now spins in `recur` rather than
+  waiting on a timer, which those builds lack, so `select { after }` ended
+  it with an error before the signal could (CI's slim run on Linux).
+
 - `--metrics` and `--profile` count what forks do. A fork's island kept
   counters of its own that were dropped when it settled, and did not sample
   call stacks at all; now it samples when its spawner does, and both join
