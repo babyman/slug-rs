@@ -10,8 +10,11 @@ their own modules reached 3.9x). Shared data, such as a constant string a
 call clones from its program, was still counted (4M calls to `len("a")`:
 0.36 s on one fork, 0.39 s on eight). A program's string constants are now
 immortal with it (0.08 s on eight forks; experiment 2 on eight forks 4.12 s),
-an extension of decision 2 to the constants a program owns. List and map
-constants and `val` data stay counted.
+an extension of decision 2 to the constants a program owns. Lists, maps,
+and strings that a module's `val`s hold are now immortal too (a `val` map
+read on eight forks: 0.48 s to 0.08 s; experiment 2 on eight forks 3.94 s,
+4.3x one fork), which replaces decision 2's "code only" with code and the
+data a module holds. Structs and enums stay counted.
 
 ## Extends
 

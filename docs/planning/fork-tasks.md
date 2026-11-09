@@ -322,8 +322,15 @@ counted, notably constants a call clones from its program (4M calls to
 
 String constants made immortal with their program: `len("a")` 0.08 s on
 eight forks; experiment 2 on eight forks 4.36 s to 4.12 s (paired), 4.1x one
-fork. Still counted: list and map constants, match-pattern literals, and the
-data `val`s hold (Crawl's template maps, for one).
+fork.
+
+`val` data made immortal too (strings, lists, maps, walked with an explicit
+stack; structs and enums stay counted). The compiler emits no list or map
+constants, so this is the whole of "constants and `val` data". A `val` map
+read on eight forks: 0.48 s to 0.08 s. Experiment 2 on eight forks 4.03 s to
+3.94 s (paired), 4.3x one fork, inside the record's 10% target. What forks
+still contend on is data they are handed rather than data a module holds:
+the world in task vars and arguments.
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
