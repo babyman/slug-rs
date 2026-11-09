@@ -417,6 +417,27 @@ impl<T> Code<T> {
         core::ptr::addr_of!(this.inner().value)
     }
 
+    /// The value, mutably, when this is its only reference. An immortal
+    /// value always reads as shared, so it is never changed in place.
+    pub fn get_mut(this: &mut Self) -> Option<&mut T> {
+        if this.inner().count.load(core::sync::atomic::Ordering::Acquire) != 1 {
+            return None;
+        }
+        #[allow(unsafe_code, reason = "Code's allocation; see its documentation")]
+        // SAFETY: the count is one, so `this` is the only reference, and the
+        // `&mut` it is borrowed through keeps it so.
+        unsafe {
+            Some(&mut this.inner.as_mut().value)
+        }
+    }
+
+    /// How many references there are, or `usize::MAX` once immortal.
+    #[must_use]
+    pub fn strong_count(this: &Self) -> usize {
+        let count = this.inner().count.load(core::sync::atomic::Ordering::Relaxed);
+        if count & IMMORTAL == 0 { count } else { usize::MAX }
+    }
+
     fn immortalize(&self) {
         self.inner()
             .count

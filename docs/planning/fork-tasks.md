@@ -320,6 +320,11 @@ against 3.9x for the original workers. Remaining: shared data is still
 counted, notably constants a call clones from its program (4M calls to
 `len("a")`: 0.36 s on one fork, 0.39 s on eight).
 
+String constants made immortal with their program: `len("a")` 0.08 s on
+eight forks; experiment 2 on eight forks 4.36 s to 4.12 s (paired), 4.1x one
+fork. Still counted: list and map constants, match-pattern literals, and the
+data `val`s hold (Crawl's template maps, for one).
+
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
   cooperatively on its worker, sharing its snapshot.

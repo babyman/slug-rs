@@ -94,7 +94,7 @@ impl MapKey {
 /// table of byte offsets on its first positional access.
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct Str(Rc<StrData>);
+pub struct Str(crate::sync::Code<StrData>);
 
 #[derive(Clone)]
 struct StrData {
@@ -123,7 +123,7 @@ impl Str {
     /// Appends `text`, copying this string first only if it is shared.
     pub(crate) fn append(mut self, text: impl fmt::Display) -> Self {
         use core::fmt::Write;
-        if let Some(data) = Rc::get_mut(&mut self.0) {
+        if let Some(data) = crate::sync::Code::get_mut(&mut self.0) {
             let before = data.text.len();
             write!(data.text, "{text}").expect("writing to a String cannot fail");
             data.scalars += data.text[before..].chars().count();
@@ -137,7 +137,7 @@ impl Str {
         let before = buffer.len();
         write!(buffer, "{text}").expect("writing to a String cannot fail");
         let scalars = self.0.scalars + buffer[before..].chars().count();
-        Self(Rc::new(StrData {
+        Self(crate::sync::Code::new(StrData {
             text: buffer,
             scalars,
             offsets: crate::sync::Once::new(),
@@ -189,14 +189,21 @@ impl Str {
 
     #[cfg(any(feature = "metrics", test))]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
-        Rc::strong_count(&self.0) == 1
+        crate::sync::Code::strong_count(&self.0) == 1
+    }
+
+    /// Stops counting this string: a constant of a program whose module has
+    /// initialized, which lives until the program ends.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn immortalize(&self) {
+        crate::sync::immortalize(&self.0);
     }
 }
 
 impl PartialEq for Str {
     fn eq(&self, other: &Self) -> bool {
         // Shared string constants make equal keys the same allocation.
-        Rc::ptr_eq(&self.0, &other.0) || self.0.text == other.0.text
+        crate::sync::Code::ptr_eq(&self.0, &other.0) || self.0.text == other.0.text
     }
 }
 
@@ -254,43 +261,43 @@ impl fmt::Debug for Str {
 
 impl From<String> for Str {
     fn from(value: String) -> Self {
-        Self(Rc::new(StrData::new(value)))
+        Self(crate::sync::Code::new(StrData::new(value)))
     }
 }
 
 impl From<&str> for Str {
     fn from(value: &str) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 
 impl From<&String> for Str {
     fn from(value: &String) -> Self {
-        Self(Rc::new(StrData::new(value.clone())))
+        Self(crate::sync::Code::new(StrData::new(value.clone())))
     }
 }
 
 impl From<Box<str>> for Str {
     fn from(value: Box<str>) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 
 impl From<Rc<str>> for Str {
     fn from(value: Rc<str>) -> Self {
-        Self(Rc::new(StrData::new(value.as_ref().into())))
+        Self(crate::sync::Code::new(StrData::new(value.as_ref().into())))
     }
 }
 
 impl From<Cow<'_, str>> for Str {
     fn from(value: Cow<'_, str>) -> Self {
-        Self(Rc::new(StrData::new(value.into_owned())))
+        Self(crate::sync::Code::new(StrData::new(value.into_owned())))
     }
 }
 
 impl From<char> for Str {
     fn from(value: char) -> Self {
-        Self(Rc::new(StrData::new(value.into())))
+        Self(crate::sync::Code::new(StrData::new(value.into())))
     }
 }
 

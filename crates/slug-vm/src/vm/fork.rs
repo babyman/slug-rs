@@ -404,10 +404,38 @@ impl Vm {
     pub(super) fn immortalize_code(&self) {
         crate::sync::immortalize(&self.globals);
         if let Some(program) = &self.module_program {
-            crate::sync::immortalize(program);
+            immortalize_program(program);
         }
         for (_, value) in self.globals.borrow().iter() {
             immortalize_value(value);
+        }
+    }
+}
+
+/// Stops counting `program` and the string constants of its chunks, which
+/// every instruction that pushes one clones. A program already immortal was
+/// walked before: a module's closures share its program. Without `threads`
+/// nothing is counted atomically, so nothing is walked.
+fn immortalize_program(program: &crate::sync::Code<crate::Program>) {
+    #[cfg(feature = "threads")]
+    if crate::sync::Code::strong_count(program) != usize::MAX {
+        crate::sync::immortalize(program);
+        immortalize_constants(program);
+    }
+    #[cfg(not(feature = "threads"))]
+    let _ = program;
+}
+
+#[cfg_attr(not(feature = "threads"), allow(dead_code))]
+fn immortalize_constants(program: &crate::Program) {
+    for index in 0..program.chunk_count() {
+        let Some(chunk) = program.chunk(index) else {
+            continue;
+        };
+        for constant in &chunk.constants {
+            if let crate::Constant::Value(Value::Str(text)) = constant {
+                text.immortalize();
+            }
         }
     }
 }
@@ -419,7 +447,7 @@ fn immortalize_value(value: &Value) {
         }
         Value::Closure(closure) => {
             crate::sync::immortalize(closure);
-            crate::sync::immortalize(&closure.program);
+            immortalize_program(&closure.program);
             crate::sync::immortalize(&closure.globals);
         }
         Value::Native(function) => function.immortalize(),

@@ -7,8 +7,11 @@ Accepted. Implemented on `feature/fork`: `slug_vm::Code` in
 a module or entry program finishes initializing. Experiment 2 on eight
 forks went from 5.9 s to 4.4 s (3.8x one fork; the workers that initialized
 their own modules reached 3.9x). Shared data, such as a constant string a
-call clones from its program, is still counted: 4M calls to `len("a")` take
-0.36 s on one fork and 0.39 s on eight.
+call clones from its program, was still counted (4M calls to `len("a")`:
+0.36 s on one fork, 0.39 s on eight). A program's string constants are now
+immortal with it (0.08 s on eight forks; experiment 2 on eight forks 4.12 s),
+an extension of decision 2 to the constants a program owns. List and map
+constants and `val` data stay counted.
 
 ## Extends
 

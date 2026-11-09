@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A program's string constants are never counted either, once its module
+  has initialized: strings use `slug_vm::Code`, and each program is walked
+  once when it becomes immortal. A constant pushed on every call no longer
+  contends across forks: 4M calls to `len("a")` took 0.39 s on eight forks
+  and now 0.08 s (0.36 s on one). Experiment 2 on eight forks, paired runs:
+  4.36 s to 4.12 s, 4.1x one fork. Against 35b7abe (5 interleaved PGO
+  rounds): geomean 1.00x tuned, 0.99x hold-out.
+
 - Code that forks share is never counted once its module has initialized
   (`docs/decisions/2026-11-08-immortal-code-objects.md`). Under `threads`,
   programs, closures, global tables, and native functions use
