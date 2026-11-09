@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Debug builds check the rule that lets threads read binding cells and
+  module tables without a lock: a cell another thread has reached panics if
+  it is written while any fork runs, at the write, whether or not the two
+  overlap in time (`slug_vm::sync::solo_check`). A panic on a fork's thread
+  becomes that fork's error rather than leaving its spawner waiting.
+  `scripts/tsan-forks.py` runs the fork fixtures under ThreadSanitizer, and
+  CI runs it on a pinned nightly.
+
 - A fork calls module functions as fast as the main thread does. Every call
   to a closure from outside the fork took the general call path to check
   its captures, even with none to check, and its copied arguments made `+`

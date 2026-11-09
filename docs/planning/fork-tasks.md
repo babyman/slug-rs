@@ -266,8 +266,9 @@ a deadlock together, so a blocked fork reports as a blocked task does. All
 33 fork fixtures pass, 400 times over, eight runs at a time for half of
 them. Open: host calls served only when the spawner waits, islands' metrics, and
 scaling past four forks (below). ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
-`-Zbuild-std`, CLI in `target/tsan`) and is clean on the fork fixtures; it
-is not in CI yet. It found nothing that `fork/channel-relay` had not: a
+`-Zbuild-std`, CLI in `target/tsan`) and is clean on the fork fixtures;
+`scripts/tsan-forks.py` runs it, and CI's `thread-sanitizer` job runs that
+on a pinned nightly. It found nothing that `fork/channel-relay` had not: a
 `select` that checked and then parked as two steps, now one under its
 channels' locks.
 
@@ -344,6 +345,15 @@ and task views hash variable addresses with one multiply rather than
 SipHash. One fork: 14.5 s against 13.9 s on the main thread (profiling
 build). Experiment 2: 7.4 s, 4.2 s, 3.7 s on 2, 4, 8 forks, as fast as the
 original workers' 3.7 s.
+
+`SoloCell` hardening. Debug builds with `threads` check its rule on every
+access (`sync::solo_check`): each cell records which thread has reached it,
+and a write from another thread while any fork runs panics at the write.
+Unlike the borrow count and ThreadSanitizer, it does not need the read and
+write to overlap in time. The workspace suite, experiment 2 (100 players,
+eight forks) and the channel stress programs run clean under it; with the
+fork write rule switched off, it fires at the write. A panic on an island
+now becomes the fork's error instead of leaving its spawner waiting.
 
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run

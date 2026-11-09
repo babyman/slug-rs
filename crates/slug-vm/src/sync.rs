@@ -61,11 +61,15 @@ impl Clone for Hint {
 ///
 /// Debug builds keep a borrow count and panic on a conflicting borrow, as a
 /// `RefCell` would; release builds read and write with no bookkeeping.
+/// Debug builds with `threads` also check the rule itself (`solo_check`):
+/// a write to a cell another thread has reached panics while any fork runs.
 #[doc(hidden)]
 pub struct SoloCell<T> {
     value: core::cell::UnsafeCell<T>,
     #[cfg(debug_assertions)]
     borrows: core::sync::atomic::AtomicIsize,
+    #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+    seen: core::sync::atomic::AtomicU64,
 }
 
 // SAFETY: see the type's documentation. Readers on several threads share
@@ -81,12 +85,16 @@ impl<T> SoloCell<T> {
             value: core::cell::UnsafeCell::new(value),
             #[cfg(debug_assertions)]
             borrows: core::sync::atomic::AtomicIsize::new(0),
+            #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+            seen: core::sync::atomic::AtomicU64::new(solo_check::NONE),
         }
     }
 
     #[inline]
     #[track_caller]
     pub(crate) fn borrow(&self) -> SoloRef<'_, T> {
+        #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+        solo_check::read(&self.seen);
         #[cfg(debug_assertions)]
         {
             let previous = self
@@ -104,6 +112,8 @@ impl<T> SoloCell<T> {
     /// A shared borrow, or `None` in a debug build when a mutable one is out.
     #[inline]
     pub(crate) fn try_borrow(&self) -> Option<SoloRef<'_, T>> {
+        #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+        solo_check::read(&self.seen);
         #[cfg(debug_assertions)]
         {
             let previous = self
@@ -121,6 +131,8 @@ impl<T> SoloCell<T> {
     #[inline]
     #[track_caller]
     pub(crate) fn borrow_mut(&self) -> SoloMut<'_, T> {
+        #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+        solo_check::write(&self.seen);
         #[cfg(debug_assertions)]
         if self
             .borrows
@@ -153,6 +165,69 @@ impl<T: core::fmt::Debug> core::fmt::Debug for SoloCell<T> {
                 .finish(),
             None => formatter.write_str("SoloCell { <borrowed> }"),
         }
+    }
+}
+
+/// The debug check of [`SoloCell`]'s rule. Each cell records which thread
+/// has reached it since it was last written: none, one, or several. A write
+/// from a thread other than the one recorded is safe only when no other
+/// thread can be reading the cell, which a debug build knows only when no
+/// fork is running anywhere; otherwise it panics, naming the write. The
+/// check is deterministic: it does not need the read and the write to
+/// overlap in time, as the borrow count and a thread sanitizer do.
+#[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+pub(crate) mod solo_check {
+    use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    /// No thread has reached the cell since it was made.
+    pub(super) const NONE: u64 = 0;
+    /// More than one thread has.
+    const SHARED: u64 = u64::MAX;
+
+    static NEXT_THREAD: AtomicU64 = AtomicU64::new(1);
+    /// Forks running on islands, in every VM of the process.
+    static RUNNING_FORKS: AtomicUsize = AtomicUsize::new(0);
+
+    std::thread_local! {
+        static THREAD: u64 = NEXT_THREAD.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn thread() -> u64 {
+        THREAD.with(|thread| *thread)
+    }
+
+    /// An island starts running a fork.
+    pub(crate) fn fork_started() {
+        RUNNING_FORKS.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// An island has finished with its fork, and reaches none of its cells.
+    pub(crate) fn fork_ended() {
+        RUNNING_FORKS.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    pub(super) fn read(seen: &AtomicU64) {
+        let me = thread();
+        let mut current = seen.load(Ordering::Acquire);
+        while current != me && current != SHARED {
+            let next = if current == NONE { me } else { SHARED };
+            match seen.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    #[track_caller]
+    pub(super) fn write(seen: &AtomicU64) {
+        let me = thread();
+        let current = seen.load(Ordering::Acquire);
+        assert!(
+            current == NONE || current == me || RUNNING_FORKS.load(Ordering::Acquire) == 0,
+            "a SoloCell that another thread has reached is written while a fork runs; \
+             see SoloCell's documentation for the rule this breaks"
+        );
+        seen.store(me, Ordering::Release);
     }
 }
 
@@ -606,5 +681,59 @@ mod code_tests {
         });
         drop(code);
         assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[cfg(all(test, debug_assertions, feature = "threads", not(target_os = "none")))]
+mod solo_check_tests {
+    use super::{SoloCell, solo_check};
+
+    /// A fork runs while this lives, as far as the check knows.
+    struct Running;
+
+    impl Running {
+        fn start() -> Self {
+            solo_check::fork_started();
+            Self
+        }
+    }
+
+    impl Drop for Running {
+        fn drop(&mut self) {
+            solo_check::fork_ended();
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "another thread has reached is written while a fork runs")]
+    fn writing_a_cell_another_thread_read_while_a_fork_runs_panics() {
+        let cell = SoloCell::new(1);
+        let _running = Running::start();
+        std::thread::scope(|scope| {
+            scope.spawn(|| assert_eq!(*cell.borrow(), 1));
+        });
+        *cell.borrow_mut() = 2;
+    }
+
+    #[test]
+    fn a_cell_only_its_thread_reached_is_written_while_a_fork_runs() {
+        let cell = SoloCell::new(1);
+        let _running = Running::start();
+        assert_eq!(*cell.borrow(), 1);
+        *cell.borrow_mut() = 2;
+        assert_eq!(*cell.borrow(), 2);
+    }
+
+    #[test]
+    fn a_cell_written_before_another_thread_reads_it_is_shared() {
+        let cell = SoloCell::new(1);
+        *cell.borrow_mut() = 2;
+        let _running = Running::start();
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| assert_eq!(*cell.borrow(), 2));
+            }
+        });
+        assert_eq!(*cell.borrow(), 2);
     }
 }

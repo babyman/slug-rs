@@ -220,6 +220,8 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     let group = execution.vm.progress.group().clone();
     group.join();
     parent.remote.fetch_add(1, Ordering::AcqRel);
+    #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+    crate::sync::solo_check::fork_started();
     let package = Sendable::new(Package {
         execution,
         task: task.clone(),
@@ -284,10 +286,18 @@ fn run(package: Package) {
     });
     vm.variables = variables;
     vm.cancel = Some(control.clone());
-    let outcome = vm
-        .run_island(&control)
-        .map(|result| result.and_then(|value| vm.sendable_result(value)));
+    // A panic here is a VM bug. Unwinding past this point would leave the
+    // spawner waiting for a result that never comes, so it becomes the
+    // fork's error instead, and the island's bookkeeping still runs. Release
+    // builds abort on a panic, which cannot leave the spawner waiting either.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        vm.run_island(&control)
+            .map(|result| result.and_then(|value| vm.sendable_result(value)))
+    }))
+    .unwrap_or_else(|panic| Some(Err(vm.island_panic_error(panic.as_ref()))));
     drop(execution);
+    #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+    crate::sync::solo_check::fork_ended();
     if let Some(result) = outcome
         && !control.cancelled()
     {
@@ -311,6 +321,20 @@ impl Vm {
             Some(control) if control.cancelled() => Err(self.cancelled_error()),
             _ => Ok(()),
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn island_panic_error(&self, panic: &(dyn core::any::Any + Send)) -> super::RuntimeError {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|message| String::from(*message))
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        self.error_at(
+            crate::RuntimeErrorKind::Fork,
+            alloc::format!("this fork stopped on an internal VM error: {message}"),
+        )
     }
 
     #[cold]
