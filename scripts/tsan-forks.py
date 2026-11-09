@@ -84,7 +84,8 @@ def main():
                 break
             if "ThreadSanitizer" in result.stderr:
                 report = result.stderr[result.stderr.index("WARNING: ThreadSanitizer"):]
-                races.append((fixture.name, "\n".join(report.splitlines()[:40])))
+                # Both accesses: the report's two stacks run to about 80 lines.
+                races.append((fixture.name, "\n".join(report.splitlines()[:160])))
                 break
     print(f"{len(fixtures)} fork fixtures, {options.runs} runs each")
     for name, report in races:

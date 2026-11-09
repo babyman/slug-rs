@@ -614,8 +614,14 @@ impl<T> Code<T> {
     #[cold]
     #[inline(never)]
     fn free(&mut self) {
-        // Release in `drop`, then Acquire here, as in `Arc`.
-        core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+        // Release in `drop`, then Acquire here, as in `Arc`: every other
+        // reference's last use happens before the free. A load rather than a
+        // fence, as `Arc` uses under ThreadSanitizer, which does not model
+        // fences; it reads the end of the count's release sequence, so it
+        // synchronizes with every earlier drop just as the fence does.
+        self.inner()
+            .count
+            .load(core::sync::atomic::Ordering::Acquire);
         #[allow(unsafe_code, reason = "Code's allocation; see its documentation")]
         // SAFETY: this was the last reference, and the allocation came from
         // `Box::leak` in `new`.

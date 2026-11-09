@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `slug_vm::Code` frees its value after an acquire load of its count rather
+  than an acquire fence, as `Arc` does under ThreadSanitizer, which does not
+  model fences: with the fence, a closure freed on one thread after its last
+  use on another read as a race (CI, `fork/channel-relay`). The ordering is
+  the same; closure-heavy workloads measure 1.00x. `scripts/tsan-forks.py`
+  prints both stacks of a report.
+
 - ThreadSanitizer builds keep the system allocator (`--cfg slug_sanitized`,
   set by `scripts/tsan-forks.py`): TSan sees only the `malloc` and `free` it
   intercepts, so memory mimalloc freed on one thread and reused on another,
