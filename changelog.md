@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The `slug.os.signal` tests run in builds without `concurrency` too: a
+  program that keeps running after a signal now spins in `recur` rather than
+  waiting on a timer, which those builds lack, so `select { after }` ended
+  it with an error before the signal could (CI's slim run on Linux).
+
 - Accepted a decision for parallel tasks: `fork { ... }` starts a task
   that sees a snapshot of its captures and every module's globals and may run
   on another core, while `spawn` keeps its meaning. A fork's writes to shared

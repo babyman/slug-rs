@@ -261,13 +261,17 @@ fn signalled(source: &str, signal: &str, waits: &[u64]) -> Output {
 }
 
 #[cfg(unix)]
+/// Waits for a signal on the channel; with `hang`, keeps running after it
+/// until the next signal ends it. The loop needs no timers, which builds
+/// without `concurrency` lack, so the tests run there too.
 const WAITS_FOR_A_SIGNAL: &str = "val signal = import(\"slug.os.signal\")\n\
     val stop = signal.notify([\"int\", \"term\"])\n\
+    val hang = fn(i:num):num { recur(i + 1) }\n\
     val main = fn() {\n\
         defer println(\"stopped\")\n\
         println(\"ready\")\n\
         println(select { recv stop })\n\
-        if (cfg(\"hang\", false)) { select { after 60000 /> fn(_) { nil } } }\n\
+        if (cfg(\"hang\", false)) { hang(0) }\n\
     }\n";
 
 #[cfg(unix)]
@@ -293,9 +297,10 @@ fn a_second_signal_ends_a_program_that_does_not_stop() {
 #[test]
 fn a_program_that_does_not_ask_ends_on_a_signal_as_before() {
     use std::os::unix::process::ExitStatusExt;
-    let source = "val main = fn() {\n\
+    let source = "val hang = fn(i:num):num { recur(i + 1) }\n\
+        val main = fn() {\n\
         println(\"ready\")\n\
-        select { after 60000 /> fn(_) { nil } }\n\
+        hang(0)\n\
     }\n";
     let output = signalled(source, "TERM", &[100]);
     assert_eq!(output.status.signal(), Some(15));
