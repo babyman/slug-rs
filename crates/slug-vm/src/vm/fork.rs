@@ -186,11 +186,7 @@ impl Vm {
     }
 
     /// What `view` sees in `slot`, when it is not the variable's own value.
-    pub(super) fn viewed_value(
-        view: &TaskView,
-        globals: &GlobalTable,
-        slot: u32,
-    ) -> Option<Value> {
+    pub(super) fn viewed_value(view: &TaskView, globals: &GlobalTable, slot: u32) -> Option<Value> {
         let (key, kind) = Self::variable_at(globals, slot)?;
         view.value(key, kind)
     }

@@ -340,8 +340,10 @@ impl VmMetrics {
         self.frame_local_capacity_total += frame_local_capacity_total;
         self.argument_values_copied_to_locals += argument_values_copied_to_locals;
         self.closure_argument_vectors_created += closure_argument_vectors_created;
-        self.exact_positional_temporary_argument_vectors_created += exact_positional_temporary_argument_vectors_created;
-        self.exact_positional_stack_local_initializations += exact_positional_stack_local_initializations;
+        self.exact_positional_temporary_argument_vectors_created +=
+            exact_positional_temporary_argument_vectors_created;
+        self.exact_positional_stack_local_initializations +=
+            exact_positional_stack_local_initializations;
         self.provided_argument_bitmaps_created += provided_argument_bitmaps_created;
         self.provided_argument_bitmap_capacity_total += provided_argument_bitmap_capacity_total;
         self.defer_scope_stacks_created += defer_scope_stacks_created;
@@ -1202,7 +1204,9 @@ impl Vm {
     pub fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
-            globals: crate::sync::Code::new(crate::sync::SoloCell::new(environment.globals.borrow().clone())),
+            globals: crate::sync::Code::new(crate::sync::SoloCell::new(
+                environment.globals.borrow().clone(),
+            )),
             host_globals: environment.host_globals.clone(),
             local_bindings: environment.local_bindings.clone(),
             imported_globals: environment.imported_globals.clone(),
@@ -1280,9 +1284,7 @@ impl Vm {
         destination: &GlobalEnvironment,
     ) -> Value {
         match value {
-            Value::Closure(closure)
-                if crate::sync::Code::ptr_eq(&closure.globals, source) =>
-            {
+            Value::Closure(closure) if crate::sync::Code::ptr_eq(&closure.globals, source) => {
                 Value::Closure(crate::sync::Code::new(Closure {
                     chunk: closure.chunk,
                     captures: closure.captures.clone(),
@@ -2146,7 +2148,8 @@ impl Vm {
             // Most calls and returns stay within one program, so keep its
             // reference rather than cloning it again.
             match (&program, self.frames.last()) {
-                (Some(current), Some(frame)) if crate::sync::Code::ptr_eq(current, frame.program()) => {}
+                (Some(current), Some(frame))
+                    if crate::sync::Code::ptr_eq(current, frame.program()) => {}
                 _ => program = Some(self.active_program()?),
             }
             let program = program.as_ref().expect("active program was loaded");
@@ -2214,17 +2217,19 @@ impl Vm {
             PackedOpcode::Constant => {
                 let value = match chunk.constants.get(operand) {
                     Some(crate::Constant::Value(value)) => value.clone(),
-                    Some(crate::Constant::Function(function)) => Value::Closure(crate::sync::Code::new(Closure {
-                        chunk: *function,
-                        captures: Vec::new(),
-                        program: self.active_program()?,
-                        globals: self.globals.clone(),
-                        global_slots: Some(self.shared_global_slots(program)),
-                        #[cfg(feature = "concurrency")]
-                        capture_sources: Vec::new(),
-                        #[cfg(feature = "concurrency")]
-                        domain: self.domain(),
-                    })),
+                    Some(crate::Constant::Function(function)) => {
+                        Value::Closure(crate::sync::Code::new(Closure {
+                            chunk: *function,
+                            captures: Vec::new(),
+                            program: self.active_program()?,
+                            globals: self.globals.clone(),
+                            global_slots: Some(self.shared_global_slots(program)),
+                            #[cfg(feature = "concurrency")]
+                            capture_sources: Vec::new(),
+                            #[cfg(feature = "concurrency")]
+                            domain: self.domain(),
+                        }))
+                    }
                     None => {
                         return Err(self.error_at(
                             RuntimeErrorKind::InvalidBytecode,
@@ -2696,7 +2701,8 @@ impl Vm {
                     if let Some(view) = &self.view {
                         let kind = name.kind();
                         if kind != crate::variables::BindingKind::Val
-                            && let Some(value) = view.value(crate::variables::VarKey::cell(cell), kind)
+                            && let Some(value) =
+                                view.value(crate::variables::VarKey::cell(cell), kind)
                         {
                             return Ok(value);
                         }
@@ -3097,17 +3103,18 @@ impl Vm {
                     }),
             })
             .collect::<VmResult<Vec<_>>>()?;
-        self.stack.push(Value::Closure(crate::sync::Code::new(Closure {
-            chunk,
-            captures,
-            program: self.active_program()?,
-            globals: self.globals.clone(),
-            global_slots: Some(self.shared_global_slots(program)),
-            #[cfg(feature = "concurrency")]
-            capture_sources: capture_sources.to_vec(),
-            #[cfg(feature = "concurrency")]
-            domain: self.domain(),
-        })));
+        self.stack
+            .push(Value::Closure(crate::sync::Code::new(Closure {
+                chunk,
+                captures,
+                program: self.active_program()?,
+                globals: self.globals.clone(),
+                global_slots: Some(self.shared_global_slots(program)),
+                #[cfg(feature = "concurrency")]
+                capture_sources: capture_sources.to_vec(),
+                #[cfg(feature = "concurrency")]
+                domain: self.domain(),
+            })));
         Ok(())
     }
 
@@ -5138,7 +5145,8 @@ impl Vm {
         for case in &values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
-                    if let Some(value) = channel.receive_locked(&mut states[locked(channel)], &mut wakes)
+                    if let Some(value) =
+                        channel.receive_locked(&mut states[locked(channel)], &mut wakes)
                     {
                         taken = Some(Some((value, handler.clone(), true)));
                         break;

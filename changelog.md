@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `make ci` passes with `threads`: the workspace allows clippy's
+  `arc_with_non_send_sync`, since `slug_vm::Shared` is `Arc` there while
+  values and hosts stay unsendable by type (the sendable check and
+  `sync::Sendable` vet what crosses threads); the fork work is formatted, and
+  the language support matrix says forks run on worker threads.
+
 - The `slug.os.signal` tests run in builds without `concurrency` too: a
   program that keeps running after a signal now spins in `recur` rather than
   waiting on a timer, which those builds lack, so `select { after }` ended

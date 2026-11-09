@@ -4,11 +4,7 @@ use alloc::boxed::Box;
 use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
-use core::{
-    cell::RefCell,
-    fmt,
-    fmt::Write as _,
-};
+use core::{cell::RefCell, fmt, fmt::Write as _};
 
 use crate::platform::NameMap;
 
@@ -733,7 +729,6 @@ impl GlobalTable {
     pub(crate) fn value(&self, slot: u32) -> &Value {
         &self.entries[slot as usize].1
     }
-
 
     /// Moves the plain entry in `slot` into a binding cell of `kind`, so
     /// assigning the variable later changes the cell and never the table,

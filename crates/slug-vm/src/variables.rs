@@ -8,10 +8,7 @@
 use crate::sync::Rc;
 use core::cell::RefCell;
 
-use crate::{
-    Program, Value,
-    value::BindingCell,
-};
+use crate::{Program, Value, value::BindingCell};
 
 /// The kind of the module-level binding `name` that `program` declares.
 #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
@@ -103,8 +100,11 @@ impl VarKey {
 
 /// A map keyed by module variable, hashed by cell address.
 #[cfg(not(target_os = "none"))]
-pub(crate) type VarMap<V> =
-    crate::platform::HashMap<VarKey, V, core::hash::BuildHasherDefault<crate::platform::AddressHasher>>;
+pub(crate) type VarMap<V> = crate::platform::HashMap<
+    VarKey,
+    V,
+    core::hash::BuildHasherDefault<crate::platform::AddressHasher>,
+>;
 
 #[cfg(target_os = "none")]
 pub(crate) type VarMap<V> = crate::platform::HashMap<VarKey, V>;

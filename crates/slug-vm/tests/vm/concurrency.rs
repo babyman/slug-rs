@@ -1086,7 +1086,10 @@ fn a_forks_metrics_and_samples_join_its_spawners() {
         forked.instructions_executed,
         spawned.instructions_executed
     );
-    assert_eq!(forked.exact_positional_recur_restarts, spawned.exact_positional_recur_restarts);
+    assert_eq!(
+        forked.exact_positional_recur_restarts,
+        spawned.exact_positional_recur_restarts
+    );
     assert!(
         within(forked_samples, spawned_samples),
         "fork {forked_samples} samples against spawn {spawned_samples}"

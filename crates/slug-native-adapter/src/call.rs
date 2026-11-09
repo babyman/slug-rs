@@ -156,7 +156,9 @@ pub(crate) fn call_binding(call: &mut NativeCall<'_>) -> NativeStatus {
 /// The binding and resource slots of this call, borrowed from the module
 /// state rather than counted: forks on several threads call the same binding
 /// at once, and the state is only read after install.
-fn binding<'call>(call: &NativeCall<'call>) -> Option<(&'call RuntimeBinding, &'call [ResourceSlot])> {
+fn binding<'call>(
+    call: &NativeCall<'call>,
+) -> Option<(&'call RuntimeBinding, &'call [ResourceSlot])> {
     let state = call.state::<ModuleState>()?;
     let index = call.member_key()?.parse::<usize>().ok()?;
     Some((state.bindings.get(index)?, state.resources.get()?))

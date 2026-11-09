@@ -9,13 +9,12 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 
 use super::{
-    RootWaiter, TaskExecution, Vm, VmResult, Waiter, progress::ProgressDriver,
-    scheduler::Nursery,
+    RootWaiter, TaskExecution, Vm, VmResult, Waiter, progress::ProgressDriver, scheduler::Nursery,
 };
 use crate::platform::HashMap;
 use crate::{
-    EmptyVmConfiguration, NativeDescriptorError, NativeFunction, NativeResourceRegistry,
-    Value, VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
+    EmptyVmConfiguration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value,
+    VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
     scheduler_signal::ProgressSignal,
     sync::{Rc, Sendable},
     value::Task,
@@ -277,7 +276,10 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     // from its own copy.
     let configuration = execution.vm.host.as_ref().map(|host| {
         let configuration = host.configuration();
-        (configuration.arguments().to_vec(), configuration.argument_map())
+        (
+            configuration.arguments().to_vec(),
+            configuration.argument_map(),
+        )
     });
     let variables = execution.vm.variables.island_copy();
     // Read here, on the spawner's thread, which owns the samples.
@@ -351,8 +353,8 @@ fn run(package: Package) {
     vm.progress = progress;
     vm.native_resources = NativeResourceRegistry::new();
     vm.host = vm.host.take().map(|host| {
-        let (arguments, argument_map) = configuration
-            .unwrap_or_else(|| (Vec::new(), EmptyVmConfiguration.argument_map()));
+        let (arguments, argument_map) =
+            configuration.unwrap_or_else(|| (Vec::new(), EmptyVmConfiguration.argument_map()));
         Rc::new(ForkHost::new(
             host,
             parent.clone(),

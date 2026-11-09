@@ -1105,12 +1105,7 @@ impl NativeModule {
                 "native resource type name cannot be empty",
             ));
         }
-        if !self
-            .inner
-            .resource_types
-            .lock()
-            .insert(name.to_string())
-        {
+        if !self.inner.resource_types.lock().insert(name.to_string()) {
             return Err(NativeDescriptorError::new(format!(
                 "native resource type `{}` is already registered in module `{}`",
                 name, self.inner.name

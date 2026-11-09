@@ -76,7 +76,10 @@ pub struct SoloCell<T> {
 // `&T`, and a writer is alone: either on its value's own thread, or before
 // any other thread can reach the cell.
 #[cfg(feature = "threads")]
-#[allow(unsafe_code, reason = "the one Sync claim; see the type's documentation")]
+#[allow(
+    unsafe_code,
+    reason = "the one Sync claim; see the type's documentation"
+)]
 unsafe impl<T: Send + Sync> Sync for SoloCell<T> {}
 
 impl<T> SoloCell<T> {
@@ -241,10 +244,15 @@ impl<T> core::ops::Deref for SoloRef<'_, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        #[allow(
+            unsafe_code,
+            reason = "borrow access to a SoloCell; see its documentation"
+        )]
         // SAFETY: no writer is active while this borrow lives (see
         // `SoloCell`); debug builds check it.
-        unsafe { &*self.cell.value.get() }
+        unsafe {
+            &*self.cell.value.get()
+        }
     }
 }
 
@@ -267,18 +275,28 @@ impl<T> core::ops::Deref for SoloMut<'_, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        #[allow(
+            unsafe_code,
+            reason = "borrow access to a SoloCell; see its documentation"
+        )]
         // SAFETY: this is the only borrow of the cell (see `SoloCell`).
-        unsafe { &*self.cell.value.get() }
+        unsafe {
+            &*self.cell.value.get()
+        }
     }
 }
 
 impl<T> core::ops::DerefMut for SoloMut<'_, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        #[allow(unsafe_code, reason = "borrow access to a SoloCell; see its documentation")]
+        #[allow(
+            unsafe_code,
+            reason = "borrow access to a SoloCell; see its documentation"
+        )]
         // SAFETY: this is the only borrow of the cell (see `SoloCell`).
-        unsafe { &mut *self.cell.value.get() }
+        unsafe {
+            &mut *self.cell.value.get()
+        }
     }
 }
 
@@ -387,7 +405,10 @@ pub(crate) struct Sendable<T>(T);
 
 // SAFETY: see the type's documentation.
 #[cfg(all(feature = "threads", not(target_os = "none")))]
-#[allow(unsafe_code, reason = "the fork package's one Send claim; see the type's documentation")]
+#[allow(
+    unsafe_code,
+    reason = "the fork package's one Send claim; see the type's documentation"
+)]
 unsafe impl<T> Send for Sendable<T> {}
 
 #[cfg(all(feature = "threads", not(target_os = "none")))]
@@ -495,7 +516,12 @@ impl<T> Code<T> {
     /// The value, mutably, when this is its only reference. An immortal
     /// value always reads as shared, so it is never changed in place.
     pub fn get_mut(this: &mut Self) -> Option<&mut T> {
-        if this.inner().count.load(core::sync::atomic::Ordering::Acquire) != 1 {
+        if this
+            .inner()
+            .count
+            .load(core::sync::atomic::Ordering::Acquire)
+            != 1
+        {
             return None;
         }
         #[allow(unsafe_code, reason = "Code's allocation; see its documentation")]
@@ -509,8 +535,15 @@ impl<T> Code<T> {
     /// How many references there are, or `usize::MAX` once immortal.
     #[must_use]
     pub fn strong_count(this: &Self) -> usize {
-        let count = this.inner().count.load(core::sync::atomic::Ordering::Relaxed);
-        if count & IMMORTAL == 0 { count } else { usize::MAX }
+        let count = this
+            .inner()
+            .count
+            .load(core::sync::atomic::Ordering::Relaxed);
+        if count & IMMORTAL == 0 {
+            count
+        } else {
+            usize::MAX
+        }
     }
 
     fn immortalize(&self) {
@@ -521,7 +554,11 @@ impl<T> Code<T> {
 
     #[cfg(test)]
     fn is_immortal(&self) -> bool {
-        self.inner().count.load(core::sync::atomic::Ordering::Relaxed) & IMMORTAL != 0
+        self.inner()
+            .count
+            .load(core::sync::atomic::Ordering::Relaxed)
+            & IMMORTAL
+            != 0
     }
 }
 
