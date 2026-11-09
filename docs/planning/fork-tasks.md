@@ -264,7 +264,10 @@ Progress (2026-11-08): islands run forks on pooled workers; wakes, results,
 and host calls cross through per-thread inboxes; a program's threads detect
 a deadlock together, so a blocked fork reports as a blocked task does. All
 33 fork fixtures pass, 400 times over, eight runs at a time for half of
-them. Open: islands' metrics, and scaling past four forks (below). A fork's
+them. Open: scaling past four forks (below). An island counts and samples
+on its own, and its counters (`VmMetrics::merge`: counts and times add,
+peaks keep the larger) and call stack samples join its spawner's when it
+settles, so `--metrics` and `--profile` see forks' work. A fork's
 host calls are served at the next call, return, or `recur` of any VM on its
 spawner's thread, not only when the spawner waits: each thread's inbox has
 an attention flag, which those points read (one load) in place of the

@@ -280,6 +280,9 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
         (configuration.arguments().to_vec(), configuration.argument_map())
     });
     let variables = execution.vm.variables.island_copy();
+    // Read here, on the spawner's thread, which owns the samples.
+    #[cfg(feature = "metrics")]
+    let profiling = execution.vm.profile.borrow().is_some();
     let group = execution.vm.progress.group().clone();
     group.join();
     parent.remote.fetch_add(1, Ordering::AcqRel);
@@ -293,6 +296,8 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
         parent,
         control,
         group,
+        #[cfg(feature = "metrics")]
+        profiling,
     });
     submit(Sendable::new(Box::new(move || run(package.into_inner()))));
     true
@@ -306,6 +311,9 @@ struct Package {
     parent: Arc<Inbox>,
     control: Arc<IslandControl>,
     group: Arc<Group>,
+    /// Whether the spawner samples call stacks, so the island does too.
+    #[cfg(feature = "metrics")]
+    profiling: bool,
 }
 
 /// Runs a fork's island on this worker thread, then reports its result.
@@ -318,6 +326,8 @@ fn run(package: Package) {
         parent,
         control,
         group,
+        #[cfg(feature = "metrics")]
+        profiling,
     } = package;
     let inbox = Inbox::current();
     // The thread's previous island may have been cancelled.
@@ -332,10 +342,7 @@ fn run(package: Package) {
     // before it runs; the spawner's own stays with the spawner.
     let progress = Rc::new(ProgressDriver::island(control.clone(), group.clone()));
     #[cfg(feature = "metrics")]
-    {
-        vm.metrics = Rc::new(core::cell::RefCell::new(super::VmMetrics::default()));
-        vm.profile = super::profile::Samples::default();
-    }
+    let spawner_counts = Counts::island(vm, profiling);
     vm.nursery = Rc::new(Nursery::root(
         progress.clone(),
         #[cfg(feature = "metrics")]
@@ -366,6 +373,10 @@ fn run(package: Package) {
             .map(|result| result.and_then(|value| vm.sendable_result(value)))
     }))
     .unwrap_or_else(|panic| Some(Err(vm.island_panic_error(panic.as_ref()))));
+    // Posted before the result, so the spawner has merged them by the time
+    // it sees the fork settle.
+    #[cfg(feature = "metrics")]
+    spawner_counts.merge_from(vm, &parent);
     drop(execution);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_ended();
@@ -381,6 +392,49 @@ fn run(package: Package) {
     // After the post, which counts the parent awake if it slept.
     group.leave();
     parent.signal.notify();
+}
+
+/// A spawner's counters and samples, which only its thread touches, kept
+/// while its fork's island counts and samples on its own.
+#[cfg(feature = "metrics")]
+struct Counts {
+    metrics: Rc<core::cell::RefCell<super::VmMetrics>>,
+    profile: super::profile::Samples,
+}
+
+#[cfg(feature = "metrics")]
+impl Counts {
+    /// Gives `vm`, about to run as an island, counters and samples of its
+    /// own (sampling when the spawner does), and keeps the spawner's.
+    fn island(vm: &mut Vm, profiling: bool) -> Self {
+        Self {
+            metrics: core::mem::replace(
+                &mut vm.metrics,
+                Rc::new(core::cell::RefCell::new(super::VmMetrics::default())),
+            ),
+            profile: core::mem::replace(
+                &mut vm.profile,
+                Rc::new(core::cell::RefCell::new(
+                    profiling.then(alloc::collections::BTreeMap::new),
+                )),
+            ),
+        }
+    }
+
+    /// Posts the island's counters and samples to the spawner's thread,
+    /// which adds them into its own.
+    fn merge_from(self, vm: &Vm, parent: &Inbox) {
+        let counts = vm.metrics.borrow().clone();
+        let samples = vm.profile.borrow_mut().take();
+        parent.post(move || {
+            self.metrics.borrow_mut().merge(&counts);
+            if let (Some(into), Some(samples)) = (self.profile.borrow_mut().as_mut(), samples) {
+                for (stack, count) in samples {
+                    *into.entry(stack).or_default() += count;
+                }
+            }
+        });
+    }
 }
 
 impl Vm {

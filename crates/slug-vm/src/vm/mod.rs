@@ -264,6 +264,127 @@ pub struct VmMetrics {
     pub program_clone_bytes: usize,
 }
 
+#[cfg(all(feature = "metrics", feature = "threads", not(target_os = "none")))]
+impl VmMetrics {
+    /// Adds the counters of `other`, a fork's island, into these: counts and
+    /// times add up, and peaks keep the larger. Every field is named, so a
+    /// new counter cannot be left out.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one line per counter, each named so none is left out"
+    )]
+    pub(crate) fn merge(&mut self, other: &Self) {
+        let Self {
+            instructions_executed,
+            instruction_clones,
+            source_span_clones,
+            source_span_lookups,
+            frames_created,
+            local_binding_cells_created,
+            frame_local_vectors_created,
+            frame_local_vectors_reused,
+            frame_local_capacity_total,
+            argument_values_copied_to_locals,
+            closure_argument_vectors_created,
+            exact_positional_temporary_argument_vectors_created,
+            exact_positional_stack_local_initializations,
+            provided_argument_bitmaps_created,
+            provided_argument_bitmap_capacity_total,
+            defer_scope_stacks_created,
+            defer_scope_entries_materialized,
+            recur_local_vectors_reused,
+            recur_local_vectors_replaced,
+            exact_positional_recur_restarts,
+            generic_recur_argument_bindings,
+            exact_positional_closure_calls,
+            generic_call_argument_bindings,
+            collection_constructions,
+            collection_elements_constructed,
+            collection_lookups,
+            collection_slices,
+            map_entries_examined,
+            collection_updates,
+            collection_elements_copied,
+            collection_unique_owner_updates,
+            collection_shared_owner_updates,
+            list_views_created,
+            list_views_materialized,
+            list_view_elements_materialized,
+            timer_registrations,
+            timer_deadline_lookups,
+            timer_wakeups,
+            wait_registration_removals,
+            timer_deadline_entries_examined,
+            timer_wakeup_entries_examined,
+            channel_waiter_entries_examined,
+            task_waiter_entries_examined,
+            timer_waiter_entries_examined,
+            peak_timer_waiters,
+            peak_ready_queue,
+            peak_channel_waiters,
+            peak_task_waiters,
+            scheduler_wait_time,
+            verification_time,
+            program_validations,
+            program_clones,
+            program_clone_bytes,
+        } = other.clone();
+        self.instructions_executed += instructions_executed;
+        self.instruction_clones += instruction_clones;
+        self.source_span_clones += source_span_clones;
+        self.source_span_lookups += source_span_lookups;
+        self.frames_created += frames_created;
+        self.local_binding_cells_created += local_binding_cells_created;
+        self.frame_local_vectors_created += frame_local_vectors_created;
+        self.frame_local_vectors_reused += frame_local_vectors_reused;
+        self.frame_local_capacity_total += frame_local_capacity_total;
+        self.argument_values_copied_to_locals += argument_values_copied_to_locals;
+        self.closure_argument_vectors_created += closure_argument_vectors_created;
+        self.exact_positional_temporary_argument_vectors_created += exact_positional_temporary_argument_vectors_created;
+        self.exact_positional_stack_local_initializations += exact_positional_stack_local_initializations;
+        self.provided_argument_bitmaps_created += provided_argument_bitmaps_created;
+        self.provided_argument_bitmap_capacity_total += provided_argument_bitmap_capacity_total;
+        self.defer_scope_stacks_created += defer_scope_stacks_created;
+        self.defer_scope_entries_materialized += defer_scope_entries_materialized;
+        self.recur_local_vectors_reused += recur_local_vectors_reused;
+        self.recur_local_vectors_replaced += recur_local_vectors_replaced;
+        self.exact_positional_recur_restarts += exact_positional_recur_restarts;
+        self.generic_recur_argument_bindings += generic_recur_argument_bindings;
+        self.exact_positional_closure_calls += exact_positional_closure_calls;
+        self.generic_call_argument_bindings += generic_call_argument_bindings;
+        self.collection_constructions += collection_constructions;
+        self.collection_elements_constructed += collection_elements_constructed;
+        self.collection_lookups += collection_lookups;
+        self.collection_slices += collection_slices;
+        self.map_entries_examined += map_entries_examined;
+        self.collection_updates += collection_updates;
+        self.collection_elements_copied += collection_elements_copied;
+        self.collection_unique_owner_updates += collection_unique_owner_updates;
+        self.collection_shared_owner_updates += collection_shared_owner_updates;
+        self.list_views_created += list_views_created;
+        self.list_views_materialized += list_views_materialized;
+        self.list_view_elements_materialized += list_view_elements_materialized;
+        self.timer_registrations += timer_registrations;
+        self.timer_deadline_lookups += timer_deadline_lookups;
+        self.timer_wakeups += timer_wakeups;
+        self.wait_registration_removals += wait_registration_removals;
+        self.timer_deadline_entries_examined += timer_deadline_entries_examined;
+        self.timer_wakeup_entries_examined += timer_wakeup_entries_examined;
+        self.channel_waiter_entries_examined += channel_waiter_entries_examined;
+        self.task_waiter_entries_examined += task_waiter_entries_examined;
+        self.timer_waiter_entries_examined += timer_waiter_entries_examined;
+        self.peak_timer_waiters = self.peak_timer_waiters.max(peak_timer_waiters);
+        self.peak_ready_queue = self.peak_ready_queue.max(peak_ready_queue);
+        self.peak_channel_waiters = self.peak_channel_waiters.max(peak_channel_waiters);
+        self.peak_task_waiters = self.peak_task_waiters.max(peak_task_waiters);
+        self.scheduler_wait_time += scheduler_wait_time;
+        self.verification_time += verification_time;
+        self.program_validations += program_validations;
+        self.program_clones += program_clones;
+        self.program_clone_bytes += program_clone_bytes;
+    }
+}
+
 /// Reported when no task can make progress while one is still waiting.
 const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
 

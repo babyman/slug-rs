@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `--metrics` and `--profile` count what forks do. A fork's island kept
+  counters of its own that were dropped when it settled, and did not sample
+  call stacks at all; now it samples when its spawner does, and both join
+  the spawner's when the fork settles (counts and times add, peaks keep the
+  larger). A fork's loop now counts as the same loop in a spawned task does
+  (140 027 instructions, where the fork's used to show 19).
+
 - A fork's host calls (importing an initialized module, configuration,
   warnings) no longer wait for their spawner to wait. Each thread's inbox
   has an attention flag, raised when a fork queues a host call or the

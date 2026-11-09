@@ -1055,3 +1055,40 @@ fn a_busy_spawner_serves_its_forks_host_calls() {
     .expect("compile busy spawner source");
     assert_eq!(vm.run_program(&program).unwrap(), Value::Int(1));
 }
+
+/// A fork's island counts and samples on its own, and its counts and
+/// samples join its spawner's when it settles: a fork's work shows up in
+/// `metrics` and the profile as the same work in a spawned task does.
+#[cfg(all(feature = "threads", feature = "metrics"))]
+#[test]
+fn a_forks_metrics_and_samples_join_its_spawners() {
+    let source = |start: &str| {
+        format!(
+            "val spin = fn(i:num, total:num):num {{ if (i >= 20000) {{ total }} else {{ recur(i + 1, total + i) }} }}\nval main = fn() {{\n    val t = {start} {{ spin(0, 0) }}\n    select {{ await t }}\n}}\n"
+        )
+    };
+    let run = |start: &str| {
+        let program = compile("counted.slug", &source(start)).expect("compile counted source");
+        let mut vm = Vm::new();
+        vm.enable_profile();
+        assert_eq!(vm.run_program(&program).unwrap(), Value::Int(199_990_000));
+        let samples: usize = vm.take_profile().expect("profiling").values().sum();
+        (vm.metrics(), samples)
+    };
+    let (spawned, spawned_samples) = run("spawn");
+    let (forked, forked_samples) = run("fork");
+    // The loop is nearly all of either run.
+    assert!(spawned.instructions_executed > 100_000, "{spawned:?}");
+    let within = |a: usize, b: usize| a.abs_diff(b) * 20 < b;
+    assert!(
+        within(forked.instructions_executed, spawned.instructions_executed),
+        "fork {} against spawn {}",
+        forked.instructions_executed,
+        spawned.instructions_executed
+    );
+    assert_eq!(forked.exact_positional_recur_restarts, spawned.exact_positional_recur_restarts);
+    assert!(
+        within(forked_samples, spawned_samples),
+        "fork {forked_samples} samples against spawn {spawned_samples}"
+    );
+}
