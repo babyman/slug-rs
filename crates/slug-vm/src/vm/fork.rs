@@ -12,9 +12,9 @@ use core::cell::RefCell;
 
 use crate::{
     SourceSpan, Value,
-    platform::{HashMap, HashSet},
+    platform::HashSet,
     value::BindingCell,
-    variables::{BindingKind, VarKey},
+    variables::{BindingKind, VarKey, VarMap},
 };
 
 /// What one task sees of the module variables, when it does not simply see
@@ -22,11 +22,11 @@ use crate::{
 pub(super) struct TaskView {
     pub(super) fork: Option<Rc<ForkContext>>,
     /// This task's copy of each `task var`.
-    own: RefCell<HashMap<VarKey, Value>>,
+    own: RefCell<VarMap<Value>>,
 }
 
 impl TaskView {
-    pub(super) fn new(fork: Option<Rc<ForkContext>>, own: HashMap<VarKey, Value>) -> Self {
+    pub(super) fn new(fork: Option<Rc<ForkContext>>, own: VarMap<Value>) -> Self {
         Self {
             fork,
             own: RefCell::new(own),
@@ -75,7 +75,7 @@ pub(super) struct ForkContext {
     /// The capture cells the fork's snapshot made, which it cannot assign.
     frozen: HashSet<usize>,
     /// Every module `var` but the `task var`s, as the fork started.
-    vars: HashMap<VarKey, Value>,
+    vars: VarMap<Value>,
 }
 
 impl ForkContext {
@@ -83,7 +83,7 @@ impl ForkContext {
         domain: u32,
         span: Option<SourceSpan>,
         captures: &[BindingCell],
-        vars: HashMap<VarKey, Value>,
+        vars: VarMap<Value>,
     ) -> Self {
         Self {
             domain,
@@ -237,7 +237,7 @@ impl Vm {
             self.variables
                 .snapshot(true, |key| parent.and_then(|view| view.own_value(key)))
         } else {
-            HashMap::new()
+            VarMap::default()
         };
         let enclosing = parent.and_then(|view| view.fork.clone());
         let fork = if forked {

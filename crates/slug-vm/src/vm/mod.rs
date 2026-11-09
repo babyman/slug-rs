@@ -4406,10 +4406,12 @@ impl Vm {
                     "closure references missing chunk".into(),
                 )
             })?;
-            // A call across fork domains takes the general path, which
-            // checks it.
+            // A call across fork domains to a closure with captures takes
+            // the general path, which checks that none is a `var`. One
+            // without captures, such as every module function a fork calls,
+            // has nothing to check.
             #[cfg(feature = "concurrency")]
-            let other_domain = closure.domain != self.domain;
+            let other_domain = closure.domain != self.domain && !closure.captures.is_empty();
             #[cfg(not(feature = "concurrency"))]
             let other_domain = false;
             if chunk.arity != count || !chunk.binds_full_positional_calls || other_domain {

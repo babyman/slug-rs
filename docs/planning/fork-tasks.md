@@ -329,6 +329,22 @@ only 2% (Crawl's `val`s are nearly all functions), and it would extend the
 memory immortality never frees from code to data. The compiler emits no
 list or map constants, so there are none to mark.
 
+One fork against the main thread (2026-11-08). One fork drew experiment 2
+in 16.8 s, the original experiment's one worker in 14.5 s. Two findings:
+builds without PGO differ by about 20% between commits on this workload
+(PGO builds: 3ee46c4 8.30 s, f7c695a 8.39 s on the main thread), so
+cross-commit timings need PGO; and a fork was 30% slower than the main
+thread (PGO 10.9 s against 8.4 s). Arithmetic, allocation, and reading
+shared data cost the same in a fork; calls did not. Every call to a closure
+from another domain, which in a fork is every module function, took the
+general call path to have its captures checked, though a closure with no
+captures has nothing to check, and the general path's copied arguments left
+strings shared, so `+` copied them. Only closures with captures take it now,
+and task views hash variable addresses with one multiply rather than
+SipHash. One fork: 14.5 s against 13.9 s on the main thread (profiling
+build). Experiment 2: 7.4 s, 4.2 s, 3.7 s on 2, 4, 8 forks, as fast as the
+original workers' 3.7 s.
+
 - **Pool.** One worker per available core. A fork's child VM moves to a
   worker and runs there until it settles or parks; tasks a fork spawns run
   cooperatively on its worker, sharing its snapshot.

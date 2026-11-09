@@ -10,7 +10,6 @@ use core::cell::RefCell;
 
 use crate::{
     Program, Value,
-    platform::HashMap,
     value::BindingCell,
 };
 
@@ -102,6 +101,14 @@ impl VarKey {
     }
 }
 
+/// A map keyed by module variable, hashed by cell address.
+#[cfg(not(target_os = "none"))]
+pub(crate) type VarMap<V> =
+    crate::platform::HashMap<VarKey, V, core::hash::BuildHasherDefault<crate::platform::AddressHasher>>;
+
+#[cfg(target_os = "none")]
+pub(crate) type VarMap<V> = crate::platform::HashMap<VarKey, V>;
+
 struct ModuleVariable {
     cell: BindingCell,
     task: bool,
@@ -131,7 +138,7 @@ impl Drop for Initializing {
 struct Variables {
     /// How many modules are initializing now.
     initializing: usize,
-    entries: HashMap<VarKey, ModuleVariable>,
+    entries: VarMap<ModuleVariable>,
     task_vars: usize,
 }
 
@@ -232,7 +239,7 @@ impl ModuleVariables {
         &self,
         task: bool,
         seen: impl Fn(VarKey) -> Option<Value>,
-    ) -> HashMap<VarKey, Value> {
+    ) -> VarMap<Value> {
         self.0
             .borrow()
             .entries

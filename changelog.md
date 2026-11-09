@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A fork calls module functions as fast as the main thread does. Every call
+  to a closure from outside the fork took the general call path to check
+  its captures, even with none to check, and its copied arguments made `+`
+  copy strings it could have appended to; only closures with captures take
+  it now. Task views hash variables by address with one multiply instead of
+  SipHash. Experiment 2 on one fork: 16.8 s to 14.5 s, against 13.9 s on
+  the main thread; on eight forks 4.12 s to 3.7 s, as fast as the workers
+  that initialized their own modules (3.7 s). Against f7c695a (5
+  interleaved PGO rounds): geomean 1.01x tuned, 1.03x hold-out; the
+  outliers re-measured over 11 rounds at 1.00x.
+
 - A program's string constants are never counted either, once its module
   has initialized: strings use `slug_vm::Code`, and each program is walked
   once when it becomes immortal. A constant pushed on every call no longer
