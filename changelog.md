@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A fork's host calls (importing an initialized module, configuration,
+  warnings) no longer wait for their spawner to wait. Each thread's inbox
+  has an attention flag, raised when a fork queues a host call or the
+  thread's own fork is cancelled; every call, return, and `recur` of any VM
+  on the thread reads it, in place of the cancellation check, and serves
+  the queued calls. A spawner busy in a loop used to stall its forks until
+  it next waited. Against bcc7e4c (5 interleaved PGO rounds): geomean 1.00x
+  tuned, 1.01x hold-out; the outliers re-measured over 11 rounds at 1.00x.
+
 - Debug builds check the rule that lets threads read binding cells and
   module tables without a lock: a cell another thread has reached panics if
   it is written while any fork runs, at the write, whether or not the two

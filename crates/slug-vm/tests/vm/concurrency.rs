@@ -955,3 +955,103 @@ fn a_fork_can_hold_its_spawners_resource_but_cannot_return_it() {
         .expect_err("a resource is not sendable");
     assert!(error.message.contains("sendable"), "{}", error.message);
 }
+
+/// A host that answers one module import, `served`, and records that it did.
+#[cfg(feature = "threads")]
+struct ServingHost {
+    configuration: slug_vm::EmptyVmConfiguration,
+    native_resources: slug_vm::NativeResourceRegistry,
+}
+
+#[cfg(feature = "threads")]
+static IMPORT_SERVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmHost for ServingHost {
+    fn import_module(
+        &self,
+        _importer: Option<&str>,
+        name: &str,
+    ) -> Result<slug_vm::VmModuleExports, slug_vm::VmHostError> {
+        if name != "served" {
+            return Err(slug_vm::VmHostError::not_found(format!("missing {name}")));
+        }
+        IMPORT_SERVED.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(slug_vm::VmModuleExports {
+            exports: Value::Map(vec![(Value::string("answer"), Value::Int(1))].into()),
+        })
+    }
+
+    fn module_initialized(&self, _importer: Option<&str>, _name: &str) -> Option<bool> {
+        Some(true)
+    }
+
+    fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn native_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn foreign_function(&self, _module: &str, _name: &str) -> Option<slug_vm::NativeFunction> {
+        None
+    }
+
+    fn define_foreign_batch(
+        &self,
+        _functions: Vec<slug_vm::NativeFunction>,
+    ) -> Result<(), slug_vm::NativeDescriptorError> {
+        Ok(())
+    }
+
+    fn define_native_global(&self, _name: String, _value: Value) {}
+
+    fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
+        self.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
+    fn configuration(&self) -> &dyn slug_vm::VmConfiguration {
+        &self.configuration
+    }
+
+    fn warn(&self, _message: String) {}
+
+    fn shutdown(&self) {}
+}
+
+/// A fork's host call runs on its spawner's thread. A spawner busy computing,
+/// which never waits, still serves it at its next call or `recur`: here the
+/// spawner spins until it sees the fork's import served, and gives up after
+/// far more iterations than that takes.
+#[cfg(feature = "threads")]
+#[test]
+fn a_busy_spawner_serves_its_forks_host_calls() {
+    fn served(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::boolean(
+            IMPORT_SERVED.load(std::sync::atomic::Ordering::SeqCst),
+        ))
+    }
+    let module = NativeModule::new("test.serving", ()).unwrap();
+    let host: slug_vm::Shared<dyn slug_vm::VmHost> = slug_vm::Shared::new(ServingHost {
+        configuration: slug_vm::EmptyVmConfiguration,
+        native_resources: slug_vm::NativeResourceRegistry::new(),
+    });
+    let mut vm = Vm::with_host(host);
+    vm.define_native(
+        module
+            .function("served", NativeArity::Exact(0), served)
+            .unwrap(),
+    )
+    .unwrap();
+    let program = compile(
+        "busy-spawner.slug",
+        "val main = fn() {\n    val t = fork { import(\"served\").answer }\n    val spin = fn(i:num):num { if (served()) { i } else { if (i > 50000000) { i } else { recur(i + 1) } } }\n    val spun = spin(0)\n    if (spun > 50000000) { -1 } else { select { await t } }\n}\n",
+    )
+    .expect("compile busy spawner source");
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(1));
+}

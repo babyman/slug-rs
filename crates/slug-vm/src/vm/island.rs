@@ -5,7 +5,7 @@
 //! See "Phase 4" in `docs/planning/fork-tasks.md`.
 
 use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 
 use super::{
@@ -29,6 +29,13 @@ type Job = Sendable<Box<dyn FnOnce()>>;
 /// whichever is waiting.
 pub(crate) struct Inbox {
     queue: Mutex<VecDeque<Job>>,
+    /// Host calls from forks, which a busy thread serves at its next call,
+    /// return, or `recur` rather than only when it waits (see `attention`).
+    requests: Mutex<VecDeque<Job>>,
+    /// What every VM on this thread checks at those points, in one load:
+    /// [`REQUESTED`] while host calls are queued, and [`CANCELLED`] once this
+    /// island's fork is cancelled.
+    attention: AtomicU8,
     signal: Arc<ProgressSignal>,
     /// Forks started from this thread that have not reported back.
     remote: AtomicUsize,
@@ -73,6 +80,11 @@ impl Group {
     }
 }
 
+/// [`Inbox::attention`]: host calls are queued.
+const REQUESTED: u8 = 1;
+/// [`Inbox::attention`]: the fork on this island is cancelled.
+const CANCELLED: u8 = 2;
+
 std::thread_local! {
     static CURRENT: Arc<Inbox> = Arc::new(Inbox::new());
 }
@@ -81,6 +93,8 @@ impl Inbox {
     fn new() -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
+            requests: Mutex::new(VecDeque::new()),
+            attention: AtomicU8::new(0),
             signal: Arc::new(ProgressSignal::new()),
             remote: AtomicUsize::new(0),
             sleeper: Mutex::new(None),
@@ -101,7 +115,12 @@ impl Inbox {
             .queue
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .is_empty();
+            .is_empty()
+            || !self
+                .requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty();
         if pending {
             *sleeper = None;
             group.join();
@@ -152,9 +171,49 @@ impl Inbox {
         self.signal.notify();
     }
 
+    /// Carries a host call from a fork to this inbox's thread, which runs it
+    /// at its next safe point, busy or waiting.
+    fn request(&self, work: impl FnOnce() + 'static) {
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(Sendable::new(Box::new(work)));
+        self.attention.fetch_or(REQUESTED, Ordering::Release);
+        self.end_sleep();
+        self.signal.notify();
+    }
+
+    /// Whether a VM on this thread must stop at its next safe point: to
+    /// serve host calls, or because its fork is cancelled. One relaxed load;
+    /// `attend` synchronizes.
+    #[inline]
+    pub(crate) fn needs_attention(&self) -> bool {
+        self.attention.load(Ordering::Relaxed) != 0
+    }
+
+    /// Runs the host calls queued so far; whether there were any.
+    pub(crate) fn serve_requests(&self) -> bool {
+        // Cleared before the queue is read: a request queued after this is
+        // either served below or raises the flag again.
+        self.attention.fetch_and(!REQUESTED, Ordering::AcqRel);
+        let mut ran = false;
+        loop {
+            let work = self
+                .requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front();
+            let Some(work) = work else {
+                return ran;
+            };
+            ran = true;
+            (work.into_inner())();
+        }
+    }
+
     /// Runs the work posted so far; whether there was any.
     pub(crate) fn drain(&self) -> bool {
-        let mut ran = false;
+        let mut ran = self.serve_requests();
         loop {
             let work = self
                 .queue
@@ -192,7 +251,11 @@ impl IslandControl {
 
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        // Pairs with the fence in `run`: either this sees the island's inbox,
+        // or the island sees the flag once it has set it.
+        core::sync::atomic::fence(Ordering::SeqCst);
         if let Some(inbox) = self.inbox.get() {
+            inbox.attention.fetch_or(CANCELLED, Ordering::Release);
             inbox.signal.notify();
         }
     }
@@ -256,7 +319,14 @@ fn run(package: Package) {
         control,
         group,
     } = package;
-    let _ = control.inbox.set(Inbox::current());
+    let inbox = Inbox::current();
+    // The thread's previous island may have been cancelled.
+    inbox.attention.fetch_and(!CANCELLED, Ordering::AcqRel);
+    let _ = control.inbox.set(inbox.clone());
+    core::sync::atomic::fence(Ordering::SeqCst);
+    if control.cancelled() {
+        inbox.attention.fetch_or(CANCELLED, Ordering::Release);
+    }
     let vm = &mut execution.vm;
     // Everything the fork shared with its spawner's scheduler is replaced
     // before it runs; the spawner's own stays with the spawner.
@@ -286,6 +356,7 @@ fn run(package: Package) {
     });
     vm.variables = variables;
     vm.cancel = Some(control.clone());
+    vm.attention = inbox.clone();
     // A panic here is a VM bug. Unwinding past this point would leave the
     // spawner waiting for a result that never comes, so it becomes the
     // fork's error instead, and the island's bookkeeping still runs. Release
@@ -313,10 +384,21 @@ fn run(package: Package) {
 }
 
 impl Vm {
-    /// Fails once this island's spawner has cancelled it. Off an island it is
-    /// one branch.
+    /// Stops at a safe point when this thread needs it: serves the host
+    /// calls forks have queued, and fails once this island's fork is
+    /// cancelled. Otherwise it is one load and a branch.
     #[inline]
-    pub(super) fn check_cancelled(&self) -> VmResult<()> {
+    pub(super) fn check_attention(&self) -> VmResult<()> {
+        if self.attention.needs_attention() {
+            return self.attend();
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn attend(&self) -> VmResult<()> {
+        self.attention.serve_requests();
         match &self.cancel {
             Some(control) if control.cancelled() => Err(self.cancelled_error()),
             _ => Ok(()),
@@ -419,7 +501,8 @@ fn submit(mut job: Job) {
 }
 
 /// The spawner's host, reached from an island: each call runs on the
-/// spawner's thread, which serves it when it next makes progress.
+/// spawner's thread, at the next call, return, or `recur` of any VM there,
+/// or when it next waits.
 struct Remote {
     host: Rc<dyn VmHost>,
     parent: Arc<Inbox>,
@@ -430,7 +513,7 @@ impl Remote {
         let reply = Arc::new((Mutex::new(None::<Sendable<R>>), Condvar::new()));
         let host = self.host.clone();
         let answer = reply.clone();
-        self.parent.post(move || {
+        self.parent.request(move || {
             let result = request(&*host);
             *answer.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Sendable::new(result));
             answer.1.notify_all();
@@ -446,7 +529,7 @@ impl Remote {
 
     fn tell(&self, request: impl FnOnce(&dyn VmHost) + 'static) {
         let host = self.host.clone();
-        self.parent.post(move || request(&*host));
+        self.parent.request(move || request(&*host));
     }
 }
 

@@ -433,6 +433,11 @@ pub struct Vm {
     /// every call, return, and `recur`, so a fork busy computing stops too.
     #[cfg(all(feature = "threads", not(target_os = "none")))]
     cancel: Option<alloc::sync::Arc<island::IslandControl>>,
+    /// This thread's inbox, whose attention flag every call, return, and
+    /// `recur` reads: to serve forks' host calls while this VM is busy, and
+    /// to stop a cancelled fork.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    attention: alloc::sync::Arc<island::Inbox>,
     /// The module variables of every VM sharing this one's host.
     #[cfg(feature = "concurrency")]
     variables: crate::ModuleVariables,
@@ -617,6 +622,8 @@ impl Default for Vm {
             domain: 0,
             #[cfg(all(feature = "threads", not(target_os = "none")))]
             cancel: None,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention: island::Inbox::current(),
             #[cfg(feature = "concurrency")]
             variables: crate::module_variables(),
             native_resources: native_resource_registry(),
@@ -2010,7 +2017,7 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             #[cfg(all(feature = "threads", not(target_os = "none")))]
-            self.check_cancelled()?;
+            self.check_attention()?;
             // Calls, returns, and suspension change the active frame rarely
             // relative to instructions, so the active code is looked up only
             // when `frame_epoch` says it may have changed.
@@ -2521,13 +2528,13 @@ impl Vm {
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
-                self.check_cancelled()?;
+                self.check_attention()?;
                 *ip = 0;
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
-                self.check_cancelled()?;
+                self.check_attention()?;
                 *ip = 0;
             }
             PackedOpcode::Return => {
@@ -3696,6 +3703,8 @@ impl Vm {
             domain: self.domain,
             #[cfg(all(feature = "threads", not(target_os = "none")))]
             cancel: self.cancel.clone(),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention: self.attention.clone(),
             #[cfg(feature = "concurrency")]
             variables: self.variables.clone(),
             native_resources: self.native_resources.clone(),

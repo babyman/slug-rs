@@ -264,8 +264,11 @@ Progress (2026-11-08): islands run forks on pooled workers; wakes, results,
 and host calls cross through per-thread inboxes; a program's threads detect
 a deadlock together, so a blocked fork reports as a blocked task does. All
 33 fork fixtures pass, 400 times over, eight runs at a time for half of
-them. Open: host calls served only when the spawner waits, islands' metrics, and
-scaling past four forks (below). ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
+them. Open: islands' metrics, and scaling past four forks (below). A fork's
+host calls are served at the next call, return, or `recur` of any VM on its
+spawner's thread, not only when the spawner waits: each thread's inbox has
+an attention flag, which those points read (one load) in place of the
+cancellation check, raised by a queued host call or a cancelled fork. ThreadSanitizer runs locally (nightly, `-Zsanitizer=thread`,
 `-Zbuild-std`, CLI in `target/tsan`) and is clean on the fork fixtures;
 `scripts/tsan-forks.py` runs it, and CI's `thread-sanitizer` job runs that
 on a pinned nightly. It found nothing that `fork/channel-relay` had not: a
