@@ -397,7 +397,9 @@ how long they may sleep. `slug-vm` keeps no dependencies. The ESP32-S3
 firmware builds with `concurrency`, provides `chan` and `close`, reads the
 system timer, and `esp32-s3-tasks.toml` runs three blinking tasks and a
 counter on one core (CI checks it). Firmware text grows 55 KB (407 to 463
-KB); static RAM is unchanged. Not yet run on the board.
+KB); static RAM is unchanged. On the board (2026-11-10) the tasks demo ran
+three minutes, 920 blinks at the expected 5.08 a second, after a startup
+bug from 735fa7f was fixed (builtins passed as module providers).
 
 ### Phase 6: Crawl and evaluation
 

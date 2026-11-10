@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The ESP32-S3 firmware starts again: since the static provider check
+  (735fa7f), it passed its builtins with its module providers to
+  `install_static_providers`, which rejects any function the artifact's
+  imports do not declare, and builtins are the artifact's implicit module,
+  so every build reset at startup with "extra static provider function
+  `slug.builtin.print`". Builtins now register with `register_builtin`, as
+  the host tests do. On the board, the light walk runs, and the tasks demo
+  blinked 920 times in three minutes at the expected 5.08 a second.
+
 - Tasks run on freestanding (`no_std`) builds: the scheduler and timers
   read a platform clock, `std`'s on hosted builds and, on embedded ones,
   the microsecond clock a host gives the VM with `Vm::set_clock` or

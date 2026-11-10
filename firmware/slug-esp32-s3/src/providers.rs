@@ -53,15 +53,26 @@ pub fn register(
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
     let builtins = NativeModule::new("slug.builtin", ())
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
-    let mut functions = vec![
-        gpio.function("write", NativeArity::Exact(2), gpio_write),
-        time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
+    // Builtins are the artifact's implicit module, not one of its imports,
+    // so they register apart from the providers the artifact declares.
+    let builtin_functions = vec![
         builtins.function("print", NativeArity::Variadic { minimum: 0 }, print),
         builtins.function("println", NativeArity::Variadic { minimum: 0 }, println),
         builtins.function("len", NativeArity::Exact(1), native_len),
         builtins.function("keys", NativeArity::Exact(1), native_keys),
         builtins.function("chan", NativeArity::Range { minimum: 0, maximum: 1 }, native_channel),
         builtins.function("close", NativeArity::Exact(1), native_close),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    for function in builtin_functions {
+        host.register_builtin(function)
+            .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    }
+    let mut functions = vec![
+        gpio.function("write", NativeArity::Exact(2), gpio_write),
+        time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
