@@ -274,6 +274,10 @@ struct ArtifactHostState {
     native_resources: NativeResourceRegistry,
     module_variables: crate::ModuleVariables,
     warnings: RefCell<Vec<String>>,
+    /// The host's monotonic clock, in microseconds, for every VM this host
+    /// starts (`Vm::set_clock`).
+    #[cfg(target_os = "none")]
+    clock: core::cell::Cell<Option<fn() -> u64>>,
 }
 
 impl ArtifactHost {
@@ -311,8 +315,28 @@ impl ArtifactHost {
                 native_resources: native_resource_registry(),
                 module_variables: crate::module_variables(),
                 warnings: RefCell::new(Vec::new()),
+                #[cfg(target_os = "none")]
+                clock: core::cell::Cell::new(None),
             }),
         })
+    }
+
+    /// Gives every VM this host starts the host's monotonic clock, in
+    /// microseconds, which timers (`select { after }`) read; without one,
+    /// time stands still on a freestanding host.
+    #[cfg(target_os = "none")]
+    pub fn set_clock(&self, clock: fn() -> u64) {
+        self.state.clock.set(Some(clock));
+    }
+
+    #[cfg_attr(not(target_os = "none"), allow(clippy::unused_self))]
+    fn prepare(&self, vm: &mut Vm) {
+        #[cfg(target_os = "none")]
+        if let Some(clock) = self.state.clock.get() {
+            vm.set_clock(clock);
+        }
+        #[cfg(not(target_os = "none"))]
+        let _ = vm;
     }
 
     /// Registers a host-provided module-qualified native function.
@@ -405,6 +429,7 @@ impl ArtifactHost {
     pub fn run(&self) -> VmResult<Value> {
         let host: Rc<dyn VmHost> = Rc::new(self.clone());
         let mut vm = Vm::with_host(host);
+        self.prepare(&mut vm);
         vm.run_program(&self.state.artifact.modules[self.state.artifact.root].program)
     }
 
@@ -415,6 +440,7 @@ impl ArtifactHost {
         }
         let host: Rc<dyn VmHost> = Rc::new(self.clone());
         let mut vm = Vm::with_module_bindings(&host, module.program.bindings());
+        self.prepare(&mut vm);
         let program = vm
             .install_named(module.program.clone(), "main")
             .map_err(|error| VmHostError::new(error.to_string()))?;

@@ -11,11 +11,11 @@ use core::{cmp, mem};
 use crate::platform::HashSet;
 
 #[cfg(feature = "concurrency")]
+use crate::platform::Instant;
+#[cfg(feature = "concurrency")]
 use core::cell::Cell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
-use std::time::Duration;
-#[cfg(any(feature = "concurrency", feature = "metrics"))]
-use std::time::Instant;
+use core::time::Duration;
 
 use crate::value::ForeignDeclaration;
 #[cfg(feature = "concurrency")]
@@ -1678,7 +1678,7 @@ impl Vm {
     /// private bytecode is malformed.
     pub fn install(&mut self, mut program: Program, entry: usize) -> VmResult<InstalledProgram> {
         #[cfg(feature = "metrics")]
-        let verification_started = Instant::now();
+        let verification_started = self.progress.now();
         program
             .validate(entry)
             .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
@@ -1693,7 +1693,10 @@ impl Vm {
         {
             let mut metrics = self.metrics.borrow_mut();
             metrics.program_validations += 1;
-            metrics.verification_time += verification_started.elapsed();
+            metrics.verification_time += self
+                .progress
+                .now()
+                .saturating_duration_since(verification_started);
         }
         program.share_string_constants();
         #[cfg(feature = "concurrency")]
@@ -1872,6 +1875,24 @@ impl Vm {
     fn reset_metrics(&mut self) {
         #[cfg(feature = "metrics")]
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
+    }
+
+    /// Gives the VM the host's monotonic clock, in microseconds, which
+    /// timers (`select { after }`) read: a freestanding build has no clock
+    /// of its own, and until a host sets one, time stands still. The tasks
+    /// the VM starts share it.
+    #[cfg(target_os = "none")]
+    pub fn set_clock(&mut self, clock: fn() -> u64) {
+        self.progress.set_clock(clock);
+    }
+
+    /// How long a host may wait before polling again for a timer: zero when
+    /// one is due, and `None` with no timer pending, when only native input
+    /// can make progress after [`Self::poll`] stalls.
+    #[cfg(feature = "concurrency")]
+    #[must_use]
+    pub fn next_timer_in(&self) -> Option<core::time::Duration> {
+        self.nursery.next_timer_in()
     }
 
     /// Performs one host-driven progress round. This method never waits for
@@ -5009,7 +5030,9 @@ impl Vm {
                         )
                     })?;
                     RuntimeSelectCase::After {
-                        deadline: Instant::now()
+                        deadline: self
+                            .progress
+                            .now()
                             .checked_add(Duration::from_millis(milliseconds))
                             .ok_or_else(|| {
                                 self.error_at(
@@ -5100,7 +5123,7 @@ impl Vm {
                 }
                 #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::After { deadline, handler } => {
-                    if *deadline <= Instant::now() {
+                    if *deadline <= self.progress.now() {
                         self.push_select_result(Value::Nil, handler.clone());
                         return Ok(());
                     }

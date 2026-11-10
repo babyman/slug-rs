@@ -69,5 +69,12 @@ jobs:
         working-directory: firmware/slug-esp32-s3
         env:
           SLUG_TARGET_DESCRIPTOR: esp32-s3-typed.toml
+      - name: Check ESP32-S3 firmware with tasks
+        run: cargo +esp check
+        working-directory: firmware/slug-esp32-s3
+        env:
+          SLUG_TARGET_DESCRIPTOR: esp32-s3-tasks.toml
+      - name: Check slug-vm with tasks for ESP32-S3
+        run: cargo +esp check -p slug-vm --no-default-features --features concurrency,metrics --target xtensa-esp32s3-none-elf -Z build-std=core,alloc
       - name: Check the typed native adapter for ESP32-S3
         run: cargo +esp check -p slug-native-adapter --target xtensa-esp32s3-none-elf -Z build-std=core,alloc

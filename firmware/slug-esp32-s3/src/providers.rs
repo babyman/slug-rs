@@ -60,6 +60,8 @@ pub fn register(
         builtins.function("println", NativeArity::Variadic { minimum: 0 }, println),
         builtins.function("len", NativeArity::Exact(1), native_len),
         builtins.function("keys", NativeArity::Exact(1), native_keys),
+        builtins.function("chan", NativeArity::Range { minimum: 0, maximum: 1 }, native_channel),
+        builtins.function("close", NativeArity::Exact(1), native_close),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
@@ -70,6 +72,36 @@ pub fn register(
             .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?,
     );
     host.install_static_providers([StaticProvider::new(functions)])
+}
+
+/// `chan(capacity = 0)`: a channel for the VM's tasks.
+fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = if call.argument_count() == 0 {
+        0
+    } else {
+        match call.argument(0).and_then(NativeValueRef::as_i64) {
+            Ok(value) => match usize::try_from(value) {
+                Ok(value) => value,
+                Err(_) => {
+                    return call.raise(NativeError::new(
+                        "native.type",
+                        "channel capacity must not be negative or too large",
+                    ));
+                }
+            },
+            Err(error) => return call.raise(error),
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+/// `close(channel)`.
+fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
 }
 
 /// Returns each physical GPIO output this board profile permits Slug to claim.

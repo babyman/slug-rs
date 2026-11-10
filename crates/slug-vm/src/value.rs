@@ -493,7 +493,10 @@ impl Channel {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_live_native_producer(&self) -> bool {
         self.native_producer
             .get()

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Tasks run on freestanding (`no_std`) builds: the scheduler and timers
+  read a platform clock, `std`'s on hosted builds and, on embedded ones,
+  the microsecond clock a host gives the VM with `Vm::set_clock` or
+  `ArtifactHost::set_clock`. `Vm::next_timer_in` tells a host that drives
+  `poll` how long it may sleep before a timer is due. The ESP32-S3 firmware
+  builds with `concurrency`, provides `chan` and `close` in the embedded
+  `slug.builtin` contract, reads its system timer, and has a tasks demo
+  (`esp32-s3-tasks.toml`, `programs/tasks.slug`): three LEDs blinking at
+  their own pace on timers while the main task counts blinks from a channel.
+
 - The agent evaluation has a `colony` project (phase 6 of the fork plan):
   its workspace starts with a working one-core ant colony simulation whose
   module variables hold what Crawl's drawing wrote, scratch context, a memo

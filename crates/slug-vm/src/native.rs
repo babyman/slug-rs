@@ -221,7 +221,10 @@ impl NativeChannelProducer {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_external_producer(&self) -> bool {
         self.state.producer_leases.load(Ordering::Acquire) > 0 && !self.is_closed()
     }
@@ -393,7 +396,10 @@ impl NativeChannelProducer {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_external_producer(&self) -> bool {
         let state = self.state.borrow();
         state.producer_leases > 0 && !state.closed

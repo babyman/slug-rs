@@ -27,7 +27,8 @@ esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
 esp-hal = { version = "~1.2.2", features = ["esp32s3"] }
 esp-println = { version = "0.18.0", features = ["esp32s3"] }
 slug-native-adapter = { path = "../../crates/slug-native-adapter" }
-slug-vm = { path = "../../crates/slug-vm", default-features = false }
+# Tasks run cooperatively on one core: `spawn`, channels, `select`, and timers.
+slug-vm = { path = "../../crates/slug-vm", default-features = false, features = ["concurrency"] }
 
 [build-dependencies]
 slug-embedded-build = { path = "../../crates/slug-embedded-build" }

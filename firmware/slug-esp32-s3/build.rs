@@ -49,6 +49,8 @@ fn compile_target_artifact() {
             builtins.function("println", NativeArity::Variadic { minimum: 0 }, build_builtin).expect("println"),
             builtins.function("len", NativeArity::Exact(1), build_builtin).expect("len"),
             builtins.function("keys", NativeArity::Exact(1), build_builtin).expect("keys"),
+            builtins.function("chan", NativeArity::Range { minimum: 0, maximum: 1 }, build_builtin).expect("chan"),
+            builtins.function("close", NativeArity::Exact(1), build_builtin).expect("close"),
         ])
         .expect("compile target artifact");
     for input in artifact.inputs {

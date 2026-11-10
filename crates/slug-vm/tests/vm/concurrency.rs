@@ -23,6 +23,46 @@ fn host_driven_execution_stalls_without_waiting_then_observes_a_due_timer() {
 }
 
 #[test]
+fn a_stalled_host_learns_how_long_until_the_next_timer() {
+    let program = compile(
+        "host-driven-deadline.slug",
+        "select { after 80 }\nselect { after 0 }\n7\n",
+    )
+    .expect("compile host-driven deadline source");
+    let mut vm = Vm::new();
+    assert_eq!(vm.next_timer_in(), None, "nothing is waiting yet");
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    let wait = vm
+        .next_timer_in()
+        .expect("the stalled program waits on a timer");
+    assert!(
+        wait > std::time::Duration::from_millis(40) && wait <= std::time::Duration::from_millis(80),
+        "the wait is what is left of 80 ms: {wait:?}"
+    );
+
+    // A host that sleeps for that long, as a freestanding one would until
+    // its timer interrupt, then finds the program done.
+    std::thread::sleep(wait);
+    loop {
+        match vm.run_until_stalled() {
+            VmProgress::Completed(value) => {
+                assert_eq!(value, Value::Int(7));
+                break;
+            }
+            VmProgress::Stalled => {
+                let wait = vm.next_timer_in().expect("still waiting on a timer");
+                assert!(wait < std::time::Duration::from_millis(20), "{wait:?}");
+                std::thread::sleep(wait);
+            }
+            other => panic!("unexpected progress {other:?}"),
+        }
+    }
+    assert_eq!(vm.next_timer_in(), None, "no timer is left");
+}
+
+#[test]
 fn host_driven_execution_drains_native_ingress_without_producer_reentry() {
     struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
 

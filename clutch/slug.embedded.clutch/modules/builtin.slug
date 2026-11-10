@@ -1,9 +1,9 @@
 /**
- * slug.builtin — the non-concurrent foundation supplied by embedded hosts.
+ * slug.builtin — the foundation supplied by embedded hosts.
  *
- * cfg, int, and stacktrace are VM builtins. This selected host contract
- * deliberately omits chan and close while the embedded concurrency profile
- * remains unavailable.
+ * cfg, int, and stacktrace are VM builtins. Tasks (`spawn`, `select`, and
+ * timers) run on the host's single core, cooperatively; `fork` runs its
+ * tasks one at a time there too.
  */
 
 /**
@@ -37,3 +37,17 @@ export foreign len = fn(value:str|bytes|list|map):num
  * order. Each key keeps its value type.
  */
 export foreign keys = fn(m:map):list
+
+/**
+ * Creates a channel with an optional non-negative buffer capacity.
+ *
+ * A zero-capacity channel rendezvouses senders and receivers; a positive
+ * capacity queues that many values before a sender blocks.
+ */
+export foreign chan = fn<T>(capacity:num = 0):chan<T>
+
+/**
+ * Closes a channel. Closing is idempotent; receivers return `nil` after any
+ * values already queued.
+ */
+export foreign close = fn<T>(channel:chan<T>):nil

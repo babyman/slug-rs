@@ -12,6 +12,11 @@ use crate::value::Channel;
 /// Slug tasks, nurseries, or timer policy so a slim VM can own it directly.
 pub(super) struct ProgressDriver {
     native_channels: RefCell<Vec<Weak<Channel>>>,
+    /// The host's monotonic clock in microseconds, for timers: a
+    /// freestanding build has no clock of its own. Until the host sets one,
+    /// time stands still.
+    #[cfg(target_os = "none")]
+    clock: core::cell::Cell<fn() -> u64>,
     signal: Arc<ProgressSignal>,
     #[cfg(not(target_os = "none"))]
     blocking_waiter: BlockingProgressWaiter,
@@ -38,6 +43,8 @@ impl ProgressDriver {
         let blocking_waiter = signal.blocking_waiter();
         Self {
             native_channels: RefCell::new(Vec::new()),
+            #[cfg(target_os = "none")]
+            clock: core::cell::Cell::new(|| 0),
             signal,
             #[cfg(not(target_os = "none"))]
             blocking_waiter,
@@ -136,7 +143,28 @@ impl ProgressDriver {
         native
     }
 
-    #[cfg(not(target_os = "none"))]
+    /// Now, for timers.
+    #[cfg(any(feature = "concurrency", feature = "metrics"))]
+    #[cfg_attr(
+        not(target_os = "none"),
+        allow(clippy::unused_self, reason = "hosted builds read std's clock")
+    )]
+    pub(super) fn now(&self) -> crate::platform::Instant {
+        #[cfg(not(target_os = "none"))]
+        return crate::platform::Instant::now();
+        #[cfg(target_os = "none")]
+        crate::platform::Instant::from_micros((self.clock.get())())
+    }
+
+    #[cfg(target_os = "none")]
+    pub(super) fn set_clock(&self, clock: fn() -> u64) {
+        self.clock.set(clock);
+    }
+
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(super) fn has_live_native_source(&self) -> bool {
         self.native_channels()
             .iter()
@@ -170,7 +198,7 @@ impl ProgressDriver {
     }
 
     /// Freestanding hosts must return to their event loop rather than block.
-    #[cfg(target_os = "none")]
+    #[cfg(all(target_os = "none", not(feature = "concurrency")))]
     pub(super) fn wait_for_progress(&self) -> bool {
         false
     }

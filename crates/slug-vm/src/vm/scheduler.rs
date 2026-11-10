@@ -1,5 +1,6 @@
 use crate::sync::Rc;
-use std::{cell::RefCell, collections::VecDeque, time::Instant};
+use alloc::{collections::VecDeque, vec::Vec};
+use core::cell::RefCell;
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;
@@ -210,8 +211,37 @@ impl Nursery {
         native_progress || task_progress || timer_progress
     }
 
+    /// Blocking-adapter wait only, on a freestanding host, which cannot
+    /// sleep: spins until a timer is due or a native producer sends. Core VM
+    /// progress must use [`Self::make_available_progress`], and hosts that
+    /// can sleep use `Vm::next_timer_in`.
+    #[cfg(target_os = "none")]
+    pub(super) fn wait_for_progress(&self) -> bool {
+        loop {
+            if self.make_available_progress() {
+                return true;
+            }
+            if self.timers.borrow().next_deadline().is_none()
+                && !self.progress.has_live_native_source()
+            {
+                // A producer may have sent, closed, and released since the
+                // drain above; whatever it sent before closing is queued.
+                return self.progress.make_available_progress();
+            }
+            core::hint::spin_loop();
+        }
+    }
+
+    /// How long until the next timer is due: zero when one is, and `None`
+    /// with no timer pending.
+    pub(super) fn next_timer_in(&self) -> Option<core::time::Duration> {
+        let deadline = self.timers.borrow().next_deadline()?;
+        Some(deadline.saturating_duration_since(self.progress.now()))
+    }
+
     /// Blocking-adapter wait only. Core VM progress must use
     /// [`Self::make_available_progress`].
+    #[cfg(not(target_os = "none"))]
     pub(super) fn wait_for_progress(&self) -> bool {
         if self.make_available_progress() {
             return true;
@@ -236,13 +266,15 @@ impl Nursery {
             // above; whatever it sent before closing is queued by now.
             return self.progress.make_available_progress();
         }
-        let timeout = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let timeout =
+            deadline.map(|deadline| deadline.saturating_duration_since(self.progress.now()));
         #[cfg(feature = "metrics")]
-        let wait_started = Instant::now();
+        let wait_started = self.progress.now();
         self.progress.wait(observed, timeout);
         #[cfg(feature = "metrics")]
         {
-            self.metrics.borrow_mut().scheduler_wait_time += wait_started.elapsed();
+            self.metrics.borrow_mut().scheduler_wait_time +=
+                self.progress.now().saturating_duration_since(wait_started);
         }
         true
     }
@@ -290,7 +322,7 @@ impl Nursery {
     }
 
     pub(super) fn wake_due_timers(&self) -> bool {
-        let due = self.timers.borrow_mut().take_due();
+        let due = self.timers.borrow_mut().take_due(self.progress.now());
         let woke = !due.is_empty();
         for waiter in due {
             waiter.resume(Ok(Value::Nil));

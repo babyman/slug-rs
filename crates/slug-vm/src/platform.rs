@@ -7,6 +7,38 @@
 #[cfg(not(target_os = "none"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 
+/// A point in time for timers: `std`'s monotonic clock on hosted builds.
+#[cfg(all(
+    not(target_os = "none"),
+    any(feature = "concurrency", feature = "metrics")
+))]
+pub(crate) use std::time::Instant;
+
+/// A point in time for timers on a freestanding host: microseconds on the
+/// clock it gives the VM (`Vm::set_clock`), which must not go backwards.
+#[cfg(all(target_os = "none", any(feature = "concurrency", feature = "metrics")))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Instant(u64);
+
+#[cfg(all(target_os = "none", any(feature = "concurrency", feature = "metrics")))]
+impl Instant {
+    pub(crate) const fn from_micros(micros: u64) -> Self {
+        Self(micros)
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn checked_add(self, duration: core::time::Duration) -> Option<Self> {
+        u64::try_from(duration.as_micros())
+            .ok()
+            .and_then(|micros| self.0.checked_add(micros))
+            .map(Self)
+    }
+
+    pub(crate) fn saturating_duration_since(self, earlier: Self) -> core::time::Duration {
+        core::time::Duration::from_micros(self.0.saturating_sub(earlier.0))
+    }
+}
+
 #[cfg(target_os = "none")]
 pub(crate) use alloc::collections::{BTreeMap as HashMap, BTreeSet as HashSet};
 

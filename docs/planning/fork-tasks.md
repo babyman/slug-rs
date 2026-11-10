@@ -387,6 +387,18 @@ thread to about 3.7 s on eight); channel throughput with and without
   firmware and drive each worker with `Vm::poll`. Single-core targets build
   without `threads`.
 
+Tasks on `no_std` (2026-11-09). `platform::Instant` is `std`'s on hosted
+builds and, on `target_os = "none"`, microseconds on a clock the host gives
+each VM (`Vm::set_clock`, `ArtifactHost::set_clock`; the VM's tasks share it
+through the progress driver). Timers take "now" from it. The blocking
+adapter spins on a freestanding host until a timer is due or a native
+producer sends; hosts that drive `poll` themselves ask `Vm::next_timer_in`
+how long they may sleep. `slug-vm` keeps no dependencies. The ESP32-S3
+firmware builds with `concurrency`, provides `chan` and `close`, reads the
+system timer, and `esp32-s3-tasks.toml` runs three blinking tasks and a
+counter on one core (CI checks it). Firmware text grows 55 KB (407 to 463
+KB); static RAM is unchanged. Not yet run on the board.
+
 ### Phase 6: Crawl and evaluation
 
 Draw Crawl's pages in forks on threads and measure the 1000-player server

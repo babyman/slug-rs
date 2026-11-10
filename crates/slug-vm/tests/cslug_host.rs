@@ -42,6 +42,26 @@ fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+fn embedded_chan(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = if call.argument_count() == 0 {
+        0
+    } else {
+        match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => usize::try_from(value).unwrap_or(0),
+            Err(error) => return call.raise(error),
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn embedded_close(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
+}
+
 fn embedded_len(call: &mut NativeCall<'_>) -> NativeStatus {
     let value = match call.argument(0) {
         Ok(value) => value,
@@ -116,6 +136,19 @@ fn register_embedded_builtins(host: &cslug::ArtifactHost) {
         builtins
             .function("keys", NativeArity::Exact(1), returns_nil)
             .expect("valid keys function"),
+        builtins
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                embedded_chan,
+            )
+            .expect("valid chan function"),
+        builtins
+            .function("close", NativeArity::Exact(1), embedded_close)
+            .expect("valid close function"),
     ] {
         host.register_builtin(function)
             .expect("register embedded builtin");
@@ -330,6 +363,33 @@ fn firmware_artifact_executes_implicit_and_explicit_builtin_calls() {
     assert_eq!(
         artifact.run().expect("embedded builtin users execute"),
         Value::Int(5)
+    );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn firmware_artifact_runs_tasks_on_channels_and_timers() {
+    let artifact = firmware_host()
+        .compile_artifact(
+            "firmware-tasks.slug",
+            "val main = fn() {\n\
+                 val results = chan(2)\n\
+                 spawn { select { after 5 }; select { send results, 2 } }\n\
+                 spawn { select { send results, 1 } }\n\
+                 val first = select { recv results }\n\
+                 val second = select { recv results }\n\
+                 close(results)\n\
+                 first * 10 + second\n\
+             }\n",
+        )
+        .expect("compile embedded task users");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
+    register_embedded_builtins(&artifact);
+
+    assert_eq!(
+        artifact.run().expect("embedded tasks execute"),
+        Value::Int(12)
     );
 }
 
