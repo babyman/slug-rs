@@ -436,6 +436,10 @@ import(...)`, a map of bindings) are immortal with its code, and a native
 call borrows its member key. 1000 pages: 1.26 s to 0.98 s on eight forks,
 0.92 s on 32 (4.1x one fork, from 3x); atomic updates fell from 16% of the
 forks' samples to 5%, now nearly all the snapshot's data (`players`).
+With f7c695a (`val` data immortal) reapplied on top, nothing changes
+(eight forks 0.90/0.92 s against 0.88/0.92 s; one fork 1% slower): its
+earlier gain here was the import maps, which no longer need the data walk.
+It stays reverted.
 
 ## Decisions (2026-11-07)
 
