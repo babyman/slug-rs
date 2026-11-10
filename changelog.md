@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A `nursery` no longer runs its body and children to the end inside the
+  instruction that starts it. The task that starts one suspends until its
+  body settles, as it would awaiting a task, and the body, once it returns,
+  suspends until its children settle; every nursery shares one scheduler.
+  So `Vm::poll` never blocks in a nursery waiting for a timer or a channel,
+  and tasks outside a nursery keep running while it waits
+  (`fork/nursery-waits-without-blocking`; before, they waited for the
+  nursery to finish). A task cancelled while it waits in a nursery cancels
+  the nursery's body and children too, which before ran on unowned
+  (`fork/nursery-cancelled-with-its-task`). Fail-fast settlement is told
+  when a child fails instead of rescanning every child after each turn, and
+  wakes the body ahead of the siblings it cancels.
+
 - Forks take turns on builds without `threads`, such as embedded ones: a
   fork busy computing yields after 10,000 calls, returns, or `recur`s, so a
   failing sibling runs and cancels it, as it would on another core

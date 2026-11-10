@@ -407,12 +407,15 @@ starved its siblings on cooperative builds, so `cancel-busy` and
 Fixed: forks yield after 10,000 calls, returns, or `recur`s, while the
 scheduler holds their domain so one fork's tasks never interleave; `spawn`
 keeps its run-until-suspended semantics, which programs such as Crawl rely
-on. Settlement now checks for a child's failure between turns. Open from the
-same review: an explicit nursery's body runs to completion inside `poll`,
-blocking on its timers (a host-driven `poll` of `nursery { select { after
-300 } }` took 304 ms), to fix by making the body resumable; settlement's
-failure scan is still per index; fork admission has two dispatch paths; and
-an island receives a whole `Vm` and overwrites its parent-owned fields.
+on. Settlement now checks for a child's failure between turns. Also fixed:
+an explicit nursery's body ran to completion inside `poll`, blocking on its
+timers (a host-driven `poll` of `nursery { select { after 300 } }` took 304
+ms). The starting task now suspends on the body as on an await, the body
+suspends until its children settle, and every nursery shares the parent's
+ready queue and timers; a child's failure is reported to its nursery rather
+than found by a per-index scan. Open from the same review: fork admission has
+two dispatch paths, and an island receives a whole `Vm` and overwrites its
+parent-owned fields.
 
 ### Phase 6: Crawl and evaluation
 

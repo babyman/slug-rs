@@ -4,24 +4,25 @@ use core::cell::RefCell;
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;
-use crate::{RuntimeError, Value, value::Task};
+use crate::{
+    RuntimeError, Value,
+    value::{NurseryWatch, Task},
+};
 
 use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-/// How a nursery settles a failed child. Either policy cancels pending
-/// children when the owner's body fails.
-pub(super) enum SettlementPolicy {
-    /// The root: an unobserved child failure is reported once every task has
-    /// settled.
-    Join,
-    /// An explicit nursery: the first unobserved child failure cancels the
-    /// remaining children.
-    FailFast,
-}
-
+/// The tasks a root, or an explicit `nursery`, started, and how it settles
+/// them. Either kind cancels pending children when the owner's body fails.
+///
+/// One scheduler runs every nursery of a VM: an explicit nursery shares its
+/// parent's ready queue and timers, so a host's `poll` makes progress on
+/// all of them, and none ever waits for another to finish.
 pub(super) struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
+    /// An explicit nursery's: the first unobserved child failure cancels the
+    /// remaining children. The root, without one, reports an unobserved
+    /// child failure once every task has settled.
+    watch: Option<Rc<NurseryWatch>>,
     /// A fork that yielded mid-turn, on a build that runs forks
     /// cooperatively: until it runs again, no other task of its fork domain
     /// may, as on an island, where they would never interleave.
@@ -29,12 +30,8 @@ pub(super) struct Nursery {
         feature = "concurrency",
         not(all(feature = "threads", not(target_os = "none")))
     ))]
-    yielded: RefCell<Option<Rc<Task>>>,
-    /// Whether a task this nursery ran has failed since settlement last
-    /// looked, so it checks for an unobserved failure only then.
-    child_failed: core::cell::Cell<bool>,
+    yielded: Rc<RefCell<Option<Rc<Task>>>>,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
-    policy: SettlementPolicy,
     timers: Rc<RefCell<TimerService>>,
     progress: Rc<ProgressDriver>,
     #[cfg(feature = "metrics")]
@@ -46,41 +43,15 @@ impl Nursery {
         progress: Rc<ProgressDriver>,
         #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
     ) -> Self {
-        Self::new(
-            SettlementPolicy::Join,
-            progress,
-            #[cfg(feature = "metrics")]
-            metrics,
-        )
-    }
-
-    pub(super) fn explicit(
-        progress: Rc<ProgressDriver>,
-        #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
-    ) -> Self {
-        Self::new(
-            SettlementPolicy::FailFast,
-            progress,
-            #[cfg(feature = "metrics")]
-            metrics,
-        )
-    }
-
-    fn new(
-        policy: SettlementPolicy,
-        progress: Rc<ProgressDriver>,
-        #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
-    ) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            watch: None,
             #[cfg(all(
                 feature = "concurrency",
                 not(all(feature = "threads", not(target_os = "none")))
             ))]
-            yielded: RefCell::new(None),
-            child_failed: core::cell::Cell::new(false),
+            yielded: Rc::new(RefCell::new(None)),
             ready: Rc::new(RefCell::new(VecDeque::new())),
-            policy,
             timers: Rc::new(RefCell::new(TimerService::new(
                 #[cfg(feature = "metrics")]
                 metrics.clone(),
@@ -88,6 +59,25 @@ impl Nursery {
             progress,
             #[cfg(feature = "metrics")]
             metrics,
+        }
+    }
+
+    /// An explicit `nursery` started in a task of `parent`'s, run by the
+    /// same scheduler.
+    pub(super) fn explicit(parent: &Self) -> Self {
+        Self {
+            tasks: RefCell::new(Vec::new()),
+            watch: Some(Rc::new(NurseryWatch::default())),
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            yielded: parent.yielded.clone(),
+            ready: parent.ready.clone(),
+            timers: parent.timers.clone(),
+            progress: parent.progress.clone(),
+            #[cfg(feature = "metrics")]
+            metrics: parent.metrics.clone(),
         }
     }
 
@@ -105,6 +95,9 @@ impl Nursery {
     }
 
     pub(super) fn add_task(&self, task: Rc<Task>) {
+        if let Some(watch) = &self.watch {
+            task.join(watch.clone());
+        }
         self.tasks.borrow_mut().push(task.clone());
         let mut ready = self.ready.borrow_mut();
         ready.push_back(task);
@@ -149,8 +142,42 @@ impl Nursery {
         }
     }
 
-    pub(super) fn run_task(&self, task: &Task) {
-        while task.is_pending() && self.make_progress() {}
+    /// Settles an explicit nursery's body, which returned `result`, once
+    /// its children allow: `None` while one is still pending, when the body
+    /// suspends to wait for them.
+    pub(super) fn settle_body(
+        &self,
+        result: &Result<Value, RuntimeError>,
+        cancellation: &RuntimeError,
+    ) -> Option<Result<Value, RuntimeError>> {
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.cancel_all(cancellation);
+                return Some(Err(error.clone()));
+            }
+        };
+        let watch = self.watch.as_ref()?;
+        // Only a child's failure since the last look can fail it fast, so
+        // the children are scanned once per failure, not once per wake.
+        if watch.take_failed()
+            && let Some(error) = self.first_unobserved_error()
+        {
+            self.cancel_all(cancellation);
+            return Some(Err(error));
+        }
+        if watch.pending() == 0 {
+            return Some(
+                self.first_unobserved_error()
+                    .map_or_else(|| Ok(value.clone()), Err),
+            );
+        }
+        None
+    }
+
+    /// The watch on this explicit nursery's children.
+    pub(super) fn watch(&self) -> Option<&Rc<NurseryWatch>> {
+        self.watch.as_ref()
     }
 
     pub(super) fn settle(
@@ -176,14 +203,15 @@ impl Nursery {
         }
     }
 
-    /// Attempts nursery settlement using only work already available to the
-    /// current host turn. `None` means that a task is still pending.
+    /// Attempts the root's settlement using only work already available to
+    /// the current host turn. `None` means that a task is still pending.
     pub(super) fn settle_available(
         &self,
         result: &Result<Value, RuntimeError>,
         cancellation: &RuntimeError,
     ) -> Option<Result<Value, RuntimeError>> {
-        // A failed body cancels its pending children under either policy:
+        // A failed body cancels its pending children, as an explicit
+        // nursery's does:
         // nothing can await them any more, and the root would otherwise wait
         // indefinitely on a task served by a live native producer.
         if let Err(error) = result {
@@ -198,23 +226,7 @@ impl Nursery {
             let Some(task) = self.tasks.borrow().get(index).cloned() else {
                 break;
             };
-            // A child that keeps the scheduler busy must not hide a
-            // sibling's failure, so it is looked for between turns.
-            while task.is_pending() && self.make_available_progress() {
-                if self.policy == SettlementPolicy::FailFast
-                    && self.child_failed.replace(false)
-                    && let Some(error) = self.first_unobserved_error()
-                {
-                    self.cancel_all(cancellation);
-                    return Some(Err(error));
-                }
-            }
-            if self.policy == SettlementPolicy::FailFast
-                && let Some(error) = self.first_unobserved_error()
-            {
-                self.cancel_all(cancellation);
-                return Some(Err(error));
-            }
+            while task.is_pending() && self.make_available_progress() {}
             if task.is_pending() {
                 return None;
             }
@@ -323,12 +335,7 @@ impl Nursery {
             return true;
         };
         match run.run() {
-            TaskRunOutcome::Settled(result) => {
-                if result.is_err() {
-                    self.child_failed.set(true);
-                }
-                next.complete(&result);
-            }
+            TaskRunOutcome::Settled(result) => next.complete(&result),
             TaskRunOutcome::Suspended(mut execution) => {
                 #[cfg(all(
                     feature = "concurrency",
@@ -336,7 +343,12 @@ impl Nursery {
                 ))]
                 let yielded = execution.yielded();
                 let wait_registration = execution.take_wait_registration();
+                let settling = execution.settling_watch();
                 next.suspend(*execution, wait_registration);
+                // A nursery's body waits for its children to settle.
+                if let Some(watch) = settling {
+                    watch.wait(next.clone());
+                }
                 #[cfg(all(
                     feature = "concurrency",
                     not(all(feature = "threads", not(target_os = "none")))

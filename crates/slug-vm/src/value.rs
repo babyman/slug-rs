@@ -250,6 +250,15 @@ pub(crate) enum WaitRegistration {
     ChannelReceive(Rc<Channel>),
     #[cfg(feature = "concurrency")]
     TaskAwait(Rc<Task>),
+    /// A task waiting in a `nursery` for its body to settle. Leaving that
+    /// wait other than by the body's settling, as when the task is
+    /// cancelled, cancels the body and its children: nothing can settle
+    /// them any more.
+    #[cfg(feature = "concurrency")]
+    Nursery {
+        body: Rc<Task>,
+        cancel: Rc<dyn Fn()>,
+    },
     #[cfg(feature = "concurrency")]
     Timer(crate::vm::timers::TimerRegistration),
 }
@@ -297,6 +306,15 @@ impl WaitRegistration {
                     metrics.peak_task_waiters = metrics.peak_task_waiters.max(state.waiters.len());
                 }
                 state.waiters.retain(|candidate| !candidate.is_same(waiter));
+            }
+            #[cfg(feature = "concurrency")]
+            Self::Nursery { body, cancel } => {
+                body.state
+                    .borrow_mut()
+                    .waiters
+                    .retain(|candidate| !candidate.is_same(waiter));
+                // A settled body has no children left to cancel.
+                cancel();
             }
             #[cfg(feature = "concurrency")]
             Self::Timer(registration) => registration.remove(waiter),
@@ -862,6 +880,52 @@ struct TaskState {
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     waiters: Vec<Waiter>,
     wait_registration: Option<WaitSet>,
+    /// The explicit nursery this task is a child of, told when it settles.
+    watch: Option<Rc<NurseryWatch>>,
+}
+
+/// What the body of an explicit nursery, once it has returned, waits on:
+/// its children all settling, or one failing, which may fail it fast.
+#[cfg(feature = "concurrency")]
+#[derive(Default)]
+pub(crate) struct NurseryWatch {
+    pending: Cell<usize>,
+    failed: Cell<bool>,
+    settling: RefCell<Option<Rc<Task>>>,
+}
+
+#[cfg(feature = "concurrency")]
+impl NurseryWatch {
+    /// How many children have yet to settle.
+    pub(crate) fn pending(&self) -> usize {
+        self.pending.get()
+    }
+
+    /// Whether a child has failed since the last call.
+    pub(crate) fn take_failed(&self) -> bool {
+        self.failed.replace(false)
+    }
+
+    /// Wakes `body`, suspended to settle, once a child fails or the last
+    /// one settles.
+    pub(crate) fn wait(&self, body: Rc<Task>) {
+        *self.settling.borrow_mut() = Some(body);
+    }
+
+    fn settled(&self, failed: bool) {
+        self.pending.set(self.pending.get().saturating_sub(1));
+        if failed {
+            self.failed.set(true);
+        }
+        if failed || self.pending.get() == 0 {
+            let body = self.settling.borrow_mut().take();
+            if let Some(body) = body {
+                // Ahead of every sibling, which a failure may cancel before
+                // it runs, as when settlement looked between turns.
+                body.resume_at(Ok(Value::Nil), failed);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "concurrency")]
@@ -931,6 +995,7 @@ impl Task {
                 ready,
                 waiters: Vec::new(),
                 wait_registration: None,
+                watch: None,
             })),
             domain: 0,
         }
@@ -944,6 +1009,12 @@ impl Task {
 
     pub(crate) fn domain(&self) -> u32 {
         self.domain
+    }
+
+    /// Makes this task a child its explicit nursery waits on.
+    pub(crate) fn join(&self, watch: Rc<NurseryWatch>) {
+        watch.pending.set(watch.pending.get() + 1);
+        self.state.borrow_mut().watch = Some(watch);
     }
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
@@ -1012,9 +1083,13 @@ impl Task {
         state.phase = TaskPhase::Settled(outcome.clone());
         release_admission(&mut state);
         let waiters = mem::take(&mut state.waiters);
+        let watch = state.watch.take();
         drop(state);
         for waiter in waiters {
             waiter.resume(outcome.clone());
+        }
+        if let Some(watch) = watch {
+            watch.settled(outcome.is_err());
         }
     }
 
@@ -1042,9 +1117,15 @@ impl Task {
         state.wait_registration = None;
         release_admission(&mut state);
         let waiters = mem::take(&mut state.waiters);
+        let watch = state.watch.take();
         drop(state);
+        // Waiters first: one that observes the outcome keeps a failure from
+        // failing the nursery fast.
         for waiter in waiters {
             waiter.resume(outcome.clone());
+        }
+        if let Some(watch) = watch {
+            watch.settled(outcome.is_err());
         }
     }
 
@@ -1092,6 +1173,11 @@ impl Task {
     }
 
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        self.resume_at(result, false);
+    }
+
+    /// Resumes the task, at the front of its ready queue when `first`.
+    fn resume_at(&self, result: Result<Value, crate::RuntimeError>, first: bool) {
         let mut state = self.state.borrow_mut();
         let wait_registration = state.wait_registration.take();
         let TaskPhase::Pending(execution) = &mut state.phase else {
@@ -1103,7 +1189,12 @@ impl Task {
         if let Some(wait_registration) = wait_registration {
             wait_registration.remove_losers(self);
         }
-        ready.borrow_mut().push_back(Rc::new(self.clone()));
+        let task = Rc::new(self.clone());
+        if first {
+            ready.borrow_mut().push_front(task);
+        } else {
+            ready.borrow_mut().push_back(task);
+        }
     }
 
     pub(crate) fn reject_closed_send(&self) {
@@ -1167,6 +1258,7 @@ impl Task {
         let wait_registration = state.wait_registration.take();
         let waiters = mem::take(&mut state.waiters);
         let ready = state.ready.clone();
+        let watch = state.watch.take();
         state.phase = TaskPhase::Settled(Err(error.clone()));
         release_admission(&mut state);
         drop(state);
@@ -1178,6 +1270,9 @@ impl Task {
         }
         for waiter in waiters {
             waiter.resume(Err(error.clone()));
+        }
+        if let Some(watch) = watch {
+            watch.settled(true);
         }
     }
 

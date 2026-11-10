@@ -1441,7 +1441,9 @@ task therefore first drives earlier ready siblings.
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved
 child failure and logically cancels siblings. Cancellation settles a task with
-an error but does not forcibly interrupt a host thread. After a successful
+an error but does not forcibly interrupt a host thread. A task cancelled while
+it waits for a nursery's body cancels that nursery, its body and children
+with it. While a nursery waits, tasks outside it continue to run. After a successful
 body, the root nursery joins its descendants before program completion.
 
 A spawned task snapshots its immediate lexical bindings. Subsequent parent

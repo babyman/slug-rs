@@ -23,6 +23,32 @@ fn host_driven_execution_stalls_without_waiting_then_observes_a_due_timer() {
 }
 
 #[test]
+fn host_driven_nursery_waits_for_its_children_without_blocking_the_host() {
+    let program = compile(
+        "host-driven-nursery.slug",
+        "nursery { spawn { select { after 50 } }; nursery { select { after 50 } } }\n42\n",
+    )
+    .expect("compile host-driven nursery source");
+    let mut vm = Vm::new();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+
+    let started = std::time::Instant::now();
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(20),
+        "a nursery must not wait for its children inside poll"
+    );
+    assert!(vm.next_timer_in().is_some(), "its children wait on timers");
+
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    assert!(matches!(
+        vm.run_until_stalled(),
+        VmProgress::Completed(Value::Int(42))
+    ));
+}
+
+#[test]
 fn a_stalled_host_learns_how_long_until_the_next_timer() {
     let program = compile(
         "host-driven-deadline.slug",

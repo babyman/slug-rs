@@ -1,0 +1,16 @@
+// Nested nurseries share one scheduler: while one waits for its children,
+// the tasks outside it carry on, in the order they are ready.
+val main = fn() {
+    val outside = spawn {
+        select { after 20 }
+        println("outside, while the nursery waits")
+        1
+    }
+    val inner = nursery {
+        spawn { select { after 60 }; println("inner child") }
+        nursery { spawn { select { after 40 }; println("nested child") } }
+        2
+    }
+    println(inner)
+    println(select { await outside })
+}

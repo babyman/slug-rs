@@ -399,6 +399,8 @@ const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
 pub(crate) struct TaskExecution {
     vm: Vm,
     settle_nursery: bool,
+    /// What a nursery's body returned, while it waits for its children.
+    settling: Option<VmResult<Value>>,
     interactive_imported_globals: Option<Rc<RefCell<HashSet<String>>>>,
     /// A fork's task, whose result must be sendable.
     forked: bool,
@@ -505,25 +507,32 @@ impl TaskExecution {
     }
 
     fn run(mut self) -> TaskRunOutcome {
-        match self.vm.execute() {
-            ExecutionOutcome::Suspended => {
-                self.sync_interactive_imports();
-                TaskRunOutcome::Suspended(Box::new(self))
+        let result = if let Some(result) = self.settling.take() {
+            // Woken because a child settled, with nothing to take.
+            self.vm.resume = None;
+            result
+        } else {
+            let outcome = self.vm.execute();
+            self.sync_interactive_imports();
+            match outcome {
+                ExecutionOutcome::Suspended => return TaskRunOutcome::Suspended(Box::new(self)),
+                ExecutionOutcome::Settled(result) => result,
             }
-            ExecutionOutcome::Settled(result) => {
-                self.sync_interactive_imports();
-                let result = if self.settle_nursery {
-                    self.vm.settle_tasks(&result)
-                } else {
-                    result
-                };
-                let result = match result {
-                    Ok(value) if self.forked => self.vm.sendable_result(value),
-                    result => result,
-                };
-                TaskRunOutcome::Settled(result)
-            }
-        }
+        };
+        let result = if self.settle_nursery {
+            let Some(result) = self.vm.settle_body(&result) else {
+                self.settling = Some(result);
+                return TaskRunOutcome::Suspended(Box::new(self));
+            };
+            result
+        } else {
+            result
+        };
+        let result = match result {
+            Ok(value) if self.forked => self.vm.sendable_result(value),
+            result => result,
+        };
+        TaskRunOutcome::Settled(result)
     }
 
     fn sync_interactive_imports(&self) {
@@ -556,6 +565,12 @@ impl TaskExecution {
 
     pub(crate) fn take_wait_registration(&mut self) -> Option<WaitSet> {
         self.vm.wait_registration.take()
+    }
+
+    /// For a nursery body suspended to settle, the watch on its children.
+    pub(crate) fn settling_watch(&self) -> Option<Rc<crate::value::NurseryWatch>> {
+        self.settling.as_ref()?;
+        self.vm.nursery.watch().cloned()
     }
 }
 
@@ -1177,6 +1192,7 @@ impl Vm {
             TaskExecution {
                 vm: task_vm,
                 settle_nursery: false,
+                settling: None,
                 interactive_imported_globals: Some(imported_globals.clone()),
                 forked: false,
             },
@@ -4085,6 +4101,7 @@ impl Vm {
         let execution = TaskExecution {
             vm,
             settle_nursery: false,
+            settling: None,
             interactive_imported_globals: None,
             forked,
         };
@@ -4124,6 +4141,18 @@ impl Vm {
         );
         let blocked = self.blocked_error();
         self.nursery.settle(result, &cancellation, &blocked)
+    }
+
+    /// Settles the body of an explicit nursery, this VM's, without waiting:
+    /// `None` while a child is pending.
+    #[cfg(feature = "concurrency")]
+    fn settle_body(&self, result: &VmResult<Value>) -> Option<VmResult<Value>> {
+        let cancellation = self.error(
+            RuntimeErrorKind::Thrown,
+            "sibling cancelled due to fail-fast".into(),
+            None,
+        );
+        self.nursery.settle_body(result, &cancellation)
     }
 
     #[cfg(feature = "concurrency")]
@@ -4171,11 +4200,7 @@ impl Vm {
                 "nursery expects a function or block".into(),
             ));
         };
-        let nursery = Rc::new(Nursery::explicit(
-            self.progress.clone(),
-            #[cfg(feature = "metrics")]
-            self.metrics.clone(),
-        ));
+        let nursery = Rc::new(Nursery::explicit(&self.nursery));
         let task_program = closure.program.clone();
         let vm = self.module_closure_vm(
             task_program.clone(),
@@ -4192,25 +4217,38 @@ impl Vm {
         let execution = TaskExecution {
             vm,
             settle_nursery: true,
+            settling: None,
             interactive_imported_globals: None,
             forked: false,
         };
         let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
+        // This task waits for the body as it would `await` it, so whoever
+        // drives the scheduler, a host's `poll` among them, runs the body and
+        // its children a turn at a time instead of here until they finish.
+        let waiter = self.blocking_waiter()?;
+        body.wait_for(waiter);
         nursery.enqueue(body.clone());
-        nursery.run_task(&body);
-        if body.is_pending() {
-            let blocked = self.error_at(RuntimeErrorKind::InvalidCall, BLOCKED_TASK_MESSAGE.into());
-            nursery.cancel_all(&blocked);
-            body.cancel(&blocked);
-            return Err(blocked);
-        }
-        let value = body.outcome().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "nursery body settled without an outcome".into(),
-            )
-        })??;
-        self.stack.push(value);
+        let cancellation = self.error_at(
+            RuntimeErrorKind::Thrown,
+            "nursery cancelled with the task that started it".into(),
+        );
+        let cancel: Rc<dyn Fn()> = Rc::new({
+            let body = body.clone();
+            move || {
+                nursery.cancel_all(&cancellation);
+                body.cancel(&cancellation);
+            }
+        });
+        self.wait_registration = Some(WaitSet::many(
+            vec![WaitRegistration::Nursery { body, cancel }],
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        ));
+        self.stack.push(Value::Nil);
+        self.frames_changed();
+        self.suspension = Some(Suspension::Select {
+            span: self.owned_span(None),
+        });
         Ok(())
     }
 
