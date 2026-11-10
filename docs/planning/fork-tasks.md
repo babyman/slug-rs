@@ -441,6 +441,14 @@ With f7c695a (`val` data immortal) reapplied on top, nothing changes
 earlier gain here was the import maps, which no longer need the data walk.
 It stays reverted.
 
+Scaling work stops here (2026-11-09): what is left is near this machine's
+ceiling (four forks 3.55x, eight 4.1x on 4P+4E), and removing every
+remaining atomic update would gain at most 5-10%. Open: rerun the 1000-page
+draw on a 16-32 core machine, where contention grows. If the atomic share
+grows there, the general fix is a fused read of a module variable's entry
+(`g[k]`, `g.field`) that does not clone the container, and on Crawl's side
+one `lookAs` per page rather than one per query.
+
 ## Decisions (2026-11-07)
 
 1. **Native functions in forks** declare thread safety in the clutch

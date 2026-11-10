@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The agent evaluation has a `colony` project (phase 6 of the fork plan):
+  its workspace starts with a working one-core ant colony simulation whose
+  module variables hold what Crawl's drawing wrote, scratch context, a memo
+  cache, and counters, and agents make each tick share its work among
+  forks. Its 59 cases come from the starting module's own results, so they
+  check the simulation is unchanged on any number of forks and from spawned
+  tasks; a new `speedup` case kind times one program on one fork and on four
+  (ratio at most 0.6). The reference passes all of them at a ratio of 0.34.
+
 - Under `threads`, a module's binding cells and their names, declared
   natives' declarations, and the import maps its `val`s hold are immortal
   once it initializes, with its code: every read of an export, a

@@ -51,6 +51,17 @@ default or Claude Code, headless on small tasks, once per feature arm and severa
   are the specification's tests (v1.4.2, vendored in `spec/`) and cases for
   what `task.md` adds; each renders from text and from `parse`'s result.
   `reference/mustache.slug` is `slug.text.mustache`, withheld from these runs.
+  `colony/` is the one project that starts from code: its workspace holds a
+  working one-core ant colony simulation, `colony.slug`, whose module
+  variables hold scratch context, a memo cache, and counters written while
+  ants decide, as Crawl's did, and asks agents to share each tick among
+  forks with `fork`. Its 59 cases, written by `make_cases.py` from the
+  starting module's own results, check that every world gives the same
+  snapshots on any number of forks, from spawned tasks too, and that a bad
+  `forks` is rejected; one `speedup` case times the same program on one fork
+  and on four and needs a ratio of at most 0.6 (skipped below four cores).
+  The reference passes all of them (ratio 0.34 on 4P+4E); the starting
+  module passes 54.
   Project runs default to a $5 budget and a 45-minute timeout and
   use the coding arms.
 
