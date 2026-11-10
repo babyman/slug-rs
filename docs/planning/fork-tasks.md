@@ -449,6 +449,21 @@ grows there, the general fix is a fused read of a module variable's entry
 (`g[k]`, `g.field`) that does not clone the container, and on Crawl's side
 one `lookAs` per page rather than one per query.
 
+Agent evaluation (2026-11-09): project `colony` (eval/agent/projects/colony)
+starts from a working one-core simulation whose module vars hold what
+Crawl's drawing wrote. Codex, testing arm: a pilot (59 cases then) and three
+repeats (71 cases), all passing every case in 89-125 s, 13 turns, 4-9 slug
+runs, no failed run, so no write error ever fired; the agents read the
+spec's fork section and designed around it first. Ratios by their own
+benchmarks 0.31-0.45. Three of four reasoned about a `task var` cache going
+stale when another task starts a new world (the pilot found the gap in the
+suite and the reference's bug); one avoided it by passing each ant as a
+parameter and keeping the cache a shared `var` only the ticker writes. The
+main performance trap was where the cache lives: one repeat reached 0.58
+before seeding its forks from the shared cache. The spec now gives the
+version-number pattern for `task var` caches. The project saturates for
+Codex as the earlier ones did.
+
 ## Decisions (2026-11-07)
 
 1. **Native functions in forks** declare thread safety in the clutch

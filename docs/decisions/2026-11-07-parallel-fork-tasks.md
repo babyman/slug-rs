@@ -176,6 +176,16 @@ to apply.
 Starting strict is also the reversible choice: allowing a write that was an
 error breaks no program; making a silent write an error would.
 
+A memo cache in a `task var` has one hazard (found by the first agent run of
+the `colony` evaluation, 2026-11-09): no task can clear another task's copy.
+When what it caches can be replaced, as a new world replaces the old, the
+copy in a task that did not replace it goes stale. The language
+specification gives the pattern: a shared `var` counts replacements, and the
+cache records the count it was filled at. Crawl's `sights` is safe today
+only because its world is replaced before the server's ticker is spawned. A
+`task var` every task resets together would remove the pattern; it waits for
+a second case.
+
 ### A fork's snapshot copies the `var`s
 
 Every top-level name of a module is a binding cell, and an importer holds

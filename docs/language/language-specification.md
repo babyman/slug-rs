@@ -209,6 +209,25 @@ already shares it.
 task var acting:str|nil = nil
 ```
 
+No task can change another task's copy. A `task var` that caches what a
+shared `var` holds must therefore notice when another task replaces it: keep
+a shared `var` counting the replacements, record in another `task var` the
+count the cache was filled at, and start the cache over when they differ.
+
+```slug
+var world = 0             // counts new worlds; every task sees it
+task var seen = {}        // this task's cache of the current world
+task var seenWorld = 0    // the world `seen` belongs to
+
+val cached = fn():map {
+    if (seenWorld != world) {
+        seen = {}
+        seenWorld = world
+    }
+    seen
+}
+```
+
 A binding's type is set by its first value. A `var` has a declared type that
 every later assignment must conform to: its annotation, or else the type of
 its initializer, except for a `nil` initializer, since `nil` there means no
