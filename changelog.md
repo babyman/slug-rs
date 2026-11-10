@@ -6,10 +6,14 @@
   its workspace starts with a working one-core ant colony simulation whose
   module variables hold what Crawl's drawing wrote, scratch context, a memo
   cache, and counters, and agents make each tick share its work among
-  forks. Its 59 cases come from the starting module's own results, so they
+  forks. Its 71 cases come from the starting module's own results, so they
   check the simulation is unchanged on any number of forks and from spawned
   tasks; a new `speedup` case kind times one program on one fork and on four
-  (ratio at most 0.6). The reference passes all of them at a ratio of 0.34.
+  (ratio at most 0.6). The reference passes all of them at a ratio of 0.33.
+  The first Codex run (59 cases then) passed every case and found a gap in
+  them: a `task var` cache that another task's `start` cannot clear goes
+  stale in the task that ran the old world. Two cases now start a new world
+  from a spawned task, and the reference's cache follows a world number.
 
 - Under `threads`, a module's binding cells and their names, declared
   natives' declarations, and the import maps its `val`s hold are immortal

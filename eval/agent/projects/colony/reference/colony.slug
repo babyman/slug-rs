@@ -48,9 +48,13 @@ task var me = {}
 
 // The squares visible from each square, by "x,y": rock never changes, so
 // what a square sees never does either. A cache, so each task has its own;
-// a fork returns what it found (`learned`) for the tick to keep.
+// a fork returns what it found (`learned`) for the tick to keep. Each copy
+// belongs to one world, `cachedWorld`: `start` in any task makes a new one,
+// `world`, which every task's copy then starts over for.
 task var sightCache = {}
 task var learned = []
+task var cachedWorld = 0
+var world = 0
 
 // A number from a list of integers, the same for the same list.
 val MASK = 0xFFFFFFFF
@@ -101,6 +105,7 @@ val peek = fn(id:str, body:fn) {
  */
 export val start = fn(seed:num, w:num, h:num, count:num) {
     gen = random.generator(seed)
+    world = world + 1
     width = w
     height = h
     nest = {x: math.div(w, 2), y: math.div(h, 2)}
@@ -134,7 +139,17 @@ export val start = fn(seed:num, w:num, h:num, count:num) {
 
 // The squares visible from (x0, y0): along a ray to each square on the edge
 // of the sight box, every square up to and including the first rock.
+// Starts this task's sight cache over if it belongs to an older world.
+val currentCache = fn() {
+    if (cachedWorld != world) {
+        sightCache = {}
+        learned = []
+        cachedWorld = world
+    }
+}
+
 val sightFrom = fn(x0:num, y0:num):list {
+    currentCache()
     val key = "" + x0 + "," + y0
     match sightCache[key] {
         found: list => return found
@@ -266,6 +281,8 @@ export val tick = fn(forks:num = 1) {
     if (forks < 1 || forks != int(forks)) {
         throw Error {type: "colony.forks", msg: "forks must be an integer from 1", data: {forks: forks}}
     }
+    // The forks start from this task's cache, so it must be this world's.
+    currentCache()
     val chosen = decideAll(forks)
     val wants = map(order, fn(id) { chosen[id] })
     stats = stats copy {looks: stats.looks + len(order)}

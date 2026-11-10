@@ -57,6 +57,8 @@ WORLDS = {
     "medium": (5, 80, 40, 300),
     "one": (6, 30, 15, 1),
     "none": (7, 30, 15, 0),
+    "packed": (8, 20, 16, 120),
+    "repacked": (9, 20, 16, 120),
 }
 TICKS = 6
 OBSERVED = ["a0", "a1", "a5"]
@@ -168,6 +170,17 @@ await(starter)
 colony.run({TICKS}, 4)
 same("run", {raw(snapshots[TICKS])})
 ''')
+
+    # A new world started in another task, after this one ran a world:
+    # nothing this task remembers of the old one carries over.
+    snapshots, observes = expected["repacked"]
+    for forks in (1, 4):
+        lines = started("packed") + f"colony.run({TICKS}, {forks})\ncolony.observe(\"a0\")\n"
+        lines += f"val restart = spawn {{ {started('repacked').strip()} }}\nawait(restart)\n"
+        lines += f"same(\"restarted\", {raw(snapshots[0])})\n"
+        lines += f"colony.run({TICKS}, {forks})\nsame(\"run\", {raw(snapshots[TICKS])})\n"
+        lines += f"expect(\"observe a0\", json.stringify(colony.observe(\"a0\")), {raw(observes[0])})\n"
+        case(f"restart-in-spawned-task-forks-{forks}", lines)
 
     # Bad `forks`, which change nothing.
     snapshots, _ = expected["small"]
