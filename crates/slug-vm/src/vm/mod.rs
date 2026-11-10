@@ -654,7 +654,7 @@ impl InteractiveTask {
                         session_globals.insert(
                             name.clone(),
                             Value::Binding {
-                                name: Rc::new(crate::variables::BindingName::new(
+                                name: crate::sync::Code::new(crate::variables::BindingName::new(
                                     name.clone(),
                                     crate::variables::declared_kind(program, name),
                                 )),
@@ -1255,7 +1255,7 @@ impl Vm {
                     destination_globals.insert(
                         name.clone(),
                         Value::Binding {
-                            name: Rc::new(crate::variables::BindingName::new(
+                            name: crate::sync::Code::new(crate::variables::BindingName::new(
                                 name.clone(),
                                 crate::variables::declared_kind(program, name),
                             )),
@@ -1522,7 +1522,7 @@ impl Vm {
                     })?;
             let value = Value::DeclaredNative {
                 function,
-                declaration: Rc::new(ForeignDeclaration {
+                declaration: crate::sync::Code::new(ForeignDeclaration {
                     identity,
                     resources: resource_signature,
                 }),

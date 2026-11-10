@@ -582,7 +582,7 @@ const INDEX_THRESHOLD: usize = 32;
 /// order is a storage detail and is never observable as map semantics.
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct Map(Rc<MapStorage>);
+pub struct Map(crate::sync::Code<MapStorage>);
 
 #[derive(Clone)]
 struct MapStorage {
@@ -807,11 +807,17 @@ impl From<Vec<(Value, Value)>> for Map {
 }
 
 impl Map {
+    /// Stops counting this map's storage: a module's import map, which
+    /// lives until the program ends. Without `threads` it does nothing.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn immortalize(&self) {
+        crate::sync::immortalize(&self.0);
+    }
     /// Takes the value of the string key `name` out of a map nothing else
     /// holds, leaving `nil` in its entry, which keeps its place; `None` when
     /// the map is shared or has no such key.
     pub(crate) fn take_string_field(&mut self, name: &str) -> Option<Value> {
-        let storage = Rc::get_mut(&mut self.0)?;
+        let storage = crate::sync::Code::get_mut(&mut self.0)?;
         let position = storage.position(&Value::string(name))?;
         Some(core::mem::replace(
             &mut storage.entries[position].1,
@@ -826,7 +832,7 @@ impl Map {
         for (key, value) in entries {
             storage.insert(key, value);
         }
-        Self(Rc::new(storage))
+        Self(crate::sync::Code::new(storage))
     }
 
     /// Builds a map literal's entries in source order, or returns the first
@@ -839,14 +845,14 @@ impl Map {
             }
             storage.push_new(key, value);
         }
-        Ok(Self(Rc::new(storage)))
+        Ok(Self(crate::sync::Code::new(storage)))
     }
 
     /// Builds a map from entries whose keys are already distinct, such as a
     /// subset of another map's entries.
     pub(crate) fn from_unique(entries: Vec<(Value, Value)>) -> Self {
         let index = (entries.len() > INDEX_THRESHOLD).then(|| MapIndex::build(&entries));
-        Self(Rc::new(MapStorage { entries, index }))
+        Self(crate::sync::Code::new(MapStorage { entries, index }))
     }
 
     #[must_use]
@@ -869,7 +875,7 @@ impl Map {
 
     #[cfg(feature = "metrics")]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
-        Rc::strong_count(&self.0) == 1
+        crate::sync::Code::strong_count(&self.0) == 1
     }
 
     /// How many entries a lookup of `key` compares: one probe for an indexed
@@ -910,7 +916,7 @@ impl Map {
         for (key, value) in other.iter() {
             storage.insert(key.clone(), value.clone());
         }
-        Self(Rc::new(storage))
+        Self(crate::sync::Code::new(storage))
     }
 
     pub(crate) fn remove(self, key: &Value) -> Self {
@@ -919,7 +925,7 @@ impl Map {
         }
         let mut storage = self.into_storage();
         storage.remove(key);
-        Self(Rc::new(storage))
+        Self(crate::sync::Code::new(storage))
     }
 
     pub(crate) fn copy_string_fields(
@@ -936,7 +942,7 @@ impl Map {
         for (name, replacement) in names.iter().zip(replacements) {
             storage.insert(Value::string(name.clone()), replacement.clone());
         }
-        Ok(Self(Rc::new(storage)))
+        Ok(Self(crate::sync::Code::new(storage)))
     }
 
     pub(crate) fn equals(&self, other: &Self) -> bool {
@@ -947,7 +953,7 @@ impl Map {
     }
 
     fn into_storage(self) -> MapStorage {
-        Rc::try_unwrap(self.0).unwrap_or_else(|storage| (*storage).clone())
+        crate::sync::Code::try_unwrap(self.0).unwrap_or_else(|storage| (*storage).clone())
     }
 }
 

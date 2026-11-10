@@ -430,6 +430,13 @@ updates on objects every fork shares, mostly not game data:
 - data: the snapshot's `players` and `levels` maps, read by every fork, and
   the templates in `val`s (which f7c695a removes).
 
+Fixed for the first two (2026-11-09): a module's binding cells and names,
+declared natives' declarations, and its import maps (`val game =
+import(...)`, a map of bindings) are immortal with its code, and a native
+call borrows its member key. 1000 pages: 1.26 s to 0.98 s on eight forks,
+0.92 s on 32 (4.1x one fork, from 3x); atomic updates fell from 16% of the
+forks' samples to 5%, now nearly all the snapshot's data (`players`).
+
 ## Decisions (2026-11-07)
 
 1. **Native functions in forks** declare thread safety in the clutch

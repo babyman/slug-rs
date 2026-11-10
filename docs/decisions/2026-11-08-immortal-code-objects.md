@@ -14,7 +14,14 @@ an extension of decision 2 to the constants a program owns. List and map
 constants and `val` data stay counted: making `val` data immortal was
 measured (a `val` map read on eight forks: 0.48 s to 0.08 s; experiment 2:
 2%) and reverted, since Crawl's `val`s are nearly all functions and it
-would leave replaced data, not only code, never freed.
+would leave replaced data, not only code, never freed. Drawing Crawl's
+pages in forks on the real server (phase 6) found three more parts of a
+module's table that every read counted: its binding cells and their names
+(cloned on every read of an export or destructured import), a declared
+native's declaration, and import maps (`val game = import(...)`, cloned on
+every `game.name`). They are immortal with the module too, and a native
+call borrows its member key rather than cloning it; 1000 pages on eight
+forks went from 1.27 s to 0.98 s.
 
 ## Extends
 
@@ -60,7 +67,10 @@ Counting them achieves nothing; it only costs.
 
 1. **Immortal code.** Under `threads`, a module's code becomes immortal when
    the module finishes initializing: its programs, the closures and native
-   functions bound in its global table, and the table itself. Cloning or
+   functions bound in its global table, and the table itself, with the
+   table's binding cells and their names, declared natives' declarations,
+   and the import maps its `val`s hold (maps whose every value is a module
+   binding). Cloning or
    dropping an immortal object reads its count and does nothing else. Every
    core can keep the line in its cache, as it does any data no one writes.
 2. **Code only, not data.** Values a module's `val`s hold (strings, maps,
@@ -69,8 +79,9 @@ Counting them achieves nothing; it only costs.
    scaling. A later record may extend immortality to `val` data if a
    measurement asks for it.
 3. **One pointer type.** `slug_vm::sync` gains a reference-counted pointer
-   for the four immortal-capable types (`Program`, `Closure`, the global
-   table, and a native function's inner state), with a count whose top bit
+   for the immortal-capable types (`Program`, `Closure`, the global table,
+   and a native function's inner state; since phase 6 also binding cells
+   and names, foreign declarations, and map storage), with a count whose top bit
    marks immortality. It replaces `Arc` for those types only; every other
    value keeps `Arc`, and builds without `threads` keep `Rc` everywhere.
    Its `unsafe` (allocation, dereference, release) stays in that one module,

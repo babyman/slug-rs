@@ -700,7 +700,7 @@ impl Drop for Channel {
 }
 
 /// Shared storage for a lexical binding captured by one or more closures.
-pub(crate) type BindingCell = Rc<crate::sync::SoloCell<Value>>;
+pub(crate) type BindingCell = crate::sync::Code<crate::sync::SoloCell<Value>>;
 pub(crate) type GlobalEnvironment = crate::sync::Code<crate::sync::SoloCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
@@ -747,7 +747,7 @@ impl GlobalTable {
         }
         let cell = binding_cell(core::mem::replace(value, Value::Nil));
         *value = Value::Binding {
-            name: Rc::new(crate::variables::BindingName::new(name.clone(), kind)),
+            name: crate::sync::Code::new(crate::variables::BindingName::new(name.clone(), kind)),
             cell: cell.clone(),
         };
         Some(cell)
@@ -806,11 +806,11 @@ pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
-    Rc::new(crate::sync::SoloCell::new(value))
+    crate::sync::Code::new(crate::sync::SoloCell::new(value))
 }
 
 pub(crate) fn module_binding(name: impl Into<String>) -> Value {
-    let name = Rc::new(crate::variables::BindingName::new(
+    let name = crate::sync::Code::new(crate::variables::BindingName::new(
         name.into(),
         crate::variables::BindingKind::default(),
     ));
@@ -1284,7 +1284,7 @@ pub enum Value {
     /// A host callable paired with the source declaration's private identity.
     DeclaredNative {
         function: NativeFunction,
-        declaration: Rc<ForeignDeclaration>,
+        declaration: crate::sync::Code<ForeignDeclaration>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -1294,7 +1294,7 @@ pub enum Value {
     Binding {
         /// The binding's name and kind, shared by every module that imports
         /// it.
-        name: Rc<crate::variables::BindingName>,
+        name: crate::sync::Code<crate::variables::BindingName>,
         cell: BindingCell,
     },
 }

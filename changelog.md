@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Under `threads`, a module's binding cells and their names, declared
+  natives' declarations, and the import maps its `val`s hold are immortal
+  once it initializes, with its code: every read of an export, a
+  destructured import, or `game.name` cloned them, and forks on other cores
+  contended on their counts. Map storage is a `slug_vm::Code` (which gains
+  `try_unwrap`), and a native call borrows its member key rather than
+  cloning it. Crawl's 1000 pages on eight forks: 1.26 s to 0.98 s, 0.92 s
+  on 32, 4.1x one fork.
+
 - Crawl's server can draw its pages in forks (`serve`'s `forks` option,
   `web.drawInForks`, `play.slug --forks=N`), the first real use of `fork`.
   Each tick, every nth present player goes to each of n forks, which find

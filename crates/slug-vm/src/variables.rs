@@ -94,7 +94,7 @@ pub(crate) enum VarKey {
 #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
 impl VarKey {
     pub(crate) fn cell(cell: &BindingCell) -> Self {
-        Self::Cell(Rc::as_ptr(cell).cast::<()>() as usize)
+        Self::Cell(crate::sync::Code::as_ptr(cell).cast::<()>() as usize)
     }
 }
 

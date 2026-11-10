@@ -112,7 +112,7 @@ impl ForkContext {
 }
 
 fn cell_key(cell: &BindingCell) -> usize {
-    Rc::as_ptr(cell).cast::<()>() as usize
+    crate::sync::Code::as_ptr(cell).cast::<()>() as usize
 }
 
 use crate::{Program, value::GlobalTable, variables::declared_kind};
@@ -438,8 +438,35 @@ fn immortalize_constants(program: &crate::Program) {
 
 fn immortalize_value(value: &Value) {
     match value {
-        Value::Binding { name, cell } if name.kind() == BindingKind::Val => {
-            immortalize_value(&cell.borrow());
+        // A module's binding cells and names live as long as its table, and
+        // every read of an export or a destructured import clones them. A
+        // `val`'s value is code too, when it is a function; a `var`'s is
+        // data, which can be replaced.
+        Value::Binding { name, cell } => {
+            crate::sync::immortalize(name);
+            crate::sync::immortalize(cell);
+            if name.kind() == BindingKind::Val {
+                immortalize_value(&cell.borrow());
+            }
+        }
+        // An import map, such as `val game = import("slug.games.crawl")`,
+        // holds only the bindings of a module's exports: it is that
+        // module's table, read on every `game.name`. Other data a `val`
+        // holds stays counted.
+        Value::Map(map)
+            if !map.is_empty()
+                && map
+                    .iter()
+                    .all(|(_, value)| matches!(value, Value::Binding { .. })) =>
+        {
+            map.immortalize();
+        }
+        Value::DeclaredNative {
+            function,
+            declaration,
+        } => {
+            function.immortalize();
+            crate::sync::immortalize(declaration);
         }
         Value::Closure(closure) => {
             crate::sync::immortalize(closure);

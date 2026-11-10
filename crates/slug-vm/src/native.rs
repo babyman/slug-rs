@@ -1254,7 +1254,7 @@ impl NativeFunction {
         let mut call = NativeCall {
             arguments,
             module: &self.0.module,
-            member_key: self.0.member_key.clone(),
+            member_key: self.0.member_key.as_deref(),
             outcome: None,
             violation: None,
             resources: Vec::new(),
@@ -1459,7 +1459,7 @@ enum NativeOutcome {
 pub struct NativeCall<'call> {
     arguments: &'call [Value],
     module: &'call NativeModule,
-    member_key: Option<Rc<str>>,
+    member_key: Option<&'call str>,
     outcome: Option<NativeOutcome>,
     violation: Option<String>,
     resources: Vec<Weak<NativeResource>>,
@@ -1495,7 +1495,7 @@ impl<'call> NativeCall<'call> {
     /// Returns this callback's opaque module-defined member key, when present.
     #[must_use]
     pub fn member_key(&self) -> Option<&str> {
-        self.member_key.as_deref()
+        self.member_key
     }
 
     pub fn set_result(&mut self, value: NativeOwnedValue) {
