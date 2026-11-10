@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Every task starts through one scheduler operation. Before, a fork its
+  nursery admitted at once went to a worker from the `fork` instruction,
+  and still left an entry in the ready queue for the scheduler to skip,
+  while a fork that waited for a permit went from the scheduler. Now an
+  admitted fork leaves without a queue entry, and anything else waits in
+  start order to be dispatched from the same place. `fork/mixed-start-order`
+  pins down the order under a nursery limit: spawns and forks take permits
+  in the order they started, whichever kind they are.
+
 - A `nursery` no longer runs its body and children to the end inside the
   instruction that starts it. The task that starts one suspends until its
   body settles, as it would awaiting a task, and the body, once it returns,

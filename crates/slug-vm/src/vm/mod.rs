@@ -1199,7 +1199,7 @@ impl Vm {
             None,
             nursery.ready_queue(),
         ));
-        nursery.add_task(task.clone());
+        nursery.start(task.clone());
         Ok(InteractiveTask {
             task,
             nursery,
@@ -4109,12 +4109,7 @@ impl Vm {
             Task::pending(execution, admission, self.nursery.ready_queue())
                 .in_domain(self.domain()),
         );
-        self.nursery.add_task(task.clone());
-        // A fork its nursery admits runs on a worker from now on.
-        #[cfg(all(feature = "threads", not(target_os = "none")))]
-        if forked {
-            island::ship(&task);
-        }
+        self.nursery.start(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
     }

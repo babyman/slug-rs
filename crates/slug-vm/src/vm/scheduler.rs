@@ -94,18 +94,29 @@ impl Nursery {
         self.ready.borrow_mut().clear();
     }
 
-    pub(super) fn add_task(&self, task: Rc<Task>) {
+    /// Starts a child of this nursery's, the one way a task begins. A fork
+    /// its nursery admits now leaves for a worker at once; any other task,
+    /// and a fork waiting for a permit, waits in the ready queue in start
+    /// order, and is dispatched from there when the scheduler admits it.
+    pub(super) fn start(&self, task: Rc<Task>) {
         if let Some(watch) = &self.watch {
             task.join(watch.clone());
         }
         self.tasks.borrow_mut().push(task.clone());
-        let mut ready = self.ready.borrow_mut();
-        ready.push_back(task);
-        #[cfg(feature = "metrics")]
+        if !Self::dispatch_remote(&task) {
+            self.enqueue(task);
+        }
+    }
+
+    /// Sends an admitted fork to run on a worker, on a build with threads;
+    /// false for any task that runs on this scheduler instead.
+    fn dispatch_remote(task: &Rc<Task>) -> bool {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        return super::island::ship(task);
+        #[cfg(not(all(feature = "threads", not(target_os = "none"))))]
         {
-            let depth = ready.len();
-            let mut metrics = self.metrics.borrow_mut();
-            metrics.peak_ready_queue = metrics.peak_ready_queue.max(depth);
+            let _ = task;
+            false
         }
     }
 
@@ -327,8 +338,7 @@ impl Nursery {
             return false;
         };
         // A fork admitted only now starts on a worker.
-        #[cfg(all(feature = "threads", not(target_os = "none")))]
-        if super::island::ship(&next) {
+        if Self::dispatch_remote(&next) {
             return true;
         }
         let Some(run) = next.take_pending(&next) else {

@@ -1,0 +1,4 @@
+schema = 1
+outcome = "success"
+stdout = "body\nspawn 1\nfork 2\nspawn 3\nfork 4\nfork 5\nspawn 6\n6\n"
+timeout_ms = 5000

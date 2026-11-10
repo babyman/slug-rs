@@ -413,9 +413,10 @@ timers (a host-driven `poll` of `nursery { select { after 300 } }` took 304
 ms). The starting task now suspends on the body as on an await, the body
 suspends until its children settle, and every nursery shares the parent's
 ready queue and timers; a child's failure is reported to its nursery rather
-than found by a per-index scan. Open from the same review: fork admission has
-two dispatch paths, and an island receives a whole `Vm` and overwrites its
-parent-owned fields.
+than found by a per-index scan. Fork admission had two dispatch paths, one of
+which left a stale ready-queue entry; `Nursery::start` is now the only way a
+task begins. Open from the same review: an island receives a whole `Vm` and
+overwrites its parent-owned fields, to fix with the ESP32-S3 threads work.
 
 ### Phase 6: Crawl and evaluation
 

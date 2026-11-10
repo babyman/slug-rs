@@ -1161,3 +1161,18 @@ fn a_forks_metrics_and_samples_join_its_spawners() {
         "fork {forked_samples} samples against spawn {spawned_samples}"
     );
 }
+
+#[test]
+#[cfg(all(feature = "metrics", feature = "threads"))]
+fn an_admitted_fork_leaves_for_a_worker_without_a_ready_queue_entry() {
+    let program = compile(
+        "fork-dispatch.slug",
+        "val main = fn() {\n    nursery {\n        fork { 1 }\n        fork { 2 }\n        fork { 3 }\n        fork { 4 }\n        0\n    }\n}\n",
+    )
+    .expect("compile fork dispatch source");
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(0));
+    // Only the nursery's body waits in the queue: each fork went straight
+    // to a worker.
+    assert_eq!(vm.metrics().peak_ready_queue, 1);
+}
