@@ -401,6 +401,19 @@ KB); static RAM is unchanged. On the board (2026-11-10) the tasks demo ran
 three minutes, 920 blinks at the expected 5.08 a second, after a startup
 bug from 735fa7f was fixed (builtins passed as module providers).
 
+Review (2026-11-10) of the task and fork scheduler found that a busy fork
+starved its siblings on cooperative builds, so `cancel-busy` and
+`cancel-nested` hung there; no CI job ran the fork suite without `threads`.
+Fixed: forks yield after 10,000 calls, returns, or `recur`s, while the
+scheduler holds their domain so one fork's tasks never interleave; `spawn`
+keeps its run-until-suspended semantics, which programs such as Crawl rely
+on. Settlement now checks for a child's failure between turns. Open from the
+same review: an explicit nursery's body runs to completion inside `poll`,
+blocking on its timers (a host-driven `poll` of `nursery { select { after
+300 } }` took 304 ms), to fix by making the body resumable; settlement's
+failure scan is still per index; fork admission has two dispatch paths; and
+an island receives a whole `Vm` and overwrites its parent-owned fields.
+
 ### Phase 6: Crawl and evaluation
 
 Draw Crawl's pages in forks on threads and measure the 1000-player server

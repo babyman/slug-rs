@@ -3,9 +3,12 @@
 
 Builds `slug` with `-Zsanitizer=thread` on the nightly toolchain (std
 rebuilt with it, so its own synchronization is seen), then runs every
-`tests/conformance/fork/*.slug` several times. A fixture's expected outcome
-is the conformance suite's to check; this only looks for data races, which
-a run may or may not hit, hence the repeats.
+`tests/conformance/fork/*.slug` several times through the conformance
+runner, `slug-fixtures`, with each fixture's time limit scaled for the slow
+instrumented build. A run fails on a data race, which TSan reports on stderr
+and in its exit status, and on any fixture that misses its expected outcome
+or output, so a fixture that ends early cannot pass without reaching what it
+tests. Races may or may not occur in a run, hence the repeats.
 
     python3 -I scripts/tsan-forks.py [--runs N] [--skip-build]
 
@@ -16,6 +19,7 @@ SLUG_TSAN_TOOLCHAIN to use another nightly, as CI does to pin one.
 import argparse
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -23,6 +27,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 TARGET_DIR = ROOT / "target" / "tsan"
 FIXTURES = ROOT / "tests" / "conformance" / "fork"
 TOOLCHAIN = "+" + os.environ.get("SLUG_TSAN_TOOLCHAIN", "nightly")
+# How much longer than its own limit a fixture may take under TSan.
+TIMEOUT_SCALE = 10
 
 
 def host_triple():
@@ -51,6 +57,17 @@ def build(triple):
     return TARGET_DIR / triple / "debug" / "slug"
 
 
+def build_runner():
+    """The conformance runner, an ordinary build: only `slug` is instrumented."""
+    subprocess.run(
+        ["cargo", "build", "-p", "slug", "--bin", "slug-fixtures"],
+        check=True,
+        cwd=ROOT,
+        env={**os.environ, "CARGO_INCREMENTAL": "0"},
+    )
+    return ROOT / "target" / "debug" / "slug-fixtures"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=3)
@@ -59,38 +76,36 @@ def main():
 
     triple = host_triple()
     binary = TARGET_DIR / triple / "debug" / "slug" if options.skip_build else build(triple)
-    environment = {
-        **os.environ,
-        "SLUG_HOME": str(ROOT),
-        # Reports go to stderr; the exit code alone would also flag a
-        # fixture that is meant to fail.
-        "TSAN_OPTIONS": "halt_on_error=1",
-    }
-    fixtures = sorted(FIXTURES.glob("*.slug"))
-    races = []
-    for fixture in fixtures:
-        for run in range(options.runs):
-            try:
-                result = subprocess.run(
-                    [str(binary), str(fixture)],
-                    cwd=FIXTURES,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-            except subprocess.TimeoutExpired:
-                races.append((fixture.name, "timed out"))
-                break
-            if "ThreadSanitizer" in result.stderr:
-                report = result.stderr[result.stderr.index("WARNING: ThreadSanitizer"):]
-                # Both accesses: the report's two stacks run to about 80 lines.
-                races.append((fixture.name, "\n".join(report.splitlines()[:160])))
-                break
-    print(f"{len(fixtures)} fork fixtures, {options.runs} runs each")
-    for name, report in races:
-        print(f"\n== {name}\n{report}")
-    sys.exit(1 if races else 0)
+    # The runner starts each fixture with a clean environment, so a wrapper
+    # gives TSan its options and a PATH to find its symbolizer; without one
+    # it warns on stderr, which a fixture's expected stderr would not match.
+    wrapper = TARGET_DIR / "slug-tsan"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"PATH={shlex.quote(os.environ.get('PATH', '/usr/bin:/bin'))}\n"
+        f"SLUG_HOME={shlex.quote(str(ROOT))}\n"
+        "TSAN_OPTIONS=halt_on_error=1\n"
+        "export PATH SLUG_HOME TSAN_OPTIONS\n"
+        f'exec {shlex.quote(str(binary))} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    runner = build_runner()
+    failures = []
+    for run in range(options.runs):
+        result = subprocess.run(
+            [str(runner), str(FIXTURES), "--slug", str(wrapper), "--timeout-scale", str(TIMEOUT_SCALE)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            failures.append((run + 1, result.stderr))
+            break
+    print(f"{len(sorted(FIXTURES.glob('*.slug')))} fork fixtures, {options.runs} runs each")
+    for run, report in failures:
+        # A race report's two stacks run to about 80 lines each.
+        print(f"\n== run {run}\n" + "\n".join(report.splitlines()[:400]))
+    sys.exit(1 if failures else 0)
 
 
 if __name__ == "__main__":

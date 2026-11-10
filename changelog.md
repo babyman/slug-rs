@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Forks take turns on builds without `threads`, such as embedded ones: a
+  fork busy computing yields after 10,000 calls, returns, or `recur`s, so a
+  failing sibling runs and cancels it, as it would on another core
+  (`fork/cancel-busy` and `fork/cancel-nested` hung there). Tasks outside
+  forks still suspend only where the language says, and the tasks of one
+  fork never interleave between suspensions: until a yielded fork runs
+  again, the scheduler holds its domain (`fork/turns-within-a-fork`).
+  Fail-fast settlement looks for a child's failure between scheduler turns
+  rather than after the child it is driving finishes, which a busy child
+  could put off forever. `make cooperative`, part of `make check`, runs
+  slug-vm's tests and the conformance suites on such a build.
+  `scripts/tsan-forks.py` runs the fixtures through the conformance runner
+  (`slug-fixtures --timeout-scale`), so a fixture must also meet its
+  expected outcome and output under TSan, not only avoid races.
+
 - The ESP32-S3 firmware starts again: since the static provider check
   (735fa7f), it passed its builtins with its module providers to
   `install_static_providers`, which rejects any function the artifact's

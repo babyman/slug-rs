@@ -1059,6 +1059,38 @@ impl Task {
         state.wait_registration = wait_registration;
     }
 
+    /// Puts a task that yielded straight back in its ready queue: it waits
+    /// on nothing, and resumes where it stopped.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn requeue(&self) {
+        let ready = self.state.borrow().ready.clone();
+        ready.borrow_mut().push_back(Rc::new(self.clone()));
+    }
+
+    /// Whether `other` is a handle on this same task.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn is(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    /// The fork domain the code of a task waiting here runs in.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn queued_domain(&self) -> Option<u32> {
+        match &self.state.borrow().phase {
+            TaskPhase::Pending(execution) => Some(execution.domain()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
         let wait_registration = state.wait_registration.take();

@@ -429,7 +429,23 @@ enum Suspension {
         #[cfg(feature = "concurrency")]
         span: Option<SourceSpan>,
     },
+    /// A fork's turn is over on a build that runs forks cooperatively: it
+    /// waits in the ready queue, to resume where it stopped, so the tasks it
+    /// would otherwise run in parallel with get to run.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    Yield,
 }
+
+/// How many calls, returns, and `recur`s a fork runs on a cooperative build
+/// before it yields to other tasks.
+#[cfg(all(
+    feature = "concurrency",
+    not(all(feature = "threads", not(target_os = "none")))
+))]
+const FORK_TURN: u32 = 10_000;
 
 enum RuntimeSelectCase {
     Receive {
@@ -462,6 +478,24 @@ impl TaskExecution {
     #[cfg(all(feature = "threads", not(target_os = "none")))]
     pub(crate) fn is_fork(&self) -> bool {
         self.forked
+    }
+
+    /// Whether this task suspended only because its fork's turn was over.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn yielded(&self) -> bool {
+        matches!(self.vm.suspension, Some(Suspension::Yield))
+    }
+
+    /// The fork domain this task's code runs in, or zero.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn domain(&self) -> u32 {
+        self.vm.domain
     }
 
     /// The error reporting that this suspended task can never resume, at the
@@ -561,6 +595,13 @@ pub struct Vm {
     /// to stop a cancelled fork.
     #[cfg(all(feature = "threads", not(target_os = "none")))]
     attention: alloc::sync::Arc<island::Inbox>,
+    /// What is left of this fork's turn, on a build that runs forks
+    /// cooperatively (see [`FORK_TURN`]).
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    fork_turn: u32,
     /// The module variables of every VM sharing this one's host.
     #[cfg(feature = "concurrency")]
     variables: crate::ModuleVariables,
@@ -747,6 +788,11 @@ impl Default for Vm {
             cancel: None,
             #[cfg(all(feature = "threads", not(target_os = "none")))]
             attention: island::Inbox::current(),
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            fork_turn: FORK_TURN,
             #[cfg(feature = "concurrency")]
             variables: crate::module_variables(),
             native_resources: native_resource_registry(),
@@ -2082,6 +2128,14 @@ impl Vm {
 
     #[allow(clippy::too_many_lines)]
     fn execute(&mut self) -> ExecutionOutcome {
+        // A yielded fork carries on where it stopped, with no value to take.
+        #[cfg(all(
+            feature = "concurrency",
+            not(all(feature = "threads", not(target_os = "none")))
+        ))]
+        if matches!(self.suspension, Some(Suspension::Yield)) {
+            self.suspension = None;
+        }
         if let Some(result) = self.resume.take() {
             self.suspension = None;
             match result {
@@ -2162,6 +2216,14 @@ impl Vm {
             }
             #[cfg(all(feature = "threads", not(target_os = "none")))]
             self.check_attention()?;
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            if self.fork_turn_over() {
+                self.suspension = Some(Suspension::Yield);
+                return Ok(ExecutionOutcome::Suspended);
+            }
             // Calls, returns, and suspension change the active frame rarely
             // relative to instructions, so the active code is looked up only
             // when `frame_epoch` says it may have changed.
@@ -2676,12 +2738,22 @@ impl Vm {
                 self.recur(program, kinds)?;
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
+                #[cfg(all(
+                    feature = "concurrency",
+                    not(all(feature = "threads", not(target_os = "none")))
+                ))]
+                self.yield_at_recur();
                 *ip = 0;
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
+                #[cfg(all(
+                    feature = "concurrency",
+                    not(all(feature = "threads", not(target_os = "none")))
+                ))]
+                self.yield_at_recur();
                 *ip = 0;
             }
             PackedOpcode::Return => {
@@ -3549,6 +3621,45 @@ impl Vm {
         frame
     }
 
+    /// Whether a fork's turn is over on a build that runs forks
+    /// cooperatively. Code outside forks never yields: tasks there suspend
+    /// only where the language says, and may rely on running uninterrupted
+    /// between. A fork's writes stay its own, so stopping it anywhere is
+    /// invisible but for timing.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    #[inline]
+    fn fork_turn_over(&mut self) -> bool {
+        if self.domain == 0 {
+            return false;
+        }
+        self.fork_turn -= 1;
+        if self.fork_turn > 0 {
+            return false;
+        }
+        self.fork_turn = FORK_TURN;
+        true
+    }
+
+    /// At a `recur`, which loops within one frame, ends the fork's turn
+    /// from the top of its function.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    #[inline]
+    fn yield_at_recur(&mut self) {
+        if self.fork_turn_over() {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.ip = 0;
+            }
+            self.frames_changed();
+            self.suspension = Some(Suspension::Yield);
+        }
+    }
+
     /// Invalidates the dispatch loop's cached frame code.
     #[inline]
     pub(in crate::vm) fn frames_changed(&mut self) {
@@ -3854,6 +3965,11 @@ impl Vm {
             cancel: self.cancel.clone(),
             #[cfg(all(feature = "threads", not(target_os = "none")))]
             attention: self.attention.clone(),
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            fork_turn: FORK_TURN,
             #[cfg(feature = "concurrency")]
             variables: self.variables.clone(),
             native_resources: self.native_resources.clone(),

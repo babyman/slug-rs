@@ -22,6 +22,17 @@ pub(super) enum SettlementPolicy {
 
 pub(super) struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
+    /// A fork that yielded mid-turn, on a build that runs forks
+    /// cooperatively: until it runs again, no other task of its fork domain
+    /// may, as on an island, where they would never interleave.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    yielded: RefCell<Option<Rc<Task>>>,
+    /// Whether a task this nursery ran has failed since settlement last
+    /// looked, so it checks for an unobserved failure only then.
+    child_failed: core::cell::Cell<bool>,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     policy: SettlementPolicy,
     timers: Rc<RefCell<TimerService>>,
@@ -62,6 +73,12 @@ impl Nursery {
     ) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            yielded: RefCell::new(None),
+            child_failed: core::cell::Cell::new(false),
             ready: Rc::new(RefCell::new(VecDeque::new())),
             policy,
             timers: Rc::new(RefCell::new(TimerService::new(
@@ -181,7 +198,17 @@ impl Nursery {
             let Some(task) = self.tasks.borrow().get(index).cloned() else {
                 break;
             };
-            while task.is_pending() && self.make_available_progress() {}
+            // A child that keeps the scheduler busy must not hide a
+            // sibling's failure, so it is looked for between turns.
+            while task.is_pending() && self.make_available_progress() {
+                if self.policy == SettlementPolicy::FailFast
+                    && self.child_failed.replace(false)
+                    && let Some(error) = self.first_unobserved_error()
+                {
+                    self.cancel_all(cancellation);
+                    return Some(Err(error));
+                }
+            }
             if self.policy == SettlementPolicy::FailFast
                 && let Some(error) = self.first_unobserved_error()
             {
@@ -296,22 +323,67 @@ impl Nursery {
             return true;
         };
         match run.run() {
-            TaskRunOutcome::Settled(result) => next.complete(&result),
+            TaskRunOutcome::Settled(result) => {
+                if result.is_err() {
+                    self.child_failed.set(true);
+                }
+                next.complete(&result);
+            }
             TaskRunOutcome::Suspended(mut execution) => {
+                #[cfg(all(
+                    feature = "concurrency",
+                    not(all(feature = "threads", not(target_os = "none")))
+                ))]
+                let yielded = execution.yielded();
                 let wait_registration = execution.take_wait_registration();
                 next.suspend(*execution, wait_registration);
+                #[cfg(all(
+                    feature = "concurrency",
+                    not(all(feature = "threads", not(target_os = "none")))
+                ))]
+                if yielded {
+                    next.requeue();
+                    *self.yielded.borrow_mut() = Some(next);
+                }
             }
         }
         true
     }
 
     fn next_ready_task(&self) -> Option<Rc<Task>> {
+        // A yielded fork that has since settled, such as by cancellation,
+        // holds its domain no longer.
+        #[cfg(all(
+            feature = "concurrency",
+            not(all(feature = "threads", not(target_os = "none")))
+        ))]
+        let held = {
+            let mut yielded = self.yielded.borrow_mut();
+            if yielded.as_ref().is_some_and(|task| !task.is_queued()) {
+                *yielded = None;
+            }
+            yielded
+                .as_ref()
+                .and_then(|task| task.queued_domain().map(|domain| (task.clone(), domain)))
+        };
         let mut ready = self.ready.borrow_mut();
         let candidates = ready.len();
         for _ in 0..candidates {
             let task = ready.pop_front().expect("ready queue length was checked");
             if !task.is_queued() {
                 continue;
+            }
+            #[cfg(all(
+                feature = "concurrency",
+                not(all(feature = "threads", not(target_os = "none")))
+            ))]
+            if let Some((yielded, domain)) = &held {
+                if task.is(yielded) {
+                    *self.yielded.borrow_mut() = None;
+                } else if task.queued_domain() == Some(*domain) {
+                    ready.push_back(task);
+                    continue;
+                }
             }
             if task.try_admit() {
                 return Some(task);

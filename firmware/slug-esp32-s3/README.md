@@ -22,7 +22,7 @@ Diagnostic output uses the ESP serial stream. Tasks run cooperatively on one
 core: `spawn`, channels, `select`, and timers (`select { after }`), which read
 the ESP32-S3 system timer that `main.rs` gives the VM (`ArtifactHost::set_clock`).
 While every task waits on a timer, the VM spins until the earliest is due;
-`fork` runs its tasks one at a time.
+forks take turns on the one core.
 
 Any artifact-loading, provider-registration, or VM failure is reported on the
 ESP serial stream and then triggers a software reset. The light-walk artifact

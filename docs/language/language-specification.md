@@ -1488,9 +1488,11 @@ differs is what it sees, which lets the runtime run it on another core:
   have finished, so a `fork` may be typed at the prompt.
 
 A fork has the same meaning on every build that has tasks. A build without
-threads runs forks one at a time, cooperatively, with the same snapshot and
-the same errors, so a program's results do not depend on how many cores run
-it.
+threads runs forks on one core, with the same snapshot and the same errors,
+so a program's results do not depend on how many cores run it. Forks take
+turns there: one busy computing yields after a while to the other tasks, so
+a failing sibling can still cancel it. The tasks of one fork never
+interleave between suspensions, on any build.
 
 ```slug
 val main = fn() {

@@ -12,6 +12,7 @@ use crate::{FixtureMetadata, FixtureOutcome};
 pub struct FixtureRunner {
     executable: PathBuf,
     default_timeout: Duration,
+    timeout_scale: u32,
 }
 
 impl FixtureRunner {
@@ -20,7 +21,16 @@ impl FixtureRunner {
         Self {
             executable: executable.into(),
             default_timeout: Duration::from_secs(1),
+            timeout_scale: 1,
         }
+    }
+
+    /// Multiplies every fixture's time limit by `scale`, for a slow build
+    /// such as one instrumented by a sanitizer.
+    #[must_use]
+    pub fn with_timeout_scale(mut self, scale: u32) -> Self {
+        self.timeout_scale = scale.max(1);
+        self
     }
 
     /// Runs every fixture below `directory`.
@@ -92,7 +102,8 @@ impl FixtureRunner {
             .map_err(|error| format!("cannot start fixture: {error}"))?;
         let timeout = metadata
             .timeout_ms
-            .map_or(self.default_timeout, Duration::from_millis);
+            .map_or(self.default_timeout, Duration::from_millis)
+            * self.timeout_scale;
         let started = Instant::now();
         loop {
             if child

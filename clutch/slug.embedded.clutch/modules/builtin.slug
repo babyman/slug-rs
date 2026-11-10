@@ -2,8 +2,8 @@
  * slug.builtin — the foundation supplied by embedded hosts.
  *
  * cfg, int, and stacktrace are VM builtins. Tasks (`spawn`, `select`, and
- * timers) run on the host's single core, cooperatively; `fork` runs its
- * tasks one at a time there too.
+ * timers) run on the host's single core, cooperatively, and forks take
+ * turns there.
  */
 
 /**
