@@ -124,8 +124,9 @@ var players = {}
 var populations = {}
 
 // The player acting now, loaded from `players` by `actAs`, and their id.
-var player = {}
-var acting:str|nil = nil
+// Each task has its own, so forks can look as a player (`lookAs`).
+task var player = {}
+task var acting:str|nil = nil
 
 // Whether a `tick` is running, and whether the action it is carrying out
 // spent the player's turn.
@@ -177,6 +178,17 @@ val actAs = fn(id:str, body:fn) {
     acting = outer
     if (outer != nil) { player = players[outer] }
     result
+}
+
+// Runs `body` as the player with `id` to look, not act: as `actAs` does,
+// but saving nothing back, so a fork can draw what players see. `body`
+// must not change the player. Inside a turn it is `actAs`.
+val lookAs = fn(id:str, body:fn) {
+    if (acting != nil) { return actAs(id, body) }
+    acting = id
+    player = players[id]
+    defer { acting = nil }
+    body()
 }
 
 /**
@@ -234,8 +246,9 @@ val companyIn = fn(key:str):list {
     company
 }
 
-// Each chunk's company, by key, while `steady` runs; nil otherwise.
-var companies = nil
+// Each chunk's company, by key, while `steady` runs; nil otherwise. A
+// cache, so each task has its own.
+task var companies = nil
 
 /**
  * Runs `body` and returns what it does, finding the players in each chunk
@@ -601,8 +614,9 @@ val around = fn(p:map):fn {
 
 // What each player saw outdoors when last asked, by id: `at`, where they
 // stood, and `found`, what they saw from there. Outdoor terrain never
-// changes, so sight depends only on where a player stands.
-var sights = {}
+// changes, so sight depends only on where a player stands. A cache, so
+// each task has its own, which starts as its spawner's.
+task var sights = {}
 
 // The squares the acting player sees outdoors, blind or not, as a map from
 // `viewKey` to true: rays from the player to each square on the edge of
@@ -2711,7 +2725,7 @@ export val command = fn(id:str, key:str, shift:bool, text:str = "") { actAs(id, 
  * Bumping into another player opens one: Talk, Give, or Leave.
  */
 export val menu = fn(id:str):map|nil {
-    actAs(id, fn() {
+    lookAs(id, fn() {
         if (player.menu == nil) { return nil }
         val m = menuOf()
         {title: m.title, page: player.menu.page, entries: map(m.entries, fn(e) { {key: e.key, label: e.label} })}
@@ -2815,7 +2829,7 @@ export val text = fn(id:str):list { actAs(id, screen) }
  * chunks as they remember them, blank where they have never been.
  */
 export val view = fn(id:str, left:num, top:num, cols:num, rows:num):list {
-    actAs(id, fn() {
+    lookAs(id, fn() {
         val current = mapRows()
         val rowOf = fn(cx:num, cy:num, ly:num):str {
             if (cx == player.cx && cy == player.cy) {
@@ -2865,7 +2879,7 @@ export val date = fn():map {
  * has been held (see `slug.games.crawl.lore.heldSince`), or nil.
  */
 export val land = fn(id:str):map {
-    actAs(id, fn() {
+    lookAs(id, fn() {
         val t = territoryHere()
         {
             holder: match empire.holder(world.empire ?? {holds: {}}, t) {
@@ -2881,39 +2895,39 @@ export val land = fn(id:str):map {
 /**
  * The chunk the player with `id` is in.
  */
-export val here = fn(id:str):map { actAs(id, site) }
+export val here = fn(id:str):map { lookAs(id, site) }
 
 /**
  * Whether the player with `id` can see (x, y) in their chunk: never while
  * blind; otherwise when it is their square or one of its eight
  * neighbours, or they are in a lit room whose rectangle holds it.
  */
-export val visible = fn(id:str, x:num, y:num):bool { actAs(id, fn() { canSee(x, y) }) }
+export val visible = fn(id:str, x:num, y:num):bool { lookAs(id, fn() { canSee(x, y) }) }
 
 /**
  * Every square the player with `id` can see, as a map from `viewKey(x, y)`
  * to true: in their chunk what `visible` says of each square, and outdoors
  * also the squares they see in the chunks beside it.
  */
-export val inView = fn(id:str):map { actAs(id, inSightNow) }
+export val inView = fn(id:str):map { lookAs(id, inSightNow) }
 
 /**
  * The armour of the player with `id`: the worn armour's value plus its
  * bonus, or 0.
  */
-export val armourValue = fn(id:str):num { actAs(id, armourTotal) }
+export val armourValue = fn(id:str):num { lookAs(id, armourTotal) }
 
 /**
  * The name of `count` of `item`, as the player with `id` knows it.
  */
-export val itemName = fn(id:str, item:map, count:num):str { actAs(id, fn() { nameOf(item, count) }) }
+export val itemName = fn(id:str, item:map, count:num):str { lookAs(id, fn() { nameOf(item, count) }) }
 
 /**
  * The living players in the chunk the player with `id` is in, other than
  * them, as [id, player] pairs in id order.
  */
 export val others = fn(id:str):list {
-    actAs(id, fn() {
+    lookAs(id, fn() {
         val company = companyIn(playerKey())
         val go = fn(i:num, acc:list):list {
             if (i == len(company)) { acc } else { recur(i + 1, if (company[i][0] == id) { acc } else { acc :+ company[i] }) }

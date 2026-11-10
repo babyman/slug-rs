@@ -23,9 +23,10 @@
  * `--host=H` (default 127.0.0.1), `--tick=MS`, the milliseconds between the
  * world's ticks (default 150), `--pace=N`, how many ticks pass for each
  * move of the monsters (default 4), and `--save=N`, how many ticks pass
- * between saves (default 20, 3 seconds), and `--render=server` to send each
+ * between saves (default 20, 3 seconds), `--render=server` to send each
  * page its map drawn as HTML rather than as data for the page to draw
- * (default `client`).
+ * (default `client`), and `--forks=N`, how many forks draw the pages each
+ * tick, on as many cores (default 1).
  */
 val tcp = import("slug.net.tcp")
 val web = import("slug.games.crawl.web")
@@ -54,7 +55,7 @@ val main = fn() {
     web.serve(listener, {
         db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
         region: cfg("region", 20), empire: cfg("empire", 6000), history: cfg("history", 100), size: cfg("size", 32), save: cfg("save", 20),
-        render: cfg("render", "client"),
+        render: cfg("render", "client"), forks: cfg("forks", 1),
     })
     println("Saved.")
 }

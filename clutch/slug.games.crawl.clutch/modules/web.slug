@@ -61,13 +61,13 @@ val data = import("slug.games.crawl.data")
 val bestiary = import("slug.games.crawl.bestiary")
 val level = import("slug.games.crawl.level")
 val town = import("slug.games.crawl.town")
-val {map, filter, contains, reduce} = import("slug.std")
+val {map, filter, contains, reduce, range} = import("slug.std")
 val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
 val secure = import("slug.random.secure")
 val {split, trim, join, toInt} = import("slug.string")
-val {trySend} = import("slug.channel")
+val {trySend, await} = import("slug.channel")
 val json = import("slug.fmt.json")
 
 // The keys `/key` accepts, as the engine names them. `i` shows the pack in
@@ -142,6 +142,10 @@ var cameras = {}
 // many ticks monsters act.
 var serving = false
 var monsterEvery = 4
+
+// How many forks draw the pages each tick (`serve`'s `forks` option): with
+// more than one, `push` shares the players out among them.
+var forks = 1
 
 val percent = fn(part:num, whole:num):num {
     if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
@@ -226,22 +230,35 @@ export val tickOnce = fn() {
 // Sends each present player's page the parts of their game that changed:
 // the map, as data or as HTML, and each other part whose data changed, drawn
 // only then; a keep-alive comment every HEARTBEAT ticks when nothing did.
-// Drops streams that are closed.
+// Drops streams that are closed. With `forks` above one, that many forks
+// each find what a share of the pages need, and this task sends it.
 val push = fn(present:list) {
-    val each = fn(i:num) {
-        if (i < len(present)) {
-            val id = present[i]
-            if (!sendChanges(id) && ticks % HEARTBEAT == 0) { broadcast(id, ": alive\n\n") }
-            recur(i + 1)
-        }
-    }
+    val n = math.min(forks, len(present))
     // Drawing changes nothing, so each chunk's company is found once.
-    game.steady(fn() { each(0) })
+    val find = fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) }
+    val found = if (n > 1) {
+        // Every nth player each, as players near each other cost alike.
+        val tasks = map(range(n), fn(w) {
+            val mine = map(range(math.div(len(present) - w + n - 1, n)), fn(i) { present[w + i * n] })
+            fork { find(mine) }
+        })
+        reduce(tasks, [], fn(acc, task) { acc + await(task) })
+    } else {
+        find(present)
+    }
+    map(found, fn(c) { if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") } })
 }
 
 // Sends the player's page what changed since it was last sent anything, or
 // with `everything`, all of it; returns whether anything was sent.
-val sendChanges = fn(id:str, everything:bool = false):bool {
+val sendChanges = fn(id:str, everything:bool = false):bool { send(changesFor(id, everything)) }
+
+// What the player's page needs sent, from what it was sent last, or with
+// `everything`, all of it: `{id, camera, map, parts, events, sent}`, their
+// window, map data and parts' data to keep for next time, the events to
+// send, and whether anything changed. It changes nothing, so a fork can
+// find it; `send` keeps and sends it.
+val changesFor = fn(id:str, everything:bool):map {
     val p = game.playerOf(id)
     // The map's data is what it shows, so it tells whether it changed.
     // The other players here, which the map and the list of what is in
@@ -249,16 +266,24 @@ val sendChanges = fn(id:str, everything:bool = false):bool {
     val others = game.others(id)
     val data = mapData(id, p, others)
     val moved = everything || data != shownMaps[id]
-    shownMaps = shownMaps + {[id]: data}
-    if (moved && clientMaps) { broadcast(id, dataEvent("map", data)) }
     val now = partsData(id, p, others)
     val last = if (everything) { {} } else { shownParts[id] ?? {} }
-    shownParts = shownParts + {[id]: now}
     val changed = filter(keys(now), fn(name) { now[name] != last[name] })
     val drawn = map(changed, fn(name) { partHtml(name, now[name]) })
     val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, others)) } else { drawn }
-    if (len(html) > 0) { broadcast(id, htmlEvent("parts", join(html, ""))) }
-    moved || len(html) > 0
+    val events = (if (moved && clientMaps) { [dataEvent("map", data)] } else { [] })
+        + (if (len(html) > 0) { [htmlEvent("parts", join(html, ""))] } else { [] })
+    {id: id, camera: camera(id, p), map: data, parts: now, events: events, sent: moved || len(html) > 0}
+}
+
+// Keeps what `changesFor` found for the player's page and sends it;
+// returns whether anything changed.
+val send = fn(c:map):bool {
+    cameras = cameras + {[c.id]: c.camera}
+    shownMaps = shownMaps + {[c.id]: c.map}
+    shownParts = shownParts + {[c.id]: c.parts}
+    map(c.events, fn(event) { broadcast(c.id, event) })
+    c.sent
 }
 
 // One server-sent event of type `kind` carrying `html`, a line of data for
@@ -309,7 +334,7 @@ val partHtml = fn(name:str, data:map):str { mustache.render(PARTS[name], data, P
 // The window of the player with `id` at `p`: where it was, unless it is new,
 // on another depth, another size, or no longer holds them, in which case
 // it is centred on them; then moved just enough to keep them a quarter of
-// its size from each edge.
+// its size from each edge. `send` keeps it, for the next tick.
 val camera = fn(id:str, p:map):map {
     val size = sizes[id] ?? {cols: level.WIDTH, rows: level.HEIGHT}
     val px = p.cx * level.WIDTH + p.x
@@ -328,7 +353,6 @@ val camera = fn(id:str, p:map):map {
         left: keep(px, left0, size.cols, mx), top: keep(py, top0, size.rows, my),
         depth: p.depth, cols: size.cols, rows: size.rows,
     }
-    cameras = cameras + {[id]: cam}
     cam
 }
 
@@ -538,6 +562,12 @@ var shownParts = {}
  * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
  */
 export val renderMaps = fn(where:str) { clientMaps = where == "client" }
+
+/**
+ * How many forks draw the pages each tick, as `serve`'s `forks` option
+ * says: with more than one, the players are shared out among them.
+ */
+export val drawInForks = fn(n:num) { forks = math.max(1, n) }
 
 // The first-listed name of the monster each capital letter is.
 val MONSTER_NAMES = reduce(bestiary.monsters, {}, fn(acc, m) {
@@ -752,6 +782,9 @@ val fresh = fn(options:map) {
  * (default 6000, 15 minutes) after `options.history` years of history
  * (default 100),
  * `options.size` chunks across and down (default 32).
+ *
+ * `options.forks` forks draw the pages each tick (default 1, this task):
+ * see `drawInForks`.
  */
 export val serve = fn(listener:tcp.Listener, options:map = {}) {
     val db = options.db
@@ -768,6 +801,7 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
     val saveEvery = options.save ?? 20
     renderMaps(options.render ?? "client")
     monsterEvery = options.pace ?? 4
+    drawInForks(options.forks ?? 1)
     serving = true
     val every = options.tick ?? 150
     spawn {

@@ -394,6 +394,42 @@ against the experiment's numbers. Add an agent evaluation task that needs
 parallel work, and triage what agents get wrong with `fork`, `task var`, and
 the write errors.
 
+Crawl draws in forks (2026-11-09). `web.push` gives every nth present
+player to each of `forks` forks; each finds what its players' pages need
+(`changesFor`, pure) and the ticker keeps cameras, maps and parts and sends
+(`send`). The write errors found every global drawing wrote, one at a time:
+`player`, `acting`, `companies` and `sights` became `task var`s; the
+read-only queries moved from `actAs` to `lookAs`, which saves nothing back
+(`actAs` rewrote `players` and marked the player dirty on every query); and
+`rng.within`, which `game.land` names places with, swapped the game's
+generator, so it now scopes a `task var` generator instead. `players`,
+`dirty` and `gen` cannot be `task var`s here, unlike in experiment 2: the
+ticker and the HTTP handlers are spawned tasks, which would each get their
+own copy. Cost on one task: none (ticker in a spawned task 0.99x,
+`crawl-ticks` 0.96x).
+
+Drawing 1000 players' pages once (seed 6, 3 ticks played, client maps):
+
+| | this task | 1 fork | 2 | 4 | 8 | 16-64 |
+| --- | --- | --- | --- | --- | --- | --- |
+| HEAD | 3.8-4.1 s | 4.1 s | 2.2 s | 1.25-1.6 s | 1.3-1.5 s | 1.3 s |
+| `val` data immortal (f7c695a reapplied) | 3.7 s | 3.8 s | 2.1 s | 1.2 s | 1.15 s | 1.2 s |
+
+Whole ticks with 1000 present players: 6.0 s on one task, 2.4 s on four or
+more forks; the world alone (no one present) 0.3 s. Scaling stops at about
+3x, at four forks; more, smaller shares do not help, so it is not the
+efficiency cores' share. About 16% of the forks' samples are atomic count
+updates on objects every fork shares, mostly not game data:
+
+- module bindings: reading `game.playerOf` clones the export's
+  `Value::Binding`, its `Arc<SoloCell>` and `Arc<BindingName>`, then
+  resolves and drops it (about 40% of the atomic samples);
+- native functions reached through module bindings: `NativeFunctionInner`
+  counts (not immortal: the walk does not look inside binding cells) and
+  their `ForeignDeclaration` and name `Arc`s on every call;
+- data: the snapshot's `players` and `levels` maps, read by every fork, and
+  the templates in `val`s (which f7c695a removes).
+
 ## Decisions (2026-11-07)
 
 1. **Native functions in forks** declare thread safety in the clutch

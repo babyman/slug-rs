@@ -10,6 +10,13 @@ val MASK = 0xFFFFFFFF
 
 var gen = random.generator(0)
 
+// The generator `within` runs code on, while it does, or nil. Each task has
+// its own, so a fork can draw from one without changing `gen`.
+task var scoped:map|nil = nil
+
+// The generator draws come from now.
+val drawing = fn():map { scoped ?? gen }
+
 /**
  * Starts the sequence for a game's seed; seeds equal modulo 2^32 are the
  * same.
@@ -19,7 +26,7 @@ export val seed = fn(s:num):nil {
     nil
 }
 
-export val getState = fn():num { gen.state() }
+export val getState = fn():num { drawing().state() }
 
 export val setState = fn(s:num):nil {
     gen = random.generator(s)
@@ -31,11 +38,10 @@ export val setState = fn(s:num):nil {
  * carries on the sequence from before; returns what `body` returns.
  */
 export val within = fn(s:num, body:fn) {
-    val saved = gen
-    gen = random.generator(s)
-    val result = body()
-    gen = saved
-    result
+    val saved = scoped
+    scoped = random.generator(s)
+    defer { scoped = saved }
+    body()
 }
 
 // a * b modulo 2^32, multiplied in pieces small enough not to overflow.
@@ -65,7 +71,7 @@ export val mix = fn(values:list):num {
 /**
  * An integer from 0 to n - 1, each equally likely.
  */
-export val below = fn(n:num):num { gen.below(n) }
+export val below = fn(n:num):num { drawing().below(n) }
 
 /**
  * The sum of `dice` draws of `below(sides) + 1`; zero dice draw nothing.
@@ -97,4 +103,4 @@ export val pick = fn(entries:list):num {
  * A shuffled copy: for i from len - 1 down to 1, swap entry i with entry
  * below(i + 1).
  */
-export val shuffle = fn(items:list):list { gen.shuffle(items) }
+export val shuffle = fn(items:list):list { drawing().shuffle(items) }

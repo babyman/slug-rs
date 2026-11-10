@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Crawl's server can draw its pages in forks (`serve`'s `forks` option,
+  `web.drawInForks`, `play.slug --forks=N`), the first real use of `fork`.
+  Each tick, every nth present player goes to each of n forks, which find
+  what each page needs (`changesFor`); the ticker then keeps each player's
+  camera, map and parts and sends the events (`send`). To let forks look as
+  a player, `game.player`, `acting`, and the drawing caches `companies` and
+  `sights` are `task var`s, the read-only queries (`view`, `others`,
+  `here`, `land`, `menu`, ...) use `lookAs`, which saves nothing back, and
+  `rng.within` runs its body on a `task var` generator rather than swapping
+  the game's. The camera is no longer stored as it is computed, only when a
+  page is sent. A new test checks that forks send each page the same events
+  as one task. One thousand players' pages: 4.0 s on one task, 2.2 s on two
+  forks, 1.25-1.6 s on four or more (this 4P+4E laptop); the server's tick
+  in a task of its own measures 0.99x, `crawl-ticks` 0.96x.
+
 - `slug_vm::Code` frees its value after an acquire load of its count rather
   than an acquire fence, as `Arc` does under ThreadSanitizer, which does not
   model fences: with the fence, a closure freed on one thread after its last

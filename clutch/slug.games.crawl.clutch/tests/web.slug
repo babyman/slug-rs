@@ -337,6 +337,44 @@ val theMapScrollsOnlyNearItsEdges = fn() {
     close(events.body)
 }
 
+// What five players' pages are sent over a few ticks, drawn in `forks`
+// forks: each page's events in order.
+val streamed = fn(forks:num):list {
+    web.start(1)
+    web.drawInForks(forks)
+    defer web.drawInForks(1)
+    // Fixed ids, as ids decide the order players are listed in.
+    val ids = map([0, 1, 2, 3, 4], fn(i) { "p" + i })
+    map(ids, fn(id) { game.join(id, id) })
+    val streams = map(ids, fn(id) { get("/events", id).body })
+    val keys = ["l", "j", "e", "space", "h"]
+    val tick = fn(t:num) {
+        if (t < 4) {
+            map([0, 1, 2, 3, 4], fn(i) { web.press(ids[i], keys[(i + t) % 5], false) })
+            web.tickOnce()
+            recur(t + 1)
+        }
+    }
+    tick(0)
+    map(streams, fn(stream) {
+        close(stream)
+        val drain = fn(out:list):list {
+            match recv(stream, 0) {
+                nil => out
+                event => recur(out :+ event)
+            }
+        }
+        drain([])
+    })
+}
+
+@test
+val forksDrawThePagesAsOneTaskDoes = fn() {
+    val alone = streamed(1)
+    assertTrue(len(alone[0]) > 2)
+    assertEqual(streamed(3), alone)
+}
+
 // Two new players, the second just east of the first on an open square.
 val twoSideBySide = fn():list {
     web.start(1)
