@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The immortal-code decision records the retention it accepts: every fresh
+  module graph, VM, or `run_program` call allocates code that is never
+  freed, and immortal binding cells keep their values' data reachable; fine
+  for process-lifetime module graphs, to revisit if long-lived embedding
+  becomes a supported workload.
+
 - Smaller fixes from the third review:
   - A module whose code is still running is not initialized: a fork
     importing or describing it meanwhile fails, as for one not yet

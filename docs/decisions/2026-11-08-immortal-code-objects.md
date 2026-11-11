@@ -132,6 +132,27 @@ Counting them achieves nothing; it only costs.
 - **Leave it.** Forks would scale to about three times one core on this
   machine and no further.
 
+## Addendum (2026-11-11): accepted retention
+
+A security review asked what this costs a long-lived host. The retention is
+accepted for module graphs that live as long as the process, which is every
+supported use today: the `slug` runner, the REPL and server sessions, and
+firmware. What is retained is wider than code alone:
+
+- Each fresh module graph, fresh VM, or host call of `run_program` (which
+  installs a new copy of its program) allocates new tables, programs, and
+  closures that become immortal and are never freed. Calls through a module
+  already installed reuse its allocations and retain nothing new.
+- A table's binding cells are immortal, so whatever data their values reach
+  stays reachable too: a module `var` holding a large map keeps its current
+  map alive, beyond the bytecode.
+
+Revisit if long-lived embedding becomes a supported workload, such as a host
+that builds many VMs or runs many programs over its lifetime. The options
+then are to free a whole graph when its last VM is dropped (immortal objects
+counted per graph rather than never freed), or to keep counting in hosts
+that ask for it.
+
 ## Open questions
 
 - Whether a runtime closure stored in a module `val` after initialization
