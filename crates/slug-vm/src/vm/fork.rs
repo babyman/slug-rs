@@ -191,6 +191,37 @@ impl Vm {
         view.value(key, kind)
     }
 
+    /// What this task sees of the module binding `cell`, `name`, however it
+    /// reached it, by its own name or through a module's import map:
+    /// `None` when that is the cell's own value. A fork reads a variable only
+    /// through its snapshot, never the cell, which belongs to another thread;
+    /// one it has no snapshot of, from a module that initialized after the
+    /// fork started, it cannot read.
+    pub(super) fn viewed_binding(
+        &self,
+        cell: &BindingCell,
+        name: &crate::variables::BindingName,
+    ) -> Result<Option<Value>, String> {
+        let Some(view) = &self.view else {
+            return Ok(None);
+        };
+        let kind = name.kind();
+        if kind == BindingKind::Val {
+            return Ok(None);
+        }
+        if let Some(value) = view.value(VarKey::cell(cell), kind) {
+            return Ok(Some(value));
+        }
+        if view.in_fork() {
+            return Err(alloc::format!(
+                "a fork cannot read `{name}`: its module initialized after the fork started, so the fork has no snapshot of it"
+            ));
+        }
+        Ok(None)
+    }
+}
+
+impl Vm {
     /// Assigns `value` to the module-level `name` as this task sees it: its
     /// own copy of a `task var`, or, in a fork, an error for any other
     /// `var`. Hands `value` back when the assignment changes the variable
@@ -300,6 +331,42 @@ impl Vm {
         Ok(value)
     }
 
+    /// A fork's outcome, as it leaves the fork: its result when sendable,
+    /// and its error when every value the error carries is, its thrown
+    /// value, a native error's data, and those of its causes. An error
+    /// carrying one that is not becomes a fork error, with the original,
+    /// stripped of its values, as its cause.
+    pub(super) fn sendable_outcome(&self, outcome: VmResult<Value>) -> VmResult<Value> {
+        let error = match outcome {
+            Ok(value) => return self.sendable_result(value),
+            Err(error) => error,
+        };
+        let mut current = Some(&error);
+        while let Some(link) = current {
+            let carried = link
+                .thrown
+                .as_deref()
+                .into_iter()
+                .chain(link.native.as_ref().and_then(|native| native.data.as_ref()));
+            for value in carried {
+                if let Some(reason) = unsendable(value) {
+                    let mut stripped = error.clone();
+                    strip_values(&mut stripped);
+                    let mut replacement = self.error_at(
+                        RuntimeErrorKind::Fork,
+                        alloc::format!(
+                            "this fork's error is not sendable: the value it carries holds {reason}, which stays with the task that made it"
+                        ),
+                    );
+                    replacement.cause = Some(alloc::boxed::Box::new(stripped));
+                    return Err(replacement);
+                }
+            }
+            current = link.cause.as_deref();
+        }
+        Err(error)
+    }
+
     pub(super) fn check_sendable(&self, value: &Value, what: &str) -> VmResult<()> {
         match unsendable(value) {
             Some(reason) => Err(self.error_at(
@@ -310,6 +377,18 @@ impl Vm {
             )),
             None => Ok(()),
         }
+    }
+}
+
+/// Drops the values `error` and its causes carry, keeping what describes
+/// them.
+fn strip_values(error: &mut crate::RuntimeError) {
+    error.thrown = None;
+    if let Some(native) = &mut error.native {
+        native.data = None;
+    }
+    if let Some(cause) = &mut error.cause {
+        strip_values(cause);
     }
 }
 
@@ -327,7 +406,7 @@ fn captured_var(closure: &crate::Closure) -> Option<String> {
 /// Why `value` cannot cross between a fork and the rest of the program:
 /// what in it is a task handle, a native resource, or a function capturing
 /// a `var`.
-fn unsendable(value: &Value) -> Option<String> {
+pub(crate) fn unsendable(value: &Value) -> Option<String> {
     let mut pending = alloc::vec![value.clone()];
     let mut closures = HashSet::new();
     while let Some(value) = pending.pop() {

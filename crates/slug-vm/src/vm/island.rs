@@ -462,7 +462,7 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     // builds abort on a panic, which cannot leave the spawner waiting either.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         vm.run_island(&control)
-            .map(|result| result.and_then(|value| vm.sendable_result(value)))
+            .map(|result| vm.sendable_outcome(result))
     }))
     .unwrap_or_else(|panic| Some(Err(vm.island_panic_error(panic.as_ref()))));
     // Posted before the result, so the spawner has merged them by the time

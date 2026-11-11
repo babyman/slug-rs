@@ -1,0 +1,9 @@
+// A fork's thrown value leaves it only if it is sendable, as its result
+// does: a function capturing the fork's `var` stays inside.
+val main = fn() {
+    val t = fork {
+        var n = 0
+        throw fn():num { n = n + 1; n }
+    }
+    select { await t }
+}

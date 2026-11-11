@@ -387,6 +387,13 @@ impl VmMetrics {
     }
 }
 
+/// Why `value` cannot cross between a fork and the rest of the program, if
+/// it cannot.
+#[cfg(feature = "concurrency")]
+pub(crate) fn unsendable_reason(value: &Value) -> Option<String> {
+    fork::unsendable(value)
+}
+
 /// Reported when no task can make progress while one is still waiting.
 const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
 
@@ -548,9 +555,10 @@ impl TaskExecution {
         } else {
             result
         };
-        let result = match result {
-            Ok(value) if self.forked => self.vm.sendable_result(value),
-            result => result,
+        let result = if self.forked {
+            self.vm.sendable_outcome(result)
+        } else {
+            result
         };
         TaskRunOutcome::Settled(result)
     }
@@ -1619,7 +1627,7 @@ impl Vm {
         let value = binding
             .as_ref()
             .and_then(|binding| binding.resolve().ok())
-            .and_then(|existing| Self::callable_signature(&existing).map(|_| existing))
+            .and_then(|existing| self.callable_signature(&existing).map(|_| existing))
             .map_or_else(
                 || value.clone(),
                 |existing| match existing {
@@ -2827,14 +2835,12 @@ impl Vm {
                     // A task with its own view of the variables reads a
                     // variable through it; a `val` it reads as anyone does.
                     #[cfg(feature = "concurrency")]
-                    if let Some(view) = &self.view {
-                        let kind = name.kind();
-                        if kind != crate::variables::BindingKind::Val
-                            && let Some(value) =
-                                view.value(crate::variables::VarKey::cell(cell), kind)
-                        {
-                            return Ok(value);
-                        }
+                    if self.view.is_some()
+                        && let Some(value) = self
+                            .viewed_binding(cell, name)
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?
+                    {
+                        return Ok(value);
                     }
                     #[cfg(not(feature = "concurrency"))]
                     let _ = name;
@@ -2879,7 +2885,7 @@ impl Vm {
         }
         globals
             .value(slot)
-            .resolve()
+            .resolve_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
     }
 
@@ -3116,7 +3122,7 @@ impl Vm {
         let new = self.pop_unresolved()?;
         let mut overloads = match existing {
             Value::Overloads(overloads) => overloads.as_ref().clone(),
-            value if Self::callable_signature(&value).is_some() => vec![value],
+            value if self.callable_signature(&value).is_some() => vec![value],
             _ => {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
@@ -3126,7 +3132,7 @@ impl Vm {
         };
         match new {
             Value::Overloads(values) => overloads.extend(values.iter().cloned()),
-            value if Self::callable_signature(&value).is_some() => overloads.push(value),
+            value if self.callable_signature(&value).is_some() => overloads.push(value),
             _ => {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
@@ -3810,7 +3816,7 @@ impl Vm {
             )
         })?;
         let callee = self.stack[base]
-            .resolve()
+            .resolve_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         match callee {
             Value::Closure(closure) => {
@@ -3844,7 +3850,7 @@ impl Vm {
                     .iter()
                     .map(|value| {
                         value
-                            .resolve()
+                            .resolve_in(self)
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
@@ -3882,7 +3888,7 @@ impl Vm {
                     .iter()
                     .map(|value| {
                         value
-                            .resolve()
+                            .resolve_in(self)
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
@@ -3896,7 +3902,7 @@ impl Vm {
                     .iter()
                     .map(|value| {
                         value
-                            .resolve()
+                            .resolve_in(self)
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
@@ -3931,7 +3937,7 @@ impl Vm {
         for index in base + 1..self.stack.len() {
             if matches!(self.stack[index], Value::Binding { .. }) {
                 self.stack[index] = self.stack[index]
-                    .resolve()
+                    .resolve_in(self)
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
             }
         }
@@ -4399,8 +4405,8 @@ impl Vm {
                 };
                 let existing = exports[index].1.clone();
                 if let (Some(existing_signatures), Some(incoming_signature)) = (
-                    Self::callable_signatures(&existing),
-                    Self::callable_signature(value),
+                    self.callable_signatures(&existing),
+                    self.callable_signature(value),
                 ) {
                     if existing_signatures
                         .iter()
@@ -4430,8 +4436,8 @@ impl Vm {
         Ok(())
     }
 
-    fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
-        match value.resolve().ok()? {
+    fn callable_signature(&self, value: &Value) -> Option<CallableRuntimeSignature> {
+        match value.resolve_in(self).ok()? {
             Value::Closure(closure) => {
                 let program = &closure.program;
                 program
@@ -4458,7 +4464,7 @@ impl Vm {
 
     /// Whether `value` is the callable `selected` names, read without
     /// building its runtime signature.
-    fn has_callable_identity(value: &Value, selected: &CallableIdentity) -> bool {
+    fn has_callable_identity(&self, value: &Value, selected: &CallableIdentity) -> bool {
         match value {
             Value::Closure(closure) => {
                 let program = &closure.program;
@@ -4470,16 +4476,21 @@ impl Vm {
             }
             Value::DeclaredNative { declaration, .. } => &declaration.identity == selected,
             Value::Binding { .. } => value
-                .resolve()
-                .is_ok_and(|value| Self::has_callable_identity(&value, selected)),
+                .resolve_in(self)
+                .is_ok_and(|value| self.has_callable_identity(&value, selected)),
             _ => false,
         }
     }
 
-    fn callable_signatures(value: &Value) -> Option<Vec<CallableRuntimeSignature>> {
+    fn callable_signatures(&self, value: &Value) -> Option<Vec<CallableRuntimeSignature>> {
         match value {
-            Value::Overloads(overloads) => overloads.iter().map(Self::callable_signature).collect(),
-            value => Self::callable_signature(value).map(|signature| vec![signature]),
+            Value::Overloads(overloads) => overloads
+                .iter()
+                .map(|value| self.callable_signature(value))
+                .collect(),
+            value => self
+                .callable_signature(value)
+                .map(|signature| vec![signature]),
         }
     }
 
@@ -4488,7 +4499,7 @@ impl Vm {
             Value::Overloads(overloads) => overloads
                 .iter()
                 .find(|candidate| {
-                    Self::callable_signature(candidate)
+                    self.callable_signature(candidate)
                         .and_then(|signature| signature.identity)
                         .as_ref()
                         == Some(identity)
@@ -4503,7 +4514,7 @@ impl Vm {
                     )
                 }),
             value
-                if Self::callable_signature(&value)
+                if self.callable_signature(&value)
                     .and_then(|signature| signature.identity)
                     .as_ref()
                     == Some(identity) =>
@@ -4567,7 +4578,7 @@ impl Vm {
             )
         })?;
         let callee = self.stack[base]
-            .resolve()
+            .resolve_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
@@ -4586,7 +4597,7 @@ impl Vm {
             }
         } else {
             if let Some(selected) = selected
-                && !Self::has_callable_identity(&callee, selected)
+                && !self.has_callable_identity(&callee, selected)
             {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
@@ -4629,7 +4640,7 @@ impl Vm {
             )
         })?;
         let callee = self.stack[base]
-            .resolve()
+            .resolve_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let positional = self.stack.split_off(base + 1);
         self.stack.truncate(base);
@@ -4637,7 +4648,7 @@ impl Vm {
             .into_iter()
             .map(|value| {
                 value
-                    .into_resolved()
+                    .into_resolved_in(self)
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
             })
             .collect::<VmResult<Vec<_>>>()?;
@@ -4736,20 +4747,21 @@ impl Vm {
             )
         })?;
         let callee = self.stack[base]
-            .resolve()
+            .resolve_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let callee = match callee {
             Value::Overloads(overloads) => selected.and_then(|selected| {
                 overloads.iter().find_map(|candidate| {
-                    let candidate = candidate.resolve().ok()?;
-                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
+                    let candidate = candidate.resolve_in(self).ok()?;
+                    self.has_callable_identity(&candidate, selected)
+                        .then_some(candidate)
                 })
             }),
             candidate => match selected {
                 None => Some(candidate),
-                Some(selected) => {
-                    Self::has_callable_identity(&candidate, selected).then_some(candidate)
-                }
+                Some(selected) => self
+                    .has_callable_identity(&candidate, selected)
+                    .then_some(candidate),
             },
         };
         let Some(Value::Closure(closure)) = callee else {
@@ -4887,7 +4899,7 @@ impl Vm {
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
             let value = value
-                .into_resolved()
+                .into_resolved_in(self)
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
             match kind {
                 CallArgumentKind::Positional => positional.push(value),
@@ -5445,9 +5457,22 @@ impl Vm {
         for case in values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
+                    #[cfg(feature = "concurrency")]
+                    let wake = if self.fork_context().is_some() {
+                        SelectWake::ForkReceive {
+                            handler,
+                            unsendable: Box::new(
+                                self.error_at(RuntimeErrorKind::Fork, String::new()),
+                            ),
+                        }
+                    } else {
+                        SelectWake::Value { handler }
+                    };
+                    #[cfg(not(feature = "concurrency"))]
+                    let wake = SelectWake::Value { handler };
                     Channel::park_receiver(
                         &mut states[locked(&channel)],
-                        Waiter::select(select_state.clone(), SelectWake::Value { handler }),
+                        Waiter::select(select_state.clone(), wake),
                     );
                     registrations.push(WaitRegistration::ChannelReceive(channel));
                 }
@@ -5848,7 +5873,7 @@ impl Vm {
         let mut error = None;
         for callee in overloads {
             let callee = callee
-                .resolve()
+                .resolve_in(self)
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
             match self.bind_call_arguments(program, &callee, positional.to_vec(), named.to_vec()) {
                 Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
@@ -5873,9 +5898,9 @@ impl Vm {
     ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
         for callee in overloads {
             let callee = callee
-                .resolve()
+                .resolve_in(self)
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
-            if !Self::has_callable_identity(&callee, selected) {
+            if !self.has_callable_identity(&callee, selected) {
                 continue;
             }
             let (arguments, provided) =

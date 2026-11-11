@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Fork isolation, from the security review:
+  - A fork reads a module's `var` through an import map (`counter.count`)
+    from its snapshot, as it reads one by name; before, it read the
+    module's own cell, from another thread, seeing values set after it
+    started (`fork/import-map-snapshot`). Every runtime binding resolution
+    now goes through the task's view (`Value::resolve_in`), and a fork that
+    reaches a `var` it has no snapshot of, from a module initialized after
+    it started, gets an error rather than the live cell.
+  - A fork's error leaves it only if what it carries is sendable, as its
+    result does: its thrown value, a native error's data, and its causes'.
+    One that is not becomes a fork error, with the original, stripped of
+    its values, as its cause; before, a thrown function capturing the
+    fork's `var` reached the parent (`fork/thrown-unsendable`).
+  - A fork's parked receive checks the value it is woken with, closing the
+    window where a sender on another thread read the channel as not yet
+    crossed just before the fork's receive marked it.
+  - A channel drains its native producer under its own lock, so two threads
+    draining at once cannot buffer the producer's values out of order.
+
 - Forks taking turns hold one task per fork domain mid-turn, not one for the
   whole scheduler. With a single slot, a second fork's yield overwrote the
   first's, and a task of the first fork could run before its own yielded

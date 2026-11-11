@@ -93,6 +93,15 @@ pub(crate) enum SelectWake {
     Value {
         handler: Option<Value>,
     },
+    /// A receive case of a fork's `select`: the value it is woken with must
+    /// be sendable, checked as it arrives, since its sender may have sent
+    /// before it saw the channel cross into a fork. `unsendable` is the
+    /// error to report one with, its reason to be added.
+    #[cfg(feature = "concurrency")]
+    ForkReceive {
+        handler: Option<Value>,
+        unsendable: Box<crate::RuntimeError>,
+    },
     #[cfg(feature = "concurrency")]
     TaskAwait {
         handler: Option<Value>,
@@ -104,6 +113,8 @@ impl SelectWake {
     fn selected(&self) -> Option<Value> {
         match self {
             Self::Value { handler } => handler.clone(),
+            #[cfg(feature = "concurrency")]
+            Self::ForkReceive { handler, .. } => handler.clone(),
             #[cfg(feature = "concurrency")]
             Self::TaskAwait { handler, observer } => {
                 observer.observe();
@@ -178,6 +189,22 @@ impl Waiter {
                     registrations.remove_for_waiter(&waiter);
                 }
                 let handler = wake.selected();
+                #[cfg(feature = "concurrency")]
+                let result = match (&wake, result) {
+                    (SelectWake::ForkReceive { unsendable, .. }, Ok(value)) => {
+                        match crate::vm::unsendable_reason(&value) {
+                            Some(reason) => {
+                                let mut error = (**unsendable).clone();
+                                error.message = alloc::format!(
+                                    "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
+                                );
+                                Err(error)
+                            }
+                            None => Ok(value),
+                        }
+                    }
+                    (_, result) => result,
+                };
                 waiter.resume(
                     result.map(|value| Value::list(vec![value, handler.unwrap_or(Value::Nil)])),
                 );
@@ -537,11 +564,14 @@ impl Channel {
         let Some(producer) = self.native_producer.get() else {
             return false;
         };
+        // Drained under the channel's lock, so two threads draining at once
+        // cannot buffer the producer's values out of order. The producer
+        // never takes this lock, so the order of the two locks is fixed.
+        let mut state = self.state.lock();
         // Read before draining: a producer closes after its last send, so
         // every value it sent is then queued and drains with the others.
         let producer_closed = producer.is_closed();
         let values = producer.drain(usize::MAX);
-        let mut state = self.state.lock();
         // A channel closed by an earlier drain is no progress; reporting it
         // as progress forever would keep the scheduler from running tasks.
         let changed = !values.is_empty() || (producer_closed && !state.closed);
@@ -1528,16 +1558,6 @@ impl Value {
             #[cfg(feature = "concurrency")]
             Self::Task(_) => "task",
             Self::NativeResource(_) => "native resource",
-        }
-    }
-
-    /// Resolves an owned value, moving it instead of cloning when it is not a
-    /// binding.
-    pub(crate) fn into_resolved(self) -> Result<Value, String> {
-        if matches!(self, Self::Binding { .. }) {
-            self.resolve()
-        } else {
-            Ok(self)
         }
     }
 
