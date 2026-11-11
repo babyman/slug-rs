@@ -22,15 +22,18 @@ pub(super) struct Nursery {
     /// An explicit nursery's: the first unobserved child failure cancels the
     /// remaining children. The root, without one, reports an unobserved
     /// child failure once every task has settled.
-    watch: Option<Rc<NurseryWatch>>,
-    /// A fork that yielded mid-turn, on a build that runs forks
-    /// cooperatively: until it runs again, no other task of its fork domain
-    /// may, as on an island, where they would never interleave.
+    watch: Rc<NurseryWatch>,
+    /// Whether this is an explicit nursery, which fails fast.
+    fail_fast: bool,
+    /// The forks' tasks that yielded mid-turn, on a build that runs forks
+    /// cooperatively, at most one per fork domain: until one runs again, no
+    /// other task of its domain may, as on an island, where they would never
+    /// interleave. Several forks may each have one waiting at once.
     #[cfg(all(
         feature = "concurrency",
         not(all(feature = "threads", not(target_os = "none")))
     ))]
-    yielded: Rc<RefCell<Option<Rc<Task>>>>,
+    yielded: Rc<RefCell<Vec<Rc<Task>>>>,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     timers: Rc<RefCell<TimerService>>,
     progress: Rc<ProgressDriver>,
@@ -45,12 +48,13 @@ impl Nursery {
     ) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
-            watch: None,
+            watch: Rc::new(NurseryWatch::default()),
+            fail_fast: false,
             #[cfg(all(
                 feature = "concurrency",
                 not(all(feature = "threads", not(target_os = "none")))
             ))]
-            yielded: Rc::new(RefCell::new(None)),
+            yielded: Rc::new(RefCell::new(Vec::new())),
             ready: Rc::new(RefCell::new(VecDeque::new())),
             timers: Rc::new(RefCell::new(TimerService::new(
                 #[cfg(feature = "metrics")]
@@ -67,7 +71,8 @@ impl Nursery {
     pub(super) fn explicit(parent: &Self) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
-            watch: Some(Rc::new(NurseryWatch::default())),
+            watch: Rc::new(NurseryWatch::default()),
+            fail_fast: true,
             #[cfg(all(
                 feature = "concurrency",
                 not(all(feature = "threads", not(target_os = "none")))
@@ -99,9 +104,7 @@ impl Nursery {
     /// and a fork waiting for a permit, waits in the ready queue in start
     /// order, and is dispatched from there when the scheduler admits it.
     pub(super) fn start(&self, task: Rc<Task>) {
-        if let Some(watch) = &self.watch {
-            task.join(watch.clone());
-        }
+        task.join(self.watch.clone());
         self.tasks.borrow_mut().push(task.clone());
         if !Self::dispatch_remote(&task) {
             self.enqueue(task);
@@ -168,7 +171,10 @@ impl Nursery {
                 return Some(Err(error.clone()));
             }
         };
-        let watch = self.watch.as_ref()?;
+        if !self.fail_fast {
+            return None;
+        }
+        let watch = &self.watch;
         // Only a child's failure since the last look can fail it fast, so
         // the children are scanned once per failure, not once per wake.
         if watch.take_failed()
@@ -188,7 +194,7 @@ impl Nursery {
 
     /// The watch on this explicit nursery's children.
     pub(super) fn watch(&self) -> Option<&Rc<NurseryWatch>> {
-        self.watch.as_ref()
+        self.fail_fast.then_some(&self.watch)
     }
 
     pub(super) fn settle(
@@ -214,8 +220,8 @@ impl Nursery {
         }
     }
 
-    /// Attempts the root's settlement using only work already available to
-    /// the current host turn. `None` means that a task is still pending.
+    /// The root's settlement, if its children allow it now, without running
+    /// any of them. `None` means that a task is still pending.
     pub(super) fn settle_available(
         &self,
         result: &Result<Value, RuntimeError>,
@@ -230,20 +236,12 @@ impl Nursery {
             return Some(Err(error.clone()));
         }
 
-        let mut index = 0;
-        loop {
-            // Released before the task runs: a `while let` would hold the
-            // borrow through the body, and a task that spawns needs it.
-            let Some(task) = self.tasks.borrow().get(index).cloned() else {
-                break;
-            };
-            while task.is_pending() && self.make_available_progress() {}
-            if task.is_pending() {
-                return None;
-            }
-            index += 1;
+        // Settlement only looks: the next scheduler turn is the caller's to
+        // run, so a host's `poll` returns between turns however long the
+        // children keep busy.
+        if self.watch.pending() > 0 {
+            return None;
         }
-
         Some(match result {
             Err(error) => Err(error.clone()),
             Ok(value) => self
@@ -365,7 +363,7 @@ impl Nursery {
                 ))]
                 if yielded {
                     next.requeue();
-                    *self.yielded.borrow_mut() = Some(next);
+                    self.yielded.borrow_mut().push(next);
                 }
             }
         }
@@ -373,20 +371,19 @@ impl Nursery {
     }
 
     fn next_ready_task(&self) -> Option<Rc<Task>> {
-        // A yielded fork that has since settled, such as by cancellation,
+        // A yielded task that has since settled, such as by cancellation,
         // holds its domain no longer.
         #[cfg(all(
             feature = "concurrency",
             not(all(feature = "threads", not(target_os = "none")))
         ))]
-        let held = {
+        let mut held: Vec<(Rc<Task>, u32)> = {
             let mut yielded = self.yielded.borrow_mut();
-            if yielded.as_ref().is_some_and(|task| !task.is_queued()) {
-                *yielded = None;
-            }
+            yielded.retain(|task| task.is_queued());
             yielded
-                .as_ref()
-                .and_then(|task| task.queued_domain().map(|domain| (task.clone(), domain)))
+                .iter()
+                .filter_map(|task| task.queued_domain().map(|domain| (task.clone(), domain)))
+                .collect()
         };
         let mut ready = self.ready.borrow_mut();
         let candidates = ready.len();
@@ -399,10 +396,16 @@ impl Nursery {
                 feature = "concurrency",
                 not(all(feature = "threads", not(target_os = "none")))
             ))]
-            if let Some((yielded, domain)) = &held {
-                if task.is(yielded) {
-                    *self.yielded.borrow_mut() = None;
-                } else if task.queued_domain() == Some(*domain) {
+            if !held.is_empty() {
+                if let Some(index) = held.iter().position(|(yielded, _)| task.is(yielded)) {
+                    // Its turn again: its domain is free once it runs.
+                    held.swap_remove(index);
+                    self.yielded
+                        .borrow_mut()
+                        .retain(|yielded| !task.is(yielded));
+                } else if let Some(domain) = task.queued_domain()
+                    && held.iter().any(|(_, held)| *held == domain)
+                {
                     ready.push_back(task);
                     continue;
                 }

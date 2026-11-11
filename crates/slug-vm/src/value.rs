@@ -1036,17 +1036,6 @@ impl Task {
         matches!(self.state.borrow().phase, TaskPhase::Running)
     }
 
-    /// Whether the task has yet to settle and is not running here: queued,
-    /// suspended, or running on another island.
-    pub(crate) fn is_pending(&self) -> bool {
-        match self.state.borrow().phase {
-            TaskPhase::Pending(_) => true,
-            #[cfg(all(feature = "threads", not(target_os = "none")))]
-            TaskPhase::Remote(_) => true,
-            TaskPhase::Running | TaskPhase::Settled(_) => false,
-        }
-    }
-
     /// Whether the task waits here for its scheduler to run it.
     pub(crate) fn is_queued(&self) -> bool {
         matches!(self.state.borrow().phase, TaskPhase::Pending(_))

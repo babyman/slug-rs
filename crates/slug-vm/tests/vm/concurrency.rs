@@ -49,6 +49,37 @@ fn host_driven_nursery_waits_for_its_children_without_blocking_the_host() {
 }
 
 #[test]
+fn host_driven_root_settlement_returns_to_the_host_between_turns() {
+    // After the root body returns, its children exchange messages for a
+    // while: each poll runs at most one scheduler turn of them.
+    let program = compile(
+        "host-driven-settlement.slug",
+        "val ping = make_channel(0)\n\
+         val pong = make_channel(0)\n\
+         val serve = fn(n:num) { if (n > 0) { select { send ping, n }; select { recv pong }; recur(n - 1) } }\n\
+         val echo = fn(n:num) { if (n > 0) { select { recv ping }; select { send pong, n }; recur(n - 1) } }\n\
+         spawn { serve(200) }\n\
+         spawn { echo(200) }\n\
+         42\n",
+    )
+    .expect("compile host-driven settlement source");
+    let mut vm = vm_with_channel_constructor();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    let mut polls = 0;
+    let value = loop {
+        polls += 1;
+        match vm.poll() {
+            VmProgress::MadeProgress => {}
+            VmProgress::Completed(value) => break value,
+            other => panic!("unexpected progress {other:?}"),
+        }
+    };
+    assert_eq!(value, Value::Int(42));
+    assert!(polls > 200, "settlement ran the children in {polls} polls");
+}
+
+#[test]
 fn a_stalled_host_learns_how_long_until_the_next_timer() {
     let program = compile(
         "host-driven-deadline.slug",

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Forks taking turns hold one task per fork domain mid-turn, not one for the
+  whole scheduler. With a single slot, a second fork's yield overwrote the
+  first's, and a task of the first fork could run before its own yielded
+  task resumed: three forks each counting to 100,000 had their readers see
+  9,997 (`fork/turns-within-a-fork` now covers forks yielding at once).
+- The root's settlement only looks at whether its children have settled,
+  using the count its nursery keeps, and leaves running them to `Vm::poll`
+  or the blocking adapter. Before, once the root body returned, one `poll`
+  ran the children for as long as they made progress: two tasks passing
+  messages, or a yielding fork, kept it from returning to the host.
+- `scripts/tsan-forks.py` has TSan write its reports to files, and fails a
+  run on any report whatever the fixture outcome: a fixture expecting an
+  error passed with TSan's exit status, and with `stderr_contains`, even
+  with a race reported after the expected diagnostic.
+
 - A fork's island is built on its worker from an explicit package of fork
   inputs (its closure, start span, task view, domain, module variables, and
   host arguments), not from the whole `Vm` its spawner prepared with its

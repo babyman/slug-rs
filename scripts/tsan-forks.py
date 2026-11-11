@@ -8,7 +8,10 @@ runner, `slug-fixtures`, with each fixture's time limit scaled for the slow
 instrumented build. A run fails on a data race, which TSan reports on stderr
 and in its exit status, and on any fixture that misses its expected outcome
 or output, so a fixture that ends early cannot pass without reaching what it
-tests. Races may or may not occur in a run, hence the repeats.
+tests. TSan writes its reports to files rather than stderr, and any report
+fails the run on its own: a fixture expecting an error cannot absorb TSan's
+exit status or a report that follows its expected diagnostic. Races may or
+may not occur in a run, hence the repeats.
 
     python3 -I scripts/tsan-forks.py [--runs N] [--skip-build]
 
@@ -25,6 +28,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TARGET_DIR = ROOT / "target" / "tsan"
+# Where TSan writes each process's reports, as `report.<pid>`.
+REPORTS = TARGET_DIR / "reports"
 FIXTURES = ROOT / "tests" / "conformance" / "fork"
 TOOLCHAIN = "+" + os.environ.get("SLUG_TSAN_TOOLCHAIN", "nightly")
 # How much longer than its own limit a fixture may take under TSan.
@@ -80,11 +85,13 @@ def main():
     # gives TSan its options and a PATH to find its symbolizer; without one
     # it warns on stderr, which a fixture's expected stderr would not match.
     wrapper = TARGET_DIR / "slug-tsan"
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    options_text = f"halt_on_error=1 log_path={REPORTS / 'report'}"
     wrapper.write_text(
         "#!/bin/sh\n"
         f"PATH={shlex.quote(os.environ.get('PATH', '/usr/bin:/bin'))}\n"
         f"SLUG_HOME={shlex.quote(str(ROOT))}\n"
-        "TSAN_OPTIONS=halt_on_error=1\n"
+        f"TSAN_OPTIONS={shlex.quote(options_text)}\n"
         "export PATH SLUG_HOME TSAN_OPTIONS\n"
         f'exec {shlex.quote(str(binary))} "$@"\n'
     )
@@ -92,14 +99,22 @@ def main():
     runner = build_runner()
     failures = []
     for run in range(options.runs):
+        for stale in REPORTS.glob("report.*"):
+            stale.unlink()
         result = subprocess.run(
             [str(runner), str(FIXTURES), "--slug", str(wrapper), "--timeout-scale", str(TIMEOUT_SCALE)],
             cwd=ROOT,
             capture_output=True,
             text=True,
         )
+        reports = sorted(REPORTS.glob("report.*"))
+        if reports:
+            failures.append(
+                (run + 1, "\n".join(report.read_text(errors="replace") for report in reports))
+            )
         if result.returncode != 0:
             failures.append((run + 1, result.stderr))
+        if failures:
             break
     print(f"{len(sorted(FIXTURES.glob('*.slug')))} fork fixtures, {options.runs} runs each")
     for run, report in failures:

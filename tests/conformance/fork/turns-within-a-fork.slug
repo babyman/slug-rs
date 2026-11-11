@@ -18,4 +18,21 @@ val main = fn() {
     }
     println(select { await counted })
     println(select { await other })
+
+    // Several forks with a task mid-turn at once: each fork's reader waits
+    // for its own writer, whichever fork yielded last.
+    val counter = fn():num {
+        var n = 0
+        val count = fn(i:num) { if (i < 100000) { n = n + 1; recur(i + 1) } }
+        val read = fn():num { n }
+        val b = spawn { read() }
+        count(0)
+        select { await b }
+    }
+    val first = fork { counter() }
+    val second = fork { counter() }
+    val third = fork { counter() }
+    println(select { await first })
+    println(select { await second })
+    println(select { await third })
 }
