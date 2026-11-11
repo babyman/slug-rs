@@ -401,15 +401,47 @@ KB); static RAM is unchanged. On the board (2026-11-10) the tasks demo ran
 three minutes, 920 blinks at the expected 5.08 a second, after a startup
 bug from 735fa7f was fixed (builtins passed as module providers).
 
-Later (2026-11-10): an M:N experiment. Each island holds a thread for its
+Parked (2026-11-10): M:N scheduling. Each island holds a thread for its
 whole life, so forks beyond the core count that compute at once are
 time-sliced by the operating system, and forks that wait hold a sleeping
-thread each (now capped at 256). A pool of about one worker per core that
+thread each (capped at 256). A pool of about one worker per core that
 resumes any ready island would bound threads by cores and avoid
 oversubscription, at the cost of islands resuming on any thread, which
 their per-thread inbox, wake routing, and single-threaded cells rule out
-today. First measure what oversubscription costs: a benchmark running, say,
-four times as many CPU-bound forks as cores.
+today.
+
+What oversubscription costs was measured first
+(`scripts/fork-oversubscription.py`): 128 million loop iterations split
+evenly across the forks, a release build, an 8-core Apple machine (4
+performance, 4 efficiency cores), medians of 5 interleaved rounds.
+
+| Forks | `nursery limit` | Wall | vs 8 forks | CPU | Involuntary switches |
+|---:|---:|---:|---:|---:|---:|
+| 8 | none | 1.80 s | 1.00x | 12.0 s | 10.1k |
+| 16 | none | 1.73 s | 0.96x | 12.2 s | 11.8k |
+| 32 | none | 1.76 s | 0.98x | 12.4 s | 11.6k |
+| 64 | none | 1.75 s | 0.97x | 12.4 s | 12.3k |
+| 128 | none | 1.73 s | 0.96x | 12.5 s | 12.5k |
+| 32 | 8 | 1.82 s | 1.01x | 12.4 s | 10.2k |
+| 64 | 8 | 1.79 s | 1.00x | 12.3 s | 10.5k |
+| 128 | 8 | 1.79 s | 1.00x | 12.3 s | 10.5k |
+| 32 | 4 | 2.45 s | 1.36x | 9.7 s | 0.9k |
+
+Up to 16 times as many forks as cores cost nothing measurable in wall time
+(within the 11-19% spread), about 3% more CPU time, and about 20% more
+involuntary switches: the operating system absorbs oversubscription, and
+pacing with `nursery limit` neither helps nor hurts. Four at a time ran 36%
+slower on 21% less CPU time, consistent with the performance cores alone;
+eight forks scaled about 4.3 times over one core (about 7.7 s), as four
+performance and four efficiency cores would. So M:N would not buy
+throughput for computing forks; what it would still buy is fewer threads
+and less memory for forks that mostly wait, which the cap bounds for now.
+
+Untested, and reasons to come back: other operating systems or uniform
+cores; forks each walking a large working set, where time-slicing could
+thrash caches (the next variant to run, giving each fork a few MB of data);
+and programs holding thousands of waiting forks, where threads' memory
+would matter.
 
 Decision (2026-11-10): the ESP32-S3 stays on one core for now, forks taking
 turns, which passes the fork suite there; its programs so far wait on timers

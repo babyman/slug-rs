@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `scripts/fork-oversubscription.py` measures what running more CPU-bound
+  forks than cores costs. On an 8-core machine, up to 16 times as many cost
+  nothing measurable in wall time and about 3% in CPU time, so M:N
+  scheduling of islands is parked: it would not buy throughput, only fewer
+  threads for waiting forks (`docs/planning/fork-tasks.md`).
+
 - HTTP and assets, from the security review:
   - `slug.net.http` answers a response whose header name is not a token,
     or whose header value holds a line break or another control
