@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Smaller fixes from the third review:
+  - A module whose code is still running is not initialized: a fork
+    importing or describing it meanwhile fails, as for one not yet
+    started; before, it got the module's exports before they were set. A
+    fork now needs a host's definite yes, and `ArtifactHost`, which said
+    nothing, answers.
+  - A channel's first native producer is published under the channel's
+    lock, so two threads attaching at once share one producer instead of
+    one sending into a producer the channel never drains.
+  - A fork's receive rejects an unsendable value before the wake leaves the
+    sender's thread, so the value never reaches the fork's thread.
+  - `slug.net.http` frames a buffered response itself: a handler's
+    `Transfer-Encoding` or `Connection` header is dropped, as its
+    `Content-Length` was, rather than sent beside the server's.
+
 - Native resources belong to the fork domain that made them, from the
   third review: a fork may hold its spawner's resource, as before, but a
   native call using it there, even of a function declared thread-safe on a

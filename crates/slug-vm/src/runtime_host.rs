@@ -254,7 +254,8 @@ pub trait VmHost {
 
     /// Whether the module `name`, imported by `importer`, has initialized,
     /// or `None` when the host cannot tell: a fork may import a module that
-    /// has, but not initialize one.
+    /// has, but not initialize one, and treats `None` as not yet. One whose
+    /// code is still running has not.
     fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
         let _ = (importer, name);
         None

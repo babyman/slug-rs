@@ -453,14 +453,21 @@ impl ModuleGraph {
     }
 
     /// Whether the module `request` names has an initialized instance, when
-    /// it can be resolved: a fork may import only such a module.
+    /// it can be resolved: a fork may import only such a module. One whose
+    /// code is still running is not.
     pub fn is_initialized<H: ModuleGraphHost>(
         &self,
         host: &H,
         request: ModuleRequest<'_>,
     ) -> Option<bool> {
         let source = host.resolve(request).ok()?;
-        Some(self.state.instances.borrow().contains_key(&source.key))
+        Some(
+            self.state
+                .instances
+                .borrow()
+                .get(&source.key)
+                .is_some_and(|instance| instance.initialized),
+        )
     }
 
     /// Resolves, compiles, and initializes one module instance.
@@ -534,11 +541,9 @@ impl ModuleGraph {
             metadata: vm.module_metadata().to_vec(),
             values: HashMap::new(),
             live_exports: vm.live_exported_values(program.program()),
+            initialized: false,
         };
-        self.state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
+        self.record(&source.key, &instance);
         if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&source.key);
             if let Some(staged) = activation.as_ref() {
@@ -569,16 +574,22 @@ impl ModuleGraph {
             exports: vm.exported_values(program.program()),
             metadata: vm.module_metadata().to_vec(),
             values: vm.declared_values(),
+            initialized: true,
             ..instance
         };
-        self.state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
+        self.record(&source.key, &instance);
         if let Some(activation) = activation {
             activation.retain();
         }
         Ok(instance)
+    }
+
+    /// Caches `instance` as the module `key`'s, provisional or initialized.
+    fn record(&self, key: &ModuleKey, instance: &ModuleInstance) {
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(key.clone(), instance.clone());
     }
 
     fn check_foreign_declarations<H: ModuleGraphHost>(
@@ -654,6 +665,7 @@ impl ModuleGraph {
             metadata: Vec::new(),
             values: HashMap::new(),
             live_exports: exports,
+            initialized: true,
         };
         self.state
             .instances
@@ -686,6 +698,9 @@ pub struct ModuleInstance {
     /// not, for `describe`.
     pub values: HashMap<String, Value>,
     pub(crate) live_exports: Value,
+    /// False while its code runs: the entry is provisional then, there so
+    /// an import cycle back to it finds it.
+    pub(crate) initialized: bool,
 }
 
 impl ModuleInstance {

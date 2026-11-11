@@ -169,3 +169,10 @@ val servesAtMostMaxConnectionsAtOnce = fn() {
     tcp.close(listener)
     await(server)
 }
+
+@test
+val framesABufferedResponseItself = fn() {
+    val handler = fn(request) { {status: 200, headers: {"Transfer-Encoding": "chunked", Connection: "keep-alive", "Content-Length": "99"}, body: "x"} }
+    val answer = exchange(handler, "GET / HTTP/1.0\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nx")
+}

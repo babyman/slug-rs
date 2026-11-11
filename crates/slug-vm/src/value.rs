@@ -73,6 +73,9 @@ pub(crate) enum ChannelReceive {
     Pending,
 }
 
+#[cfg(feature = "concurrency")]
+type Screen = dyn Fn(Result<Value, crate::RuntimeError>) -> Result<Value, crate::RuntimeError>;
+
 #[derive(Clone)]
 pub(crate) struct Waiter {
     identity: usize,
@@ -84,6 +87,11 @@ pub(crate) struct Waiter {
     #[cfg(all(feature = "threads", not(target_os = "none")))]
     home: Arc<crate::vm::island::Inbox>,
     resume: Rc<dyn Fn(Result<Value, crate::RuntimeError>)>,
+    /// Applied to a wake before it is carried to the waiter's thread: a
+    /// fork's receive rejects an unsendable value here, so the value never
+    /// reaches the fork's thread.
+    #[cfg(feature = "concurrency")]
+    screen: Option<Rc<Screen>>,
     reject_closed_send: Rc<dyn Fn()>,
     set_closed_send_error: Rc<dyn Fn(crate::RuntimeError)>,
 }
@@ -94,8 +102,9 @@ pub(crate) enum SelectWake {
         handler: Option<Value>,
     },
     /// A receive case of a fork's `select`: the value it is woken with must
-    /// be sendable, checked as it arrives, since its sender may have sent
-    /// before it saw the channel cross into a fork. `unsendable` is the
+    /// be sendable, checked by the waker before the wake leaves its thread,
+    /// since its sender may have sent before it saw the channel cross into a
+    /// fork. `unsendable` is the
     /// error to report one with, its reason to be added.
     #[cfg(feature = "concurrency")]
     ForkReceive {
@@ -140,6 +149,8 @@ impl Waiter {
                 let root = root.clone();
                 move |result| root.resume(result)
             }),
+            #[cfg(feature = "concurrency")]
+            screen: None,
             reject_closed_send: Rc::new({
                 let root = root.clone();
                 move || root.reject_closed_send()
@@ -160,6 +171,8 @@ impl Waiter {
                 let task = task.clone();
                 move |result| task.resume(result)
             }),
+            #[cfg(feature = "concurrency")]
+            screen: None,
             reject_closed_send: Rc::new({
                 let task = task.clone();
                 move || task.reject_closed_send()
@@ -176,6 +189,26 @@ impl Waiter {
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         let home = state.borrow().waiter.home.clone();
         let resume_state = state.clone();
+        #[cfg(feature = "concurrency")]
+        let screen: Option<Rc<Screen>> = match &wake {
+            SelectWake::ForkReceive { unsendable, .. } => {
+                let unsendable = unsendable.clone();
+                Some(Rc::new(move |result| match result {
+                    Ok(value) => match crate::vm::unsendable_reason(&value) {
+                        Some(reason) => {
+                            let mut error = (*unsendable).clone();
+                            error.message = alloc::format!(
+                                "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
+                            );
+                            Err(error)
+                        }
+                        None => Ok(value),
+                    },
+                    result => result,
+                }))
+            }
+            SelectWake::Value { .. } | SelectWake::TaskAwait { .. } => None,
+        };
         Self {
             identity,
             claim,
@@ -189,26 +222,12 @@ impl Waiter {
                     registrations.remove_for_waiter(&waiter);
                 }
                 let handler = wake.selected();
-                #[cfg(feature = "concurrency")]
-                let result = match (&wake, result) {
-                    (SelectWake::ForkReceive { unsendable, .. }, Ok(value)) => {
-                        match crate::vm::unsendable_reason(&value) {
-                            Some(reason) => {
-                                let mut error = (**unsendable).clone();
-                                error.message = alloc::format!(
-                                    "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
-                                );
-                                Err(error)
-                            }
-                            None => Ok(value),
-                        }
-                    }
-                    (_, result) => result,
-                };
                 waiter.resume(
                     result.map(|value| Value::list(vec![value, handler.unwrap_or(Value::Nil)])),
                 );
             }),
+            #[cfg(feature = "concurrency")]
+            screen,
             reject_closed_send: Rc::new({
                 let state = state.clone();
                 move || state.borrow().waiter.reject_closed_send()
@@ -237,6 +256,11 @@ impl Waiter {
 
     /// Wakes a waiter whose claim this wake already holds.
     pub(crate) fn resume_claimed(&self, result: Result<Value, crate::RuntimeError>) {
+        #[cfg(feature = "concurrency")]
+        let result = match &self.screen {
+            Some(screen) => screen(result),
+            None => result,
+        };
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         if !self.home.is_current() {
             let waiter = self.clone();
@@ -517,8 +541,11 @@ impl Channel {
         if state.closed {
             producer.close();
         }
-        drop(state);
+        // Published before the lock is released, so a second attach on
+        // another thread leases this producer rather than making one the
+        // channel never drains.
         let _ = self.native_producer.set(producer.receiver_handle());
+        drop(state);
         Some(producer)
     }
 

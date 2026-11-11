@@ -4239,7 +4239,8 @@ impl Vm {
         name: &str,
         operation: &str,
     ) -> VmResult<()> {
-        if self.fork_context().is_some() && host.module_initialized(importer, name) == Some(false) {
+        // Only a definite yes: a host that cannot tell may be initializing it.
+        if self.fork_context().is_some() && host.module_initialized(importer, name) != Some(true) {
             return Err(self.error_at(
                 RuntimeErrorKind::Fork,
                 format!(

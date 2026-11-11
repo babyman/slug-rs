@@ -269,6 +269,9 @@ struct ArtifactHostState {
     artifact: Artifact,
     configuration: Rc<dyn VmConfiguration>,
     instances: RefCell<HashMap<String, Value>>,
+    /// Modules whose code is running: their `instances` entries are
+    /// provisional, there so an import cycle back to one finds it.
+    initializing: RefCell<HashSet<String>>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: NativeResourceRegistry,
@@ -310,6 +313,7 @@ impl ArtifactHost {
                 artifact,
                 configuration,
                 instances: RefCell::new(HashMap::new()),
+                initializing: RefCell::new(HashSet::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
@@ -433,6 +437,23 @@ impl ArtifactHost {
         vm.run_program(&self.state.artifact.modules[self.state.artifact.root].program)
     }
 
+    /// The index of the module that `importer` imports as `name`.
+    fn import_target(&self, importer: Option<&str>, name: &str) -> Option<usize> {
+        let importer = importer?;
+        let importer = self
+            .state
+            .artifact
+            .modules
+            .iter()
+            .position(|module| module.key == importer)?;
+        self.state
+            .artifact
+            .imports
+            .iter()
+            .find(|edge| edge.importer == importer && edge.name == name)
+            .map(|edge| edge.target)
+    }
+
     fn initialize(&self, index: usize) -> Result<Value, VmHostError> {
         let module = &self.state.artifact.modules[index];
         if let Some(exports) = self.state.instances.borrow().get(&module.key) {
@@ -449,7 +470,13 @@ impl ArtifactHost {
             .instances
             .borrow_mut()
             .insert(module.key.clone(), live_exports);
-        if let Err(error) = vm.run_module(&program) {
+        self.state
+            .initializing
+            .borrow_mut()
+            .insert(module.key.clone());
+        let ran = vm.run_module(&program);
+        self.state.initializing.borrow_mut().remove(&module.key);
+        if let Err(error) = ran {
             self.state.instances.borrow_mut().remove(&module.key);
             let failure = crate::InitializationFailure::from_runtime(&error);
             return Err(VmHostError::initialization(
@@ -497,35 +524,21 @@ impl VmHost for ArtifactHost {
         importer: Option<&str>,
         name: &str,
     ) -> Result<VmModuleExports, VmHostError> {
-        let Some(importer) = importer else {
+        let Some(target) = self.import_target(importer, name) else {
             return Err(VmHostError::not_found(format!(
                 "module `{name}` is not present in the compiled artifact"
             )));
         };
-        let Some(importer) = self
-            .state
-            .artifact
-            .modules
-            .iter()
-            .position(|module| module.key == importer)
-        else {
-            return Err(VmHostError::not_found(format!(
-                "module `{name}` is not present in the compiled artifact"
-            )));
-        };
-        let Some(edge) = self
-            .state
-            .artifact
-            .imports
-            .iter()
-            .find(|edge| edge.importer == importer && edge.name == name)
-        else {
-            return Err(VmHostError::not_found(format!(
-                "module `{name}` is not present in the compiled artifact"
-            )));
-        };
-        self.initialize(edge.target)
+        self.initialize(target)
             .map(|exports| VmModuleExports { exports })
+    }
+
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let module = &self.state.artifact.modules[self.import_target(importer, name)?];
+        Some(
+            self.state.instances.borrow().contains_key(&module.key)
+                && !self.state.initializing.borrow().contains(&module.key),
+        )
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
