@@ -5,7 +5,9 @@ val main = fn() {
     val seen = fork {
         val wait = fn(i:num):num { if (i < 300000) { recur(i + 1) } else { i } }
         wait(0)
-        counter.count
+        // Comparing the import map whole reads its `var` from the snapshot
+        // too, not from the module.
+        [counter.count, counter == {count: 0, bump: counter.bump}]
     }
     counter.bump()
     counter.bump()

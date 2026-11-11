@@ -538,6 +538,9 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     drop(vm);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_ended();
+    // Free before the spawner can see the fork settle, which may lead it to
+    // start the next fork at once.
+    release_place();
     if let Some(result) = outcome
         && !control.cancelled()
     {
@@ -547,7 +550,6 @@ fn run(inputs: ForkInputs, link: ParentLink) {
         parent.post(move || drop(task));
     }
     parent.remote.fetch_sub(1, Ordering::AcqRel);
-    release_place();
     // After the post, which counts the parent awake if it slept.
     group.leave();
     parent.signal.notify();
@@ -677,9 +679,17 @@ impl Vm {
                 return None;
             }
             match self.execute() {
-                super::ExecutionOutcome::Settled(result) => {
-                    return Some(self.settle_tasks(&result));
-                }
+                // The fork's children settle as the root's do, but a
+                // cancellation, which wakes this thread, ends the wait.
+                super::ExecutionOutcome::Settled(result) => loop {
+                    if control.cancelled() {
+                        return None;
+                    }
+                    if let Some(settled) = self.settle_tasks_available(&result) {
+                        return Some(settled);
+                    }
+                    self.make_progress();
+                },
                 super::ExecutionOutcome::Suspended => loop {
                     if control.cancelled() {
                         return None;

@@ -1,4 +1,4 @@
 schema = 1
 outcome = "success"
-stdout = "0\n2\n"
+stdout = "[0, true]\n2\n"
 timeout_ms = 10000

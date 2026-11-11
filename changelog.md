@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Fork lifecycle and nested reads, from the third review:
+  - A fork's island settles its children in its own loop, which a
+    cancellation ends: before, once the fork's body had returned, a
+    cancellation woke the island and it went back to waiting on a child's
+    timer or producer, holding its worker and its place among the running
+    forks.
+  - A finished fork frees its place before its spawner can see it settle;
+    at `SLUG_MAX_FORKS=1`, forks awaited one after another failed now and
+    then with "cannot start" (3 of 5 runs of 2,000).
+  - Comparing values with `==`, and checking what leaves a fork, read a
+    module `var` inside a value, such as an import map, through the running
+    task's snapshot, as `counter.count` does; before, they read the
+    module's own cell, from another thread. Each thread records the view of
+    the task it runs. Freestanding builds, which run one thread and have no
+    thread-locals, still compare such a value against the variable itself.
+
 - `scripts/fork-oversubscription.py` measures what running more CPU-bound
   forks than cores costs. On an 8-core machine, up to 16 times as many cost
   nothing measurable in wall time and about 3% in CPU time, so M:N

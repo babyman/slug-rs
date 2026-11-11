@@ -651,3 +651,63 @@ fn slug_max_forks_must_be_a_positive_whole_number() {
             .contains("SLUG_MAX_FORKS must be a positive whole number, got `none`")
     );
 }
+
+#[test]
+fn a_finished_fork_frees_its_place_before_its_spawner_sees_it_settle() {
+    // At a limit of one, forks awaited one after another always fit.
+    let path = fixture_path("fork-limit-sequential");
+    fs::write(
+        &path,
+        "val run = fn(i:num, total:num):num { if (i == 2000) { total } else { recur(i + 1, total + select { await fork { 1 } }) } }\nval main = fn() { println(run(0, 0)) }\n",
+    )
+    .expect("write sequential forks source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "1")
+        .arg(&path)
+        .output()
+        .expect("run sequential forks source");
+    fs::remove_file(path).expect("remove sequential forks source");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "a finished fork still held its place"
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2000\n");
+}
+
+#[test]
+fn a_fork_cancelled_while_its_children_settle_frees_its_place() {
+    // The first fork's body returns while its child waits on a long timer;
+    // its sibling's failure cancels it there. Its island must stop rather
+    // than keep waiting, so two forks fit under a limit of two afterwards.
+    let path = fixture_path("fork-cancelled-settling");
+    fs::write(
+        &path,
+        "val main = fn() {\n\
+             val run = fn():num {\n\
+                 defer onerror(err) { 0 }\n\
+                 nursery {\n\
+                     fork { spawn { select { after 60000 } }; 1 }\n\
+                     fork { select { after 50 }; throw \"stop\" }\n\
+                 }\n\
+                 1\n\
+             }\n\
+             run()\n\
+             select { after 200 }\n\
+             val a = fork { select { after 20 }; 1 }\n\
+             val b = fork { select { after 20 }; 2 }\n\
+             println(select { await a } + select { await b })\n\
+         }\n",
+    )
+    .expect("write cancelled settling source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "2")
+        .arg(&path)
+        .output()
+        .expect("run cancelled settling source");
+    fs::remove_file(path).expect("remove cancelled settling source");
+
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
+}

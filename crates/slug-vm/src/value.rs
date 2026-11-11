@@ -1597,11 +1597,25 @@ impl Value {
     }
 }
 
+/// Whether a module binding's value, as the running task sees it, which in
+/// a fork is its snapshot, equals `value`. A `val` reads the same to every
+/// task, so it is compared in place.
+fn binding_equals(cell: &BindingCell, name: &crate::variables::BindingName, value: &Value) -> bool {
+    #[cfg(feature = "concurrency")]
+    if name.kind() != crate::variables::BindingKind::Val {
+        return crate::vm::seen_binding(cell, name).eq(value);
+    }
+    #[cfg(not(feature = "concurrency"))]
+    let _ = name;
+    cell.borrow().eq(value)
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Binding { cell, .. }, value) => cell.borrow().eq(value),
-            (value, Self::Binding { cell, .. }) => value.eq(&cell.borrow()),
+            (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
+                binding_equals(cell, name, value)
+            }
             (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int(a), Self::Int(b)) => a == b,

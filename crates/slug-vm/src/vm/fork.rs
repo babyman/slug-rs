@@ -67,6 +67,59 @@ impl TaskView {
     }
 }
 
+// Freestanding builds run one thread and have no thread-locals: there a
+// fork's `==` on a value holding a module `var` reads the variable itself,
+// which no other thread can be writing. Reading it by name or member, and
+// what leaves the fork, still goes through the snapshot.
+#[cfg(not(target_os = "none"))]
+std::thread_local! {
+    /// The view of the task this thread is running, for reads of module
+    /// bindings that no VM makes, such as `==` on an import map.
+    static RUNNING_VIEW: RefCell<Option<Rc<TaskView>>> = const { RefCell::new(None) };
+}
+
+/// Records `view` as that of the task this thread runs from now on.
+#[cfg(not(target_os = "none"))]
+pub(super) fn set_running_view(view: Option<&Rc<TaskView>>) {
+    RUNNING_VIEW.with(|running| {
+        let mut running = running.borrow_mut();
+        // The same task runs turn after turn: only a change is written.
+        let same = match (running.as_ref(), view) {
+            (Some(running), Some(view)) => Rc::ptr_eq(running, view),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            *running = view.cloned();
+        }
+    });
+}
+
+/// The value of the module binding `cell`, `name`, as the task running on
+/// this thread sees it: through its view, and never, in a fork, from a
+/// `var`'s own cell, which belongs to another thread. A `var` the fork has
+/// no snapshot of reads as uninitialized here, where no error can be
+/// raised; reading it by name or member fails.
+pub(crate) fn seen_binding(cell: &BindingCell, name: &crate::variables::BindingName) -> Value {
+    #[cfg(not(target_os = "none"))]
+    if name.kind() != BindingKind::Val {
+        let seen = RUNNING_VIEW.with(|running| {
+            let running = running.borrow();
+            let view = running.as_ref()?;
+            Some(
+                view.value(VarKey::cell(cell), name.kind())
+                    .or_else(|| view.in_fork().then_some(Value::Uninitialized)),
+            )
+        });
+        if let Some(Some(value)) = seen {
+            return value;
+        }
+    }
+    #[cfg(target_os = "none")]
+    let _ = name;
+    cell.borrow().clone()
+}
+
 pub(super) struct ForkContext {
     /// What the fork and the tasks inside it make belongs to this domain.
     pub(super) domain: u32,
@@ -422,7 +475,7 @@ pub(crate) fn unsendable(value: &Value) -> Option<String> {
             }
             Value::Struct(value) => pending.extend(value.values.iter().cloned()),
             Value::Overloads(values) => pending.extend(values.iter().cloned()),
-            Value::Binding { cell, .. } => pending.push(cell.borrow().clone()),
+            Value::Binding { cell, name } => pending.push(seen_binding(&cell, &name)),
             Value::Closure(closure) => {
                 if !closures.insert(crate::sync::Code::as_ptr(&closure).cast::<()>() as usize) {
                     continue;

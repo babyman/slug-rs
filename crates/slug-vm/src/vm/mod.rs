@@ -390,6 +390,9 @@ impl VmMetrics {
 /// Why `value` cannot cross between a fork and the rest of the program, if
 /// it cannot.
 #[cfg(feature = "concurrency")]
+pub(crate) use fork::seen_binding;
+
+#[cfg(feature = "concurrency")]
 pub(crate) fn unsendable_reason(value: &Value) -> Option<String> {
     fork::unsendable(value)
 }
@@ -2172,6 +2175,9 @@ impl Vm {
 
     #[allow(clippy::too_many_lines)]
     fn execute(&mut self) -> ExecutionOutcome {
+        // Reads of module bindings that no VM makes see this task's view.
+        #[cfg(all(feature = "concurrency", not(target_os = "none")))]
+        fork::set_running_view(self.view.as_ref());
         // A yielded fork carries on where it stopped, with no value to take.
         #[cfg(all(
             feature = "concurrency",
