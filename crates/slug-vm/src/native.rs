@@ -1314,7 +1314,9 @@ impl NativeFunction {
         self.0.module.resource_type_names()
     }
 
-    pub(crate) fn invoke(&self, arguments: &[Value]) -> NativeInvocation {
+    /// Calls the function with `arguments` for a task of fork `domain`, or
+    /// zero outside forks.
+    pub(crate) fn invoke(&self, arguments: &[Value], domain: u32) -> NativeInvocation {
         if !self.0.arity.accepts(arguments.len()) {
             return NativeInvocation::Error(
                 NativeError::new(
@@ -1336,6 +1338,7 @@ impl NativeFunction {
             outcome: None,
             violation: None,
             resources: Vec::new(),
+            domain,
         };
         let status = catch_native_unwind(|| (self.0.callback)(&mut call));
         let Ok(status) = status else {
@@ -1411,8 +1414,10 @@ impl<T> Clone for NativeResourceType<T> {
     }
 }
 
-type ResourceClose = dyn Fn(&mut dyn Any);
-type ResourceDestroy = dyn Fn(Box<dyn Any>);
+// Each wraps a function pointer, so a resource type can be held in the
+// state of a module whose functions forks may call.
+type ResourceClose = dyn Fn(&mut dyn Any) + Send + Sync;
+type ResourceDestroy = dyn Fn(Box<dyn Any>) + Send + Sync;
 
 struct ResourceTypeRegistration {
     id: usize,
@@ -1435,6 +1440,14 @@ pub struct NativeResource {
     module: Rc<NativeModuleInner>,
     payload: RefCell<Option<Box<dyn Any>>>,
     state: Cell<NativeResourceState>,
+    /// The fork domain of the task that made it, or zero: only tasks of the
+    /// same domain use it, which a fork holding its spawner's resource is
+    /// not. Its payload and state are those of one thread.
+    owner: u32,
+    /// The thread that made it, where its payload is destroyed whichever
+    /// thread lets go of it last.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    home: alloc::sync::Arc<crate::vm::island::Inbox>,
 }
 
 impl fmt::Debug for NativeResource {
@@ -1523,6 +1536,18 @@ impl NativeResource {
 
 impl Drop for NativeResource {
     fn drop(&mut self) {
+        // A fork that held its spawner's resource may be the last to let go;
+        // the payload is the spawner's thread's to destroy.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if !self.home.is_current() {
+            if let Some(payload) = self.payload.get_mut().take() {
+                let registration = self.registration.clone();
+                self.home.post(move || {
+                    let _ = catch_native_unwind(|| (registration.destroy)(payload));
+                });
+            }
+            return;
+        }
         if let Some(payload) = self.payload.get_mut().take() {
             let _ = catch_native_unwind(|| (self.registration.destroy)(payload));
         }
@@ -1541,6 +1566,8 @@ pub struct NativeCall<'call> {
     outcome: Option<NativeOutcome>,
     violation: Option<String>,
     resources: Vec<Weak<NativeResource>>,
+    /// The fork domain of the calling task, or zero.
+    domain: u32,
 }
 
 impl<'call> NativeCall<'call> {
@@ -1676,6 +1703,9 @@ impl<'call> NativeCall<'call> {
             module: self.module.inner.clone(),
             payload: RefCell::new(Some(Box::new(payload))),
             state: Cell::new(NativeResourceState::Open),
+            owner: self.domain,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         });
         self.resources.push(Rc::downgrade(&resource));
         Ok(NativeOwnedValue(Value::NativeResource(resource)))
@@ -1712,6 +1742,7 @@ impl<'call> NativeCall<'call> {
                 ),
             ));
         }
+        Self::check_owner(resource, self.domain)?;
         if resource.state.get() != NativeResourceState::Open {
             return Err(NativeError::new(
                 "native.resource_closed",
@@ -1760,9 +1791,27 @@ impl<'call> NativeCall<'call> {
                 ),
             ));
         }
+        Self::check_owner(resource, self.domain)?;
         resource
             .close()
             .map_err(|message| NativeError::new("native.resource_close", message))
+    }
+
+    /// Fails before a resource's state or payload is touched unless the
+    /// task calling, of fork `domain`, is of the domain that made it: a fork
+    /// may hold its spawner's resource, but not use it, since its state
+    /// belongs to the spawner's thread.
+    fn check_owner(resource: &NativeResource, domain: u32) -> Result<(), NativeError> {
+        if resource.owner == domain {
+            return Ok(());
+        }
+        Err(NativeError::new(
+            "native.resource_owner",
+            format!(
+                "this `{}` resource was made outside this fork, which may hold it but not use it",
+                resource.registration.name
+            ),
+        ))
     }
 
     fn validate_resource_type<T>(
@@ -1850,6 +1899,9 @@ mod tests {
             module: module.inner.clone(),
             payload: RefCell::new(Some(Box::new(()))),
             state: Cell::new(NativeResourceState::Open),
+            owner: 0,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         });
         registry.register(vec![Rc::downgrade(&resource)]);
         assert_eq!(registry.tracked_count(), 1);
@@ -1861,6 +1913,9 @@ mod tests {
                 module: module.inner.clone(),
                 payload: RefCell::new(Some(Box::new(()))),
                 state: Cell::new(NativeResourceState::Open),
+                owner: 0,
+                #[cfg(all(feature = "threads", not(target_os = "none")))]
+                home: crate::vm::island::Inbox::current(),
             });
             registry.register(vec![Rc::downgrade(&resource)]);
         }

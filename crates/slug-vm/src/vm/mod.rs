@@ -5618,7 +5618,11 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
-        let invocation = function.invoke(arguments);
+        #[cfg(feature = "concurrency")]
+        let domain = self.domain;
+        #[cfg(not(feature = "concurrency"))]
+        let domain = 0;
+        let invocation = function.invoke(arguments, domain);
         // A producer minted from a channel argument needs progress wakeups,
         // as a native-created channel result does.
         for argument in arguments {

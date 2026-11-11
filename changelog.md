@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Native resources belong to the fork domain that made them, from the
+  third review: a fork may hold its spawner's resource, as before, but a
+  native call using it there, even of a function declared thread-safe on a
+  thread-safe module, fails with `native.resource_owner` before the
+  resource's state or payload is touched, which are the spawner's thread's.
+  A resource whose last holder lets go on another thread has its payload
+  destroyed on the thread that made it, posted there. Resource type
+  registrations are `Send + Sync`, so a module holding its resource types
+  can be made with `NativeModule::new_thread_safe`.
+
 - Fork lifecycle and nested reads, from the third review:
   - A fork's island settles its children in its own loop, which a
     cancellation ends: before, once the fork's body had returned, a

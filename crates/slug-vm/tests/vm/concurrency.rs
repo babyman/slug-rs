@@ -1274,3 +1274,99 @@ fn a_nursery_lets_go_of_tasks_that_have_settled() {
         "only {destroyed} of 300 results were released"
     );
 }
+
+/// A thread-safe module with a resource type, as a typed clutch declaring
+/// `thread_safe = true` on a function that takes a handle would make.
+#[cfg(feature = "threads")]
+mod owned_resources {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use super::*;
+
+    pub struct Payload;
+
+    type Kind = Arc<OnceLock<NativeResourceType<Payload>>>;
+    type Callback = for<'call> fn(&mut NativeCall<'call>) -> NativeStatus;
+
+    /// Where each payload was destroyed.
+    pub static DESTROYED_ON: Mutex<Vec<std::thread::ThreadId>> = Mutex::new(Vec::new());
+
+    fn destroy(_: Payload) {
+        DESTROYED_ON
+            .lock()
+            .unwrap()
+            .push(std::thread::current().id());
+    }
+
+    fn kind(call: &NativeCall<'_>) -> NativeResourceType<Payload> {
+        call.state::<Kind>().unwrap().get().unwrap().clone()
+    }
+
+    fn make_it(call: &mut NativeCall<'_>) -> NativeStatus {
+        let kind = kind(call);
+        let resource = call.resource(&kind, Payload).unwrap();
+        call.return_value(resource)
+    }
+
+    fn use_it(call: &mut NativeCall<'_>) -> NativeStatus {
+        let kind = kind(call);
+        match call.with_resource(0, &kind, |_| 7) {
+            Ok(value) => call.return_value(NativeOwnedValue::integer(value)),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    pub fn vm() -> Vm {
+        let kind: Kind = Arc::default();
+        let module = NativeModule::new_thread_safe("test.owned", kind.clone()).unwrap();
+        kind.set(module.resource_type("thing", |_| {}, destroy).unwrap())
+            .ok()
+            .unwrap();
+        let mut vm = Vm::new();
+        let callbacks: [(&str, NativeArity, Callback); 2] = [
+            ("make_it", NativeArity::Exact(0), make_it),
+            ("use_it", NativeArity::Exact(1), use_it),
+        ];
+        for (name, arity, callback) in callbacks {
+            let function = module.function(name, arity, callback).unwrap();
+            function.declare_thread_safe().unwrap();
+            vm.define_native(function).unwrap();
+        }
+        vm
+    }
+}
+
+// One test, as both programs record where payloads are destroyed.
+#[test]
+#[cfg(feature = "threads")]
+fn a_fork_holds_but_cannot_use_its_spawners_resource_whose_thread_destroys_it() {
+    let mut vm = owned_resources::vm();
+    let uses = compile(
+        "fork-uses-resource.slug",
+        "val main = fn() {\n    val r = make_it()\n    val direct = use_it(r)\n    val own = select { await fork { use_it(make_it()) } }\n    val t = fork { use_it(r) }\n    [direct, own, select { await t }]\n}\n",
+    )
+    .expect("compile resource owner source");
+    let error = vm
+        .run_program(&uses)
+        .expect_err("a fork using its spawner's resource fails");
+    assert!(
+        error
+            .message
+            .contains("made outside this fork, which may hold it but not use it"),
+        "{}",
+        error.message
+    );
+
+    // `start` returns before its fork ends, so the fork's copy of the
+    // resource is the last; the spawner's thread still destroys it.
+    let drops = compile(
+        "fork-drops-resource.slug",
+        "val start = fn() {\n    val r = make_it()\n    fork { val kept = r; select { after 50 }; 1 }\n}\nval main = fn() {\n    val t = start()\n    select { await t }\n    select { after 50 }\n}\n",
+    )
+    .expect("compile resource drop source");
+    owned_resources::DESTROYED_ON.lock().unwrap().clear();
+    vm.run_program(&drops).unwrap();
+    drop(vm);
+    let destroyed = owned_resources::DESTROYED_ON.lock().unwrap().clone();
+    assert_eq!(destroyed, vec![std::thread::current().id()]);
+}
