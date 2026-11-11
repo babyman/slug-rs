@@ -272,100 +272,190 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
         return false;
     };
     let parent = Inbox::current();
-    // Taken here, on the thread that owns the host: the island reads them
-    // from its own copy.
-    let configuration = execution.vm.host.as_ref().map(|host| {
-        let configuration = host.configuration();
-        (
-            configuration.arguments().to_vec(),
-            configuration.argument_map(),
-        )
-    });
-    let variables = execution.vm.variables.island_copy();
-    // Read here, on the spawner's thread, which owns the samples.
-    #[cfg(feature = "metrics")]
-    let profiling = execution.vm.profile.borrow().is_some();
-    let group = execution.vm.progress.group().clone();
-    group.join();
+    let (inputs, link) = ForkInputs::take(execution, task.clone(), parent.clone(), control);
+    link.group.join();
     parent.remote.fetch_add(1, Ordering::AcqRel);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_started();
-    let package = Sendable::new(Package {
-        execution,
-        task: task.clone(),
-        configuration,
-        variables,
-        parent,
-        control,
-        group,
-        #[cfg(feature = "metrics")]
-        profiling,
-    });
-    submit(Sendable::new(Box::new(move || run(package.into_inner()))));
+    let package = Sendable::new((inputs, link));
+    submit(Sendable::new(Box::new(move || {
+        let (inputs, link) = package.into_inner();
+        run(inputs, link);
+    })));
     true
 }
 
-struct Package {
-    execution: TaskExecution,
-    task: Rc<Task>,
-    configuration: Option<(Vec<String>, Value)>,
+/// Everything a fork's island is built from, and all that crosses to its
+/// worker for the island to own: the code it runs and what it may see.
+/// Nothing of the spawner's scheduler, resources, or counters is in it.
+struct ForkInputs {
+    closure: crate::sync::Code<crate::value::Closure>,
+    /// Where the fork was started, for its errors' call stacks.
+    span: Option<crate::SourceSpan>,
+    view: Option<Rc<super::fork::TaskView>>,
+    domain: u32,
+    /// The island's own registry of module variables.
     variables: crate::ModuleVariables,
-    parent: Arc<Inbox>,
-    control: Arc<IslandControl>,
-    group: Arc<Group>,
+    /// The host's arguments, read on the spawner's thread, which owns the
+    /// host; `None` without a host.
+    configuration: Option<(Vec<String>, Value)>,
     /// Whether the spawner samples call stacks, so the island does too.
     #[cfg(feature = "metrics")]
     profiling: bool,
 }
 
+/// What stays the spawner's while its fork runs: the island touches these
+/// only to post work back to the spawner's thread, which alone uses them.
+struct ParentLink {
+    /// The spawner's host, which the island's forwards host calls to.
+    host: Option<Rc<dyn VmHost>>,
+    task: Rc<Task>,
+    parent: Arc<Inbox>,
+    control: Arc<IslandControl>,
+    group: Arc<Group>,
+    #[cfg(feature = "metrics")]
+    counts: Counts,
+}
+
+impl ForkInputs {
+    /// Takes a fork's inputs from the execution its spawner prepared,
+    /// dropping the rest of that execution here, on the spawner's thread.
+    fn take(
+        execution: TaskExecution,
+        task: Rc<Task>,
+        parent: Arc<Inbox>,
+        control: Arc<IslandControl>,
+    ) -> (Self, ParentLink) {
+        let vm = &execution.vm;
+        let frame = vm
+            .frames
+            .first()
+            .expect("a fork's execution starts with its closure's frame");
+        let span = match &frame.call_span {
+            Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
+            _ => None,
+        };
+        let configuration = vm.host.as_ref().map(|host| {
+            let configuration = host.configuration();
+            (
+                configuration.arguments().to_vec(),
+                configuration.argument_map(),
+            )
+        });
+        let inputs = Self {
+            closure: frame.closure.clone(),
+            span,
+            view: vm.view.clone(),
+            domain: vm.domain,
+            variables: vm.variables.island_copy(),
+            configuration,
+            #[cfg(feature = "metrics")]
+            profiling: vm.profile.borrow().is_some(),
+        };
+        let link = ParentLink {
+            host: vm.host.clone(),
+            task,
+            parent,
+            control,
+            group: vm.progress.group().clone(),
+            #[cfg(feature = "metrics")]
+            counts: Counts {
+                metrics: vm.metrics.clone(),
+                profile: vm.profile.clone(),
+            },
+        };
+        // The rest is the spawner's, released on its thread.
+        drop(execution);
+        (inputs, link)
+    }
+
+    /// The island's VM, built on its worker from these inputs alone and
+    /// the worker's own scheduler, cancellation, and attention.
+    fn island_vm(self, link: &ParentLink, inbox: &Arc<Inbox>) -> Vm {
+        let Self {
+            closure,
+            span,
+            view,
+            domain,
+            variables,
+            configuration,
+            #[cfg(feature = "metrics")]
+            profiling,
+        } = self;
+        let progress = Rc::new(ProgressDriver::island(
+            link.control.clone(),
+            link.group.clone(),
+        ));
+        #[cfg(feature = "metrics")]
+        let metrics = Rc::new(core::cell::RefCell::new(super::VmMetrics::default()));
+        let nursery = Rc::new(Nursery::root(
+            progress.clone(),
+            #[cfg(feature = "metrics")]
+            metrics.clone(),
+        ));
+        let host = link.host.clone().map(|host| {
+            let (arguments, argument_map) =
+                configuration.unwrap_or_else(|| (Vec::new(), EmptyVmConfiguration.argument_map()));
+            Rc::new(ForkHost::new(
+                host,
+                link.parent.clone(),
+                arguments,
+                argument_map,
+                variables.clone(),
+            )) as Rc<dyn VmHost>
+        });
+        Vm::closure_vm(
+            super::Inherited {
+                host,
+                progress,
+                view,
+                domain,
+                cancel: Some(link.control.clone()),
+                attention: inbox.clone(),
+                variables,
+                native_resources: NativeResourceRegistry::new(),
+                #[cfg(feature = "metrics")]
+                metrics,
+                #[cfg(feature = "metrics")]
+                profile: Rc::new(core::cell::RefCell::new(
+                    profiling.then(alloc::collections::BTreeMap::new),
+                )),
+            },
+            closure,
+            Vec::new(),
+            None,
+            span,
+            super::calls::ClosureCallOptions {
+                direct_task_limit: None,
+                direct_task_count: None,
+                nursery,
+            },
+        )
+    }
+}
+
 /// Runs a fork's island on this worker thread, then reports its result.
-fn run(package: Package) {
-    let Package {
-        mut execution,
+fn run(inputs: ForkInputs, link: ParentLink) {
+    let inbox = Inbox::current();
+    // The thread's previous island may have been cancelled.
+    inbox.attention.fetch_and(!CANCELLED, Ordering::AcqRel);
+    let _ = link.control.inbox.set(inbox.clone());
+    core::sync::atomic::fence(Ordering::SeqCst);
+    if link.control.cancelled() {
+        inbox.attention.fetch_or(CANCELLED, Ordering::Release);
+    }
+    let mut vm = inputs.island_vm(&link, &inbox);
+    let ParentLink {
+        host,
         task,
-        configuration,
-        variables,
         parent,
         control,
         group,
         #[cfg(feature = "metrics")]
-        profiling,
-    } = package;
-    let inbox = Inbox::current();
-    // The thread's previous island may have been cancelled.
-    inbox.attention.fetch_and(!CANCELLED, Ordering::AcqRel);
-    let _ = control.inbox.set(inbox.clone());
-    core::sync::atomic::fence(Ordering::SeqCst);
-    if control.cancelled() {
-        inbox.attention.fetch_or(CANCELLED, Ordering::Release);
-    }
-    let vm = &mut execution.vm;
-    // Everything the fork shared with its spawner's scheduler is replaced
-    // before it runs; the spawner's own stays with the spawner.
-    let progress = Rc::new(ProgressDriver::island(control.clone(), group.clone()));
-    #[cfg(feature = "metrics")]
-    let spawner_counts = Counts::island(vm, profiling);
-    vm.nursery = Rc::new(Nursery::root(
-        progress.clone(),
-        #[cfg(feature = "metrics")]
-        vm.metrics.clone(),
-    ));
-    vm.progress = progress;
-    vm.native_resources = NativeResourceRegistry::new();
-    vm.host = vm.host.take().map(|host| {
-        let (arguments, argument_map) =
-            configuration.unwrap_or_else(|| (Vec::new(), EmptyVmConfiguration.argument_map()));
-        Rc::new(ForkHost::new(
-            host,
-            parent.clone(),
-            arguments,
-            argument_map,
-            variables.clone(),
-        )) as Rc<dyn VmHost>
-    });
-    vm.variables = variables;
-    vm.cancel = Some(control.clone());
-    vm.attention = inbox.clone();
+        counts,
+    } = link;
+    // The island's host holds its own handle on the spawner's.
+    drop(host);
     // A panic here is a VM bug. Unwinding past this point would leave the
     // spawner waiting for a result that never comes, so it becomes the
     // fork's error instead, and the island's bookkeeping still runs. Release
@@ -378,8 +468,8 @@ fn run(package: Package) {
     // Posted before the result, so the spawner has merged them by the time
     // it sees the fork settle.
     #[cfg(feature = "metrics")]
-    spawner_counts.merge_from(vm, &parent);
-    drop(execution);
+    counts.merge_from(&vm, &parent);
+    drop(vm);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_ended();
     if let Some(result) = outcome
@@ -406,23 +496,6 @@ struct Counts {
 
 #[cfg(feature = "metrics")]
 impl Counts {
-    /// Gives `vm`, about to run as an island, counters and samples of its
-    /// own (sampling when the spawner does), and keeps the spawner's.
-    fn island(vm: &mut Vm, profiling: bool) -> Self {
-        Self {
-            metrics: core::mem::replace(
-                &mut vm.metrics,
-                Rc::new(core::cell::RefCell::new(super::VmMetrics::default())),
-            ),
-            profile: core::mem::replace(
-                &mut vm.profile,
-                Rc::new(core::cell::RefCell::new(
-                    profiling.then(alloc::collections::BTreeMap::new),
-                )),
-            ),
-        }
-    }
-
     /// Posts the island's counters and samples to the spawner's thread,
     /// which adds them into its own.
     fn merge_from(self, vm: &Vm, parent: &Inbox) {

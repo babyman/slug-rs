@@ -390,6 +390,26 @@ impl VmMetrics {
 /// Reported when no task can make progress while one is still waiting.
 const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
 
+/// What a task's VM takes from the VM that starts it, or, for a fork's
+/// island, from the worker it runs on.
+#[cfg(feature = "concurrency")]
+struct Inherited {
+    host: Option<Rc<dyn VmHost>>,
+    progress: Rc<ProgressDriver>,
+    view: Option<Rc<fork::TaskView>>,
+    domain: u32,
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    cancel: Option<alloc::sync::Arc<island::IslandControl>>,
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    attention: alloc::sync::Arc<island::Inbox>,
+    variables: crate::ModuleVariables,
+    native_resources: NativeResourceRegistry,
+    #[cfg(feature = "metrics")]
+    metrics: Rc<RefCell<VmMetrics>>,
+    #[cfg(feature = "metrics")]
+    profile: profile::Samples,
+}
+
 /// The independently owned interpreter state for a spawned task.
 ///
 /// It currently runs to settlement, but keeping the VM intact makes future
@@ -3956,9 +3976,74 @@ impl Vm {
                 span,
             ));
         }
-        let mut vm = Self {
+        Ok(Self::closure_vm(
+            self.inherited(),
+            closure,
+            arguments,
+            provided,
+            span,
+            options,
+        ))
+    }
+
+    /// What a task's VM takes from this one, which starts it.
+    #[cfg(feature = "concurrency")]
+    fn inherited(&self) -> Inherited {
+        Inherited {
             host: self.host.clone(),
-            module_program: Some(program.clone()),
+            progress: self.progress.clone(),
+            view: self.view.clone(),
+            domain: self.domain,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel: self.cancel.clone(),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention: self.attention.clone(),
+            variables: self.variables.clone(),
+            native_resources: self.native_resources.clone(),
+            #[cfg(feature = "metrics")]
+            metrics: self.metrics.clone(),
+            #[cfg(feature = "metrics")]
+            profile: self.profile.clone(),
+        }
+    }
+
+    /// A VM about to call `closure`, whose chunk exists and takes
+    /// `arguments`: every field is either `inherited` or starts empty, so a
+    /// new field must be one or the other, here, for tasks and islands
+    /// alike.
+    #[cfg(feature = "concurrency")]
+    fn closure_vm(
+        inherited: Inherited,
+        closure: crate::sync::Code<Closure>,
+        arguments: Vec<Value>,
+        provided: Option<Vec<bool>>,
+        span: Option<SourceSpan>,
+        options: ClosureCallOptions,
+    ) -> Vm {
+        let Inherited {
+            host,
+            progress,
+            view,
+            domain,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            cancel,
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            attention,
+            variables,
+            native_resources,
+            #[cfg(feature = "metrics")]
+            metrics,
+            #[cfg(feature = "metrics")]
+            profile,
+        } = inherited;
+        let program = closure.program.clone();
+        let locals_count = program
+            .chunk(closure.chunk)
+            .expect("the closure's chunk was checked")
+            .locals;
+        let mut vm = Self {
+            host,
+            module_program: Some(program),
             globals: closure.globals.clone(),
             imported_globals: HashSet::new(),
             module_metadata: Vec::new(),
@@ -3966,29 +4051,20 @@ impl Vm {
             frames: Vec::new(),
             local_slot_pool: Vec::new(),
             cleanup: Vec::new(),
-            progress: self.progress.clone(),
-            #[cfg(feature = "concurrency")]
+            progress,
             nursery: options.nursery,
-            #[cfg(feature = "concurrency")]
             direct_task_limit: options.direct_task_limit,
-            #[cfg(feature = "concurrency")]
             direct_task_count: options.direct_task_count,
-            #[cfg(feature = "concurrency")]
-            view: self.view.clone(),
-            #[cfg(feature = "concurrency")]
-            domain: self.domain,
+            view,
+            domain,
             #[cfg(all(feature = "threads", not(target_os = "none")))]
-            cancel: self.cancel.clone(),
+            cancel,
             #[cfg(all(feature = "threads", not(target_os = "none")))]
-            attention: self.attention.clone(),
-            #[cfg(all(
-                feature = "concurrency",
-                not(all(feature = "threads", not(target_os = "none")))
-            ))]
+            attention,
+            #[cfg(not(all(feature = "threads", not(target_os = "none"))))]
             fork_turn: FORK_TURN,
-            #[cfg(feature = "concurrency")]
-            variables: self.variables.clone(),
-            native_resources: self.native_resources.clone(),
+            variables,
+            native_resources,
             current_waiter: None,
             suspension: None,
             resume: None,
@@ -3997,29 +4073,30 @@ impl Vm {
             frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
-            metrics: self.metrics.clone(),
+            metrics,
             #[cfg(feature = "metrics")]
-            profile: self.profile.clone(),
+            profile,
         };
         let argument_count = arguments.len();
-        let (locals, reused) = vm.take_frame_locals(arguments, chunk.locals);
+        let (locals, reused) = vm.take_frame_locals(arguments, locals_count);
         vm.record_frame_locals(locals.capacity(), argument_count, reused);
         #[cfg(feature = "metrics")]
-        vm.record_frame(chunk.locals);
+        vm.record_frame(locals_count);
+        let provided = vm.frame_provided(provided);
         vm.push_frame(Frame {
             closure,
             call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
             ip: 0,
             stack_base: 0,
             locals,
-            provided: self.frame_provided(provided),
+            provided,
             scope_depth: 1,
             scopes: Vec::new(),
             cleanup_action: false,
             cleanup_recovers: false,
             cleanup_owner_depth: None,
         });
-        Ok(vm)
+        vm
     }
 
     /// Starts a task from the closure on the stack: a spawned task shares

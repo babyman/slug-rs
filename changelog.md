@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A fork's island is built on its worker from an explicit package of fork
+  inputs (its closure, start span, task view, domain, module variables, and
+  host arguments), not from the whole `Vm` its spawner prepared with its
+  parent-owned fields overwritten there. What stays the spawner's (its host,
+  the task, its inbox and thread group, its counters) travels apart and is
+  used only through posts back to it, and the spawner's prepared execution
+  is now released on its own thread. Tasks and islands build their VMs
+  through one constructor whose every field is either inherited or starts
+  empty, so a new `Vm` field cannot cross to a worker unnoticed. The package
+  holds no `std` thread types, so a future core-1 worker on the ESP32-S3 can
+  build from it too: the board stays on one core for now, with forks as
+  islands there the long-term goal (`docs/planning/fork-tasks.md`).
+
 - Every task starts through one scheduler operation. Before, a fork its
   nursery admitted at once went to a worker from the `fork` instruction,
   and still left an entry in the ready queue for the scheduler to skip,

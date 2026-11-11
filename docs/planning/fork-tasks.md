@@ -401,6 +401,17 @@ KB); static RAM is unchanged. On the board (2026-11-10) the tasks demo ran
 three minutes, 920 blinks at the expected 5.08 a second, after a startup
 bug from 735fa7f was fixed (builtins passed as module providers).
 
+Decision (2026-11-10): the ESP32-S3 stays on one core for now, forks taking
+turns, which passes the fork suite there; its programs so far wait on timers
+and pins, so a second core would buy nothing measurable yet. The long-term
+goal is the full port, forks as islands on the second core, so `fork` means
+the same everywhere; one VM per core joined by channels was rejected as a
+second, embedded-only model. The port needs atomic counts on Xtensa
+(measure their cost on the board first), a `no_std` worker started on core 1
+with a cross-core wake in place of the condvar, and fork limits sized to the
+board's RAM. Toward it, an island is built from an explicit package of fork
+inputs, free of `std` thread types, which a core-1 worker can reuse.
+
 Review (2026-11-10) of the task and fork scheduler found that a busy fork
 starved its siblings on cooperative builds, so `cancel-busy` and
 `cancel-nested` hung there; no CI job ran the fork suite without `threads`.
@@ -415,8 +426,10 @@ suspends until its children settle, and every nursery shares the parent's
 ready queue and timers; a child's failure is reported to its nursery rather
 than found by a per-index scan. Fork admission had two dispatch paths, one of
 which left a stale ready-queue entry; `Nursery::start` is now the only way a
-task begins. Open from the same review: an island receives a whole `Vm` and
-overwrites its parent-owned fields, to fix with the ESP32-S3 threads work.
+task begins. Last, an island received a whole `Vm` and overwrote its
+parent-owned fields; it is now built on its worker from `ForkInputs`, with
+what stays the spawner's in a separate `ParentLink`, through the one
+constructor tasks use (`Vm::closure_vm`, from `Inherited`).
 
 ### Phase 6: Crawl and evaluation
 
