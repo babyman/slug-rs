@@ -20,3 +20,6 @@
 
 # Agent evaluation results; the harness recreates them locally.
 /eval/agent/results/
+
+# Crawl worlds saved by clutch/slug.games.crawl.clutch/play.slug.
+/crawl.db*

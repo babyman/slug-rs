@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -17,6 +17,13 @@ slim:
 	cargo test --workspace --no-default-features --features metrics
 	cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 	cargo clippy --workspace --all-targets --no-default-features --features metrics -- -D warnings
+
+# Tasks and forks without threads, as single-core and embedded builds run
+# them: forks take turns cooperatively.
+cooperative:
+	cargo test -p slug-vm --no-default-features --features concurrency
+	cargo test -p slug --no-default-features --features concurrency --test legacy_syntax_conformance
+	cargo clippy -p slug-vm --all-targets --no-default-features --features concurrency -- -D warnings
 
 test-vm:
 	cargo test -p slug-vm --features metrics --test vm
@@ -60,7 +67,7 @@ test-native:
 # repository as SLUG_HOME.
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.random.secure.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.games.crawl.clutch
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh
@@ -99,6 +106,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim docs-check test-clutches
+check: fmt-check lint test slim cooperative docs-check test-clutches
 
 ci: check

@@ -1,0 +1,222 @@
+val game = import("slug.games.crawl")
+val empire = import("slug.games.crawl.empire")
+val lore = import("slug.games.crawl.lore")
+val level = import("slug.games.crawl.level")
+val rng = import("slug.games.crawl.rng")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, reduce, all, any} = import("slug.std")
+
+// Changes the player with `id` by `fields`, and the world by `world`.
+val change = fn(id:str, fields:map, world:map = {}) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}, world: s.world + world})
+}
+
+// A world with a little history and Mara in it, just down the stairs from
+// the start town.
+val downstairs = fn() {
+    game.newGame(2, {history: 10})
+    game.join("a", "Mara")
+    val down = game.here("a").down
+    change("a", {x: down.x, y: down.y, gold: 37})
+    game.command("a", "enter", false)
+}
+
+// Mara starves to death where she stands.
+val starve = fn() {
+    change("a", {food: -849})
+    game.command("a", "space", false)
+}
+
+val levelOf = fn(id:str):map {
+    val p = game.playerOf(id)
+    game.current().levels[game.chunkKey(p.cx, p.cy, p.depth)]
+}
+
+@test
+val theDeadLeaveAGraveWithWhatTheyCarriedAroundIt = fn() {
+    downstairs()
+    val p = game.playerOf("a")
+    val pack = p.pack
+    starve()
+    val lv = levelOf("a")
+    val season = game.current().world.empire.step
+    assertEqual(lv.graves, [{x: p.x, y: p.y, name: "Mara", level: 1, cause: "starved to death", step: season}])
+    val laid = filter(lv.items, fn(i) { i.dropped == true })
+    // Each thing, and the gold, on its own square beside the grave.
+    assertEqual(map(laid, fn(i) { i.item }), map(pack, fn(e) { e.item }) :+ {kind: "gold", amount: 37})
+    assertTrue(all(laid, fn(i) { math_max(abs(i.x - p.x), abs(i.y - p.y)) == 1 }))
+    assertEqual(len(reduce(laid, {}, fn(acc, i) { acc + {["" + i.x + "," + i.y]: true} })), len(laid))
+    assertEqual([game.playerOf("a").pack, game.playerOf("a").gold], [[], 0])
+    assertTrue(any(game.playerOf("a").more, fn(m) { m == "Your grave lies here, and what you carried around it." }))
+}
+
+val abs = fn(n:num):num { if (n < 0) { -n } else { n } }
+val math_max = fn(a:num, b:num):num { if (a > b) { a } else { b } }
+
+@test
+val deathsAreRememberedAndToldOf = fn() {
+    downstairs()
+    val p = game.playerOf("a")
+    starve()
+    val w = game.current().world
+    val here = empire.territoryOf(p.cx, p.cy, p.depth)
+    val death = {step: w.empire.step, who: "Mara", at: here, kind: "death", level: 1, cause: "starved to death", depth: 1}
+    assertEqual(w.empire.annals[len(w.empire.annals) - 1], death)
+    assertEqual(w.empire.chronicle[len(w.empire.chronicle) - 1], death)
+    assertEqual(empire.tell(w.seed, w.empire, death), "Mara starved to death " + empire.placeName(w.seed, here) + ".")
+    assertEqual(lore.fallen(w.seed, w.empire, 3),
+        ["Mara, level 1, starved to death " + empire.placeName(w.seed, here) + ", in " + empire.whenOf(death) + "."])
+    assertEqual(empire.tell(w.seed, w.empire, death + {cause: "killed by the troll"}),
+        "Mara was killed by the troll " + empire.placeName(w.seed, here) + ".")
+}
+
+@test
+val walkingOntoAGraveReadsIt = fn() {
+    downstairs()
+    val p = game.playerOf("a")
+    starve()
+    // Someone else comes by, from the square west of the grave.
+    game.join("b", "Ash")
+    change("b", {cx: p.cx, cy: p.cy, depth: p.depth, x: p.x - 1, y: p.y})
+    game.command("b", "l", false)
+    val b = game.playerOf("b")
+    assertEqual([b.x, b.y], [p.x, p.y])
+    val grave = levelOf("b").graves[0]
+    assertTrue(any(b.messages, fn(m) { m == lore.epitaph(grave) }))
+    assertEqual(lore.epitaph(grave), "Here lies Mara, level 1, starved to death, in " + empire.dateOf(grave.step) + ".")
+    // The map shows the grave where nothing lies on it.
+    val key = game.chunkKey(p.cx, p.cy, p.depth)
+    assertEqual(game.current().players.b.memory[key][p.y][p.x], game.GRAVE)
+}
+
+@test
+val theFirstToComeDeeperIsRemembered = fn() {
+    game.newGame(2, {history: 10})
+    game.join("a", "Mara")
+    // As if no one had been deeper than the surface.
+    change("a", {}, {deepest: 0})
+    val down = game.here("a").down
+    change("a", {x: down.x, y: down.y})
+    game.command("a", "enter", false)
+    val e = game.current().world.empire
+    val deed = e.annals[len(e.annals) - 1]
+    assertEqual([deed.kind, deed.deed, deed.who, deed.depth], ["deed", "descent", "Mara", 1])
+    assertEqual(game.current().world.deepest, 1)
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == "No one has come this deep before." }))
+    assertEqual(empire.tell(game.current().world.seed, e, deed), "Mara was the first to reach depth 1, " + empire.placeName(game.current().world.seed, deed.at) + ".")
+    // Going back up and down again is no deed.
+    val up = game.here("a").up
+    change("a", {x: up.x, y: up.y})
+    game.command("a", "enter", false)
+    val again = game.here("a").down
+    change("a", {x: again.x, y: again.y})
+    game.command("a", "enter", false)
+    assertEqual(len(game.current().world.empire.annals), len(e.annals))
+}
+
+@test
+val deedsAreToldInWords = fn() {
+    val e = {factions: [{name: "the Gnash Pack"}], annals: [], chronicle: []}
+    val tell = fn(event:map):str { empire.tell(7, e, {step: 0, kind: "deed", who: "Mara", at: "1,1,2"} + event) }
+    val where = empire.placeName(7, "1,1,2")
+    assertEqual(tell({deed: "slew", what: "ogre"}), "Mara slew an ogre " + where + ".")
+    assertEqual(tell({deed: "slew", what: "dragon"}), "Mara slew a dragon " + where + ".")
+    assertEqual(tell({deed: "bounty", gold: 140, kills: 12, name: "Fort Greygate"}), "Mara claimed 140 gold in bounties at Fort Greygate, for 12 kills.")
+    assertEqual(tell({deed: "weakened", against: 0, kills: 11}), "Mara's hunting thinned the Gnash Pack's ranks " + where + ".")
+}
+
+@test
+val aHunterWhoThinsAFactionsRanksIsRemembered = fn() {
+    game.newGame(2, {history: 10})
+    val w = game.current().world
+    val e0 = w.empire
+    // Land a faction from below holds, and a kind of its people.
+    val held = filter(keys(e0.holds), fn(k) { e0.factions[e0.holds[k]].people == "orcs" })[0]
+    val i = e0.holds[held]
+    val kills = fn(n:num, who:str):map { reduce(range(n), e0, fn(e, _) { empire.killed(e, held, "orc", who) }) }
+    val after = fn(e:map):list {
+        val stepped = rng.within(5, fn() { empire.step(e, w.seed) })
+        filter(stepped.annals, fn(a) { a.kind == "deed" })
+    }
+    assertEqual(after(kills(9, "Mara")), [])
+    val deeds = after(kills(10, "Mara"))
+    assertEqual(map(deeds, fn(d) { [d.deed, d.who, d.against, d.kills, d.at] }), [["weakened", "Mara", i, 10, held]])
+    // Kills by no one named, or split between two, are no one's deed.
+    assertEqual(after(kills(12, "")), [])
+    assertEqual(after(reduce(range(6), kills(6, "Mara"), fn(e, _) { empire.killed(e, held, "orc", "Ash") })), [])
+    // A "|" in a name does not split its key.
+    assertEqual(map(after(kills(10, "M|a")), fn(d) { d.who }), ["M/a"])
+}
+
+@test
+val theAnnalsKeepOnlyTheLatestOfThePlayersEvents = fn() {
+    game.newGame(2, {history: 75})
+    val e0 = game.current().world.empire
+    val great = len(e0.annals)
+    val e = reduce(range(70), e0, fn(e, n) { empire.record(e, {kind: "death", who: "P" + n, level: 1, cause: "starved to death", at: "0,0,1", depth: 1}) })
+    val deaths = filter(e.annals, fn(a) { a.kind == "death" })
+    assertEqual(len(deaths), 60)
+    assertEqual([deaths[0].who, deaths[59].who], ["P10", "P69"])
+    assertEqual(len(e.annals), great + 60)
+}
+
+@test
+val innkeepersKeepARollOfTheFallen = fn() {
+    game.newGame(2, {history: 10})
+    game.join("a", "Ann")
+    val lv = game.here("a")
+    val inn = filter(lv.characters, fn(c) { c.role == "innkeeper" })[0]
+    val sides = filter([["h", 1, 0], ["l", -1, 0], ["k", 0, 1], ["j", 0, -1]], fn(d) {
+        val ch = lv.map[inn.y + d[2]][inn.x + d[1]]
+        (ch == level.FLOOR || ch == level.ROAD) && !any(lv.characters, fn(o) { o.x == inn.x + d[1] && o.y == inn.y + d[2] })
+    })
+    change("a", {x: inn.x + sides[0][1], y: inn.y + sides[0][2]})
+    game.command("a", sides[0][0], false)
+    game.command("a", "4", false)
+    assertEqual(game.playerOf("a").messages, [inn.name + " says: \"No one has fallen yet. May it stay that way.\""])
+    val s = game.snapshot()
+    val death = {kind: "death", who: "Mara", level: 3, cause: "killed by the orc", at: "1,1,1", depth: 2}
+    game.load(s copy {world: s.world copy {empire: empire.record(s.world.empire, death)}})
+    game.command("a", "4", false)
+    val w = game.current().world
+    // The roll's lines are long; they page on with --More--.
+    val heard = game.playerOf("a").messages + game.playerOf("a").more
+    assertEqual(heard, [inn.name + " says: \"We remember them here:\""] + lore.fallen(w.seed, w.empire, 3))
+}
+
+@test
+val battlefieldsAreStrewnWithTheRemainsOfBattles = fn() {
+    game.newGame(2, {history: 10})
+    game.join("a", "Mara")
+    val home = game.playerOf("a")
+    // The land under the start town has seen ten battles.
+    val under = empire.territoryOf(home.cx, home.cy, 1)
+    val s = game.snapshot()
+    val e = s.world.empire
+    game.load(s copy {world: s.world copy {empire: e copy {lands: (e.lands ?? {}) + {[under]: {changes: 0, battles: 10, fought: [4, 2]}}}}})
+    val down = game.here("a").down
+    change("a", {x: down.x, y: down.y})
+    game.command("a", "enter", false)
+    val lv = levelOf("a")
+    assertEqual(len(lv.remains), 5)
+    // Walking onto remains tells of the battle; the map shows them.
+    val r = filter(lv.remains, fn(q) { lv.map[q.y][q.x - 1] == level.FLOOR && indexAtList(lv.items, q.x - 1, q.y) && indexAtList(lv.remains, q.x - 1, q.y) })[0]
+    change("a", {x: r.x - 1, y: r.y})
+    game.command("a", "l", false)
+    val w = game.current().world
+    assertTrue(any(game.playerOf("a").messages, fn(m) { m == lore.remains(w.empire, under) }))
+    assertEqual(lore.remains(w.empire, under), "Old bones and broken blades lie here, where " + empire.factionName(w.empire, 4) + " fought " + empire.factionName(w.empire, 2) + ".")
+    // Coming again strews no more than the battles call for.
+    val up = game.here("a").up
+    change("a", {x: up.x, y: up.y})
+    game.command("a", "enter", false)
+    // Arriving in town pages on with --More--.
+    val down2 = game.here("a").down
+    change("a", {x: down2.x, y: down2.y, more: [], messages: []})
+    game.command("a", "enter", false)
+    assertEqual(len(levelOf("a").remains), 5)
+}
+
+// Whether nothing in `xs` is at (x, y).
+val indexAtList = fn(xs:list, x:num, y:num):bool { !any(xs, fn(q) { q.x == x && q.y == y }) }

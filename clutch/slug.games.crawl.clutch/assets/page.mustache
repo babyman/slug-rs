@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crawl</title>
+  <link rel="stylesheet" href="/crawl.css">
+  <script src="/htmx.js"></script>
+  <script src="/crawl-map.js"></script>
+  <script src="/crawl.js"></script>
+</head>
+{{! Each key press posts to /key; buttons in the game post their own keys.
+    Requests run one at a time, in order, so fast typing is never reordered. }}
+<body hx-target="#game" hx-sync="#keys:queue all">
+  <div id="keys" hx-post="/key" hx-trigger="keydown[isGameKey(event)] from:document"></div>
+  <header>
+    <h1>CRAWL</h1><p>A world above, a dungeon below.</p>
+    {{! Outside #game too: a new name, and Enter, renames the character. }}
+    <form class="name" hx-post="/name" hx-swap="none" hx-on::after-request="this.elements.name.blur()">
+      <label for="name">You are</label>
+      <input id="name" name="name" value="{{name}}" maxlength="20" autocomplete="off" enterkeyhint="done" aria-label="Your name" title="Type a new name and press Enter">
+    </form>
+  </header>
+  {{! Outside #game, so what is being typed survives each push of the game. }}
+  <form class="say" hx-post="/say" hx-swap="none" hx-on::after-request="this.reset(); this.elements.text.blur()">
+    <input id="say" name="text" maxlength="80" autocomplete="off" enterkeyhint="send" placeholder="Say something to everyone in sight…" aria-label="Say">
+    <button>Say</button>
+  </form>
+  <main id="game">
+    {{>game}}
+  </main>
+  {{! On a touch screen, a bar of controls stays at the bottom: a pad of the
+      eight directions with Wait in the middle, and Run, which while on makes
+      every direction run, Stairs, and Wait. }}
+  <nav class="touch" aria-label="Controls">
+    <div class="side">
+      <button type="button" class="run" aria-pressed="false">Run</button>
+      <button hx-post="/key" hx-vals='{"key": "enter"}'>Stairs</button>
+      <button hx-post="/key" hx-vals='{"key": "space"}'>Wait</button>
+    </div>
+    <div class="pad">
+      <button data-direction hx-post="/key" hx-vals='{"key": "y"}' aria-label="Up and left">↖</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "k"}' aria-label="Up">↑</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "u"}' aria-label="Up and right">↗</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "h"}' aria-label="Left">←</button>
+      <button hx-post="/key" hx-vals='{"key": "space"}' aria-label="Wait">·</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "l"}' aria-label="Right">→</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "b"}' aria-label="Down and left">↙</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "j"}' aria-label="Down">↓</button>
+      <button data-direction hx-post="/key" hx-vals='{"key": "n"}' aria-label="Down and right">↘</button>
+    </div>
+  </nav>
+  <p class="help">Move <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> <kbd>y</kbd><kbd>u</kbd><kbd>b</kbd><kbd>n</kbd> or arrows ·
+  Shift to run · <kbd>space</kbd> wait · <kbd>enter</kbd> take the stairs ·
+  <kbd>e</kbd> eat <kbd>q</kbd> quaff <kbd>r</kbd> read <kbd>w</kbd> wield <kbd>a</kbd> wear <kbd>d</kbd> drop ·
+  or use the buttons beside each item in your pack. Walk into another player to talk to them or give them something, and into the people of towns and forts to trade, eat, rest, hear the news, or claim the bounties a fort's captain posts;
+  <kbd>/</kbd> to say something to everyone in sight. Your name, at the top, is yours to change. Walk off the edge of the map to go further: anywhere on the surface, through an opening below. The stairs <b>%</b> lead down into the dungeon.</p>
+</body>
+</html>

@@ -12,6 +12,7 @@ use crate::{FixtureMetadata, FixtureOutcome};
 pub struct FixtureRunner {
     executable: PathBuf,
     default_timeout: Duration,
+    timeout_scale: u32,
 }
 
 impl FixtureRunner {
@@ -20,7 +21,16 @@ impl FixtureRunner {
         Self {
             executable: executable.into(),
             default_timeout: Duration::from_secs(1),
+            timeout_scale: 1,
         }
+    }
+
+    /// Multiplies every fixture's time limit by `scale`, for a slow build
+    /// such as one instrumented by a sanitizer.
+    #[must_use]
+    pub fn with_timeout_scale(mut self, scale: u32) -> Self {
+        self.timeout_scale = scale.max(1);
+        self
     }
 
     /// Runs every fixture below `directory`.
@@ -33,8 +43,16 @@ impl FixtureRunner {
         let fixtures = fixture_sources(directory)?;
         let mut failures = Vec::new();
         for source in fixtures {
-            if let Err(error) = self.run_fixture(&source) {
-                failures.push(format!("{}: {error}", source.display()));
+            let pending = FixtureMetadata::load(&source.with_extension("fixture.toml"))
+                .ok()
+                .and_then(|metadata| metadata.pending);
+            match (self.run_fixture(&source), pending) {
+                (Err(error), None) => failures.push(format!("{}: {error}", source.display())),
+                (Ok(()), Some(reason)) => failures.push(format!(
+                    "{}: pending fixture now conforms ({reason}); remove `pending`",
+                    source.display()
+                )),
+                _ => {}
             }
         }
         if failures.is_empty() {
@@ -55,6 +73,20 @@ impl FixtureRunner {
             .as_ref()
             .map_or_else(|| root.to_path_buf(), |path| root.join(path));
         let library_root = metadata.library_root.as_ref().map(|path| root.join(path));
+        // A diagnostic quotes its path and source lines, so a fragment found
+        // there would match whatever the error is.
+        if !metadata.stderr_contains.is_empty() {
+            let text = fs::read_to_string(source)
+                .map_err(|error| format!("cannot read fixture source: {error}"))?;
+            let path = source.display().to_string();
+            if let Some(fragment) = metadata.stderr_contains.iter().find(|fragment| {
+                text.contains(fragment.as_str()) || path.contains(fragment.as_str())
+            }) {
+                return Err(format!(
+                    "stderr_contains fragment {fragment:?} also appears in the fixture's source or path, which a diagnostic quotes"
+                ));
+            }
+        }
         let mut command = Command::new(&self.executable);
         command
             .arg(source)
@@ -70,7 +102,8 @@ impl FixtureRunner {
             .map_err(|error| format!("cannot start fixture: {error}"))?;
         let timeout = metadata
             .timeout_ms
-            .map_or(self.default_timeout, Duration::from_millis);
+            .map_or(self.default_timeout, Duration::from_millis)
+            * self.timeout_scale;
         let started = Instant::now();
         loop {
             if child
@@ -116,6 +149,13 @@ impl FixtureRunner {
             return Err(format!(
                 "stderr mismatch: expected {expected:?}, observed {stderr:?}"
             ));
+        }
+        for expected in &metadata.stderr_contains {
+            if !stderr.contains(expected.as_str()) {
+                return Err(format!(
+                    "stderr does not contain {expected:?}; observed {stderr:?}"
+                ));
+            }
         }
         if let Some(expected) = metadata.diagnostic.as_deref()
             && stderr != expected

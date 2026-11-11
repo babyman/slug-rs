@@ -14,7 +14,12 @@ use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Value, Vm,
 };
 
-// See docs/decisions/2026-10-25-desktop-allocator.md.
+// See docs/decisions/2026-10-25-desktop-allocator.md. ThreadSanitizer builds
+// (`--cfg slug_sanitized`, set by scripts/tsan-forks.py) keep the system
+// allocator: TSan sees only the `malloc` and `free` it intercepts, not
+// mimalloc's own handoff of freed memory between threads, so memory freed on
+// one thread and reused on another would read as a race.
+#[cfg(not(slug_sanitized))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -141,7 +146,8 @@ fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
 }
 
 fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
-    let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
+    let builtins =
+        NativeModule::new_thread_safe("slug.builtin", ()).expect("static native module is valid");
     vec![
         builtins
             .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
@@ -177,9 +183,36 @@ fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
 
 fn register_native_modules(vm: &mut Vm) {
     for function in builtin_functions() {
+        // Printing, lengths, keys, and channels are safe from any thread.
+        function
+            .declare_thread_safe()
+            .expect("builtins have no state to share");
         vm.define_builtin(function)
             .expect("static builtin binding is unique");
     }
+}
+
+/// Applies `SLUG_MAX_FORKS`, how many forks may run at once, when set.
+fn configure_fork_limit() -> Result<(), String> {
+    let Some(value) = env::var_os("SLUG_MAX_FORKS") else {
+        return Ok(());
+    };
+    let limit = value
+        .to_str()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| {
+            format!(
+                "SLUG_MAX_FORKS must be a positive whole number, got `{}`",
+                value.to_string_lossy()
+            )
+        })?;
+    #[cfg(feature = "threads")]
+    slug_vm::set_fork_limit(limit);
+    // Forks run as tasks on one thread here, so there is nothing to bound.
+    #[cfg(not(feature = "threads"))]
+    let _ = limit;
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -202,6 +235,10 @@ fn main() -> ExitCode {
             _ => break,
         }
         remaining.next();
+    }
+    if let Err(message) = configure_fork_limit() {
+        eprint_startup_error("usage", "environment", message, json);
+        return ExitCode::from(1);
     }
     match remaining.next().as_deref() {
         Some("--version" | "-V") => {
@@ -430,6 +467,28 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    // The artifact carries no native code: its foreign bindings come from
+    // the installed clutches, which stay active while `loader` lives, so it
+    // is declared before the host that calls them.
+    let loader = match build_default_host_vm(
+        source_root,
+        slug_home.as_deref(),
+        program_arguments,
+        entry_module,
+    ) {
+        Ok((_, loader)) => loader,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    let foreign = match loader.artifact_foreign_functions(&artifact) {
+        Ok(functions) => functions,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
     let configuration = slug::Configuration::load(
         source_root,
         slug_home.as_deref(),
@@ -437,7 +496,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         program_arguments,
         entry_module,
     );
-    let host = match ArtifactHost::new(artifact, std::rc::Rc::new(configuration)) {
+    let host = match ArtifactHost::new(artifact, slug_vm::Shared::new(configuration)) {
         Ok(host) => host,
         Err(error) => {
             eprint_startup_error("artifact", "load", error.to_string(), json);
@@ -449,6 +508,10 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
             eprint_startup_error("host", "builtin", error.to_string(), json);
             return ExitCode::from(1);
         }
+    }
+    if let Err(error) = host.register_foreign_batch(foreign) {
+        eprint_startup_error("host", "clutch", error.to_string(), json);
+        return ExitCode::from(1);
     }
     match host.run() {
         Ok(result) => exit_status(host.has_entrypoint(), &result, json),
@@ -510,12 +573,22 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
     };
     program.set_module_name(entry_module);
     register_native_modules(&mut vm);
+    #[cfg(feature = "metrics")]
+    let profile_path = std::env::var_os("SLUG_PROFILE");
+    #[cfg(feature = "metrics")]
+    if profile_path.is_some() {
+        vm.enable_profile();
+    }
     let outcome = vm.run_program(&program);
     // Counting builds report the VM's internal counters, documented in
     // docs/engineering/benchmarking.md.
     #[cfg(feature = "metrics")]
     if std::env::var_os("SLUG_DUMP_METRICS").is_some() {
         eprintln!("{:#?}", vm.metrics());
+    }
+    #[cfg(feature = "metrics")]
+    if let (Some(path), Some(samples)) = (profile_path, vm.take_profile()) {
+        write_profile(&path, &samples);
     }
     match outcome {
         Ok(result) => {
@@ -528,6 +601,19 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
             eprint_runtime_error(&error, &resolved_path, &source, json);
             ExitCode::from(1)
         }
+    }
+}
+
+/// Writes sampled Slug stacks as folded stacks, one `stack count` a line.
+#[cfg(feature = "metrics")]
+fn write_profile(path: &std::ffi::OsStr, samples: &std::collections::BTreeMap<String, usize>) {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for (stack, count) in samples {
+        let _ = writeln!(text, "{stack} {count}");
+    }
+    if let Err(error) = std::fs::write(path, text) {
+        eprintln!("slug: cannot write profile: {error}");
     }
 }
 

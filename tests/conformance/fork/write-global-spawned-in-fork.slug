@@ -1,0 +1,10 @@
+// A task spawned inside a fork is inside the fork.
+var total = 0
+val bump = fn() { total = total + 1 }
+val main = fn() {
+    val t = fork {
+        val inner = spawn { bump() }
+        select { await inner }
+    }
+    select { await t }
+}

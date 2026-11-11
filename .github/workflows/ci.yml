@@ -37,6 +37,22 @@ jobs:
         if: runner.os != 'Windows'
         run: make test-filesystem-clutch
 
+  # The fork fixtures under ThreadSanitizer, with std rebuilt for it.
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    env:
+      SLUG_TSAN_TOOLCHAIN: nightly-2026-11-07
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-11-07
+          components: rust-src
+      # ThreadSanitizer cannot map its shadow memory with the runner's
+      # default address-space randomization.
+      - run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: python3 -I scripts/tsan-forks.py --runs 3
+
   embedded-check:
     runs-on: ubuntu-latest
     steps:
@@ -53,5 +69,12 @@ jobs:
         working-directory: firmware/slug-esp32-s3
         env:
           SLUG_TARGET_DESCRIPTOR: esp32-s3-typed.toml
+      - name: Check ESP32-S3 firmware with tasks
+        run: cargo +esp check
+        working-directory: firmware/slug-esp32-s3
+        env:
+          SLUG_TARGET_DESCRIPTOR: esp32-s3-tasks.toml
+      - name: Check slug-vm with tasks for ESP32-S3
+        run: cargo +esp check -p slug-vm --no-default-features --features concurrency,metrics --target xtensa-esp32s3-none-elf -Z build-std=core,alloc
       - name: Check the typed native adapter for ESP32-S3
         run: cargo +esp check -p slug-native-adapter --target xtensa-esp32s3-none-elf -Z build-std=core,alloc

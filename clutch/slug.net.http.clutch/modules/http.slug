@@ -19,11 +19,22 @@
  * A request is a map of `method`, `path` (percent-decoded), `query` (a map
  * of decoded parameters), `headers` (a map from lowercased name to value,
  * repeated headers joined with ", "), `body` (bytes), and `params` (what
- * `router` matched). A response is a string, sent as a `200` text body, or a
- * map of `status`, and optionally `headers` and `body` (a string or bytes).
- * The server adds `Content-Length`, a default `Content-Type`, and
- * `Connection: close` when it closes the connection. A handler that throws,
- * or returns something that is not a response, is answered with `500`.
+ * `router` matched); `form(request)` decodes a form body's fields, and
+ * `mediaType(name)` gives a file name's media type from its extension. A
+ * response is a string, sent as a `200` text body, or a map of `status`, and
+ * optionally `headers` and `body` (a string or bytes). The server adds
+ * `Content-Length`, a default `Content-Type`, and `Connection: close` when it
+ * closes the connection.
+ *
+ * A body can also be a channel of strings or bytes, for a response that
+ * arrives over time, such as server-sent events: the server writes each
+ * value as it is received, and ends the response and closes the connection
+ * when the channel is closed. When the client goes away, the server closes
+ * the channel, so the next send to it fails. A handler that throws, or returns something that is
+ * not a response, such as one with a header name that is not a token or a
+ * header value with a line break, is answered with `500`, except that an `http.reject` error,
+ * such as `form`'s for a body that does not decode, is answered with its
+ * status.
  *
  * The server reads requests as RFC 9112 describes: it decodes chunked
  * bodies, answers `Expect: 100-continue`, keeps HTTP/1.1 connections open
@@ -34,7 +45,7 @@
 
 val tcp = import("slug.net.tcp")
 val {split, trim, lower, join, chars, ord, toInt, toBytes, fromBytes} = import("slug.string")
-val {send} = import("slug.channel")
+val {send, recv} = import("slug.channel")
 
 // --- Protocol errors ---------------------------------------------------------
 
@@ -62,6 +73,29 @@ val isToken = fn(text:str):bool {
     }
     val go = fn(i:num):bool { if (i == len(text)) { true } else if (ok(text[i])) { recur(i + 1) } else { false } }
     len(text) > 0 && go(0)
+}
+
+// Whether `text` may be a header field's value: visible characters, spaces,
+// and tabs. A line break would end the field early and let what follows be
+// read as another field, or as the body.
+val isFieldValue = fn(text:str):bool {
+    val ok = fn(c:str):bool { c == "\t" || (ord(c) >= 32 && ord(c) != 127) }
+    val go = fn(i:num):bool { if (i == len(text)) { true } else if (ok(text[i])) { recur(i + 1) } else { false } }
+    go(0)
+}
+
+// Whether every one of a response's `headers` has a token for a name and a
+// field value, as written.
+val validHeaders = fn(headers:map):bool {
+    val names = keys(headers)
+    val go = fn(i:num):bool {
+        if (i == len(names)) { return true }
+        val name = names[i]
+        val value = headers[name]
+        if (!isToken("$name") || !isFieldValue("$value")) { return false }
+        recur(i + 1)
+    }
+    go(0)
 }
 
 val contains = fn(values:list, value):bool {
@@ -315,11 +349,11 @@ val readChunked = fn(input:map, maxHeaderBytes:num, maxBodyBytes:num):bytes {
     readChunks(0x"")
 }
 
-// The target's decoded path and its query parameters.
-val parseTarget = fn(target:str):[str, map] {
-    val parts = split(target, "?")
-    val query = if (len(parts) > 1) { join(parts[1:], "?") } else { "" }
-    val parameters = split(query, "&")
+// The decoded parameters of `text`, a query string or form body: `+` is a
+// space, a parameter without `=` is "", empty parameters are skipped, and
+// when a name repeats the last value wins.
+val parseParameters = fn(text:str):map {
+    val parameters = split(text, "&")
     val readParameters = fn(i:num, out:map):map {
         if (i == len(parameters)) { return out }
         if (parameters[i] == "") { return recur(i + 1, out) }
@@ -327,7 +361,14 @@ val parseTarget = fn(target:str):[str, map] {
         val value = if (len(pair) > 1) { join(pair[1:], "=") } else { "" }
         recur(i + 1, out + {[decode(pair[0], true)]: decode(value, true)})
     }
-    [decode(parts[0]), readParameters(0, {})]
+    readParameters(0, {})
+}
+
+// The target's decoded path and its query parameters.
+val parseTarget = fn(target:str):[str, map] {
+    val parts = split(target, "?")
+    val query = if (len(parts) > 1) { join(parts[1:], "?") } else { "" }
+    [decode(parts[0]), parseParameters(query)]
 }
 
 // Reads one request: the request map and whether the connection closes after
@@ -389,7 +430,8 @@ val reason = fn(status:num):str {
 }
 
 // A handler's result as a response map, or a `500` when it is not a valid
-// response.
+// response: among others, one with a header whose name is not a token or
+// whose value holds a line break.
 val normalize = fn(response):map {
     val valid = match response {
         _:str => true
@@ -405,17 +447,51 @@ val normalize = fn(response):map {
         given:map => given
         _ => {status: 500}
     }
+    val headersValid = match result.headers {
+        nil => true
+        given:map => validHeaders(given)
+        _ => false
+    }
+    if (!headersValid) { return {status: 500} }
     match result.body {
         nil => result
         _:str => result
         _:bytes => result
+        _:chan => result
         _ => {status: 500}
     }
 }
 
-// Writes `response`; `head` sends no body, as for `HEAD`.
-val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool) {
+// Writes each value received from `channel` until it is closed, then
+// returns; when a write fails because the client went away, closes the
+// channel first.
+val stream = fn(connection:tcp.Connection, channel:chan) {
+    defer onerror(_) {
+        close(channel)
+        return nil
+    }
+    val next = fn() {
+        match recv(channel) {
+            nil => nil
+            text:str => { tcp.write(connection, text); recur() }
+            data:bytes => { tcp.write(connection, data); recur() }
+            _ => recur()
+        }
+    }
+    next()
+}
+
+// Writes `response`; `head` sends no body, as for `HEAD`. Returns whether
+// the connection must close: when `closing`, or after a streamed body.
+val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool):bool {
     val result = normalize(response)
+    match result.body {
+        channel:chan => {
+            streamed(connection, result, channel, head)
+            return true
+        }
+        _ => nil
+    }
     val status = result.status
     val body = result.body ?? ""
     val data = match body {
@@ -453,11 +529,38 @@ val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool) {
     if (closing && !contains(seen, "connection")) { text = text + "Connection: close\r\n" }
     tcp.write(connection, text + "\r\n")
     if (!head && !bodiless && len(data) > 0) { tcp.write(connection, data) }
+    closing
 }
 
-// Calls `handler`; a throw is answered with `500`.
+// Writes a response whose body is `channel`: its head, with no length, so
+// the body runs until the connection closes, then the stream.
+val streamed = fn(connection:tcp.Connection, result:map, channel:chan, head:bool) {
+    val headers = result.headers ?? {}
+    val keysGiven = keys(headers)
+    val writeHeaders = fn(i:num, out:str):str {
+        if (i == len(keysGiven)) { return out }
+        val given = keysGiven[i]
+        val name = "$given"
+        val key = lower(name)
+        if (key == "content-length" || key == "connection" || key == "transfer-encoding") { return recur(i + 1, out) }
+        val value = headers[given]
+        recur(i + 1, out + name + ": " + "$value" + "\r\n")
+    }
+    val status = result.status
+    val top = writeHeaders(0, "HTTP/1.1 $status " + reason(status) + "\r\n")
+    tcp.write(connection, top + "Connection: close\r\n\r\n")
+    if (head) { close(channel) } else { stream(connection, channel) }
+}
+
+// Calls `handler`; an `http.reject` throw is answered with its status, and
+// any other throw with `500`.
 val invoke = fn(handler:fn, request:map) {
-    defer onerror(_) { return {status: 500} }
+    defer onerror(error) {
+        return match error {
+            {type: "http.reject", data: data} => {status: data.status}
+            _ => {status: 500}
+        }
+    }
     handler(request)
 }
 
@@ -486,8 +589,8 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
     }
     input.awaitRequest()
     val [request, closing] = readRequest(connection, input, options)
-    respond(connection, invoke(handler, request), request.method == "HEAD", closing)
-    if (closing) { "closed" } else { "open" }
+    val closed = respond(connection, invoke(handler, request), request.method == "HEAD", closing)
+    if (closed) { "closed" } else { "open" }
 }
 
 /**
@@ -500,19 +603,88 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
  * - `headerTimeout`, 5000: milliseconds from a request's first byte until its
  *   header section is complete, before the server answers `408`;
  * - `maxHeaderBytes`, 8192: the largest request line and header section;
- * - `maxBodyBytes`, 1048576: the largest body, after chunked decoding.
+ * - `maxBodyBytes`, 1048576: the largest body, after chunked decoding;
+ * - `maxConnections`, unlimited: the most connections served at once; at
+ *   the limit the server accepts no more until one closes, and those that
+ *   arrive meanwhile wait in the listener's queue.
  */
 export val serve = fn(listener:tcp.Listener, handler:fn, options:map = {}) {
+    val limit = options.maxConnections
+    // One token per connection being served, when they are limited: taking
+    // one waits while every token is out.
+    val slots = match limit {
+        nil => nil
+        count:num => {
+            if (int(count) != count || count < 1) {
+                throw Error {type: "http.options", msg: "maxConnections must be a positive whole number"}
+            }
+            chan(count)
+        }
+        _ => throw Error {type: "http.options", msg: "maxConnections must be a positive whole number"}
+    }
     val accept = fn() {
+        match slots {
+            nil => nil
+            tokens => send(tokens, true)
+        }
         match tcp.accept(listener) {
             nil => nil
             connection => {
-                spawn { serveConnection(connection, handler, options) }
+                spawn {
+                    defer {
+                        match slots {
+                            nil => nil
+                            tokens => recv(tokens)
+                        }
+                    }
+                    serveConnection(connection, handler, options)
+                }
                 recur()
             }
         }
     }
     accept()
+}
+
+// --- Forms -------------------------------------------------------------------
+
+/**
+ * The fields of `request`'s form body, decoded as its `query` is, when its
+ * `Content-Type` is `application/x-www-form-urlencoded`; `{}` otherwise. A
+ * body that does not decode is answered with `400`.
+ */
+export val form = fn(request:map):map {
+    val type = lower(request.headers["content-type"] ?? "")
+    if (trim(split(type, ";")[0]) != "application/x-www-form-urlencoded") { return {} }
+    parseParameters(utf8(request.body))
+}
+
+// --- Media types -------------------------------------------------------------
+
+val TEXT = "; charset=utf-8"
+
+val MEDIA_TYPES = {
+    html: "text/html" + TEXT, htm: "text/html" + TEXT, css: "text/css" + TEXT,
+    js: "text/javascript" + TEXT, mjs: "text/javascript" + TEXT, txt: "text/plain" + TEXT,
+    csv: "text/csv" + TEXT, md: "text/markdown" + TEXT, xml: "application/xml",
+    json: "application/json", wasm: "application/wasm", pdf: "application/pdf",
+    svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", avif: "image/avif", ico: "image/x-icon",
+    woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+    mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav", mp4: "video/mp4", webm: "video/webm",
+}
+
+/**
+ * The media type for a file named `name`, such as an asset's name, from its
+ * extension, case ignored: `"htmx.js"` is `text/javascript; charset=utf-8`
+ * and `"images/foo.png"` is `image/png`. A name with no extension, or one
+ * not in the table, is `application/octet-stream`.
+ */
+export val mediaType = fn(name:str):str {
+    val file = split(name, "/")
+    val parts = split(file[len(file) - 1], ".")
+    if (len(parts) < 2 || (parts[0] == "" && len(parts) == 2)) { return "application/octet-stream" }
+    MEDIA_TYPES[lower(parts[len(parts) - 1])] ?? "application/octet-stream"
 }
 
 // --- Routing -----------------------------------------------------------------

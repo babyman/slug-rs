@@ -1,0 +1,79 @@
+val game = import("slug.games.crawl")
+val bestiary = import("slug.games.crawl.bestiary")
+val data = import("slug.games.crawl.data")
+val level = import("slug.games.crawl.level")
+val region = import("slug.games.crawl.region")
+val rng = import("slug.games.crawl.rng")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range, reduce, all, any} = import("slug.std")
+
+val named = fn(name:str):map { filter(bestiary.monsters, fn(m) { m.name == name })[0] }
+
+val indexOf = fn(name:str):num { filter(range(len(bestiary.monsters)), fn(i) { bestiary.monsters[i].name == name })[0] }
+
+@test
+val theEvalsKindsKeepTheirPlacesAndGoDeeper = fn() {
+    assertEqual(map(bestiary.monsters[:11], fn(m) { m.name }), map(data.monsters, fn(m) { m.name }))
+    assertEqual(named("troll").depths, [6, bestiary.DEEPEST])
+    assertEqual(named("kobold").depths, [1, 5])
+    val letters = map(bestiary.monsters, fn(m) { m.letter })
+    assertTrue(all(letters, fn(l) { len(filter(letters, fn(o) { o == l })) == 1 }))
+    assertEqual(len(bestiary.monsters), 19)
+}
+
+@test
+val eachDepthHasItsOwnKinds = fn() {
+    val at = fn(d:num):list { level.habitat(d) }
+    assertTrue(any(at(0), fn(k) { k == "wolf" }) && any(at(0), fn(k) { k == "giant rat" }))
+    assertTrue(!any(at(9), fn(k) { k == "dragon" }))
+    assertTrue(any(at(10), fn(k) { k == "dragon" }) && any(at(30), fn(k) { k == "dragon" }))
+    // A rare kind is listed once, the rest three times each.
+    assertEqual(len(filter(at(10), fn(k) { k == "dragon" })), 1)
+    assertEqual(len(filter(at(10), fn(k) { k == "wraith" })), 3)
+    assertTrue(any(at(12), fn(k) { k == "troll" }))
+}
+
+@test
+val dragonsLiveAlone = fn() {
+    val go = fn(i:num, counts:map, most:num):num {
+        if (i == 300) { return most }
+        val r = rng.within(i, fn() { region.visit(counts, ["dragon"], 8) })
+        val back = if (r.leaving != nil) { r.counts + {dragon: (r.counts.dragon ?? 0) + 1} } else { r.counts }
+        recur(i + 1, back, math.max(most, back.dragon ?? 0))
+    }
+    assertEqual(go(0, {dragon: 1}, 0), 1)
+}
+
+@test
+val newKindsTurnUpInTheDungeon = fn() {
+    val seen = reduce(range(60), {}, fn(acc, i) {
+        val lv = level.generate(3, i % 6, int(i / 6), 1 + i % 12, 32)
+        reduce(lv.monsters, acc, fn(a, m) { a + {[bestiary.monsters[m.kind].name]: true} })
+    })
+    assertTrue(any(["giant rat", "wolf", "goblin", "giant ant", "skeleton", "ogre", "wraith"], fn(k) { seen[k] == true }))
+}
+
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+@test
+val aWraithsBlowsSapStrength = fn() {
+    game.newGame(4)
+    game.join("a", "Ann")
+    val p = game.playerOf("a")
+    val key = game.chunkKey(p.cx, p.cy, p.depth)
+    val s = game.snapshot()
+    val lv = s.levels[key]
+    val spot = filter(range(lv.walls.left + 1, lv.walls.right), fn(x) { lv.map[10][x] == "=" && lv.map[10][x + 1] == "=" })[0]
+    val wraith = {x: spot + 1, y: 10, kind: indexOf("wraith"), hp: 999, maxHp: 999, state: "awake"}
+    game.load(s copy {
+        levels: s.levels + {[key]: lv copy {monsters: [wraith], characters: []}},
+        players: s.players + {a: s.players.a copy {x: spot, y: 10, hp: 999, maxHp: 999}},
+    })
+    map(range(40), fn(_) { if (!game.playerOf("a").dead) { game.command("a", "space", false) } })
+    assertTrue(game.playerOf("a").str < 16)
+}
+
+val math = import("slug.math")

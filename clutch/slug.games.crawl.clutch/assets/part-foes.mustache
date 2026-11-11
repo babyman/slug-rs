@@ -1,0 +1,12 @@
+{{! What is in view. }}
+<div id="part-foes" class="part"><section class="foes">
+    <h2>In view</h2>
+    {{^foes}}<p class="none">Nothing in sight.</p>{{/foes}}
+    {{#hasFoes}}
+    <ul>
+      {{#foes}}
+      <li><i class="{{cls}}">{{letter}}</i><span>{{name}}{{#asleep}} <em>asleep</em>{{/asleep}}</span>{{^person}}<div class="bar {{bar}}"><div style="width:{{health}}%"></div></div>{{/person}}</li>
+      {{/foes}}
+    </ul>
+    {{/hasFoes}}
+  </section></div>

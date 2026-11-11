@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{HashMap, HashSet};
 
 use slug_vm::{
     CallArgumentKind, CallableIdentity, Capture, Chunk, Entrypoint, EntrypointArguments, EnumValue,
@@ -47,6 +44,8 @@ pub(super) struct Compiler {
     module_name: Option<String>,
     /// The names `{*}` declarations define, when they are known.
     selected_globals: Option<HashSet<String>>,
+    /// The bytes of each asset the module names, read before analysis.
+    assets: super::assets::Assets,
 }
 
 /// The VM's own builtins, which it installs in every module's globals.
@@ -100,7 +99,13 @@ impl Compiler {
             implicit_globals: None,
             module_name: None,
             selected_globals: analysis.selected_globals.clone(),
+            assets: super::assets::Assets::new(),
         }
+    }
+
+    pub(super) fn with_assets(mut self, assets: super::assets::Assets) -> Self {
+        self.assets = assets;
+        self
     }
 
     /// Makes a name that is neither declared nor one of `names`, the
@@ -184,6 +189,7 @@ impl Compiler {
         for expression in &self.expressions {
             if let ExprKind::Declare {
                 mutable,
+                task,
                 exported,
                 pattern,
                 ..
@@ -193,6 +199,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: names.clone(),
                     mutable: *mutable,
+                    task: *task,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -242,6 +249,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: true,
                     foreign_arity: Some(foreign_arity(signature)),
@@ -274,6 +282,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -301,6 +310,7 @@ impl Compiler {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
+                    task: false,
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
@@ -767,20 +777,23 @@ impl Compiler {
                         .with_extent(expression));
                     }
                     self.expression(state, value)?;
-                    // Stores consume their operand, while assignment expressions evaluate to it.
-                    state.emit(Op::Duplicate, &expression.span);
-                    match binding {
-                        Binding::Global { .. } => {
-                            state.emit(Op::SetGlobal(name.clone()), &expression.span);
-                        }
-                        Binding::Local { slot, .. } => {
-                            state.emit(Op::SetLocal(slot), &expression.span);
-                        }
-                        Binding::Capture { slot, .. } => {
-                            state.emit(Op::SetCapture(slot), &expression.span);
-                        }
-                        Binding::Inherited { .. } => {
-                            unreachable!("inherited bindings are captured lazily")
+                    if !matches!(binding, Binding::Global { .. }) || !state.fuse_global_update(name)
+                    {
+                        // Stores consume their operand, while assignment expressions evaluate to it.
+                        state.emit(Op::Duplicate, &expression.span);
+                        match binding {
+                            Binding::Global { .. } => {
+                                state.emit(Op::SetGlobal(name.clone()), &expression.span);
+                            }
+                            Binding::Local { slot, .. } => {
+                                state.emit(Op::SetLocal(slot), &expression.span);
+                            }
+                            Binding::Capture { slot, .. } => {
+                                state.emit(Op::SetCapture(slot), &expression.span);
+                            }
+                            Binding::Inherited { .. } => {
+                                unreachable!("inherited bindings are captured lazily")
+                            }
                         }
                     }
                 }
@@ -846,7 +859,7 @@ impl Compiler {
                     )
                     .with_extent(expression));
                 }
-                ExprKind::Spawn(body) => {
+                ExprKind::Spawn { body, fork } => {
                     let function = Expr::new(
                         ExprKind::Function {
                             type_parameters: Vec::new(),
@@ -858,7 +871,7 @@ impl Compiler {
                         expression.end,
                     );
                     self.expression(state, &function)?;
-                    state.emit(Op::Spawn, &expression.span);
+                    state.emit(if *fork { Op::Fork } else { Op::Spawn }, &expression.span);
                 }
                 ExprKind::Select(cases) => {
                     for case in cases {
@@ -1117,6 +1130,19 @@ impl Compiler {
                         );
                     }
                 }
+                ExprKind::Call { callee, arguments } if super::assets::is_asset(callee) => {
+                    let bytes = super::assets::literal_name(arguments)
+                        .and_then(|name| self.assets.get(name))
+                        .ok_or_else(|| {
+                            SourceError::semantic(
+                                SourceErrorCode::Internal,
+                                "asset was not read before compilation",
+                                expression.span.clone(),
+                            )
+                        })?;
+                    let constant = state.constant(bytes.clone());
+                    state.emit(Op::Constant(constant), &expression.span);
+                }
                 ExprKind::Call { callee, arguments } => {
                     let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
                     let positional = arguments
@@ -1182,7 +1208,7 @@ impl Compiler {
                     for case in cases {
                         let key = state.constant(Value::string(case.clone()));
                         state.emit(Op::Constant(key), &expression.span);
-                        let value = state.constant(Value::Enum(Rc::new(EnumValue {
+                        let value = state.constant(Value::Enum(slug_vm::Shared::new(EnumValue {
                             module: self
                                 .module_name
                                 .as_ref()
@@ -2445,7 +2471,7 @@ fn contains_scoped_defer(expression: &Expr) -> bool {
             ExprKind::Assign { value, .. }
             | ExprKind::Return { value }
             | ExprKind::Throw { value }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
             ExprKind::Recur(values) => arguments(values),
             ExprKind::Nursery { limit, body } => {

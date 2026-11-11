@@ -1,0 +1,7 @@
+// Forks belong to the nursery: the first failure cancels the others.
+val main = fn() {
+    nursery {
+        fork { select { after 5000 /> fn(_) { println("not cancelled") } } }
+        fork { throw "boom" }
+    }
+}

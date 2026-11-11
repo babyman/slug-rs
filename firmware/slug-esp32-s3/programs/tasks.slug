@@ -1,0 +1,39 @@
+val gpio = import("slug.gpio")
+// The firmware registers every provider it links, and an artifact must
+// declare each, so this program imports slug.time though tasks wait on
+// timers instead.
+val time = import("slug.time")
+
+// Three tasks blink three PinPulse LEDs, each at its own pace on the VM's
+// timers, while the main task counts their blinks from a channel.
+val BLINKERS = [[4, 150], [5, 400], [6, 1000]]
+
+// Blinks `pin` every `period` milliseconds, sending it to `blinks` after
+// each blink.
+val blink = fn(pin, period, blinks) {
+    val go = fn(on) {
+        gpio.write(pin, on)
+        select { after period }
+        if (!on) { select { send blinks, pin } }
+        recur(!on)
+    }
+    go(true)
+}
+
+val main = fn() {
+    val blinks = chan(8)
+    val start = fn(i) {
+        if (i < len(BLINKERS)) {
+            val [pin, period] = BLINKERS[i]
+            spawn { blink(pin, period, blinks) }
+            recur(i + 1)
+        }
+    }
+    start(0)
+    val count = fn(n) {
+        val pin = select { recv blinks }
+        if ((n + 1) % 10 == 0) { println("blinks: ", n + 1, " (last on GPIO ", pin, ")") }
+        recur(n + 1)
+    }
+    count(0)
+}

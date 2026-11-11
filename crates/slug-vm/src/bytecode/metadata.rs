@@ -1,4 +1,5 @@
-use alloc::{boxed::Box, rc::Rc, string::String, sync::Arc, vec::Vec};
+use crate::sync::Rc;
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use crate::Value;
 
@@ -194,11 +195,25 @@ pub struct ModuleTag {
     pub arguments: Vec<Value>,
 }
 
+/// The binding a function captures in one capture slot: whether it is a
+/// `var`, which a fork cannot share with its spawner, and if so its name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureDetail {
+    pub name: String,
+    pub mutable: bool,
+}
+
 /// Retained source metadata for a top-level declaration.
+// Each flag is a separate fact a source declaration states (`var`, `task`,
+// `export`, `foreign`), and `describe` reports them as such.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct ModuleDeclaration {
     pub bindings: Vec<String>,
     pub mutable: bool,
+    /// Whether a mutable declaration is a `task var`, which every task owns a
+    /// copy of.
+    pub task: bool,
     pub exported: bool,
     /// Whether this declaration must be supplied by the module-qualified host registry.
     pub foreign: bool,

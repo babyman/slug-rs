@@ -1,7 +1,7 @@
 val http = import("slug.net.http")
 val tcp = import("slug.net.tcp")
-val {await} = import("slug.channel")
-val {fromBytes} = import("slug.string")
+val {await, send} = import("slug.channel")
+val {fromBytes, toBytes} = import("slug.string")
 val {assertEqual} = import("slug.test")
 
 val request = fn(method:str, path:str):map {
@@ -68,4 +68,104 @@ val rejectsMalformedRequests = fn() {
 val answersAnInvalidResponseWith500 = fn() {
     val answer = exchange(fn(request) { {status: "abc"} }, "GET / HTTP/1.0\r\n\r\n")
     assertEqual(answer, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+@test
+val readsFormBodies = fn() {
+    val post = fn(type:str, body:bytes):map {
+        request("POST", "/") + {headers: {"content-type": type}, body: body}
+    }
+    assertEqual(http.form(post("application/x-www-form-urlencoded", toBytes("key=a+b&shift=true&&x"))), {key: "a b", shift: "true", x: ""})
+    assertEqual(http.form(post("Application/X-WWW-Form-Urlencoded; charset=utf-8", toBytes("q=%C3%A9"))), {q: "é"})
+    assertEqual(http.form(post("text/plain", toBytes("key=a"))), {})
+    assertEqual(http.form(request("POST", "/")), {})
+}
+
+@test
+val answersABadFormWith400 = fn() {
+    val handler = fn(request) { http.form(request).key ?? "none" }
+    val answer = exchange(handler, "POST / HTTP/1.0\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\nkey=%Z")
+    assertEqual(answer, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+@test
+val mediaTypesComeFromExtensions = fn() {
+    assertEqual(http.mediaType("htmx.js"), "text/javascript; charset=utf-8")
+    assertEqual(http.mediaType("images/Foo.PNG"), "image/png")
+    assertEqual(http.mediaType("archive.tar.gz"), "application/octet-stream")
+    assertEqual(http.mediaType("README"), "application/octet-stream")
+    assertEqual(http.mediaType(".css"), "application/octet-stream")
+    assertEqual(http.mediaType("dir.d/file"), "application/octet-stream")
+}
+
+@test
+val streamsAChannelBodyUntilItCloses = fn() {
+    val handler = fn(request) {
+        val body = chan(4)
+        spawn {
+            send(body, "data: one\n\n")
+            send(body, toBytes("data: two\n\n"))
+            close(body)
+        }
+        {status: 200, headers: {"Content-Type": "text/event-stream"}, body: body}
+    }
+    val answer = exchange(handler, "GET /events HTTP/1.1\r\nHost: test\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: one\n\ndata: two\n\n")
+}
+
+@test
+val closesAStreamWhoseClientLeaves = fn() {
+    val body = chan(1)
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, fn(request) { {status: 200, body: body} }, {idleTimeout: 1000}) }
+    val client = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(client, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
+    tcp.read(client, timeout = 5000)
+    tcp.close(client)
+    // Writes to a closed socket fail once the peer's reset arrives; keep
+    // sending until the server closes the channel.
+    val pump = fn(i:num):bool {
+        if (i == 200) { return false }
+        val sent = fn():bool {
+            defer onerror(_) { return false }
+            send(body, "tick\n")
+            true
+        }
+        if (sent()) { recur(i + 1) } else { true }
+    }
+    assertEqual(pump(0), true)
+    tcp.close(listener)
+    await(server)
+}
+
+@test
+val answersAHeaderThatWouldSplitTheResponseWith500 = fn() {
+    val injected = fn(request) { {status: 200, headers: {Location: "/a\r\nSet-Cookie: stolen=1"}, body: "x"} }
+    val answer = exchange(injected, "GET / HTTP/1.0\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    val badName = fn(request) { {status: 200, headers: {"X-A: b\r\nX-C": "d"}, body: "x"} }
+    assertEqual(exchange(badName, "GET / HTTP/1.0\r\n\r\n"), answer)
+}
+
+@test
+val servesAtMostMaxConnectionsAtOnce = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, fn(request) { "ok" }, {idleTimeout: 2000, maxConnections: 1}) }
+    val request = "GET / HTTP/1.1\r\nHost: test\r\n\r\n"
+    val first = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(first, request)
+    assertEqual(tcp.read(first, timeout = 5000) == nil, false)
+    // The first connection stays open, so the second waits to be accepted.
+    val second = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(second, request)
+    val answeredWithin = fn(connection, ms:num):bool {
+        defer onerror(_) { return false }
+        tcp.read(connection, timeout = ms) != nil
+    }
+    assertEqual(answeredWithin(second, 300), false)
+    tcp.close(first)
+    assertEqual(tcp.read(second, timeout = 5000) == nil, false)
+    tcp.close(second)
+    tcp.close(listener)
+    await(server)
 }

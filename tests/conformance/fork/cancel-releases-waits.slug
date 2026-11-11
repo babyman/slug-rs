@@ -1,0 +1,25 @@
+// A cancelled fork leaves every channel it, its tasks, and its nested forks
+// wait on: a later send reaches a live receiver, not one that will never run.
+val main = fn() {
+    val ch = chan(0)
+    val run = fn():num {
+        defer onerror(err) { 0 }
+        nursery {
+            fork {
+                val nested = fork { select { recv ch }; println("nested fork received") }
+                spawn { select { recv ch }; println("fork's task received") }
+                select { recv ch }
+                println("fork received")
+                select { await nested }
+            }
+            fork { select { after 50 }; throw "stop" }
+        }
+        1
+    }
+    println(run())
+    val readers = [spawn { select { recv ch } }, spawn { select { recv ch } }, spawn { select { recv ch } }]
+    select { send ch, 1 }
+    select { send ch, 2 }
+    select { send ch, 3 }
+    println(select { await readers[0] } + select { await readers[1] } + select { await readers[2] })
+}

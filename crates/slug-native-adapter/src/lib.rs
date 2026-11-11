@@ -24,12 +24,14 @@ use alloc::{
     format,
     rc::Rc,
     string::{String, ToString},
+    sync::Arc,
     vec::Vec,
 };
 use core::{
     any::Any,
-    cell::{Cell, OnceCell},
+    cell::OnceCell,
     fmt,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use slug_vm::{NativeArity, NativeFunction, NativeModule};
@@ -62,17 +64,20 @@ pub struct Installed {
 /// deactivates it when it finalizes the clutch; a function called after
 /// that fails with `native.plugin_inactive` instead of entering the
 /// library. Resource release is unaffected.
+///
+/// Atomic, as the host may deactivate it while forks on other threads call
+/// the table's functions.
 #[derive(Clone, Default)]
-pub struct Activity(Rc<Cell<bool>>);
+pub struct Activity(Arc<AtomicBool>);
 
 impl Activity {
     /// Makes every function of the table fail with `native.plugin_inactive`.
     pub fn deactivate(&self) {
-        self.0.set(true);
+        self.0.store(true, Ordering::Release);
     }
 
     pub(crate) fn is_inactive(&self) -> bool {
-        self.0.get()
+        self.0.load(Ordering::Acquire)
     }
 }
 
@@ -80,7 +85,7 @@ impl fmt::Debug for Activity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Activity")
-            .field("inactive", &self.0.get())
+            .field("inactive", &self.is_inactive())
             .finish()
     }
 }
@@ -89,7 +94,7 @@ impl fmt::Debug for Activity {
 /// becomes `nil`; a binding whose declaration is annotated `str` without
 /// `nil` must instead fail with `native.type`.
 #[derive(Clone, Default)]
-pub struct TextResults(Rc<Vec<(String, Rc<Cell<bool>>)>>);
+pub struct TextResults(Rc<Vec<(String, Arc<AtomicBool>)>>);
 
 impl TextResults {
     /// Makes a NULL text result of `module.name` fail with `native.type`.
@@ -100,7 +105,7 @@ impl TextResults {
         self.0
             .iter()
             .find(|(binding, _)| *binding == qualified)
-            .map(|(_, reject)| reject.set(true))
+            .map(|(_, reject)| reject.store(true, Ordering::Release))
             .is_some()
     }
 }
@@ -245,6 +250,24 @@ fn table_resources(
         .collect()
 }
 
+/// The module a typed binding group's functions belong to, which forks may
+/// call: its state is declared thread-safe though `ModuleState` is not
+/// `Send + Sync`.
+fn typed_module(
+    name: &str,
+    state: ModuleState,
+    scope: usize,
+) -> Result<NativeModule, slug_vm::NativeDescriptorError> {
+    // SAFETY: after install the state is only read, through shared
+    // references, and its two switches are atomic; see `ModuleState`. Its
+    // functions are immortal once their module initializes, so the state is
+    // never dropped while a fork may call one.
+    #[allow(unsafe_code, reason = "a typed module's state; see above")]
+    unsafe {
+        NativeModule::new_thread_safe_with_scope_unchecked(name, state, scope)
+    }
+}
+
 /// Installs every module of one table in one native resource scope, so a
 /// handle declared by one module can be passed to another.
 fn install_modules(
@@ -282,8 +305,7 @@ fn install_modules(
             resources: slots.clone(),
             activity: activity.clone(),
         };
-        let module =
-            NativeModule::new_with_scope(module_name.as_str(), state, scope).map_err(descriptor)?;
+        let module = typed_module(&module_name, state, scope).map_err(descriptor)?;
         installed.push((module_name, module, functions, runtime));
     }
     // Resource types belong to their declaring module, even one that binds no
@@ -411,6 +433,6 @@ fn runtime_binding(
         results,
         close,
         list,
-        reject_null_text: Rc::new(Cell::new(false)),
+        reject_null_text: Arc::new(AtomicBool::new(false)),
     })
 }

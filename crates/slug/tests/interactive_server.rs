@@ -218,8 +218,10 @@ fn session_infers_wrappers_from_retained_callable_signatures() {
 fn configured_server_resolves_and_typechecks_builtin_imports() {
     let root = workspace_root();
     let loader = DesktopLoader::new(&root, Some(root.join("lib")));
-    let mut server =
-        Server::with_desktop_loader(Vm::with_host(Rc::new(loader.clone())), loader.clone());
+    let mut server = Server::with_desktop_loader(
+        Vm::with_host(slug_vm::Shared::new(loader.clone())),
+        loader.clone(),
+    );
     let response = server.handle_line(
         &request(
             1,
@@ -258,7 +260,8 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
 fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
     let root = workspace_root();
     let loader = DesktopLoader::new(&root, Some(root.join("lib")));
-    let mut server = Server::with_desktop_loader(Vm::with_host(Rc::new(loader.clone())), loader);
+    let mut server =
+        Server::with_desktop_loader(Vm::with_host(slug_vm::Shared::new(loader.clone())), loader);
     assert!(
         server
             .handle_line(
@@ -330,7 +333,8 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
 fn submission_runs_later_binding_free_forms_after_a_stall() {
     let root = workspace_root();
     let loader = DesktopLoader::new(&root, Some(root.join("lib")));
-    let mut server = Server::with_desktop_loader(Vm::with_host(Rc::new(loader.clone())), loader);
+    let mut server =
+        Server::with_desktop_loader(Vm::with_host(slug_vm::Shared::new(loader.clone())), loader);
     assert!(
         server
             .handle_line(
@@ -511,8 +515,10 @@ fn dropping_a_slim_server_cancels_all_retained_cells() {
 fn launched_program_output_has_a_root_origin() {
     let root = workspace_root();
     let loader = DesktopLoader::new(&root, Some(root.join("lib")));
-    let mut server =
-        Server::with_desktop_loader(Vm::with_host(Rc::new(loader.clone())), loader.clone());
+    let mut server = Server::with_desktop_loader(
+        Vm::with_host(slug_vm::Shared::new(loader.clone())),
+        loader.clone(),
+    );
     let program = loader
         .compile_source("<root>", "println('worker started')")
         .expect("compile root program");

@@ -162,6 +162,9 @@ pub enum Op {
     Import(Vec<CallArgumentKind>),
     ImportPooled(CallArgumentsId),
     Spawn,
+    /// Starts a task that sees a snapshot of its captures and the module
+    /// variables, from the closure on the stack.
+    Fork,
     Nursery {
         has_limit: bool,
     },
@@ -218,6 +221,84 @@ pub enum Op {
     RecurPooled(CallArgumentsId),
     RecurPositional(usize),
     Return,
+    /// Applies `operator` to the two values on top of the stack, assigns the
+    /// result to the module-level `name`, and pushes it: the fused form of
+    /// the operator, `Duplicate`, `SetGlobal(name)`. When the left value is
+    /// the one `name` holds, the operation cannot fail, and nothing else
+    /// holds that value, the collection is updated in place instead of being
+    /// copied, as `players = players + {[id]: player}` wants.
+    UpdateGlobal {
+        name: String,
+        operator: GlobalUpdate,
+    },
+    UpdateGlobalPooled {
+        name: GlobalNameId,
+        operator: GlobalUpdate,
+    },
+    /// `StructCopy(fields)` whose result is assigned to the module-level
+    /// `name` and pushed, updating in place as `UpdateGlobal` does.
+    CopyGlobal {
+        name: String,
+        fields: Vec<String>,
+    },
+    CopyGlobalPooled {
+        name: GlobalNameId,
+        fields: StructFieldsId,
+    },
+    /// `CopyGlobal` whose last replacement is `operator` applied to the two
+    /// values on top of the stack: the fused form of the operator and
+    /// `CopyGlobal`, for `player = player copy {memory: player.memory +
+    /// entry}`. When nothing can fail and nothing else holds the copied
+    /// value, the last field's value is taken out of it first, so that the
+    /// operator updates that collection in place too.
+    CopyGlobalUpdate {
+        name: String,
+        fields: Vec<String>,
+        operator: GlobalUpdate,
+    },
+    CopyGlobalUpdatePooled {
+        name: GlobalNameId,
+        fields: StructFieldsId,
+        operator: GlobalUpdate,
+    },
+}
+
+/// The operator of an `UpdateGlobal` instruction, which behaves exactly like
+/// its standalone instruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlobalUpdate {
+    Add,
+    Subtract,
+    Append,
+}
+
+impl GlobalUpdate {
+    // Append new operators: a `.cslug` artifact stores the position as the
+    // operator's code.
+    const ALL: [Self; 3] = [Self::Add, Self::Subtract, Self::Append];
+
+    /// The update operator a standalone instruction performs, if any.
+    #[must_use]
+    pub fn of(op: &Op) -> Option<Self> {
+        Some(match op {
+            Op::Add => Self::Add,
+            Op::Subtract => Self::Subtract,
+            Op::ListAppend => Self::Append,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn code(self) -> u32 {
+        Self::ALL
+            .iter()
+            .position(|operator| *operator == self)
+            .and_then(|index| u32::try_from(index).ok())
+            .expect("operator is listed")
+    }
+
+    pub(crate) fn from_code(code: u32) -> Option<Self> {
+        Self::ALL.get(usize::try_from(code).ok()?).copied()
+    }
 }
 
 /// The source ordering and expansion mode for a dynamic call argument.

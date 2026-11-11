@@ -1,0 +1,43 @@
+val secure = import("slug.random.secure")
+val {assertEqual, assertTrue, assertThrows} = import("slug.test")
+val {all} = import("slug.std")
+val {chars} = import("slug.string")
+
+@test
+val bytesComeInTheCountAsked = fn() {
+    assertEqual(len(secure.bytes(1)), 1)
+    assertEqual(len(secure.bytes(256)), 256)
+    assertTrue(secure.bytes(32) != secure.bytes(32))
+}
+
+@test
+val bytesCoverTheRange = fn() {
+    val data = secure.bytes(256)
+    val seen = fn(i:num, acc:map):map {
+        if (i == len(data)) { acc } else { recur(i + 1, acc + {["" + data[i]]: true}) }
+    }
+    // 256 draws of 256 values give about 162 distinct ones.
+    assertTrue(len(keys(seen(0, {}))) > 100)
+}
+
+@test
+val countsOutOfRangeThrow = fn() {
+    assertEqual(assertThrows(fn() { secure.bytes(0) }).type, "random.range")
+    assertEqual(assertThrows(fn() { secure.bytes(257) }).type, "random.range")
+    assertEqual(assertThrows(fn() { secure.bytes(1.5) }).type, "random.range")
+}
+
+@test
+val tokensAreHexAndDiffer = fn() {
+    val t = secure.token()
+    assertEqual(len(t), 32)
+    assertTrue(all(chars(t), fn(c) { (c >= "0" && c <= "9") || (c >= "a" && c <= "f") }))
+    assertEqual(len(secure.token(4)), 8)
+    assertTrue(secure.token() != secure.token())
+}
+
+@test
+val seedsAreThirtyTwoBits = fn() {
+    val s = secure.seed()
+    assertTrue(s >= 0 && s <= 0xFFFFFFFF && int(s) == s)
+}

@@ -8,8 +8,8 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 
 use crate::{
-    ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry,
-    SourceDiagnostic, Value, platform::HashMap,
+    InitializationFailure, ModuleDeclaration, NativeDescriptorError, NativeFunction,
+    NativeResourceRegistry, SourceDiagnostic, Value, platform::HashMap,
 };
 
 /// Checked failure returned by a VM host callback.
@@ -19,6 +19,7 @@ pub struct VmHostError {
     not_found: bool,
     compile_error: Option<Box<SourceDiagnostic>>,
     missing_module: Option<Box<MissingModule>>,
+    initialization_failure: Option<Box<InitializationFailure>>,
 }
 
 /// The module a not-found import named, and the available names it most
@@ -40,6 +41,7 @@ impl VmHostError {
             not_found: false,
             compile_error: None,
             missing_module: None,
+            initialization_failure: None,
         }
     }
 
@@ -50,6 +52,7 @@ impl VmHostError {
             not_found: true,
             compile_error: None,
             missing_module: None,
+            initialization_failure: None,
         }
     }
 
@@ -62,6 +65,17 @@ impl VmHostError {
             not_found: false,
             compile_error: Some(Box::new(error)),
             missing_module: None,
+            initialization_failure: None,
+        }
+    }
+
+    /// A failure because a module's top-level code raised a runtime error
+    /// while the module was initialized.
+    #[must_use]
+    pub fn initialization(message: impl Into<String>, failure: InitializationFailure) -> Self {
+        Self {
+            initialization_failure: Some(Box::new(failure)),
+            ..Self::new(message)
         }
     }
 
@@ -82,6 +96,12 @@ impl VmHostError {
     #[must_use]
     pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
         self.compile_error.as_deref()
+    }
+
+    /// The runtime error of a module that failed while it was initialized.
+    #[must_use]
+    pub fn initialization_failure(&self) -> Option<&InitializationFailure> {
+        self.initialization_failure.as_deref()
     }
 
     /// For a not-found module, its name and the names it most likely meant.
@@ -231,6 +251,18 @@ pub trait VmHost {
 
     /// Native-resource lifetime registry shared by VMs for this host.
     fn native_resources(&self) -> NativeResourceRegistry;
+
+    /// Whether the module `name`, imported by `importer`, has initialized,
+    /// or `None` when the host cannot tell: a fork may import a module that
+    /// has, but not initialize one.
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let _ = (importer, name);
+        None
+    }
+
+    /// The module variables of every VM this host creates, which a task
+    /// copies when it starts: one registry, shared like `native_resources`.
+    fn module_variables(&self) -> crate::ModuleVariables;
 
     /// Immutable configuration callbacks visible to `cfg` and typed entrypoints.
     fn configuration(&self) -> &dyn VmConfiguration;

@@ -46,6 +46,8 @@ fn main() -> ! {
         .unwrap_or_else(|error| reset_after_failure("failed to decode flash artifact", error));
     let host = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
         .unwrap_or_else(|error| reset_after_failure("flash artifact graph is invalid", error));
+    // Timers read the system timer, in microseconds since boot.
+    host.set_clock(|| esp_hal::time::Instant::now().duration_since_epoch().as_micros());
     providers::register(&host, providers::safe_output_pins(peripherals))
         .unwrap_or_else(|error| reset_after_failure("provider registration failed", error));
     match host.run() {

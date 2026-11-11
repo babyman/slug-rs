@@ -1,0 +1,17 @@
+// A fork updates its own copy of a `task var` many times; the spawner's
+// copy is unchanged.
+task var seen:map = {}
+val note = fn(n:num) {
+    if (n > 0) {
+        seen = seen + {["k" + n]: n}
+        recur(n - 1)
+    }
+}
+val main = fn() {
+    val t = fork {
+        note(2000)
+        len(seen)
+    }
+    println(select { await t })
+    println(len(seen))
+}

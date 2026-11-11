@@ -1,0 +1,61 @@
+/**
+ * Plays Crawl in a web browser: serves slug.games.crawl.web and prints its
+ * address.
+ *
+ * The world is saved in a SQLite database, `--db=PATH` (default crawl.db),
+ * every few seconds and when the server stops on Ctrl-C or SIGTERM (a
+ * second one stops it at once, unsaved), and a server started on a database
+ * that holds a world carries that world on. `--new` starts a new world in it instead, and
+ * replaces the one it held.
+ *
+ * Options for a new world: `--seed=N` (default: a fresh world each time;
+ * the seed is printed, so a world can be played again), `--region=N`, how
+ * many ticks pass between the region layer's visits to each chunk, where
+ * its monsters breed, die off and move on (default 20, 3 seconds),
+ * `--empire=N`, how many ticks pass between the empire layer's steps, where
+ * factions earn, grow and fight over land, each step a season (default
+ * 6000, 15 minutes), `--history=N`, how many years of history the
+ * empires live through before anyone comes, in which settlements may fall
+ * to ruin (default 100), and
+ * `--size=N`, how many chunks across and down the world is (default 32).
+ *
+ * Options for the server: `--port=N` (default 8080; 0 picks a free one),
+ * `--host=H` (default 127.0.0.1), `--tick=MS`, the milliseconds between the
+ * world's ticks (default 150), `--pace=N`, how many ticks pass for each
+ * move of the monsters (default 4), and `--save=N`, how many ticks pass
+ * between saves (default 20, 3 seconds), `--render=server` to send each
+ * page its map drawn as HTML rather than as data for the page to draw
+ * (default `client`), and `--forks=N`, how many forks draw the pages each
+ * tick, on as many cores (default 1).
+ */
+val tcp = import("slug.net.tcp")
+val web = import("slug.games.crawl.web")
+val store = import("slug.games.crawl.store")
+val secure = import("slug.random.secure")
+val signal = import("slug.os.signal")
+
+val main = fn() {
+    val host = cfg("host", "127.0.0.1")
+    val listener = tcp.listen(host, cfg("port", 8080))
+    val path = cfg("db", "crawl.db")
+    val db = store.open(path)
+    defer store.close(db)
+    val fresh = cfg("new", false) || !store.has(db)
+    val seed = cfg("seed", -1)
+    val world = if (!fresh) { store.seed(db) } else if (seed < 0) { secure.seed() } else { seed }
+    val how = if (fresh) { "new world" } else { "world" }
+    println("Crawl: http://" + host + ":" + tcp.localPort(listener) + "/ (" + how + " " + world + ", saved in " + path + ")")
+    // Stopping closes the listener, so `serve` saves the world and returns.
+    val stop = signal.notify(["int", "term"])
+    spawn {
+        select { recv stop }
+        println("Saving the world and stopping…")
+        tcp.close(listener)
+    }
+    web.serve(listener, {
+        db: db, new: fresh, seed: world, tick: cfg("tick", 150), pace: cfg("pace", 4),
+        region: cfg("region", 20), empire: cfg("empire", 6000), history: cfg("history", 100), size: cfg("size", 32), save: cfg("save", 20),
+        render: cfg("render", "client"), forks: cfg("forks", 1),
+    })
+    println("Saved.")
+}

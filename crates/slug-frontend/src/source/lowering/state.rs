@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{BinaryOperator, Capture, Chunk, Constant, MatchPattern, Op, SourceSpan, Value};
+use slug_vm::{
+    BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, Instruction, MatchPattern, Op,
+    SourceSpan, Value,
+};
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
 /// `Local` is a slot of the enclosing function and a `Capture` is a slot of
@@ -98,6 +101,29 @@ impl State {
         self.chunk.name = name.into();
         self.chunk.arity = arity;
         self.chunk.locals = self.next_local;
+        // Which capture slots hold a `var`, by name, so a fork can tell one;
+        // other slots keep an empty name, which allocates nothing.
+        let mut captures = vec![None; self.captures.len()];
+        for (name, binding) in &self.outer {
+            if let Binding::Capture { slot, mutable } = binding
+                && *mutable
+                && let Some(entry) = captures.get_mut(*slot)
+            {
+                *entry = Some(slug_vm::CaptureDetail {
+                    name: name.clone(),
+                    mutable: true,
+                });
+            }
+        }
+        self.chunk.captures = captures
+            .into_iter()
+            .map(|capture| {
+                capture.unwrap_or(slug_vm::CaptureDetail {
+                    name: String::new(),
+                    mutable: false,
+                })
+            })
+            .collect();
         self.chunk
     }
     pub(super) fn is_module_scope(&self) -> bool {
@@ -129,6 +155,60 @@ impl State {
             return false;
         }
         self.chunk.code.truncate(end - 1);
+        true
+    }
+    /// Makes the `+`, `-`, `:+`, or `copy` just emitted for the value of an
+    /// assignment to the module-level `name` assign it as well, so that the
+    /// collection it updates can change in place. A `copy` whose last field's
+    /// value ends in one of the others takes that operator in too, as in
+    /// `player = player copy {memory: player.memory + entry}`. No jump may
+    /// land after the instructions replaced, where the assignment's own
+    /// instructions would have been.
+    pub(super) fn fuse_global_update(&mut self, name: &str) -> bool {
+        let Some(index) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > index {
+            return false;
+        }
+        let nested = match &self.chunk.code[index].op {
+            Op::StructCopy(fields) if !fields.is_empty() => index
+                .checked_sub(1)
+                .filter(|operator| self.last_jump_target <= *operator)
+                .and_then(|operator| GlobalUpdate::of(&self.chunk.code[operator].op)),
+            _ => None,
+        };
+        if let Some(operator) = nested {
+            let Some(Instruction {
+                op: Op::StructCopy(fields),
+                ..
+            }) = self.chunk.code.pop()
+            else {
+                unreachable!("the last instruction is a copy");
+            };
+            // The fused instruction keeps the operator's span for its errors.
+            self.chunk.code[index - 1].op = Op::CopyGlobalUpdate {
+                name: name.into(),
+                fields,
+                operator,
+            };
+            return true;
+        }
+        let op = &mut self.chunk.code[index].op;
+        let fused = match op {
+            Op::StructCopy(fields) => Op::CopyGlobal {
+                name: name.into(),
+                fields: std::mem::take(fields),
+            },
+            _ => match GlobalUpdate::of(op) {
+                Some(operator) => Op::UpdateGlobal {
+                    name: name.into(),
+                    operator,
+                },
+                None => return false,
+            },
+        };
+        *op = fused;
         true
     }
     /// Removes the `GetGlobal` just emitted for a call's callee and returns

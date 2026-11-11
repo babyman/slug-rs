@@ -1,0 +1,2 @@
+val start = fn() { fork { 1 } }
+val t = start()

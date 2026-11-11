@@ -67,10 +67,11 @@ blank or comment lines, continues the `if` before it; a `;` before `else` still
 ends that `if`.
 
 These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
-`enum`, `export`, `false`, `fn`, `foreign`, `if`, `match`, `nil`, `nursery`,
-`onerror`, `onsuccess`, `recur`, `resource`, `return`, `select`, `spawn`,
-`struct`, `throw`, `true`, `val`, and `var`. `limit` is a keyword only directly
-after `nursery`, and is an ordinary name elsewhere. A reserved word may still
+`enum`, `export`, `false`, `fn`, `foreign`, `fork`, `if`, `match`, `nil`,
+`nursery`, `onerror`, `onsuccess`, `recur`, `resource`, `return`, `select`,
+`spawn`, `struct`, `throw`, `true`, `val`, and `var`. `limit` is a keyword only
+directly after `nursery`, and `task` only directly before `var` or `val` at the
+start of a statement; both are ordinary names elsewhere. A reserved word may still
 be a map key, a property name after `.`, or a struct field name, none of which
 binds a name: `{nil: 1, copy: true}` has the string keys `"nil"` and
 `"copy"`, read as `m.nil` and `m.copy`. `true` and `false` are the exception
@@ -195,6 +196,37 @@ because the assignment would discard the call's change: in
 `var` after it. Only calls of functions declared with `val name = fn ...` are
 followed, and only through functions nested in the one that declares the
 `var`, which share the same `var`.
+
+`task var` declares a module variable that every task owns a copy of. It is
+valid only at module top level, and may be exported, documented, and tagged
+like any `var`. A task, started by `spawn` or `fork`, begins with its
+spawner's value of each `task var` at the moment it starts, and its
+assignments change only its own copy; the program's main task begins with the
+declared value. `task val` is an error: a `val` never changes, so every task
+already shares it.
+
+```slug
+task var acting:str|nil = nil
+```
+
+No task can change another task's copy. A `task var` that caches what a
+shared `var` holds must therefore notice when another task replaces it: keep
+a shared `var` counting the replacements, record in another `task var` the
+count the cache was filled at, and start the cache over when they differ.
+
+```slug
+var world = 0             // counts new worlds; every task sees it
+task var seen = {}        // this task's cache of the current world
+task var seenWorld = 0    // the world `seen` belongs to
+
+val cached = fn():map {
+    if (seenWorld != world) {
+        seen = {}
+        seenWorld = world
+    }
+    seen
+}
+```
 
 A binding's type is set by its first value. A `var` has a declared type that
 every later assignment must conform to: its annotation, or else the type of
@@ -723,6 +755,30 @@ imports with the same name and signature likewise retain the first loaded
 callable and issue a warning; callables with distinct signatures combine into
 the imported overload set.
 
+### Assets
+
+`asset(name)` evaluates to the contents, as `bytes`, of a file the module's
+clutch ships in its `assets` folder. It is a compile-time form recognised by
+name, like `import`: its one argument must be a string literal, and the
+compiler reads the file through the host and embeds its bytes as a constant
+of the compiled module, so a running program, a `.cslug` artifact, or a
+firmware image never reads it again. A local binding named `asset` does not
+change what a call to `asset` means.
+
+```slug
+val script = asset("htmx.js")          // assets/htmx.js
+val logo = asset("images/logo.png")    // assets/images/logo.png
+```
+
+`name` is a path in the `assets` folder written with `/`: non-empty segments,
+none `.` or `..`, without `\` or NUL. Each segment must match the file's
+name exactly, case included, even where the file system ignores case. Only a
+module whose source file is inside an indexed clutch, including that clutch's
+test files and programs, has assets, and only its own clutch's; a host that
+provides no assets has none. A call that is not one string literal, is
+piped, or names no such file is a compile error with the code
+`invalid_asset`. See [Experimental Clutches](../reference/experimental-clutches.md#assets).
+
 ## Implicit builtin module
 
 `slug.builtin` is the small, host-provided foundation module. When the host
@@ -898,6 +954,7 @@ source order, one map per declared binding:
 | `name` | the binding's name |
 | `exported` | whether the declaration is exported |
 | `mutable` | whether it is a `var` |
+| `task` | whether it is a `task var` |
 | `documentation` | its doc block's text without the `*` markers, or `nil` |
 | `tags` | its tags in order, each `{name, arguments}`, with the arguments as evaluated |
 | `value` | the binding's value when the module finished initializing |
@@ -1384,14 +1441,75 @@ task therefore first drives earlier ready siblings.
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved
 child failure and logically cancels siblings. Cancellation settles a task with
-an error but does not forcibly interrupt a host thread. After a successful
+an error but does not forcibly interrupt a host thread. A task cancelled while
+it waits for a nursery's body cancels that nursery, its body and children
+with it. While a nursery waits, tasks outside it continue to run. After a successful
 body, the root nursery joins its descendants before program completion.
 
 A spawned task snapshots its immediate lexical bindings. Subsequent parent
 assignment is not visible through those captured local bindings. Captured
 values are shallow-shared, so channels and mutable objects retain identity.
 Outer lexical bindings and module globals remain live, and ordinary closures
-continue to share their captured mutable bindings.
+continue to share their captured mutable bindings. A `task var` is the
+exception: each task has its own (see Bindings). A fork, below, sees a
+snapshot of everything instead.
+
+### Forks
+
+`fork` starts a child task like `spawn`, from a block or function body,
+yielding a task handle that belongs to the current nursery and is awaited,
+selected on, limited, cancelled, and settled as a spawned task is. What
+differs is what it sees, which lets the runtime run it on another core:
+
+- **A snapshot.** A fork sees its captures, immediate and outer, and every
+  module variable as they were when it started. Later assignments by other
+  tasks are not visible to it.
+- **No writes to shared bindings.** Inside a fork, and in the tasks it
+  spawns and the functions it calls, assigning a binding declared outside the
+  fork is an error, unless it is a `task var`, whose copy is the fork's own.
+  The compiler reports an assignment written inside the fork as a static
+  error; one reached through a call is a runtime error when it runs. A fork's
+  own bindings, and closures it makes over them, behave as in any task.
+- **Results by value.** A fork's result, and every value it sends on a
+  channel, must be sendable: nil, booleans, numbers, strings, bytes, enum
+  cases, struct schemas, channels, lists, maps, and structs of sendable values,
+  and closures that capture only sendable values and no `var`. Task handles,
+  native resources, and closures over a `var` are not sendable. A fork may
+  hold one in its snapshot, but using it there is a runtime error, as is
+  returning or sending one; a fork whose result type is a task handle or
+  resource is a static error.
+- **Channels cross forks.** A fork can send and receive on any channel it
+  holds, and `select` in a fork waits on channels and timers as in any task.
+- **Natives and modules.** Calling a native function that its clutch does not
+  declare thread-safe is a runtime error in a fork. Importing a module that
+  has initialized is allowed; importing one that has not is a runtime error,
+  since initializing it runs code that writes its variables. A fork cannot
+  start while a module initializes: a `fork` in module top-level code is a
+  static error, and one reached from it is a runtime error. An interactive
+  session's entries are the exception: each runs after the earlier ones
+  have finished, so a `fork` may be typed at the prompt.
+
+A fork has the same meaning on every build that has tasks. A build without
+threads runs forks on one core, with the same snapshot and the same errors,
+so a program's results do not depend on how many cores run it. Forks take
+turns there: one busy computing yields after a while to the other tasks, so
+a failing sibling can still cancel it. The tasks of one fork never
+interleave between suspensions, on any build.
+
+A build with threads runs each fork on a thread of its own, and may bound
+how many run at once; a fork started beyond the bound fails with a fork
+error rather than waiting, since the forks running may be waiting for it. A
+fork that waits costs no processor time, so the bound is well above the
+number of cores; a program pacing work to the cores does so with
+`nursery limit`. A cancelled fork's tasks and nested forks are cancelled
+with it, and stop waiting on anything outside it.
+
+```slug
+val main = fn() {
+  val total = fork { sum(numbers) }
+  println(select { await total })
+}
+```
 
 `select` evaluates cases for channel receive, channel send, timers, task await,
 and `_` as a default case. The selected case value is piped to its handler:

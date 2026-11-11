@@ -1,18 +1,15 @@
+use crate::sync::Rc;
 #[cfg(feature = "concurrency")]
 use alloc::boxed::Box;
-use alloc::{collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
-use core::{
-    cell::{OnceCell, RefCell},
-    fmt,
-    fmt::Write as _,
-};
+use core::{cell::RefCell, fmt, fmt::Write as _};
 
 use crate::platform::NameMap;
 
 #[cfg(feature = "concurrency")]
-use alloc::rc::Weak;
+use crate::sync::Weak;
 #[cfg(feature = "concurrency")]
 use core::cell::Cell;
 
@@ -47,10 +44,14 @@ impl Builtin {
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
 pub struct Channel {
-    pub(crate) state: Rc<RefCell<ChannelState>>,
+    pub(crate) state: Rc<crate::sync::Lock<ChannelState>>,
     /// Set when native code creates the channel, or when a producer is first
     /// minted from a Slug-created channel.
-    native_producer: OnceCell<NativeChannelProducer>,
+    native_producer: crate::sync::Once<NativeChannelProducer>,
+    /// Set once a fork sends or receives on the channel: every value sent on
+    /// it is then checked as sendable.
+    #[cfg(feature = "concurrency")]
+    crossed: crate::sync::Flag,
 }
 
 pub(crate) struct ChannelState {
@@ -75,6 +76,13 @@ pub(crate) enum ChannelReceive {
 #[derive(Clone)]
 pub(crate) struct Waiter {
     identity: usize,
+    /// For one case of a `select`: the flag its cases share, which the first
+    /// wake to claim sets, so no other case is taken as well.
+    claim: Option<Arc<core::sync::atomic::AtomicBool>>,
+    /// The thread whose scheduler owns the waiting execution: a wake from
+    /// another thread is carried there to run.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    home: Arc<crate::vm::island::Inbox>,
     resume: Rc<dyn Fn(Result<Value, crate::RuntimeError>)>,
     reject_closed_send: Rc<dyn Fn()>,
     set_closed_send_error: Rc<dyn Fn(crate::RuntimeError)>,
@@ -84,6 +92,15 @@ pub(crate) struct Waiter {
 pub(crate) enum SelectWake {
     Value {
         handler: Option<Value>,
+    },
+    /// A receive case of a fork's `select`: the value it is woken with must
+    /// be sendable, checked as it arrives, since its sender may have sent
+    /// before it saw the channel cross into a fork. `unsendable` is the
+    /// error to report one with, its reason to be added.
+    #[cfg(feature = "concurrency")]
+    ForkReceive {
+        handler: Option<Value>,
+        unsendable: Box<crate::RuntimeError>,
     },
     #[cfg(feature = "concurrency")]
     TaskAwait {
@@ -97,6 +114,8 @@ impl SelectWake {
         match self {
             Self::Value { handler } => handler.clone(),
             #[cfg(feature = "concurrency")]
+            Self::ForkReceive { handler, .. } => handler.clone(),
+            #[cfg(feature = "concurrency")]
             Self::TaskAwait { handler, observer } => {
                 observer.observe();
                 handler.clone()
@@ -107,7 +126,7 @@ impl SelectWake {
 
 pub(crate) struct SelectWaitState {
     waiter: Waiter,
-    selected: bool,
+    claimed: Arc<core::sync::atomic::AtomicBool>,
     registrations: Option<WaitSet>,
 }
 
@@ -116,6 +135,7 @@ impl Waiter {
         let identity = Rc::as_ptr(&root.state) as usize;
         Self {
             identity,
+            claim: None,
             resume: Rc::new({
                 let root = root.clone();
                 move |result| root.resume(result)
@@ -125,6 +145,8 @@ impl Waiter {
                 move || root.reject_closed_send()
             }),
             set_closed_send_error: Rc::new(move |error| root.set_closed_send_error(error)),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         }
     }
 
@@ -133,6 +155,7 @@ impl Waiter {
         let identity = Rc::as_ptr(&task.state) as usize;
         Self {
             identity,
+            claim: None,
             resume: Rc::new({
                 let task = task.clone();
                 move |result| task.resume(result)
@@ -142,20 +165,23 @@ impl Waiter {
                 move || task.reject_closed_send()
             }),
             set_closed_send_error: Rc::new(|_| {}),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home: crate::vm::island::Inbox::current(),
         }
     }
 
     pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
         let identity = state.borrow().waiter.identity;
+        let claim = Some(state.borrow().claimed.clone());
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        let home = state.borrow().waiter.home.clone();
         let resume_state = state.clone();
         Self {
             identity,
+            claim,
+            // Runs once the wake has claimed the select.
             resume: Rc::new(move |result| {
                 let mut selected = resume_state.borrow_mut();
-                if selected.selected {
-                    return;
-                }
-                selected.selected = true;
                 let registrations = selected.registrations.take();
                 let waiter = selected.waiter.clone();
                 drop(selected);
@@ -163,6 +189,22 @@ impl Waiter {
                     registrations.remove_for_waiter(&waiter);
                 }
                 let handler = wake.selected();
+                #[cfg(feature = "concurrency")]
+                let result = match (&wake, result) {
+                    (SelectWake::ForkReceive { unsendable, .. }, Ok(value)) => {
+                        match crate::vm::unsendable_reason(&value) {
+                            Some(reason) => {
+                                let mut error = (**unsendable).clone();
+                                error.message = alloc::format!(
+                                    "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
+                                );
+                                Err(error)
+                            }
+                            None => Ok(value),
+                        }
+                    }
+                    (_, result) => result,
+                };
                 waiter.resume(
                     result.map(|value| Value::list(vec![value, handler.unwrap_or(Value::Nil)])),
                 );
@@ -174,10 +216,33 @@ impl Waiter {
             set_closed_send_error: Rc::new(move |error| {
                 state.borrow().waiter.set_closed_send_error(error);
             }),
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            home,
         }
     }
 
+    /// Claims this waiter's select, when it has one; whether the claim is
+    /// this wake's, so the waiter is to be woken.
+    pub(crate) fn try_claim(&self) -> bool {
+        self.claim
+            .as_ref()
+            .is_none_or(|claim| !claim.swap(true, core::sync::atomic::Ordering::AcqRel))
+    }
+
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        if self.try_claim() {
+            self.resume_claimed(result);
+        }
+    }
+
+    /// Wakes a waiter whose claim this wake already holds.
+    pub(crate) fn resume_claimed(&self, result: Result<Value, crate::RuntimeError>) {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if !self.home.is_current() {
+            let waiter = self.clone();
+            self.home.post(move || (waiter.resume)(result));
+            return;
+        }
         (self.resume)(result);
     }
 
@@ -186,6 +251,18 @@ impl Waiter {
     }
 
     pub(crate) fn reject_closed_send(&self) {
+        if self.try_claim() {
+            self.reject_claimed();
+        }
+    }
+
+    pub(crate) fn reject_claimed(&self) {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if !self.home.is_current() {
+            let waiter = self.clone();
+            self.home.post(move || (waiter.reject_closed_send)());
+            return;
+        }
         (self.reject_closed_send)();
     }
 
@@ -200,6 +277,15 @@ pub(crate) enum WaitRegistration {
     ChannelReceive(Rc<Channel>),
     #[cfg(feature = "concurrency")]
     TaskAwait(Rc<Task>),
+    /// A task waiting in a `nursery` for its body to settle. Leaving that
+    /// wait other than by the body's settling, as when the task is
+    /// cancelled, cancels the body and its children: nothing can settle
+    /// them any more.
+    #[cfg(feature = "concurrency")]
+    Nursery {
+        body: Rc<Task>,
+        cancel: Rc<dyn Fn()>,
+    },
     #[cfg(feature = "concurrency")]
     Timer(crate::vm::timers::TimerRegistration),
 }
@@ -212,7 +298,7 @@ impl WaitRegistration {
     ) {
         match self {
             Self::ChannelSend(channel) => {
-                let mut state = channel.state.borrow_mut();
+                let mut state = channel.state.lock();
                 #[cfg(feature = "metrics")]
                 {
                     let mut metrics = metrics.borrow_mut();
@@ -225,7 +311,7 @@ impl WaitRegistration {
                     .retain(|(candidate, _)| !candidate.is_same(waiter));
             }
             Self::ChannelReceive(channel) => {
-                let mut state = channel.state.borrow_mut();
+                let mut state = channel.state.lock();
                 #[cfg(feature = "metrics")]
                 {
                     let mut metrics = metrics.borrow_mut();
@@ -247,6 +333,15 @@ impl WaitRegistration {
                     metrics.peak_task_waiters = metrics.peak_task_waiters.max(state.waiters.len());
                 }
                 state.waiters.retain(|candidate| !candidate.is_same(waiter));
+            }
+            #[cfg(feature = "concurrency")]
+            Self::Nursery { body, cancel } => {
+                body.state
+                    .borrow_mut()
+                    .waiters
+                    .retain(|candidate| !candidate.is_same(waiter));
+                // A settled body has no children left to cancel.
+                cancel();
             }
             #[cfg(feature = "concurrency")]
             Self::Timer(registration) => registration.remove(waiter),
@@ -279,7 +374,7 @@ impl WaitSet {
     pub(crate) fn select_state(waiter: Waiter) -> Rc<RefCell<SelectWaitState>> {
         Rc::new(RefCell::new(SelectWaitState {
             waiter,
-            selected: false,
+            claimed: Arc::new(core::sync::atomic::AtomicBool::new(false)),
             registrations: None,
         }))
     }
@@ -358,17 +453,31 @@ impl RootWaiter {
 }
 
 impl Channel {
+    /// Whether a fork has used the channel, so what is sent on it may reach
+    /// one.
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn crossed(&self) -> bool {
+        self.crossed.get()
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn mark_crossed(&self) {
+        self.crossed.set(true);
+    }
+
     #[must_use]
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            state: Rc::new(RefCell::new(ChannelState {
+            state: Rc::new(crate::sync::Lock::new(ChannelState {
                 capacity,
                 messages: VecDeque::new(),
                 senders: VecDeque::new(),
                 receivers: VecDeque::new(),
                 closed: false,
             })),
-            native_producer: OnceCell::new(),
+            native_producer: crate::sync::Once::new(),
+            #[cfg(feature = "concurrency")]
+            crossed: crate::sync::Flag::new(false),
         }
     }
 
@@ -376,14 +485,16 @@ impl Channel {
         let producer = NativeChannelProducer::bounded(capacity);
         (
             Self {
-                state: Rc::new(RefCell::new(ChannelState {
+                state: Rc::new(crate::sync::Lock::new(ChannelState {
                     capacity,
                     messages: VecDeque::new(),
                     senders: VecDeque::new(),
                     receivers: VecDeque::new(),
                     closed: false,
                 })),
-                native_producer: OnceCell::from(producer.receiver_handle()),
+                native_producer: crate::sync::Once::from(producer.receiver_handle()),
+                #[cfg(feature = "concurrency")]
+                crossed: crate::sync::Flag::new(false),
             },
             producer,
         )
@@ -394,7 +505,7 @@ impl Channel {
     /// so native and Slug sends share the channel's capacity. Returns `None`
     /// for an unbuffered channel, which no native send could ever enter.
     pub(crate) fn attach_native_producer(&self) -> Option<NativeChannelProducer> {
-        let state = self.state.borrow();
+        let state = self.state.lock();
         if state.capacity == 0 {
             return None;
         }
@@ -427,7 +538,10 @@ impl Channel {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_live_native_producer(&self) -> bool {
         self.native_producer
             .get()
@@ -450,116 +564,176 @@ impl Channel {
         let Some(producer) = self.native_producer.get() else {
             return false;
         };
+        // Drained under the channel's lock, so two threads draining at once
+        // cannot buffer the producer's values out of order. The producer
+        // never takes this lock, so the order of the two locks is fixed.
+        let mut state = self.state.lock();
         // Read before draining: a producer closes after its last send, so
         // every value it sent is then queued and drains with the others.
         let producer_closed = producer.is_closed();
         let values = producer.drain(usize::MAX);
-        let mut state = self.state.borrow_mut();
         // A channel closed by an earlier drain is no progress; reporting it
         // as progress forever would keep the scheduler from running tasks.
         let changed = !values.is_empty() || (producer_closed && !state.closed);
-        let mut resumed = Vec::new();
-        let mut rejected_senders = Vec::new();
+        let mut wakes = Vec::new();
         for value in values {
-            if let Some(receiver) = state.receivers.pop_front() {
+            if let Some(receiver) = pop_receiver(&mut state) {
                 self.release_buffer_slot();
-                resumed.push((receiver, value.into_value()));
+                wakes.push(ChannelWake::Resume(receiver, value.into_value()));
             } else {
                 state.messages.push_back(value.into_value());
             }
         }
         if producer_closed {
             state.closed = true;
-            resumed.extend(
-                state
-                    .receivers
-                    .drain(..)
-                    .map(|receiver| (receiver, Value::Nil)),
-            );
-            rejected_senders.extend(state.senders.drain(..).map(|(sender, _)| sender));
+            close_waiters(&mut state, &mut wakes);
         }
         drop(state);
-        let changed = changed || !resumed.is_empty() || !rejected_senders.is_empty();
-        for (receiver, value) in resumed {
-            receiver.resume(Ok(value));
-        }
-        for sender in rejected_senders {
-            sender.reject_closed_send();
-        }
+        let changed = changed || !wakes.is_empty();
+        run_wakes(wakes);
         changed
     }
 
-    pub(crate) fn try_send(&self, value: Value) -> ChannelSend {
+    /// The channel's state, locked: a `select` about to wait holds the locks
+    /// of all its channels while it checks them once more and parks on
+    /// them, so no send or receive can slip between the check and the park.
+    pub(crate) fn lock_state(&self) -> crate::sync::LockGuard<'_, ChannelState> {
+        self.state.lock()
+    }
+
+    pub(crate) fn try_send(&self, value: &Value) -> ChannelSend {
         self.drain_native();
-        let mut state = self.state.borrow_mut();
+        let mut wakes = Vec::new();
+        let outcome = self.send_locked(&mut self.state.lock(), value, &mut wakes);
+        run_wakes(wakes);
+        outcome
+    }
+
+    /// Sends `value` on the locked `state`, if a receiver or buffer space
+    /// takes it, adding the wakes it owes to `wakes`.
+    pub(crate) fn send_locked(
+        &self,
+        state: &mut ChannelState,
+        value: &Value,
+        wakes: &mut Vec<ChannelWake>,
+    ) -> ChannelSend {
         if state.closed {
             return ChannelSend::Closed;
         }
-        if let Some(receiver) = state.receivers.pop_front() {
-            drop(state);
-            receiver.resume(Ok(value));
+        if let Some(receiver) = pop_receiver(state) {
+            wakes.push(ChannelWake::Resume(receiver, value.clone()));
             return ChannelSend::Ready;
         }
         if state.messages.len() < state.capacity && self.reserve_buffer_slot() {
-            state.messages.push_back(value);
+            state.messages.push_back(value.clone());
             return ChannelSend::Ready;
         }
         ChannelSend::Pending
     }
 
-    pub(crate) fn park_sender(&self, waiter: Waiter, value: Value) {
-        self.state.borrow_mut().senders.push_back((waiter, value));
+    pub(crate) fn park_sender(state: &mut ChannelState, waiter: Waiter, value: Value) {
+        state.senders.push_back((waiter, value));
     }
 
     pub(crate) fn try_receive(&self) -> ChannelReceive {
         self.drain_native();
-        let mut state = self.state.borrow_mut();
-        if let Some(value) = state.messages.pop_front() {
-            self.release_buffer_slot();
-            if !state.senders.is_empty()
-                && self.reserve_buffer_slot()
-                && let Some((sender, pending)) = state.senders.pop_front()
-            {
-                state.messages.push_back(pending);
-                drop(state);
-                sender.resume(Ok(Value::Nil));
-            }
-            return ChannelReceive::Ready(value);
-        }
-        if let Some((sender, value)) = state.senders.pop_front() {
-            drop(state);
-            sender.resume(Ok(Value::Nil));
-            return ChannelReceive::Ready(value);
-        }
-        if state.closed {
-            return ChannelReceive::Ready(Value::Nil);
-        }
-        ChannelReceive::Pending
+        let mut wakes = Vec::new();
+        let outcome = self.receive_locked(&mut self.state.lock(), &mut wakes);
+        run_wakes(wakes);
+        outcome.map_or(ChannelReceive::Pending, ChannelReceive::Ready)
     }
 
-    pub(crate) fn park_receiver(&self, waiter: Waiter) {
-        self.state.borrow_mut().receivers.push_back(waiter);
+    /// Receives from the locked `state`, if a message, a waiting sender, or
+    /// the channel's closing gives a value, adding the wakes it owes.
+    pub(crate) fn receive_locked(
+        &self,
+        state: &mut ChannelState,
+        wakes: &mut Vec<ChannelWake>,
+    ) -> Option<Value> {
+        if let Some(value) = state.messages.pop_front() {
+            self.release_buffer_slot();
+            if !state.senders.is_empty() && self.reserve_buffer_slot() {
+                if let Some((sender, pending)) = pop_sender(state) {
+                    state.messages.push_back(pending);
+                    wakes.push(ChannelWake::Resume(sender, Value::Nil));
+                } else {
+                    self.release_buffer_slot();
+                }
+            }
+            return Some(value);
+        }
+        if let Some((sender, value)) = pop_sender(state) {
+            wakes.push(ChannelWake::Resume(sender, Value::Nil));
+            return Some(value);
+        }
+        state.closed.then_some(Value::Nil)
+    }
+
+    pub(crate) fn park_receiver(state: &mut ChannelState, waiter: Waiter) {
+        state.receivers.push_back(waiter);
     }
 
     pub(crate) fn close(&self) {
         self.revoke_native_producer();
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock();
         if state.closed {
             return;
         }
         state.closed = true;
-        let receivers = state.receivers.drain(..).collect::<Vec<_>>();
-        let senders = state
-            .senders
-            .drain(..)
-            .map(|(sender, _)| sender)
-            .collect::<Vec<_>>();
+        let mut wakes = Vec::new();
+        close_waiters(&mut state, &mut wakes);
         drop(state);
-        for receiver in receivers {
-            receiver.resume(Ok(Value::Nil));
+        run_wakes(wakes);
+    }
+}
+
+/// A wake a channel owes a waiter it has claimed, run once its lock is
+/// released.
+pub(crate) enum ChannelWake {
+    Resume(Waiter, Value),
+    Reject(Waiter),
+}
+
+pub(crate) fn run_wakes(wakes: Vec<ChannelWake>) {
+    for wake in wakes {
+        match wake {
+            ChannelWake::Resume(waiter, value) => waiter.resume_claimed(Ok(value)),
+            ChannelWake::Reject(waiter) => waiter.reject_claimed(),
         }
-        for sender in senders {
-            sender.reject_closed_send();
+    }
+}
+
+/// The first parked receiver this channel can claim. One already claimed,
+/// by another case of its `select`, is stale and dropped.
+fn pop_receiver(state: &mut ChannelState) -> Option<Waiter> {
+    while let Some(receiver) = state.receivers.pop_front() {
+        if receiver.try_claim() {
+            return Some(receiver);
+        }
+    }
+    None
+}
+
+fn pop_sender(state: &mut ChannelState) -> Option<(Waiter, Value)> {
+    while let Some((sender, value)) = state.senders.pop_front() {
+        if sender.try_claim() {
+            return Some((sender, value));
+        }
+    }
+    None
+}
+
+/// Wakes every waiter a closing channel can claim: receivers with `nil`,
+/// senders with the closed-send error.
+fn close_waiters(state: &mut ChannelState, wakes: &mut Vec<ChannelWake>) {
+    for receiver in state.receivers.drain(..) {
+        if receiver.try_claim() {
+            wakes.push(ChannelWake::Resume(receiver, Value::Nil));
+        }
+    }
+    for (sender, _) in state.senders.drain(..) {
+        if sender.try_claim() {
+            wakes.push(ChannelWake::Reject(sender));
         }
     }
 }
@@ -577,11 +751,11 @@ impl Drop for Channel {
 }
 
 /// Shared storage for a lexical binding captured by one or more closures.
-pub(crate) type BindingCell = Rc<RefCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<RefCell<GlobalTable>>;
+pub(crate) type BindingCell = crate::sync::Code<crate::sync::SoloCell<Value>>;
+pub(crate) type GlobalEnvironment = crate::sync::Code<crate::sync::SoloCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(RefCell::new(GlobalTable::default()))
+    crate::sync::Code::new(crate::sync::SoloCell::new(GlobalTable::default()))
 }
 
 /// Global bindings stored in definition order behind a name index.
@@ -605,6 +779,29 @@ impl GlobalTable {
     #[inline]
     pub(crate) fn value(&self, slot: u32) -> &Value {
         &self.entries[slot as usize].1
+    }
+
+    /// Moves the plain entry in `slot` into a binding cell of `kind`, so
+    /// assigning the variable later changes the cell and never the table,
+    /// which forks on other threads may be reading. A binding cell already
+    /// there is marked as `kind` and returned.
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn bind_variable(
+        &mut self,
+        slot: u32,
+        kind: crate::variables::BindingKind,
+    ) -> Option<BindingCell> {
+        let (name, value) = self.entries.get_mut(slot as usize)?;
+        if let Value::Binding { name, cell } = value {
+            name.set_kind(kind);
+            return Some(cell.clone());
+        }
+        let cell = binding_cell(core::mem::replace(value, Value::Nil));
+        *value = Value::Binding {
+            name: crate::sync::Code::new(crate::variables::BindingName::new(name.clone(), kind)),
+            cell: cell.clone(),
+        };
+        Some(cell)
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<&Value> {
@@ -648,23 +845,26 @@ impl Extend<(String, Value)> for GlobalTable {
 
 /// One cached `GlobalTable` slot per global name of a program, filled on the
 /// first read of each name. Valid only for one program and one environment.
-pub(crate) type GlobalSlots = Rc<[core::cell::Cell<u32>]>;
+pub(crate) type GlobalSlots = Rc<[crate::sync::Hint]>;
 
 /// A `GlobalSlots` entry whose name has not been resolved yet.
 pub(crate) const UNRESOLVED_GLOBAL: u32 = u32::MAX;
 
 pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
     (0..program.global_name_count())
-        .map(|_| core::cell::Cell::new(UNRESOLVED_GLOBAL))
+        .map(|_| crate::sync::Hint::new(UNRESOLVED_GLOBAL))
         .collect()
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
-    Rc::new(RefCell::new(value))
+    crate::sync::Code::new(crate::sync::SoloCell::new(value))
 }
 
 pub(crate) fn module_binding(name: impl Into<String>) -> Value {
-    let name = Rc::new(name.into());
+    let name = crate::sync::Code::new(crate::variables::BindingName::new(
+        name.into(),
+        crate::variables::BindingKind::default(),
+    ));
     Value::Binding {
         name,
         cell: binding_cell(Value::Uninitialized),
@@ -675,14 +875,19 @@ pub(crate) fn module_binding(name: impl Into<String>) -> Value {
 pub struct Closure {
     pub(crate) chunk: usize,
     pub(crate) captures: Vec<BindingCell>,
-    pub(crate) program: Option<Rc<crate::Program>>,
-    pub(crate) globals: Option<GlobalEnvironment>,
-    /// Slots in `globals` already resolved for `program`'s global names.
-    /// Present only when both are, and shared by closures created with the
-    /// same program and environment.
+    /// The program the closure's chunk belongs to, and the global table its
+    /// names resolve in. A call's frame reads both from here, so entering a
+    /// function counts neither: forks on other threads share them.
+    pub(crate) program: crate::sync::Code<crate::Program>,
+    pub(crate) globals: GlobalEnvironment,
+    /// Slots in `globals` already resolved for `program`'s global names,
+    /// shared by closures created with the same program and environment.
     pub(crate) global_slots: Option<GlobalSlots>,
     #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,
+    /// The fork domain of the task that made the closure, or zero.
+    #[cfg(feature = "concurrency")]
+    pub(crate) domain: u32,
 }
 
 /// A cached task completion. Tasks are runtime-owned and retain their outcome
@@ -691,6 +896,9 @@ pub struct Closure {
 #[derive(Clone)]
 pub struct Task {
     state: Rc<RefCell<TaskState>>,
+    /// The fork domain of the task that started this one, which alone may
+    /// use its handle; zero outside forks.
+    domain: u32,
 }
 
 #[cfg(feature = "concurrency")]
@@ -702,6 +910,52 @@ struct TaskState {
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     waiters: Vec<Waiter>,
     wait_registration: Option<WaitSet>,
+    /// The explicit nursery this task is a child of, told when it settles.
+    watch: Option<Rc<NurseryWatch>>,
+}
+
+/// What the body of an explicit nursery, once it has returned, waits on:
+/// its children all settling, or one failing, which may fail it fast.
+#[cfg(feature = "concurrency")]
+#[derive(Default)]
+pub(crate) struct NurseryWatch {
+    pending: Cell<usize>,
+    failed: Cell<bool>,
+    settling: RefCell<Option<Rc<Task>>>,
+}
+
+#[cfg(feature = "concurrency")]
+impl NurseryWatch {
+    /// How many children have yet to settle.
+    pub(crate) fn pending(&self) -> usize {
+        self.pending.get()
+    }
+
+    /// Whether a child has failed since the last call.
+    pub(crate) fn take_failed(&self) -> bool {
+        self.failed.replace(false)
+    }
+
+    /// Wakes `body`, suspended to settle, once a child fails or the last
+    /// one settles.
+    pub(crate) fn wait(&self, body: Rc<Task>) {
+        *self.settling.borrow_mut() = Some(body);
+    }
+
+    fn settled(&self, failed: bool) {
+        self.pending.set(self.pending.get().saturating_sub(1));
+        if failed {
+            self.failed.set(true);
+        }
+        if failed || self.pending.get() == 0 {
+            let body = self.settling.borrow_mut().take();
+            if let Some(body) = body {
+                // Ahead of every sibling, which a failure may cancel before
+                // it runs, as when settlement looked between turns.
+                body.resume_at(Ok(Value::Nil), failed);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "concurrency")]
@@ -713,6 +967,9 @@ pub(crate) fn task_state_layout() -> (usize, usize) {
 enum TaskPhase {
     Pending(Box<crate::vm::TaskExecution>),
     Running,
+    /// A fork running on its own island, on a worker thread.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    Remote(Arc<crate::vm::island::IslandControl>),
     Settled(Result<Value, crate::RuntimeError>),
 }
 
@@ -768,8 +1025,26 @@ impl Task {
                 ready,
                 waiters: Vec::new(),
                 wait_registration: None,
+                watch: None,
             })),
+            domain: 0,
         }
+    }
+
+    /// This task, whose handle belongs to the fork `domain`.
+    pub(crate) fn in_domain(mut self, domain: u32) -> Self {
+        self.domain = domain;
+        self
+    }
+
+    pub(crate) fn domain(&self) -> u32 {
+        self.domain
+    }
+
+    /// Makes this task a child its explicit nursery waits on.
+    pub(crate) fn join(&self, watch: Rc<NurseryWatch>) {
+        watch.pending.set(watch.pending.get() + 1);
+        self.state.borrow_mut().watch = Some(watch);
     }
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
@@ -791,8 +1066,50 @@ impl Task {
         matches!(self.state.borrow().phase, TaskPhase::Running)
     }
 
-    pub(crate) fn is_pending(&self) -> bool {
+    /// Whether the task waits here for its scheduler to run it.
+    pub(crate) fn is_queued(&self) -> bool {
         matches!(self.state.borrow().phase, TaskPhase::Pending(_))
+    }
+
+    /// Takes the execution of a fork its nursery has admitted, to run on an
+    /// island, leaving the task waiting on `control`.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn take_for_island(
+        &self,
+        control: &Arc<crate::vm::island::IslandControl>,
+    ) -> Option<crate::vm::TaskExecution> {
+        let mut state = self.state.borrow_mut();
+        if !state.admitted
+            || !matches!(&state.phase, TaskPhase::Pending(execution) if execution.is_fork())
+        {
+            return None;
+        }
+        let TaskPhase::Pending(execution) =
+            mem::replace(&mut state.phase, TaskPhase::Remote(control.clone()))
+        else {
+            unreachable!("the phase was checked");
+        };
+        Some(*execution)
+    }
+
+    /// Settles a fork whose island has finished, unless it was cancelled.
+    #[cfg(all(feature = "threads", not(target_os = "none")))]
+    pub(crate) fn complete_remote(&self, outcome: &Result<Value, crate::RuntimeError>) {
+        let mut state = self.state.borrow_mut();
+        if !matches!(state.phase, TaskPhase::Remote(_)) {
+            return;
+        }
+        state.phase = TaskPhase::Settled(outcome.clone());
+        release_admission(&mut state);
+        let waiters = mem::take(&mut state.waiters);
+        let watch = state.watch.take();
+        drop(state);
+        for waiter in waiters {
+            waiter.resume(outcome.clone());
+        }
+        if let Some(watch) = watch {
+            watch.settled(outcome.is_err());
+        }
     }
 
     pub(crate) fn try_admit(&self) -> bool {
@@ -819,9 +1136,15 @@ impl Task {
         state.wait_registration = None;
         release_admission(&mut state);
         let waiters = mem::take(&mut state.waiters);
+        let watch = state.watch.take();
         drop(state);
+        // Waiters first: one that observes the outcome keeps a failure from
+        // failing the nursery fast.
         for waiter in waiters {
             waiter.resume(outcome.clone());
+        }
+        if let Some(watch) = watch {
+            watch.settled(outcome.is_err());
         }
     }
 
@@ -836,7 +1159,44 @@ impl Task {
         state.wait_registration = wait_registration;
     }
 
+    /// Puts a task that yielded straight back in its ready queue: it waits
+    /// on nothing, and resumes where it stopped.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn requeue(&self) {
+        let ready = self.state.borrow().ready.clone();
+        ready.borrow_mut().push_back(Rc::new(self.clone()));
+    }
+
+    /// Whether `other` is a handle on this same task.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn is(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    /// The fork domain the code of a task waiting here runs in.
+    #[cfg(all(
+        feature = "concurrency",
+        not(all(feature = "threads", not(target_os = "none")))
+    ))]
+    pub(crate) fn queued_domain(&self) -> Option<u32> {
+        match &self.state.borrow().phase {
+            TaskPhase::Pending(execution) => Some(execution.domain()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        self.resume_at(result, false);
+    }
+
+    /// Resumes the task, at the front of its ready queue when `first`.
+    fn resume_at(&self, result: Result<Value, crate::RuntimeError>, first: bool) {
         let mut state = self.state.borrow_mut();
         let wait_registration = state.wait_registration.take();
         let TaskPhase::Pending(execution) = &mut state.phase else {
@@ -848,7 +1208,12 @@ impl Task {
         if let Some(wait_registration) = wait_registration {
             wait_registration.remove_losers(self);
         }
-        ready.borrow_mut().push_back(Rc::new(self.clone()));
+        let task = Rc::new(self.clone());
+        if first {
+            ready.borrow_mut().push_front(task);
+        } else {
+            ready.borrow_mut().push_back(task);
+        }
     }
 
     pub(crate) fn reject_closed_send(&self) {
@@ -882,7 +1247,7 @@ impl Task {
     pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
         match &self.state.borrow().phase {
             TaskPhase::Settled(outcome) => Some(outcome.clone()),
-            TaskPhase::Pending(_) | TaskPhase::Running => None,
+            _ => None,
         }
     }
 
@@ -891,20 +1256,28 @@ impl Task {
     pub(crate) fn blocked_error(&self) -> Option<crate::RuntimeError> {
         match &self.state.borrow().phase {
             TaskPhase::Pending(execution) => Some(execution.blocked_error()),
-            TaskPhase::Running | TaskPhase::Settled(_) => None,
+            _ => None,
         }
     }
 
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         let phase = mem::replace(&mut state.phase, TaskPhase::Running);
-        if !matches!(phase, TaskPhase::Pending(_)) {
-            state.phase = phase;
-            return;
+        match phase {
+            TaskPhase::Pending(_) => {}
+            // The island stops at its next scheduling point; its result,
+            // when it comes, is dropped.
+            #[cfg(all(feature = "threads", not(target_os = "none")))]
+            TaskPhase::Remote(control) => control.cancel(),
+            phase => {
+                state.phase = phase;
+                return;
+            }
         }
         let wait_registration = state.wait_registration.take();
         let waiters = mem::take(&mut state.waiters);
         let ready = state.ready.clone();
+        let watch = state.watch.take();
         state.phase = TaskPhase::Settled(Err(error.clone()));
         release_admission(&mut state);
         drop(state);
@@ -917,6 +1290,20 @@ impl Task {
         for waiter in waiters {
             waiter.resume(Err(error.clone()));
         }
+        if let Some(watch) = watch {
+            watch.settled(true);
+        }
+    }
+
+    /// Whether the task has settled with nothing left for its nursery to
+    /// report: a value, or a failure something has awaited.
+    pub(crate) fn is_done_with(&self) -> bool {
+        let state = self.state.borrow();
+        match &state.phase {
+            TaskPhase::Settled(Ok(_)) => true,
+            TaskPhase::Settled(Err(_)) => state.observed,
+            _ => false,
+        }
     }
 
     pub(crate) fn unobserved_error(&self) -> Option<crate::RuntimeError> {
@@ -926,7 +1313,7 @@ impl Task {
         } else {
             match &state.phase {
                 TaskPhase::Settled(Err(error)) => Some(error.clone()),
-                TaskPhase::Pending(_) | TaskPhase::Running | TaskPhase::Settled(Ok(_)) => None,
+                _ => None,
             }
         }
     }
@@ -960,6 +1347,18 @@ pub struct StructValue {
 }
 
 impl StructValue {
+    /// Takes the value of field `name` out of a struct nothing else holds,
+    /// leaving `nil`; `None` when it is shared or has no such field.
+    pub(crate) fn take_field(value: &mut Rc<Self>, name: &str) -> Option<Value> {
+        let value = Rc::get_mut(value)?;
+        let index = value
+            .schema
+            .fields
+            .iter()
+            .position(|field| field.name.as_ref() == name)?;
+        Some(core::mem::replace(&mut value.values[index], Value::Nil))
+    }
+
     pub(crate) fn copy_fields(
         self: Rc<Self>,
         names: &[String],
@@ -1038,14 +1437,14 @@ pub enum Value {
     Struct(Rc<StructValue>),
     Enum(Rc<EnumValue>),
     Channel(Rc<Channel>),
-    Closure(Rc<Closure>),
+    Closure(crate::sync::Code<Closure>),
     #[cfg(feature = "concurrency")]
     Task(Rc<Task>),
     Native(NativeFunction),
     /// A host callable paired with the source declaration's private identity.
     DeclaredNative {
         function: NativeFunction,
-        declaration: Rc<ForeignDeclaration>,
+        declaration: crate::sync::Code<ForeignDeclaration>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -1053,7 +1452,9 @@ pub enum Value {
     Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
     Binding {
-        name: Rc<String>,
+        /// The binding's name and kind, shared by every module that imports
+        /// it.
+        name: crate::sync::Code<crate::variables::BindingName>,
         cell: BindingCell,
     },
 }
@@ -1171,18 +1572,8 @@ impl Value {
         }
     }
 
-    /// Resolves an owned value, moving it instead of cloning when it is not a
-    /// binding.
-    pub(crate) fn into_resolved(self) -> Result<Value, String> {
-        if matches!(self, Self::Binding { .. }) {
-            self.resolve()
-        } else {
-            Ok(self)
-        }
-    }
-
     pub(crate) fn resolve(&self) -> Result<Value, String> {
-        let Self::Binding { name, cell } = self else {
+        let Self::Binding { name, cell, .. } = self else {
             return Ok(self.clone());
         };
         let value = cell.borrow().clone();
@@ -1206,11 +1597,25 @@ impl Value {
     }
 }
 
+/// Whether a module binding's value, as the running task sees it, which in
+/// a fork is its snapshot, equals `value`. A `val` reads the same to every
+/// task, so it is compared in place.
+fn binding_equals(cell: &BindingCell, name: &crate::variables::BindingName, value: &Value) -> bool {
+    #[cfg(feature = "concurrency")]
+    if name.kind() != crate::variables::BindingKind::Val {
+        return crate::vm::seen_binding(cell, name).eq(value);
+    }
+    #[cfg(not(feature = "concurrency"))]
+    let _ = name;
+    cell.borrow().eq(value)
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Binding { cell, .. }, value) => cell.borrow().eq(value),
-            (value, Self::Binding { cell, .. }) => value.eq(&cell.borrow()),
+            (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
+                binding_equals(cell, name, value)
+            }
             (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int(a), Self::Int(b)) => a == b,
@@ -1229,7 +1634,7 @@ impl PartialEq for Value {
             }
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
-            (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
+            (Self::Closure(a), Self::Closure(b)) => crate::sync::Code::ptr_eq(a, b),
             #[cfg(feature = "concurrency")]
             (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
             (Self::Native(a), Self::Native(b)) => a.same_function(b),

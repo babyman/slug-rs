@@ -61,6 +61,7 @@ Documentation blocks on top-level `val`/`var`/`foreign` declarations|partial|`cr
 `???` checked runtime placeholder|implemented|`crates/slug/tests/cli.rs`
 Top-level `export` declaration metadata|partial|`crates/slug-vm/tests/vm.rs`
 Source-level module imports and exported-value maps|partial|`crates/slug/tests/module_loader.rs`
+Compile-time clutch assets with `asset(name)`|implemented|`crates/slug/tests/module_loader.rs` and `crates/slug/tests/cli/modules.rs`
 Predeclared module bindings and cyclic initialization|implemented|`crates/slug/tests/module_loader.rs`
 Live imported module bindings|implemented|`crates/slug/tests/module_loader.rs`
 Imported-name shadowing and non-callable conflict warnings|implemented|`crates/slug/tests/cli.rs` and `crates/slug/tests/module_loader.rs`
@@ -69,9 +70,11 @@ Retained top-level declaration, tag, and documentation metadata|implemented|`cra
 Automatic local `main()`, `main(args:list)`, and `main(args:map)` entrypoint invocation|implemented|`crates/slug/tests/cli.rs`
 Immutable configuration store and source precedence|implemented|`crates/slug/tests/configuration.rs`
 `cfg` builtin|implemented|`crates/slug/tests/configuration.rs`
-Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption|partial|`crates/slug/tests/cli.rs`
+Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption; freestanding builds (ESP32-S3) run tasks and timers on the host's clock|partial|`crates/slug/tests/cli.rs`
+Fork tasks (`fork`) and `task var`: snapshots, the write rule, sendable values, channels, natives, imports, and initialization; forks run on worker threads in `threads` builds and cooperatively otherwise; embedded multi-core pending|partial|`tests/conformance/fork/` and `crates/slug-vm/tests/vm.rs`
 Builtin `chan` construction and `close`, plus bounded FIFO channel operations through the `slug.channel` module and bounded thread-safe native producers|implemented|`crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs`
 Shared standard-input line stream and interactive helpers through core-Clutch `slug.io.stdin`|implemented|`crates/slug/tests/cli.rs`
+Interrupt and terminate requests delivered on channels through core-Clutch `slug.os.signal`|implemented|`crates/slug/tests/typed_core.rs`
 Broad `resource` source type|removed|`language/nominal-types.md`
 Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints|partial|`crates/slug/tests/cli.rs`, `crates/slug/tests/module_loader.rs`, and `language/nominal-types.md`
 Fieldless nominal enums with required qualified cases|implemented|`crates/slug/tests/cli.rs`, `crates/slug/tests/module_loader.rs`, and `language/nominal-types.md`

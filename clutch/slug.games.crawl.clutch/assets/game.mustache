@@ -1,0 +1,27 @@
+{{! The game, which the page's #game holds. Each part is drawn on its own:
+    after the first page, the server sends a part again, in a parts event,
+    only when what it shows has changed, and the page swaps it in by id. }}
+<div class="play">
+  <div class="board">
+    {{>part-top}}
+    {{>part-map}}
+    {{>part-menu}}
+    {{>part-over}}
+  </div>
+  {{>part-log}}
+</div>
+<aside>
+  {{>part-foes}}
+  {{>part-stats}}
+  {{>part-pack}}
+  <section class="actions">
+    <button hx-post="/key" hx-vals='{"key": "space"}'>Wait <kbd>space</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "enter"}'>Stairs <kbd>enter</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "e"}'>Eat <kbd>e</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "q"}'>Quaff <kbd>q</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "r"}'>Read <kbd>r</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "w"}'>Wield <kbd>w</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "a"}'>Wear <kbd>a</kbd></button>
+    <button hx-post="/key" hx-vals='{"key": "d"}'>Drop <kbd>d</kbd></button>
+  </section>
+</aside>

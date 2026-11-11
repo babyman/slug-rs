@@ -1,0 +1,2 @@
+println("helper init")
+export val value = 7

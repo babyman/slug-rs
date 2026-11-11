@@ -1,0 +1,23 @@
+// A fork busy calling functions, and the fork it started, are both
+// cancelled when a sibling fails.
+val step = fn(n:num):num { n + 1 }
+val churn = fn(n:num):num {
+    if (n == 3000000) { println("still running") }
+    recur(step(n))
+}
+val guarded = fn():str {
+    defer onerror(err) { "caught" }
+    nursery {
+        fork {
+            val inner = fork { churn(0) }
+            churn(0)
+        }
+        fork { throw "boom" }
+    }
+    "not reached"
+}
+val main = fn() {
+    println(guarded())
+    select { after 2000 /> fn(_) { nil } }
+    println("done")
+}

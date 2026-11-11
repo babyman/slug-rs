@@ -19,7 +19,15 @@
  * library.
  */
 
-val {ord, chr, sort} = import("slug.string")
+val {ord, chr, sort, toBytes} = import("slug.string")
+
+// slug.bytes.findAny's native search, bound directly: going through the
+// module costs a call for every string written.
+foreign findAnyRaw = fn(data:bytes, set:bytes, from:num):num
+
+// The bytes a JSON string must escape: the quote, the backslash, and the
+// control characters.
+val ESCAPED = 0x"225c000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -635,8 +643,10 @@ val escapeChar = fn(c) {
 
 val needsEscape = fn(c) { c == "\"" || c == "\\" || c < " " }
 
-// Appends the quoted JSON form of s to out.
+// Appends the quoted JSON form of s to out: whole when it has nothing to
+// escape, as most strings do.
 val emitString = fn(s, out) {
+    if (findAnyRaw(toBytes(s), ESCAPED, 0) < 0) { return out + "\"" + s + "\"" }
     val n = len(s)
     val go = fn(i, start, acc) {
         if (i == n) {

@@ -137,7 +137,7 @@ impl Expr {
             | ExprKind::Return { value }
             | ExprKind::Throw { value }
             | ExprKind::Defer { value, .. }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. }
             | ExprKind::TypeApply { callee: value, .. } => visit(value),
             ExprKind::Recur(arguments) => {
@@ -272,6 +272,8 @@ pub(super) enum ExprKind {
     Name(String),
     Declare {
         mutable: bool,
+        /// A module-level `task var`, which every task owns a copy of.
+        task: bool,
         exported: bool,
         pattern: Pattern,
         documentation: Option<String>,
@@ -324,7 +326,12 @@ pub(super) enum ExprKind {
         limit: Option<Box<Expr>>,
         body: Box<Expr>,
     },
-    Spawn(Box<Expr>),
+    /// `spawn` starts a task sharing live state; `fork` starts one that sees
+    /// a snapshot (`fork: true`).
+    Spawn {
+        body: Box<Expr>,
+        fork: bool,
+    },
     Select(Vec<SelectCase>),
     Match {
         subject: Option<Box<Expr>>,
@@ -591,6 +598,7 @@ pub(super) enum TokenKind {
     Recur,
     Nursery,
     Spawn,
+    Fork,
     Select,
     Match,
     Struct,
@@ -699,6 +707,7 @@ impl TokenKind {
             Self::Recur => "recur",
             Self::Nursery => "nursery",
             Self::Spawn => "spawn",
+            Self::Fork => "fork",
             Self::Select => "select",
             Self::Match => "match",
             Self::Struct => "struct",
@@ -736,6 +745,7 @@ impl TokenKind {
             Self::Recur => "`recur`".into(),
             Self::Nursery => "`nursery`".into(),
             Self::Spawn => "`spawn`".into(),
+            Self::Fork => "`fork`".into(),
             Self::Select => "`select`".into(),
             Self::Match => "`match`".into(),
             Self::Struct => "`struct`".into(),

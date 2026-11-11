@@ -1,0 +1,238 @@
+val game = import("slug.games.crawl")
+val level = import("slug.games.crawl.level")
+val {assertEqual, assertTrue} = import("slug.test")
+val {filter, map, range} = import("slug.std")
+val math = import("slug.math")
+
+// Changes the player with `id` by `fields`.
+val setPlayer = fn(id:str, fields:map) {
+    val s = game.snapshot()
+    game.load(s copy {players: s.players + {[id]: s.players[id] + fields}})
+}
+
+// Two open squares side by side in the chunk player "a" is in.
+val openPair = fn():list {
+    val rows = game.here("a").map
+    val go = fn(i:num):list {
+        val x = i % (level.WIDTH - 1)
+        val y = int(i / (level.WIDTH - 1))
+        if (rows[y][x] == "." && rows[y][x + 1] == ".") { [{x: x, y: y}, {x: x + 1, y: y}] } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// Players "a" (Ann) and "b" (Bo) side by side, Bo just east of Ann, in a
+// world with seed `seed`, and "c" (Cy) far away.
+val sideBySide = fn(seed:num) {
+    game.newGame(seed, {size: 8})
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    game.join("c", "Cy")
+    val a = game.playerOf("a")
+    val pair = openPair()
+    setPlayer("a", {x: pair[0].x, y: pair[0].y})
+    setPlayer("b", {cx: a.cx, cy: a.cy, depth: a.depth, x: pair[1].x, y: pair[1].y})
+    setPlayer("c", {cx: a.cx, cy: a.cy, depth: a.depth + 3})
+}
+
+// Ann walks into Bo, opening the menu.
+val meetBo = fn() { game.command("a", "l", false) }
+
+// The menu the player with `id` has open; fails the test when none is.
+val openMenu = fn(id:str):map {
+    match game.menu(id) {
+        m: map => m
+        _ => throw Error {type: "test", msg: id + " has no menu open"}
+    }
+}
+
+val messagesOf = fn(id:str):list { game.playerOf(id).messages }
+
+@test
+val walkingIntoAnotherPlayerOpensAMenuAndTakesNoTime = fn() {
+    sideBySide(1)
+    val before = game.playerOf("a")
+    val turn = game.current().world.turn
+    meetBo()
+    val m = openMenu("a")
+    assertEqual(m.title, "You meet Bo.")
+    assertEqual(map(m.entries, fn(e) { [e.key, e.label] }), [["1", "Talk"], ["2", "Give"]])
+    assertEqual([game.playerOf("a").x, game.current().world.turn], [before.x, turn])
+    assertEqual(game.menu("b"), nil)
+    assertEqual(game.text("a")[1], "You meet Bo.")
+}
+
+@test
+val runningIntoAnotherPlayerStopsWithoutAMenu = fn() {
+    sideBySide(2)
+    game.command("a", "l", true)
+    assertEqual(game.menu("a"), nil)
+}
+
+@test
+val spaceGoesBackAPageAndThenCloses = fn() {
+    sideBySide(3)
+    meetBo()
+    game.command("a", "1", false)
+    assertEqual(openMenu("a").page, "talk")
+    game.command("a", "space", false)
+    assertEqual(openMenu("a").page, "main")
+    game.command("a", "space", false)
+    assertEqual(game.menu("a"), nil)
+}
+
+@test
+val anyOtherKeyClosesTheMenuAndActsAsUsual = fn() {
+    sideBySide(4)
+    meetBo()
+    game.command("a", "e", false)
+    assertEqual(game.menu("a"), nil)
+    assertEqual(game.playerOf("a").prompt, "e")
+}
+
+@test
+val whatIsSaidIsHeardByThoseInSight = fn() {
+    sideBySide(5)
+    meetBo()
+    game.command("a", "1", false)
+    game.command("a", "4", false)
+    assertEqual(messagesOf("a"), ["You say: \"Help!\""])
+    assertEqual(filter(messagesOf("b"), fn(m) { m == "Ann says: \"Help!\"" }), ["Ann says: \"Help!\""])
+    assertEqual(filter(messagesOf("c"), fn(m) { m == "Ann says: \"Help!\"" }), [])
+    assertEqual(game.menu("a"), nil)
+}
+
+@test
+val typedWordsAreSaidOnOneLineAndNoLongerThanALine = fn() {
+    sideBySide(6)
+    game.command("a", "say", false, "  over\there  ")
+    assertEqual(messagesOf("a"), ["You say: \"over here\""])
+    game.command("a", "say", false, "x" * 200)
+    assertEqual(messagesOf("a"), ["You say: \"" + "x" * 80 + "\""])
+    game.command("a", "say", false, " \n ")
+    assertEqual(messagesOf("a"), ["You say: \"" + "x" * 80 + "\""])
+}
+
+@test
+val givingAnItemMovesItToTheOtherPack = fn() {
+    sideBySide(7)
+    val ann = game.playerOf("a")
+    val weapon = ann.weapon
+    val worn = ann.armour
+    meetBo()
+    game.command("a", "2", false)
+    val keys = map(openMenu("a").entries, fn(e) { e.key })
+    assertTrue(!contains(keys, worn))
+    assertTrue(contains(keys, weapon))
+    val given = filter(ann.pack, fn(e) { e.letter == weapon })[0].item
+    game.command("a", weapon, false)
+    assertEqual(game.playerOf("a").weapon, nil)
+    assertEqual(filter(game.playerOf("a").pack, fn(e) { e.letter == weapon }), [])
+    assertEqual(len(filter(game.playerOf("b").pack, fn(e) { e.item == given })), 2)
+    assertEqual(len(messagesOf("a")) > 0 && messagesOf("a")[0][:12], "You give Bo ")
+}
+
+@test
+val givingGoldMovesIt = fn() {
+    sideBySide(8)
+    setPlayer("a", {gold: 35})
+    meetBo()
+    game.command("a", "2", false)
+    game.command("a", "1", false)
+    assertEqual([game.playerOf("a").gold, game.playerOf("b").gold], [25, 10])
+    meetBo()
+    game.command("a", "2", false)
+    game.command("a", "2", false)
+    assertEqual([game.playerOf("a").gold, game.playerOf("b").gold], [0, 35])
+    assertEqual(filter(messagesOf("b"), fn(m) { m == "Ann gives you 25 gold." }), ["Ann gives you 25 gold."])
+}
+
+@test
+val aFullPackTakesNothing = fn() {
+    sideBySide(9)
+    val full = map(range(22), fn(i) { {letter: "abcdefghijklmnopqrstuv"[i], item: {kind: "weapon", type: 0, bonus: i}, count: 1} })
+    setPlayer("b", {pack: full, weapon: nil, armour: nil})
+    val before = game.playerOf("a").pack
+    meetBo()
+    game.command("a", "2", false)
+    game.command("a", openMenu("a").entries[0].key, false)
+    assertEqual(messagesOf("a"), ["Bo can't carry any more."])
+    assertEqual(game.playerOf("a").pack, before)
+}
+
+@test
+val nothingIsGivenToSomeoneWhoHasMovedAway = fn() {
+    sideBySide(10)
+    meetBo()
+    game.command("a", "2", false)
+    setPlayer("b", {depth: 4})
+    val before = game.playerOf("a").pack
+    game.command("a", openMenu("a").entries[0].key, false)
+    assertEqual(messagesOf("a"), ["Bo is no longer beside you."])
+    assertEqual(game.playerOf("a").pack, before)
+}
+
+@test
+val playersMeetAcrossAChunkEdge = fn() {
+    game.newGame(11, {size: 8})
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    val a = game.playerOf("a")
+    // Outdoors, the chunks beside a player's are made as they look into
+    // them, so Ann waits a turn on the east edge first.
+    val here = game.here("a").map
+    val edge = fn(y:num):num { if (here[y][level.WIDTH - 1] == ".") { y } else { recur(y + 1) } }
+    setPlayer("a", {x: level.WIDTH - 1, y: edge(0)})
+    game.command("a", "space", false)
+    val east = game.snapshot().levels[game.chunkKey(a.cx + 1, a.cy, a.depth)].map
+    val open = fn(y:num):num {
+        if (here[y][level.WIDTH - 1] == "." && east[y][0] == ".") { y } else { recur(y + 1) }
+    }
+    val y = open(0)
+    setPlayer("a", {x: level.WIDTH - 1, y: y})
+    setPlayer("b", {cx: a.cx + 1, cy: a.cy, depth: a.depth, x: 0, y: y})
+    game.command("a", "l", false)
+    assertEqual(openMenu("a").title, "You meet Bo.")
+    assertEqual(game.playerOf("a").cx, a.cx)
+}
+
+val contains = fn(xs:list, v):bool { len(filter(xs, fn(x) { x == v })) > 0 }
+
+@test
+val playersCanNameThemselvesAndThoseInSightHear = fn() {
+    sideBySide(12)
+    game.command("a", "name", false, "  Aria\tof the Vale  ")
+    assertEqual(game.playerOf("a").name, "Aria of the Vale")
+    assertEqual(messagesOf("a"), ["You are now known as Aria of the Vale."])
+    assertTrue(contains(messagesOf("b"), "Ann is now known as Aria of the Vale."))
+    assertTrue(!contains(messagesOf("c"), "Ann is now known as Aria of the Vale."))
+    // At most 20 characters, and nothing for a blank name.
+    game.command("a", "name", false, "Bartholomew the Unready")
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+    game.command("a", "name", false, "   ")
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+    // The name outlives the character.
+    setPlayer("a", {dead: true})
+    game.command("a", "enter", false)
+    assertEqual(game.playerOf("a").name, "Bartholomew the Unre")
+}
+
+@test
+val aFullPackSaysWhatIsLeftBehind = fn() {
+    sideBySide(13)
+    val b = game.playerOf("b")
+    setPlayer("b", {depth: 5})
+    val full = map(range(22), fn(i) { {letter: "abcdefghijklmnopqrstuv"[i], item: {kind: "weapon", type: 0, bonus: i}, count: 1} })
+    // Ann knows healing potions, so she knows what she leaves.
+    setPlayer("a", {pack: full, weapon: nil, armour: nil, known: {potions: [0], scrolls: []}})
+    val s = game.snapshot()
+    val a = game.playerOf("a")
+    val key = game.chunkKey(a.cx, a.cy, a.depth)
+    game.load(s copy {levels: s.levels + {[key]: s.levels[key] copy {
+        items: [{x: b.x, y: b.y, item: {kind: "potion", type: 0}}], monsters: [], characters: [],
+    }}})
+    game.command("a", "l", false)
+    assertEqual(game.playerOf("a").x, b.x)
+    assertTrue(contains(messagesOf("a"), "Your pack is full; you leave a potion of healing."))
+    assertEqual(len(game.here("a").items), 1)
+}

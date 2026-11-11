@@ -329,7 +329,8 @@ impl Parser {
                         | TokenKind::Foreign
                         | TokenKind::Resource
                         | TokenKind::Enum
-                ) || matches!(self.kind(), TokenKind::Name(name) if name == "type"))
+                ) || matches!(self.kind(), TokenKind::Name(name) if name == "type")
+                    || self.at_task_declaration())
             {
                 return Err(SourceError::at_token(
                     SourceErrorCode::InvalidDocumentation,
@@ -395,6 +396,28 @@ impl Parser {
                     self.previous_end(),
                 ));
             }
+            let task = if self.at_task_declaration() {
+                let modifier = self.next();
+                if self.matches(&TokenKind::Val) {
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "`task val` is not a declaration: a `val` never changes, so every task already shares it; `task` applies only to `task var`",
+                        modifier.span,
+                    )
+                    .with_end(self.peek().end));
+                }
+                if self.nesting != 0 {
+                    return Err(SourceError::at(
+                        SourceErrorCode::TopLevelOnly,
+                        "`task var` declarations are only valid at module top level",
+                        modifier.span,
+                    )
+                    .with_end(self.peek().end));
+                }
+                true
+            } else {
+                false
+            };
             if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
                 let mutable = matches!(self.next().kind, TokenKind::Var);
                 if self.matches(&TokenKind::Eq) {
@@ -417,6 +440,7 @@ impl Parser {
                 return Ok(Expr::new(
                     ExprKind::Declare {
                         mutable,
+                        task,
                         exported,
                         pattern,
                         documentation,
@@ -1198,7 +1222,8 @@ impl Parser {
                 TokenKind::If => return self.if_expression(span),
                 TokenKind::Recur => return self.recur(span),
                 TokenKind::Nursery => return self.nursery(span),
-                TokenKind::Spawn => return self.spawn(span),
+                TokenKind::Spawn => return self.spawn(span, false),
+                TokenKind::Fork => return self.spawn(span, true),
                 TokenKind::Select => return self.select(span),
                 TokenKind::Match => return self.match_expression(span),
                 TokenKind::Struct => return self.struct_schema(span),
@@ -1308,7 +1333,17 @@ impl Parser {
             ))
         })
     }
-    fn spawn(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+    /// Whether the next tokens begin a `task var` (or the mistaken
+    /// `task val`): `task` is a declaration modifier only directly before
+    /// `var` or `val`, and a name everywhere else.
+    fn at_task_declaration(&self) -> bool {
+        matches!(self.kind(), TokenKind::Name(name) if name == "task")
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Var | TokenKind::Val)
+            )
+    }
+    fn spawn(&mut self, span: SourceSpan, fork: bool) -> Result<Expr, SourceError> {
         super::stack::grow(|| {
             let body = if self.matches(&TokenKind::LBrace) {
                 let delimiter = self.next();
@@ -1322,7 +1357,10 @@ impl Parser {
                 body?
             };
             Ok(Expr::new(
-                ExprKind::Spawn(Box::new(body)),
+                ExprKind::Spawn {
+                    body: Box::new(body),
+                    fork,
+                },
                 span,
                 self.previous_end(),
             ))

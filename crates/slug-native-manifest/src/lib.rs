@@ -47,6 +47,10 @@ pub struct Binding {
     pub signature: Signature,
     /// The target cannot be addressed, so the shim skips its exact-type check.
     pub is_macro: bool,
+    /// The clutch declares the function safe to call from any thread, so a
+    /// `fork` may call it. It does not change the shim, so it is not part of
+    /// the canonical signature.
+    pub thread_safe: bool,
 }
 
 impl Binding {
@@ -352,7 +356,17 @@ fn parse_function(
     let entry = entry
         .as_table()
         .ok_or_else(|| ManifestError::new(location, "must be a table"))?;
-    require_keys(entry, &["symbol", "signature", "macro"], location)?;
+    require_keys(
+        entry,
+        &["symbol", "signature", "macro", "thread_safe"],
+        location,
+    )?;
+    let thread_safe = match entry.get("thread_safe") {
+        None => false,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ManifestError::new(format!("{location}.thread_safe"), "must be a boolean")
+        })?,
+    };
     let handles = resources
         .iter()
         .map(|resource| {
@@ -363,7 +377,10 @@ fn parse_function(
             )
         })
         .collect::<Vec<_>>();
-    parse_binding(module, name, entry, &handles, location)
+    Ok(Binding {
+        thread_safe,
+        ..parse_binding(module, name, entry, &handles, location)?
+    })
 }
 
 fn parse_binding(
@@ -399,6 +416,7 @@ fn parse_binding(
         symbol: symbol.to_owned(),
         signature,
         is_macro,
+        thread_safe: false,
     })
 }
 

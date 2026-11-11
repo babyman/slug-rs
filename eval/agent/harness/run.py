@@ -95,12 +95,18 @@ TESTING_DOCS = ["docs/language/testing.md"]
 # Library modules a project asks agents to write, with their source files,
 # withheld from that project's documentation and install so its agents do not
 # find one ready-made: `slug.fmt.json` is the JSON project's chosen solution,
-# and `slug.net.http` the HTTP project's. Other runs have them as ordinary
-# library modules.
+# `slug.net.http` the HTTP project's, and `slug.text.mustache` the Mustache
+# project's reference. Other runs have them as ordinary library modules.
 WITHHELD_MODULES = {
     "json": {"slug.fmt.json": "json.slug"},
     "http": {"slug.net.http": "http.slug"},
+    "mustache": {"slug.text.mustache": "mustache.slug"},
 }
+
+
+# Clutches no run installs: `slug.games.crawl` is the Crawl project's
+# reference solution.
+HIDDEN_CLUTCHES = ["slug.games.crawl.clutch"]
 
 
 def withheld(run):
@@ -114,6 +120,8 @@ LIBRARY_SOURCES = [
     ("clutch/slug.db.sqlite.clutch/modules", "library/sqlite"),
     ("clutch/slug.net.tcp.clutch/modules", "library/net"),
     ("clutch/slug.net.http.clutch/modules", "library/http"),
+    ("clutch/slug.text.mustache.clutch/modules", "library/mustache"),
+    ("clutch/slug.random.secure.clutch/modules", "library/random-secure"),
     ("clutch/slug.arcade.clutch/modules", "library/arcade"),
 ]
 
@@ -446,12 +454,13 @@ def isolated_install(slug, withheld_modules):
     solutions and hidden cases live, leaving out `withheld_modules`."""
     install = Path(tempfile.mkdtemp(prefix="slug-eval-install-"))
     # Clutch tests are left out: some hold project suites' hidden cases.
-    ignore = shutil.ignore_patterns(".DS_Store", "tests", *withheld_modules.values())
+    ignore = shutil.ignore_patterns(".DS_Store", "tests", *HIDDEN_CLUTCHES, *withheld_modules.values())
     for directory in ("lib", "clutch"):
         shutil.copytree(REPO / directory, install / "home" / directory, ignore=ignore)
+    hidden = [*withheld_modules, *HIDDEN_CLUTCHES]
     for manifest in (install / "home" / "clutch").glob("**/*.toml"):
         lines = manifest.read_text().splitlines(keepends=True)
-        kept = [line for line in lines if not any(f'"{name}"' in line for name in withheld_modules)]
+        kept = [line for line in lines if not any(f'"{name}"' in line for name in hidden)]
         manifest.write_text("".join(kept))
     (install / "bin").mkdir()
     shutil.copy2(slug, install / "bin" / "slug-real")

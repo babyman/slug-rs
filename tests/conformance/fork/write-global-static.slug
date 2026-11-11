@@ -1,0 +1,5 @@
+var total = 0
+val main = fn() {
+    val t = fork { total = 1 }
+    select { await t }
+}

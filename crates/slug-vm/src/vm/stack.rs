@@ -35,7 +35,7 @@ impl Vm {
             .ok_or_else(|| {
                 self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into())
             })?
-            .into_resolved()
+            .into_resolved_in(self)
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
     }
 
@@ -59,7 +59,7 @@ impl Vm {
             .into_iter()
             .map(|value| {
                 value
-                    .into_resolved()
+                    .into_resolved_in(self)
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
             })
             .collect()
@@ -249,6 +249,32 @@ fn ordering(left: Value, right: Value) -> Result<Option<Ordering>, (&'static str
             numbers(left, right)
                 .map(|(left, right)| left.partial_cmp(&right))
                 .map_err(|_| names)
+        }
+    }
+}
+
+impl Value {
+    /// This value as the running task sees it: a module binding through the
+    /// task's view of the variables, such as a fork's snapshot, however the
+    /// task reached it; anything else as it is.
+    pub(super) fn resolve_in(&self, vm: &Vm) -> Result<Self, String> {
+        #[cfg(feature = "concurrency")]
+        if let Self::Binding { cell, name } = self
+            && let Some(value) = vm.viewed_binding(cell, name)?
+        {
+            return Ok(value);
+        }
+        #[cfg(not(feature = "concurrency"))]
+        let _ = vm;
+        self.resolve()
+    }
+
+    /// [`Self::resolve_in`], moving a value that is not a binding.
+    pub(super) fn into_resolved_in(self, vm: &Vm) -> Result<Self, String> {
+        if matches!(self, Self::Binding { .. }) {
+            self.resolve_in(vm)
+        } else {
+            Ok(self)
         }
     }
 }

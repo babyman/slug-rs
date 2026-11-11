@@ -1,0 +1,20 @@
+// Spawns and forks share one start order. Under a limit, each waits for a
+// permit in the order it was started, whichever kind it is, and none runs
+// before the body that started it suspends or returns.
+val main = fn() {
+    nursery limit 1 {
+        spawn { println("spawn 1") }
+        fork { println("fork 2") }
+        spawn { println("spawn 3") }
+        fork { println("fork 4") }
+        fork { println("fork 5") }
+        spawn { println("spawn 6") }
+        println("body")
+    }
+    nursery limit 2 {
+        val first = fork { 1 }
+        val second = spawn { 2 }
+        val third = fork { 3 }
+        println(select { await third } + select { await second } + select { await first })
+    }
+}

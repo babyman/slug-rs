@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, fmt, path::PathBuf};
 
-use slug_vm::{MissingModule, SourceDiagnostic, VmHostError};
+use slug_vm::{InitializationFailure, MissingModule, SourceDiagnostic, VmHostError};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -116,6 +116,20 @@ pub trait ModuleResolver {
     /// Returns a checked failure when the name is invalid, unavailable, or its
     /// host-provided source cannot be read.
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
+
+    /// Reads the asset `name` for the module whose key is `module`: a file
+    /// its clutch ships, which `asset(name)` embeds when the module compiles.
+    /// `name` is already a valid asset name: `/`-separated segments, none
+    /// empty, `.`, or `..`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message for the compile error when the module has no such
+    /// asset. A resolver that provides no assets refuses every request.
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        let _ = module;
+        Err(format!("no asset `{name}`: this host provides no assets"))
+    }
 }
 
 /// One source module selected by a statically linked host.
@@ -221,6 +235,11 @@ pub enum ModuleLoadError {
         location: String,
         message: String,
     },
+    /// The module's top-level code failed while it was initialized.
+    Initialization {
+        location: String,
+        failure: Box<InitializationFailure>,
+    },
     Clutch {
         location: String,
         message: String,
@@ -236,6 +255,9 @@ impl fmt::Display for ModuleLoadError {
             Self::Compile { location, error } => write!(f, "cannot compile {location}: {error}"),
             Self::Source { location, message } => {
                 write!(f, "cannot compile {location}: {message}")
+            }
+            Self::Initialization { location, failure } => {
+                write!(f, "cannot initialize {location}: {}", failure.message)
             }
             Self::Clutch { location, message } => {
                 write!(f, "cannot load clutch {location}: {message}")
@@ -261,6 +283,9 @@ impl From<ModuleLoadError> for VmHostError {
                 elsewhere,
             }),
             ModuleLoadError::Compile { error, .. } => Self::compile(message, *error),
+            ModuleLoadError::Initialization { failure, .. } => {
+                Self::initialization(message, *failure)
+            }
             _ => Self::new(message),
         }
     }

@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "crates/slug-frontend/benches/source")
 CACHE = os.path.join(ROOT, "target/bench-ab")
 PGO_BUILD = os.path.join(ROOT, "scripts/pgo-build.py")
-# `http-server` imports the staged slug.net.tcp clutch from this checkout.
+# `http-server` and the Crawl workloads import clutches from this checkout.
 ENVIRONMENT = {**os.environ, "SLUG_HOME": os.environ.get("SLUG_HOME", ROOT)}
 
 

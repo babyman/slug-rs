@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
     rc::Rc,
@@ -43,6 +43,7 @@ struct ModuleRuntimeServices {
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: slug_vm::NativeResourceRegistry,
+    module_variables: slug_vm::ModuleVariables,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
 }
@@ -67,6 +68,10 @@ struct ModuleGraphState {
     compiled: RefCell<HashMap<ModuleKey, Program>>,
     semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
     resolving_snapshots: RefCell<HashSet<ModuleKey>>,
+    /// Whether the compilation of the module whose snapshot is being made
+    /// found an import already being resolved, an import cycle, and so
+    /// compiled without that import's snapshot.
+    cycle_cut: Cell<bool>,
     instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
 }
 
@@ -138,6 +143,7 @@ impl ModuleGraph {
                 compiled: RefCell::new(HashMap::new()),
                 semantic_snapshots: RefCell::new(HashMap::new()),
                 resolving_snapshots: RefCell::new(HashSet::new()),
+                cycle_cut: Cell::new(false),
                 instances: RefCell::new(HashMap::new()),
             }),
         }
@@ -281,29 +287,35 @@ impl ModuleGraph {
         if let Some(index) = indexes.get(key) {
             return Ok(*index);
         }
-        let mut compilation = self
-            .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
-            .map_err(|error| ModuleLoadError::Compile {
-                location: diagnostic_name.into(),
-                error: Box::new((&error).into()),
-            })?;
-        compilation.program.set_module_name(name);
-        compilation.program.set_module_key(key.as_str());
-        self.state
-            .semantic_snapshots
-            .borrow_mut()
-            .insert(key.clone(), compilation.snapshot);
+        let cached = self.state.compiled.borrow().get(key).cloned();
+        let mut program = if let Some(program) = cached {
+            program
+        } else {
+            let compilation = self
+                .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
+                .map_err(|error| ModuleLoadError::Compile {
+                    location: diagnostic_name.into(),
+                    error: Box::new((&error).into()),
+                })?;
+            self.state
+                .semantic_snapshots
+                .borrow_mut()
+                .insert(key.clone(), compilation.snapshot);
+            compilation.program
+        };
+        program.set_module_name(name);
+        program.set_module_key(key.as_str());
         self.state
             .compiled
             .borrow_mut()
-            .insert(key.clone(), compilation.program.clone());
+            .insert(key.clone(), program.clone());
 
         let index = modules.len();
         indexes.insert(key.clone(), index);
         modules.push(ArtifactModule {
             key: key.as_str().into(),
             name: name.into(),
-            program: compilation.program,
+            program,
         });
         sources.push(ArtifactSource {
             diagnostic_name: diagnostic_name.into(),
@@ -346,9 +358,13 @@ impl ModuleGraph {
         source: &str,
         module_name: Option<&str>,
     ) -> Result<crate::source::CompiledSource, SourceError> {
-        compile_with_resolver(diagnostic_name, source, module_name, |name| {
-            self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
-        })
+        compile_with_resolver(
+            diagnostic_name,
+            source,
+            module_name,
+            |name| self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name)),
+            |name| resolver.asset(key, name),
+        )
     }
 
     fn semantic_snapshot(
@@ -366,9 +382,11 @@ impl ModuleGraph {
             .borrow_mut()
             .insert(source.key.clone())
         {
+            self.state.cycle_cut.set(true);
             return None;
         }
-        let snapshot = self
+        let outer_cut = self.state.cycle_cut.replace(false);
+        let compilation = self
             .compile_source_for_module(
                 resolver,
                 &source.key,
@@ -376,18 +394,73 @@ impl ModuleGraph {
                 &source.text,
                 Some(request.name),
             )
-            .ok()
-            .map(|compilation| compilation.snapshot);
+            .ok();
+        let cut = self.state.cycle_cut.replace(outer_cut);
         self.state
             .resolving_snapshots
             .borrow_mut()
             .remove(&source.key);
-        let snapshot = snapshot?;
+        let compilation = compilation?;
+        // The program is the one compiling the module for itself would make,
+        // so it is kept, unless an import cycle left out a snapshot that a
+        // later compilation will have.
+        if !cut {
+            let mut program = compilation.program;
+            program.set_module_name(request.name);
+            program.set_module_key(source.key.as_str());
+            self.state
+                .compiled
+                .borrow_mut()
+                .entry(source.key.clone())
+                .or_insert(program);
+        }
+        let snapshot = compilation.snapshot;
         self.state
             .semantic_snapshots
             .borrow_mut()
             .insert(source.key, snapshot.clone());
         Some(snapshot)
+    }
+
+    /// Activates the native clutch that provides module `name`'s foreign
+    /// bindings, without compiling or initializing the module, for a host
+    /// that runs it from a compiled artifact. The module's installed source
+    /// is checked against the native bindings as an import checks it. A
+    /// module with no native clutch activates nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the module cannot be resolved, or its
+    /// native clutch cannot be staged, does not match the module's foreign
+    /// declarations, or cannot be registered.
+    pub fn activate_foreign<H: ModuleGraphHost>(
+        &self,
+        host: &H,
+        name: &str,
+    ) -> Result<(), ModuleLoadError> {
+        let source = host.resolve(ModuleRequest::new(None, name))?;
+        let Some(mut activation) = host.stage_activation(&source)? else {
+            return Ok(());
+        };
+        if let Err(error) = Self::check_foreign_declarations(host, &source, name)
+            .and_then(|()| activation.register())
+        {
+            activation.cleanup();
+            return Err(error);
+        }
+        activation.retain();
+        Ok(())
+    }
+
+    /// Whether the module `request` names has an initialized instance, when
+    /// it can be resolved: a fork may import only such a module.
+    pub fn is_initialized<H: ModuleGraphHost>(
+        &self,
+        host: &H,
+        request: ModuleRequest<'_>,
+    ) -> Option<bool> {
+        let source = host.resolve(request).ok()?;
+        Some(self.state.instances.borrow().contains_key(&source.key))
     }
 
     /// Resolves, compiles, and initializes one module instance.
@@ -484,9 +557,11 @@ impl ModuleGraph {
                     ),
                     error: compile_error,
                 },
-                None => ModuleLoadError::Source {
+                // The failure is the runtime error that began it, whether
+                // in this module's code or a module it imported.
+                None => ModuleLoadError::Initialization {
                     location: source.diagnostic_name.clone(),
-                    message: error.to_string(),
+                    failure: Box::new(slug_vm::InitializationFailure::from_runtime(&error)),
                 },
             });
         }
@@ -654,6 +729,7 @@ impl ModuleHost {
                     native_globals: RefCell::new(HashMap::new()),
                     foreign_functions: RefCell::new(HashMap::new()),
                     native_resources: native_resource_registry(),
+                    module_variables: slug_vm::module_variables(),
                     warnings: RefCell::new(Vec::new()),
                     shutdown_errors: RefCell::new(Vec::new()),
                 },
@@ -685,6 +761,10 @@ impl ModuleHost {
 impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
+    }
+
+    fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
+        self.state.resolver.asset(module, name)
     }
 }
 
@@ -875,12 +955,19 @@ impl ModuleGraphHost for ModuleHost {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        let host: std::rc::Rc<dyn VmHost> = std::rc::Rc::new(self.clone());
+        let host: slug_vm::Shared<dyn VmHost> = slug_vm::Shared::new(self.clone());
         Vm::with_module_bindings(&host, bindings)
     }
 }
 
 impl VmHost for ModuleHost {
+    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+        let importer = importer.map(ModuleKey::new);
+        self.state
+            .graph
+            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -932,6 +1019,10 @@ impl VmHost for ModuleHost {
 
     fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
         self.native_resources()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        self.state.services.module_variables.clone()
     }
 
     fn configuration(&self) -> &dyn VmConfiguration {
@@ -993,7 +1084,7 @@ mod tests {
         let bytes = cslug::encode(&artifact).expect("encode artifact");
         let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
         assert_eq!(
-            ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+            ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
                 .expect("valid artifact")
                 .run()
                 .expect("execute artifact"),
@@ -1009,7 +1100,7 @@ mod tests {
                 "val name = \"missing\"\nval main = fn() { import(name) }\n",
             )
             .expect("compile artifact");
-        let error = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+        let error = ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
             .expect("valid artifact")
             .run()
             .expect_err("missing artifact edge");

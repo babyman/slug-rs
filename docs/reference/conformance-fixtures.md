@@ -32,6 +32,14 @@ timeout_ms = 1000
 - `timeout_ms` is a positive integer execution limit.
 - `diagnostic` is an exact expected diagnostic string. It is valid only for a
   non-success outcome.
+- `stderr_contains` is a list of strings that must each appear in stderr, for
+  a diagnostic whose exact wording the fixture does not fix. It is valid only
+  for a non-success outcome. A fragment must not appear in the fixture's
+  source or path, which a diagnostic quotes.
+- `pending` gives the reason a fixture does not conform yet, such as the
+  phase of a plan that implements it. The runner still runs a pending
+  fixture: one that fails is not a failure, and one that conforms is, so its
+  `pending` is removed when the feature lands.
 
 Absent stream fields leave that stream unchecked. An absent timeout leaves the
 runner's default limit in effect. A runner must reject a missing sidecar,
@@ -56,5 +64,9 @@ test-library imports and assertion calls: each fixture isolates a language form
 that the Rust implementation currently supports. `tests/conformance/nominal-types/`
 covers public nominal declarations, transparent aliases, imported type paths,
 alias-cycle diagnostics, and observable enum behavior.
+`tests/conformance/fork/` specifies `fork` and `task var`
+([parallel fork tasks](../decisions/2026-11-07-parallel-fork-tasks.md)) ahead
+of their implementation; its fixtures are pending until the phases of
+[the fork plan](../planning/fork-tasks.md) that implement them land.
 `crates/slug/tests/legacy_syntax_conformance.rs` runs the complete `tests/conformance/`
 tree through `slug-fixtures` as part of `make test`.

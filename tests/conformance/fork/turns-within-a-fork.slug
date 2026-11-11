@@ -1,0 +1,38 @@
+// Tasks inside one fork never interleave between suspensions, on any build:
+// a build that runs forks cooperatively switches between forks mid-turn,
+// never between the tasks of one fork, which an island runs one at a time.
+val main = fn() {
+    val other = fork {
+        val spin = fn(n:num):num { if (n == 50000) { n } else { recur(n + 1) } }
+        spin(0)
+    }
+    val counted = fork {
+        // Closures share `n`; a spawned task's own captures are snapshots.
+        var n = 0
+        val count = fn(i:num) { if (i < 100000) { n = n + 1; recur(i + 1) } }
+        val read = fn():num { n }
+        val a = spawn { count(0) }
+        val b = spawn { read() }
+        select { await a }
+        select { await b }
+    }
+    println(select { await counted })
+    println(select { await other })
+
+    // Several forks with a task mid-turn at once: each fork's reader waits
+    // for its own writer, whichever fork yielded last.
+    val counter = fn():num {
+        var n = 0
+        val count = fn(i:num) { if (i < 100000) { n = n + 1; recur(i + 1) } }
+        val read = fn():num { n }
+        val b = spawn { read() }
+        count(0)
+        select { await b }
+    }
+    val first = fork { counter() }
+    val second = fork { counter() }
+    val third = fork { counter() }
+    println(select { await first })
+    println(select { await second })
+    println(select { await third })
+}

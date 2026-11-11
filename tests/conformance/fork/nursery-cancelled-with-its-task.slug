@@ -1,0 +1,15 @@
+// A task waiting in a nursery is cancelled by its own nursery's fail-fast:
+// the nursery it waits in is cancelled with it, children and all.
+val main = fn() {
+    nursery {
+        spawn {
+            nursery {
+                spawn { select { after 300 /> fn(_) { println("inner task ran") } } }
+                fork { select { after 300 /> fn(_) { println("inner fork ran") } } }
+                select { after 300 /> fn(_) { println("inner body ran") } }
+            }
+            println("outer task ran")
+        }
+        spawn { select { after 20 }; throw "boom" }
+    }
+}

@@ -23,6 +23,103 @@ fn host_driven_execution_stalls_without_waiting_then_observes_a_due_timer() {
 }
 
 #[test]
+fn host_driven_nursery_waits_for_its_children_without_blocking_the_host() {
+    let program = compile(
+        "host-driven-nursery.slug",
+        "nursery { spawn { select { after 50 } }; nursery { select { after 50 } } }\n42\n",
+    )
+    .expect("compile host-driven nursery source");
+    let mut vm = Vm::new();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+
+    let started = std::time::Instant::now();
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(20),
+        "a nursery must not wait for its children inside poll"
+    );
+    assert!(vm.next_timer_in().is_some(), "its children wait on timers");
+
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    assert!(matches!(
+        vm.run_until_stalled(),
+        VmProgress::Completed(Value::Int(42))
+    ));
+}
+
+#[test]
+fn host_driven_root_settlement_returns_to_the_host_between_turns() {
+    // After the root body returns, its children exchange messages for a
+    // while: each poll runs at most one scheduler turn of them.
+    let program = compile(
+        "host-driven-settlement.slug",
+        "val ping = make_channel(0)\n\
+         val pong = make_channel(0)\n\
+         val serve = fn(n:num) { if (n > 0) { select { send ping, n }; select { recv pong }; recur(n - 1) } }\n\
+         val echo = fn(n:num) { if (n > 0) { select { recv ping }; select { send pong, n }; recur(n - 1) } }\n\
+         spawn { serve(200) }\n\
+         spawn { echo(200) }\n\
+         42\n",
+    )
+    .expect("compile host-driven settlement source");
+    let mut vm = vm_with_channel_constructor();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    let mut polls = 0;
+    let value = loop {
+        polls += 1;
+        match vm.poll() {
+            VmProgress::MadeProgress => {}
+            VmProgress::Completed(value) => break value,
+            other => panic!("unexpected progress {other:?}"),
+        }
+    };
+    assert_eq!(value, Value::Int(42));
+    assert!(polls > 200, "settlement ran the children in {polls} polls");
+}
+
+#[test]
+fn a_stalled_host_learns_how_long_until_the_next_timer() {
+    let program = compile(
+        "host-driven-deadline.slug",
+        "select { after 80 }\nselect { after 0 }\n7\n",
+    )
+    .expect("compile host-driven deadline source");
+    let mut vm = Vm::new();
+    assert_eq!(vm.next_timer_in(), None, "nothing is waiting yet");
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    let wait = vm
+        .next_timer_in()
+        .expect("the stalled program waits on a timer");
+    assert!(
+        wait > std::time::Duration::from_millis(40) && wait <= std::time::Duration::from_millis(80),
+        "the wait is what is left of 80 ms: {wait:?}"
+    );
+
+    // A host that sleeps for that long, as a freestanding one would until
+    // its timer interrupt, then finds the program done.
+    std::thread::sleep(wait);
+    loop {
+        match vm.run_until_stalled() {
+            VmProgress::Completed(value) => {
+                assert_eq!(value, Value::Int(7));
+                break;
+            }
+            VmProgress::Stalled => {
+                let wait = vm.next_timer_in().expect("still waiting on a timer");
+                assert!(wait < std::time::Duration::from_millis(20), "{wait:?}");
+                std::thread::sleep(wait);
+            }
+            other => panic!("unexpected progress {other:?}"),
+        }
+    }
+    assert_eq!(vm.next_timer_in(), None, "no timer is left");
+}
+
+#[test]
 fn host_driven_execution_drains_native_ingress_without_producer_reentry() {
     struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
 
@@ -898,4 +995,282 @@ mod minted_producers {
         );
         assert!(error.message.contains("buffered channel"), "{error}");
     }
+}
+
+// Fork behavior that needs native functions; the source-level behavior is in
+// `tests/conformance/fork`. Both wait for phase 2 of
+// `docs/planning/fork-tasks.md`.
+
+#[test]
+fn only_a_module_with_thread_safe_state_declares_functions_thread_safe() {
+    fn answer(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::integer(42))
+    }
+    // State a fork on another thread must not read.
+    let local = NativeModule::new("test.local_state", std::rc::Rc::new(Cell::new(0))).unwrap();
+    let function = local
+        .function("answer", NativeArity::Exact(0), answer)
+        .unwrap();
+    let error = function
+        .declare_thread_safe()
+        .expect_err("local state cannot be shared");
+    assert!(error.to_string().contains("new_thread_safe"), "{error}");
+    assert!(!function.is_thread_safe());
+
+    let shared = NativeModule::new_thread_safe("test.shared_state", ()).unwrap();
+    let function = shared
+        .function("answer", NativeArity::Exact(0), answer)
+        .unwrap();
+    function.declare_thread_safe().unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    let program = compile(
+        "fork-thread-safe-native.slug",
+        "val main = fn() {\n    val t = fork { answer() }\n    select { await t }\n}\n",
+    )
+    .expect("compile thread-safe native source");
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(42));
+}
+
+#[test]
+fn a_fork_cannot_call_a_native_function_not_declared_thread_safe() {
+    fn answer(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::integer(42))
+    }
+    let module = NativeModule::new("test.fork_natives", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("answer", NativeArity::Exact(0), answer)
+            .unwrap(),
+    )
+    .unwrap();
+    let program = compile(
+        "fork-native.slug",
+        "val main = fn() {\n    val direct = answer()\n    val t = fork { answer() }\n    direct + select { await t }\n}\n",
+    )
+    .expect("compile fork native source");
+    let error = vm
+        .run_program(&program)
+        .expect_err("a fork calling an undeclared native fails");
+    assert!(
+        error.message.contains("`answer`") && error.message.contains("thread-safe"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn a_fork_can_hold_its_spawners_resource_but_cannot_return_it() {
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed, destroyed);
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+    let holds = compile(
+        "fork-holds-resource.slug",
+        "val main = fn() {\n    val r = make_resource()\n    val t = fork { val kept = r; 1 }\n    select { await t }\n}\n",
+    )
+    .expect("compile holding source");
+    assert_eq!(vm.run_program(&holds).unwrap(), Value::Int(1));
+    let returns = compile(
+        "fork-returns-resource.slug",
+        "val main = fn() {\n    val r = make_resource()\n    val t = fork { r }\n    select { await t }\n}\n",
+    )
+    .expect("compile returning source");
+    let error = vm
+        .run_program(&returns)
+        .expect_err("a resource is not sendable");
+    assert!(error.message.contains("sendable"), "{}", error.message);
+}
+
+/// A host that answers one module import, `served`, and records that it did.
+#[cfg(feature = "threads")]
+struct ServingHost {
+    configuration: slug_vm::EmptyVmConfiguration,
+    native_resources: slug_vm::NativeResourceRegistry,
+}
+
+#[cfg(feature = "threads")]
+static IMPORT_SERVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmHost for ServingHost {
+    fn import_module(
+        &self,
+        _importer: Option<&str>,
+        name: &str,
+    ) -> Result<slug_vm::VmModuleExports, slug_vm::VmHostError> {
+        if name != "served" {
+            return Err(slug_vm::VmHostError::not_found(format!("missing {name}")));
+        }
+        IMPORT_SERVED.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(slug_vm::VmModuleExports {
+            exports: Value::Map(vec![(Value::string("answer"), Value::Int(1))].into()),
+        })
+    }
+
+    fn module_initialized(&self, _importer: Option<&str>, _name: &str) -> Option<bool> {
+        Some(true)
+    }
+
+    fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn native_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn foreign_function(&self, _module: &str, _name: &str) -> Option<slug_vm::NativeFunction> {
+        None
+    }
+
+    fn define_foreign_batch(
+        &self,
+        _functions: Vec<slug_vm::NativeFunction>,
+    ) -> Result<(), slug_vm::NativeDescriptorError> {
+        Ok(())
+    }
+
+    fn define_native_global(&self, _name: String, _value: Value) {}
+
+    fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
+        self.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
+    fn configuration(&self) -> &dyn slug_vm::VmConfiguration {
+        &self.configuration
+    }
+
+    fn warn(&self, _message: String) {}
+
+    fn shutdown(&self) {}
+}
+
+/// A fork's host call runs on its spawner's thread. A spawner busy computing,
+/// which never waits, still serves it at its next call or `recur`: here the
+/// spawner spins until it sees the fork's import served, and gives up after
+/// far more iterations than that takes.
+#[cfg(feature = "threads")]
+#[test]
+fn a_busy_spawner_serves_its_forks_host_calls() {
+    fn served(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::boolean(
+            IMPORT_SERVED.load(std::sync::atomic::Ordering::SeqCst),
+        ))
+    }
+    let module = NativeModule::new("test.serving", ()).unwrap();
+    let host: slug_vm::Shared<dyn slug_vm::VmHost> = slug_vm::Shared::new(ServingHost {
+        configuration: slug_vm::EmptyVmConfiguration,
+        native_resources: slug_vm::NativeResourceRegistry::new(),
+    });
+    let mut vm = Vm::with_host(host);
+    vm.define_native(
+        module
+            .function("served", NativeArity::Exact(0), served)
+            .unwrap(),
+    )
+    .unwrap();
+    let program = compile(
+        "busy-spawner.slug",
+        "val main = fn() {\n    val t = fork { import(\"served\").answer }\n    val spin = fn(i:num):num { if (served()) { i } else { if (i > 50000000) { i } else { recur(i + 1) } } }\n    val spun = spin(0)\n    if (spun > 50000000) { -1 } else { select { await t } }\n}\n",
+    )
+    .expect("compile busy spawner source");
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(1));
+}
+
+/// A fork's island counts and samples on its own, and its counts and
+/// samples join its spawner's when it settles: a fork's work shows up in
+/// `metrics` and the profile as the same work in a spawned task does.
+#[cfg(all(feature = "threads", feature = "metrics"))]
+#[test]
+fn a_forks_metrics_and_samples_join_its_spawners() {
+    let source = |start: &str| {
+        format!(
+            "val spin = fn(i:num, total:num):num {{ if (i >= 20000) {{ total }} else {{ recur(i + 1, total + i) }} }}\nval main = fn() {{\n    val t = {start} {{ spin(0, 0) }}\n    select {{ await t }}\n}}\n"
+        )
+    };
+    let run = |start: &str| {
+        let program = compile("counted.slug", &source(start)).expect("compile counted source");
+        let mut vm = Vm::new();
+        vm.enable_profile();
+        assert_eq!(vm.run_program(&program).unwrap(), Value::Int(199_990_000));
+        let samples: usize = vm.take_profile().expect("profiling").values().sum();
+        (vm.metrics(), samples)
+    };
+    let (spawned, spawned_samples) = run("spawn");
+    let (forked, forked_samples) = run("fork");
+    // The loop is nearly all of either run.
+    assert!(spawned.instructions_executed > 100_000, "{spawned:?}");
+    let within = |a: usize, b: usize| a.abs_diff(b) * 20 < b;
+    assert!(
+        within(forked.instructions_executed, spawned.instructions_executed),
+        "fork {} against spawn {}",
+        forked.instructions_executed,
+        spawned.instructions_executed
+    );
+    assert_eq!(
+        forked.exact_positional_recur_restarts,
+        spawned.exact_positional_recur_restarts
+    );
+    assert!(
+        within(forked_samples, spawned_samples),
+        "fork {forked_samples} samples against spawn {spawned_samples}"
+    );
+}
+
+#[test]
+#[cfg(all(feature = "metrics", feature = "threads"))]
+fn an_admitted_fork_leaves_for_a_worker_without_a_ready_queue_entry() {
+    let program = compile(
+        "fork-dispatch.slug",
+        "val main = fn() {\n    nursery {\n        fork { 1 }\n        fork { 2 }\n        fork { 3 }\n        fork { 4 }\n        0\n    }\n}\n",
+    )
+    .expect("compile fork dispatch source");
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(0));
+    // Only the nursery's body waits in the queue: each fork went straight
+    // to a worker.
+    assert_eq!(vm.metrics().peak_ready_queue, 1);
+}
+
+#[test]
+fn a_nursery_lets_go_of_tasks_that_have_settled() {
+    // A server starts a task per connection: once one settles with nothing
+    // to report, its nursery must not keep it, or its result, alive.
+    fn destroyed_so_far(call: &mut NativeCall<'_>) -> NativeStatus {
+        let count = call.state::<Rc<Cell<usize>>>().unwrap().get();
+        call.return_value(NativeOwnedValue::integer(i64::try_from(count).unwrap()))
+    }
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed, destroyed.clone());
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+    let counter = NativeModule::new("test.counter", destroyed).unwrap();
+    vm.define_native(
+        counter
+            .function("destroyed_so_far", NativeArity::Exact(0), destroyed_so_far)
+            .unwrap(),
+    )
+    .unwrap();
+    let program = compile(
+        "settled-tasks.slug",
+        "val run = fn(i:num) { if (i < 300) { val t = spawn { make_resource() }; select { await t }; recur(i + 1) } }\n\
+         run(0)\n\
+         destroyed_so_far()\n",
+    )
+    .expect("compile settled tasks source");
+    let Value::Int(destroyed) = vm.run_program(&program).unwrap() else {
+        panic!("expected a count");
+    };
+    assert!(
+        destroyed >= 200,
+        "only {destroyed} of 300 results were released"
+    );
 }

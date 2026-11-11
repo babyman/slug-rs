@@ -1,0 +1,59 @@
+/**
+ * slug.random.secure — unpredictable random numbers from the operating system
+ *
+ * Draws from the operating system's cryptographically secure generator
+ * (`arc4random_buf` on macOS, `getrandom` on Linux, `BCryptGenRandom` on
+ * Windows), for values no one should be able to guess or repeat: session
+ * tokens, ids, and fresh seeds. It cannot be seeded or replayed; use
+ * `slug.random` for dice, maps, and anything that must come out the same
+ * again.
+ *
+ * ```slug
+ * val secure = import("slug.random.secure")
+ *
+ * secure.token()                                   // 32 hex digits
+ * val dice = import("slug.random").generator(secure.seed())
+ * ```
+ */
+
+foreign bytesRaw = fn(count:num):list
+
+// The most bytes one call gives.
+val MAX = 256
+
+val HEX = "0123456789abcdef"
+
+/**
+ * `count` random bytes, from 1 to 256. Throws an `Error` of type
+ * `random.range` for any other count, and of type `random.os` when the
+ * operating system cannot supply them.
+ */
+export val bytes = fn(count:num):bytes {
+    if (count < 1 || count > MAX || int(count) != count) {
+        throw Error {type: "random.range", msg: "bytes needs a count from 1 to 256"}
+    }
+    match bytesRaw(count) {
+        [0, data] => data
+        _ => throw Error {type: "random.os", msg: "the operating system gave no random bytes"}
+    }
+}
+
+/**
+ * A token of `size` random bytes (default 16, which is 128 bits), as twice
+ * as many lowercase hex digits, safe in URLs and cookies.
+ */
+export val token = fn(size:num = 16):str {
+    val data = bytes(size)
+    val go = fn(i:num, out:str):str {
+        if (i == len(data)) { out } else { recur(i + 1, out + HEX[data[i] >> 4] + HEX[data[i] & 15]) }
+    }
+    go(0, "")
+}
+
+/**
+ * A random integer from 0 to 2^32 - 1, such as a seed for `slug.random`.
+ */
+export val seed = fn():num {
+    val b = bytes(4)
+    ((b[0] * 256 + b[1]) * 256 + b[2]) * 256 + b[3]
+}

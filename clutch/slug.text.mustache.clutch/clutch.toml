@@ -1,0 +1,5 @@
+[modules]
+"slug.text.mustache" = { source = "modules/mustache.slug" }
+
+[tests]
+files = ["tests/mustache.slug"]

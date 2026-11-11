@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
+use crate::sync::Rc;
+use core::cell::RefCell;
+
+use crate::platform::{HashMap, Instant};
+use alloc::vec::Vec;
 
 #[cfg(feature = "metrics")]
 use super::VmMetrics;
@@ -59,8 +63,8 @@ impl TimerService {
         id
     }
 
-    pub(crate) fn take_due(&mut self) -> Vec<Waiter> {
-        let now = Instant::now();
+    /// The waiters whose deadlines are at or before `now`.
+    pub(crate) fn take_due(&mut self, now: Instant) -> Vec<Waiter> {
         let mut due = Vec::new();
         while self.heap.first().is_some_and(|entry| entry.deadline <= now) {
             let entry = self.pop_min().expect("timer heap was checked");

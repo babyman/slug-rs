@@ -9,12 +9,17 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <time.h>
+#include <unistd.h>
 #endif
 
 static atomic_bool reader_started = false;
@@ -204,4 +209,209 @@ void slug_core_to_bytes(const char *text, size_t text_length, const uint8_t **da
   static const uint8_t empty[1] = {0};
   *data = text_length == 0 ? empty : (const uint8_t *)text;
   *length = text_length;
+}
+
+int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *needle,
+                       size_t needle_length, int64_t from) {
+  if (from < 0 || (uint64_t)from > data_length) return -2;
+  size_t at = (size_t)from;
+  if (needle_length == 0) return (int64_t)at;
+  while (data_length - at >= needle_length) {
+    /* The first byte by memchr, then the rest. */
+    const uint8_t *first = memchr(data + at, needle[0], data_length - at - needle_length + 1);
+    if (first == NULL) return -1;
+    at = (size_t)(first - data);
+    if (memcmp(first + 1, needle + 1, needle_length - 1) == 0) return (int64_t)at;
+    at += 1;
+  }
+  return -1;
+}
+
+int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
+                           size_t set_length, int64_t from) {
+  if (from < 0 || (uint64_t)from > data_length) return -2;
+  bool member[256] = {false};
+  for (size_t i = 0; i < set_length; i++) member[set[i]] = true;
+  for (size_t at = (size_t)from; at < data_length; at++) {
+    if (member[data[at]]) return (int64_t)at;
+  }
+  return -1;
+}
+
+/* --- Signals ------------------------------------------------------------
+ *
+ * Each call to slug_core_notify_signals adds a listener: the kinds it wants
+ * and the producer to send their names through. A signal goes to every
+ * listener for its kind. Once a signal of a kind has been delivered, the
+ * next one of that kind ends the process as if no one listened, until a
+ * new call asks for that kind again; and a signal that reaches no open
+ * listener ends the process too. */
+
+#define SIGNAL_KINDS 2
+static const char *const signal_names[SIGNAL_KINDS] = {"int", "term"};
+
+typedef struct {
+  int64_t kinds;
+  slug_producer *events;
+} signal_listener;
+
+static signal_listener *listeners = NULL;
+static size_t listener_count = 0;
+static size_t listener_capacity = 0;
+
+#if defined(_WIN32)
+static SRWLOCK listeners_lock = SRWLOCK_INIT;
+static void lock_listeners(void) { AcquireSRWLockExclusive(&listeners_lock); }
+static void unlock_listeners(void) { ReleaseSRWLockExclusive(&listeners_lock); }
+#else
+static pthread_mutex_t listeners_lock = PTHREAD_MUTEX_INITIALIZER;
+static void lock_listeners(void) { pthread_mutex_lock(&listeners_lock); }
+static void unlock_listeners(void) { pthread_mutex_unlock(&listeners_lock); }
+#endif
+
+/* Sends the name of signal `kind` to every listener for it, dropping those
+ * whose channel has gone; returns whether any listener took it. A listener
+ * whose channel is full already has a signal waiting, so it counts. */
+static bool deliver_signal(int kind) {
+  const char *name = signal_names[kind];
+  size_t length = kind == 0 ? 3 : 4;
+  bool taken = false;
+  lock_listeners();
+  size_t i = 0;
+  while (i < listener_count) {
+    signal_listener *listener = &listeners[i];
+    if ((listener->kinds & ((int64_t)1 << kind)) == 0) {
+      i++;
+      continue;
+    }
+    int32_t status = slug_producer_send_text(listener->events, name, length);
+    if (status == SLUG_PRODUCER_SENT || status == SLUG_PRODUCER_FULL) {
+      taken = true;
+      i++;
+    } else {
+      slug_producer_release(listener->events);
+      listeners[i] = listeners[--listener_count];
+    }
+  }
+  unlock_listeners();
+  return taken;
+}
+
+static bool add_listener(int64_t kinds, slug_producer *events) {
+  lock_listeners();
+  if (listener_count == listener_capacity) {
+    size_t capacity = listener_capacity == 0 ? 4 : listener_capacity * 2;
+    signal_listener *grown = realloc(listeners, capacity * sizeof *grown);
+    if (grown == NULL) {
+      unlock_listeners();
+      return false;
+    }
+    listeners = grown;
+    listener_capacity = capacity;
+  }
+  listeners[listener_count++] = (signal_listener){kinds, events};
+  unlock_listeners();
+  return true;
+}
+
+#if defined(_WIN32)
+
+/* Ctrl-C is "int" and Ctrl-Break "term"; the console runs this handler on a
+ * thread of its own. Returning FALSE lets the default handler end the
+ * process. */
+static volatile LONG signal_delivered[SIGNAL_KINDS];
+static volatile LONG console_handler_installed = 0;
+
+static BOOL WINAPI on_console_event(DWORD type) {
+  int kind = type == CTRL_C_EVENT ? 0 : type == CTRL_BREAK_EVENT ? 1 : -1;
+  if (kind < 0) return FALSE;
+  if (InterlockedExchange(&signal_delivered[kind], 1) != 0) return FALSE;
+  return deliver_signal(kind) ? TRUE : FALSE;
+}
+
+static bool watch_signals(int64_t kinds) {
+  for (int kind = 0; kind < SIGNAL_KINDS; kind++) {
+    if (kinds & ((int64_t)1 << kind)) InterlockedExchange(&signal_delivered[kind], 0);
+  }
+  if (InterlockedCompareExchange(&console_handler_installed, 1, 0) == 0) {
+    if (!SetConsoleCtrlHandler(on_console_event, TRUE)) {
+      InterlockedExchange(&console_handler_installed, 0);
+      return false;
+    }
+  }
+  return true;
+}
+
+#else
+
+/* The handler only writes the signal's number to a pipe, which is safe in a
+ * signal handler, and puts back the default action, so a second signal
+ * ends the process however busy the program is. A watcher thread reads the
+ * pipe and does the rest. */
+static const int signal_numbers[SIGNAL_KINDS] = {SIGINT, SIGTERM};
+static int signal_pipe[2] = {-1, -1};
+static pthread_once_t watcher_once = PTHREAD_ONCE_INIT;
+static bool watcher_running = false;
+
+static void on_signal(int number) {
+  int saved = errno;
+  struct sigaction fallback;
+  fallback.sa_handler = SIG_DFL;
+  fallback.sa_flags = 0;
+  sigemptyset(&fallback.sa_mask);
+  sigaction(number, &fallback, NULL);
+  unsigned char byte = (unsigned char)number;
+  ssize_t written = write(signal_pipe[1], &byte, 1);
+  (void)written;
+  errno = saved;
+}
+
+static void *signal_watcher(void *unused) {
+  (void)unused;
+  for (;;) {
+    unsigned char byte;
+    ssize_t count = read(signal_pipe[0], &byte, 1);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) return NULL;
+    int kind = byte == SIGINT ? 0 : byte == SIGTERM ? 1 : -1;
+    /* No one took it: the default action is back, so this ends the process. */
+    if (kind >= 0 && !deliver_signal(kind)) kill(getpid(), byte);
+  }
+}
+
+static void start_watcher(void) {
+  if (pipe(signal_pipe) != 0) return;
+  for (int i = 0; i < 2; i++) fcntl(signal_pipe[i], F_SETFD, FD_CLOEXEC);
+  fcntl(signal_pipe[1], F_SETFL, fcntl(signal_pipe[1], F_GETFL) | O_NONBLOCK);
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, signal_watcher, NULL) != 0) return;
+  pthread_detach(thread);
+  watcher_running = true;
+}
+
+static bool watch_signals(int64_t kinds) {
+  pthread_once(&watcher_once, start_watcher);
+  if (!watcher_running) return false;
+  for (int kind = 0; kind < SIGNAL_KINDS; kind++) {
+    if ((kinds & ((int64_t)1 << kind)) == 0) continue;
+    struct sigaction action;
+    action.sa_handler = on_signal;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(signal_numbers[kind], &action, NULL) != 0) return false;
+  }
+  return true;
+}
+
+#endif
+
+int32_t slug_core_notify_signals(int64_t kinds, slug_producer *events) {
+  if (kinds <= 0 || kinds >= ((int64_t)1 << SIGNAL_KINDS) || !add_listener(kinds, events)) {
+    slug_producer_release(events);
+    return SLUG_CORE_SIGNALS_FAILED;
+  }
+  /* The listener stays registered even if watching fails; a signal then
+   * takes its default action, and the listener is dropped once its channel
+   * goes. */
+  return watch_signals(kinds) ? SLUG_CORE_SIGNALS_WATCHING : SLUG_CORE_SIGNALS_FAILED;
 }

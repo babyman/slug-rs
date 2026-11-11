@@ -1,0 +1,301 @@
+/**
+ * colony — ants foraging on a grid.
+ *
+ * The colony lives in this module's variables. `start` makes a world: a
+ * grid of rock, floor and food around a nest, with ants on it. Each `tick`,
+ * every ant decides where to go from the colony as the tick began: one
+ * carrying food heads for the nest; one that sees food takes the first step
+ * of a shortest path to the nearest food it sees; any other wanders. Then
+ * the ants move, in order, each onto the square it chose unless rock or an
+ * ant that moved before it is there; an ant picks up the food it steps on,
+ * and drops what it carries beside the nest. Last, food grows back on
+ * random floor squares.
+ */
+val random = import("slug.random")
+val math = import("slug.math")
+val {map, filter, range, reduce} = import("slug.std")
+
+val ROCK = "#"
+val FLOOR = "."
+val FOOD = "*"
+val NEST = "N"
+
+// How far an ant sees, in squares, across and down.
+val SIGHT = 6
+
+// The eight directions, clockwise from north.
+val DIRECTIONS = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]]
+
+var width = 0
+var height = 0
+// The grid, a string per row.
+var rows = []
+// The ants by id, `{id, n, x, y, carrying}`, and their ids in order.
+var ants = {}
+var order = []
+var nest = {x: 0, y: 0}
+// How much food has reached the nest, and how many ticks have run.
+var store = 0
+var turn = 0
+var regrow = 1
+var stats = {looks: 0, moves: 0, blocked: 0, gathered: 0}
+var gen = random.generator(0)
+
+// The ant acting now, as `as` loads it, and its id.
+var acting:str|nil = nil
+var me = {}
+
+// The squares visible from each square, by "x,y": rock never changes, so
+// what a square sees never does either.
+var sightCache = {}
+
+// A number from a list of integers, the same for the same list.
+val MASK = 0xFFFFFFFF
+val mul32 = fn(a:num, b:num):num {
+    (a * (b & 0xFFFF) + (((a * (b >> 16)) & 0xFFFF) << 16)) & MASK
+}
+val fmix = fn(h:num):num {
+    val a = mul32(h ^ (h >> 16), 0x85EBCA6B)
+    val b = mul32(a ^ (a >> 13), 0xC2B2AE35)
+    b ^ (b >> 16)
+}
+val mix = fn(values:list):num {
+    reduce(values, 0x9E3779B9, fn(h, v) { fmix(h ^ fmix(v & MASK)) })
+}
+
+val at = fn(x:num, y:num):str { rows[y][x] }
+
+val inside = fn(x:num, y:num):bool { x >= 0 && y >= 0 && x < width && y < height }
+
+val setAt = fn(x:num, y:num, c:str) {
+    val row = rows[y]
+    rows = rows[:y] + [row[:x] + c + row[x + 1:]] + rows[y + 1:]
+}
+
+// Runs `body` as the ant with `id`, which it reads and changes as `me`,
+// and saves it back after.
+val as = fn(id:str, body:fn) {
+    acting = id
+    me = ants[id]
+    val result = body()
+    ants = ants + {[id]: me}
+    acting = nil
+    result
+}
+
+/**
+ * Makes a new world `w` squares across and `h` down from `seed`, with
+ * `count` ants, and forgets the old one.
+ */
+export val start = fn(seed:num, w:num, h:num, count:num) {
+    gen = random.generator(seed)
+    width = w
+    height = h
+    nest = {x: math.div(w, 2), y: math.div(h, 2)}
+    val cell = fn(x:num, y:num):str {
+        if (x == 0 || y == 0 || x == w - 1 || y == h - 1) { return ROCK }
+        if (math.abs(x - nest.x) <= 1 && math.abs(y - nest.y) <= 1) {
+            return if (x == nest.x && y == nest.y) { NEST } else { FLOOR }
+        }
+        val r = gen.below(20)
+        if (r < 3) { ROCK } else if (r == 3) { FOOD } else { FLOOR }
+    }
+    rows = map(range(h), fn(y) { reduce(range(w), "", fn(row, x) { row + cell(x, y) }) })
+    val place = fn(i:num, placed:map, list:list) {
+        if (i == count) { return [placed, list] }
+        val x = 1 + gen.below(w - 2)
+        val y = 1 + gen.below(h - 2)
+        val key = "" + x + "," + y
+        if (at(x, y) != FLOOR || placed[key] != nil) { return recur(i, placed, list) }
+        val id = "a" + i
+        recur(i + 1, placed + {[key]: true}, list :+ {id: id, n: i, x: x, y: y, carrying: false})
+    }
+    val [_, made] = place(0, {}, [])
+    ants = reduce(made, {}, fn(acc, a) { acc + {[a.id]: a} })
+    order = map(made, fn(a) { a.id })
+    store = 0
+    turn = 0
+    regrow = math.div(count, 10) + 1
+    stats = {looks: 0, moves: 0, blocked: 0, gathered: 0}
+    sightCache = {}
+}
+
+// The squares visible from (x0, y0): along a ray to each square on the edge
+// of the sight box, every square up to and including the first rock.
+val sightFrom = fn(x0:num, y0:num):list {
+    val key = "" + x0 + "," + y0
+    match sightCache[key] {
+        found: list => return found
+        _ => nil
+    }
+    var seen = {}
+    val ray = fn(x1:num, y1:num) {
+        val dx = math.abs(x1 - x0)
+        val dy = -math.abs(y1 - y0)
+        val sx = if (x0 < x1) { 1 } else { -1 }
+        val sy = if (y0 < y1) { 1 } else { -1 }
+        val go = fn(x:num, y:num, err:num) {
+            if (!inside(x, y)) { return nil }
+            seen = seen + {["" + x + "," + y]: [x, y]}
+            if ((x == x1 && y == y1) || (at(x, y) == ROCK && !(x == x0 && y == y0))) { return nil }
+            val e2 = 2 * err
+            val nx = if (e2 >= dy) { x + sx } else { x }
+            val ny = if (e2 <= dx) { y + sy } else { y }
+            recur(nx, ny, err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 }))
+        }
+        go(x0, y0, dx + dy)
+    }
+    map(range(-SIGHT, SIGHT + 1), fn(d) {
+        ray(x0 + d, y0 - SIGHT)
+        ray(x0 + d, y0 + SIGHT)
+        ray(x0 - SIGHT, y0 + d)
+        ray(x0 + SIGHT, y0 + d)
+    })
+    val found = map(keys(seen), fn(k) { seen[k] })
+    sightCache = sightCache + {[key]: found}
+    found
+}
+
+// What the acting ant sees, counted in `stats.looks`.
+val look = fn():list {
+    stats = stats copy {looks: stats.looks + 1}
+    sightFrom(me.x, me.y)
+}
+
+val open = fn(x:num, y:num):bool { inside(x, y) && at(x, y) != ROCK }
+
+// The first step of a shortest path through open squares within sight to
+// the nearest square in `targets` (a set of "x,y"), trying directions in
+// order; nil when none can be reached.
+val stepToward = fn(targets:map):list|nil {
+    val reach = fn(queue:list, i:num, from:map):list|nil {
+        if (i == len(queue)) { return nil }
+        val [x, y] = queue[i]
+        val key = "" + x + "," + y
+        if (targets[key] != nil && i > 0) {
+            // Walk back to the square next to the ant.
+            val back = fn(k:str):list {
+                val prev = from[k]
+                if (prev[0] == me.x && prev[1] == me.y) { split(k) } else { recur("" + prev[0] + "," + prev[1]) }
+            }
+            return back(key)
+        }
+        val next = filter(DIRECTIONS, fn(d) {
+            val nx = x + d[0]
+            val ny = y + d[1]
+            math.abs(nx - me.x) <= SIGHT && math.abs(ny - me.y) <= SIGHT && open(nx, ny)
+                && from["" + nx + "," + ny] == nil && !(nx == me.x && ny == me.y)
+        })
+        val more = map(next, fn(d) { [x + d[0], y + d[1]] })
+        val marked = reduce(more, from, fn(acc, p) { acc + {["" + p[0] + "," + p[1]]: [x, y]} })
+        recur(queue + more, i + 1, marked)
+    }
+    reach([[me.x, me.y]], 0, {})
+}
+
+val split = fn(key:str):list {
+    val parts = string.split(key, ",")
+    [string.toInt(parts[0]) ?? 0, string.toInt(parts[1]) ?? 0]
+}
+val string = import("slug.string")
+
+// The square the acting ant wants to move to.
+val decide = fn():list {
+    val seen = look()
+    if (me.carrying) {
+        val sx = if (nest.x > me.x) { 1 } else if (nest.x < me.x) { -1 } else { 0 }
+        val sy = if (nest.y > me.y) { 1 } else if (nest.y < me.y) { -1 } else { 0 }
+        val tries = filter([[sx, sy], [sx, 0], [0, sy]], fn(d) { (d[0] != 0 || d[1] != 0) && open(me.x + d[0], me.y + d[1]) })
+        return if (len(tries) > 0) { [me.x + tries[0][0], me.y + tries[0][1]] } else { [me.x, me.y] }
+    }
+    val food = reduce(seen, {}, fn(acc, p) {
+        if (at(p[0], p[1]) == FOOD) { acc + {["" + p[0] + "," + p[1]]: true} } else { acc }
+    })
+    if (len(keys(food)) > 0) {
+        match stepToward(food) {
+            step: list => return step
+            _ => nil
+        }
+    }
+    val first = mix([turn, me.n]) % 8
+    val tries = filter(range(8), fn(i) {
+        val d = DIRECTIONS[(first + i) % 8]
+        open(me.x + d[0], me.y + d[1])
+    })
+    if (len(tries) == 0) { return [me.x, me.y] }
+    val d = DIRECTIONS[(first + tries[0]) % 8]
+    [me.x + d[0], me.y + d[1]]
+}
+
+/**
+ * Runs one tick, as the module's description says. `forks` is how many
+ * forks the ants' decisions are shared among; this version makes them all
+ * itself.
+ */
+export val tick = fn(forks:num = 1) {
+    val wants = map(order, fn(id) { as(id, decide) })
+    // Where each ant stands, by "x,y".
+    var occupied:map = reduce(order, {}, fn(acc, id) { acc + {["" + ants[id].x + "," + ants[id].y]: id} })
+    val move = fn(i:num) {
+        if (i == len(order)) { return nil }
+        val id = order[i]
+        val [tx, ty] = wants[i]
+        as(id, fn() {
+            if (tx == me.x && ty == me.y) { return nil }
+            val key = "" + tx + "," + ty
+            if (!open(tx, ty) || occupied[key] != nil) {
+                stats = stats copy {blocked: stats.blocked + 1}
+                return nil
+            }
+            occupied = occupied - ("" + me.x + "," + me.y) + {[key]: id}
+            me = me copy {x: tx, y: ty}
+            stats = stats copy {moves: stats.moves + 1}
+            if (!me.carrying && at(tx, ty) == FOOD) {
+                setAt(tx, ty, FLOOR)
+                me = me copy {carrying: true}
+            }
+            if (me.carrying && math.abs(tx - nest.x) <= 1 && math.abs(ty - nest.y) <= 1) {
+                me = me copy {carrying: false}
+                store = store + 1
+                stats = stats copy {gathered: stats.gathered + 1}
+            }
+        })
+        recur(i + 1)
+    }
+    move(0)
+    // Food grows back on floor no ant stands on.
+    map(range(regrow), fn(_) {
+        val x = 1 + gen.below(width - 2)
+        val y = 1 + gen.below(height - 2)
+        if (at(x, y) == FLOOR && occupied["" + x + "," + y] == nil) { setAt(x, y, FOOD) }
+    })
+    turn = turn + 1
+}
+
+/**
+ * Runs `ticks` ticks, each with `forks` forks.
+ */
+export val run = fn(ticks:num, forks:num = 1) {
+    map(range(ticks), fn(_) { tick(forks) })
+    nil
+}
+
+/**
+ * The colony now: `{turn, store, stats, rows, ants}`, with the ants as a
+ * list in order.
+ */
+export val snapshot = fn():map {
+    {turn: turn, store: store, stats: stats, rows: rows, ants: map(order, fn(id) { ants[id] })}
+}
+
+/**
+ * What the ant with `id` sees: `{squares, food, carrying}`, how many
+ * squares are in its sight, how many of them hold food, and whether it is
+ * carrying food. Not counted in `stats.looks`.
+ */
+export val observe = fn(id:str):map {
+    as(id, fn() {
+        val seen = sightFrom(me.x, me.y)
+        {squares: len(seen), food: len(filter(seen, fn(p) { at(p[0], p[1]) == FOOD })), carrying: me.carrying}
+    })
+}

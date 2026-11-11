@@ -1,0 +1,6 @@
+// `describe` initializes the module it describes, so a fork may describe
+// only a module already initialized, as it may import only one.
+val main = fn() {
+    val t = fork { describe("uninitialized") }
+    select { await t }
+}

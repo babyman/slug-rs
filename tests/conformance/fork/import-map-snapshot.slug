@@ -1,0 +1,16 @@
+// A fork reads a module's `var` through an import map as it reads one by
+// name: from its snapshot, taken when it started, not the variable itself.
+val counter = import("exportedcounter")
+val main = fn() {
+    val seen = fork {
+        val wait = fn(i:num):num { if (i < 300000) { recur(i + 1) } else { i } }
+        wait(0)
+        // Comparing the import map whole reads its `var` from the snapshot
+        // too, not from the module.
+        [counter.count, counter == {count: 0, bump: counter.bump}]
+    }
+    counter.bump()
+    counter.bump()
+    println(select { await seen })
+    println(counter.count)
+}

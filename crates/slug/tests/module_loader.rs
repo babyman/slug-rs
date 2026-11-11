@@ -20,7 +20,7 @@ trait VmWithModuleLoader {
 
 impl VmWithModuleLoader for Vm {
     fn with_module_loader(loader: ModuleLoader) -> Self {
-        Self::with_host(Rc::new(loader))
+        Self::with_host(slug_vm::Shared::new(loader))
     }
 }
 
@@ -771,7 +771,7 @@ fn clutch_plugins_reject_unavailable_or_unrelated_registrations() {
     let missing = ModuleLoader::with_clutch_repository(&root, None, repository);
     assert!(matches!(
         missing.initialize(None, "example.plugin"),
-        Err(ModuleLoadError::Source { .. })
+        Err(ModuleLoadError::Initialization { .. })
     ));
     assert_eq!(INVALID_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 2);
 
@@ -810,7 +810,7 @@ fn clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations() {
 
     assert!(matches!(
         loader.initialize(None, "example.plugin"),
-        Err(ModuleLoadError::Source { .. })
+        Err(ModuleLoadError::Initialization { .. })
     ));
     assert_eq!(loader.initialized_module_count(), 0);
     assert_eq!(RETRY_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
@@ -1345,7 +1345,7 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
             "val {*} = import(\"math\")\nexport val result = double(21)\n",
         )
         .expect("compile through the in-memory resolver");
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute runtime import through the same resolver");
@@ -1373,7 +1373,7 @@ fn compiling_a_module_preserves_an_opaque_resolver_key_for_runtime_imports() {
     let program = loader
         .compile(None, "parent")
         .expect("compile parent module through opaque resolver");
-    let mut vm = Vm::with_host(Rc::new(loader));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader));
 
     vm.run_named(&program, "main")
         .expect("runtime import uses resolver key rather than diagnostic name");
@@ -1403,7 +1403,9 @@ fn module_graph_compiles_entry_source_through_an_injected_resolver() {
         program.bindings(),
         &["answer".to_owned(), "math".to_owned()]
     );
-    assert_eq!(graph.cached_module_count(), 0);
+    // The import compiled for its snapshot is kept for running it; the
+    // entry is not.
+    assert_eq!(graph.cached_module_count(), 1);
 }
 
 #[test]
@@ -1436,7 +1438,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
             "val a = import(\"a\")\nexport val output = a.a()\n",
         )
         .expect("compile an in-memory cycle");
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute the in-memory cycle");
@@ -1464,7 +1466,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
     let missing = loader
         .compile_source("memory:missing", "import(\"missing\")\n")
         .expect("missing imports compile until runtime");
-    let error = Vm::with_host(Rc::new(loader))
+    let error = Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&missing, "main")
         .expect_err("missing in-memory imports must be checked runtime errors");
     assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
@@ -1551,9 +1553,23 @@ fn imported_module_failures_retain_the_imported_source_location() {
         .expect_err("broken module must fail");
 
     assert_eq!(error.kind, RuntimeErrorKind::Module);
-    let expected_location = format!("{}:1:1", broken.display());
-    assert!(error.message.contains(&expected_location), "{error}");
     assert!(error.message.contains("not implemented"), "{error}");
+    let failure = error
+        .initialization_failure()
+        .expect("the import keeps the module's failure");
+    let span = failure.span.as_ref().expect("the failure has a location");
+    assert_eq!(
+        (span.path.to_string(), span.line, span.column),
+        (
+            broken
+                .canonicalize()
+                .expect("canonical module path")
+                .display()
+                .to_string(),
+            1,
+            1
+        )
+    );
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 
@@ -2848,4 +2864,208 @@ fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     );
     assert_eq!(loader.initialized_module_count(), 0);
     fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+/// A clutch with `example.assets`, whose `assets` folder holds `htmx.js`,
+/// `images/dot.png`, and a directory `empty`, in a repository a loader uses.
+fn asset_clutch(kind: &str, module_source: &str) -> (std::path::PathBuf, ModuleLoader) {
+    let root = root(kind);
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create asset root");
+    let clutch = write_source_clutch(&root, &[("example.assets", "assets.slug", module_source)]);
+    fs::create_dir_all(clutch.join("assets/images")).expect("create asset folders");
+    fs::create_dir_all(clutch.join("assets/empty")).expect("create empty asset folder");
+    fs::write(clutch.join("assets/htmx.js"), "var htmx=1;\n").expect("write script asset");
+    fs::write(
+        clutch.join("assets/images/dot.png"),
+        [0x89, b'P', b'N', b'G', 0, 255],
+    )
+    .expect("write image asset");
+    let repository = ClutchRepository::new(vec![("example.assets".into(), clutch)])
+        .expect("create clutch repository");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    (root, loader)
+}
+
+#[test]
+fn clutch_modules_and_programs_embed_their_assets() {
+    let (root, loader) = asset_clutch(
+        "clutch-assets",
+        "export val script = asset(\"htmx.js\")\n\
+         export val image = asset(\"images/dot.png\")\n\
+         export val again = asset(\"htmx.js\") == script\n",
+    );
+    let program = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "val {script, image, again} = import(\"example.assets\")\n\
+             export val text = script\nexport val png = image\nexport val same = again\n",
+        )
+        .expect("compile asset importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main").expect("run asset importer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"text\": 0x\"7661722068746d783d313b0a\", \"png\": 0x\"89504e4700ff\", \"same\": true}"
+    );
+
+    // A program in the clutch, which no manifest lists, has its assets too.
+    let inside = root.join("example.clutch/play.slug");
+    let program = loader
+        .compile_source(
+            &inside.to_string_lossy(),
+            "export val image = asset(\"images/dot.png\")\n",
+        )
+        .expect("compile program in clutch");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run program in clutch");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"image\": 0x\"89504e4700ff\"}"
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[test]
+fn asset_calls_that_name_no_shipped_file_are_compile_errors() {
+    let (root, loader) = asset_clutch("clutch-asset-errors", "export val x = 1\n");
+    let inside = root.join("example.clutch/play.slug");
+    let compile_inside = |source: &str| {
+        loader
+            .compile_source(&inside.to_string_lossy(), source)
+            .expect_err("asset call must not compile")
+    };
+    for (source, message) in [
+        (
+            "asset(\"missing.js\")\n",
+            "no asset `missing.js` in example.clutch's assets folder",
+        ),
+        (
+            "asset(\"HTMX.js\")\n",
+            "`htmx.js` differs from `HTMX.js` only in case",
+        ),
+        (
+            "asset(\"images/DOT.png\")\n",
+            "`dot.png` differs from `DOT.png` only in case",
+        ),
+        (
+            "asset(\"empty\")\n",
+            "asset `empty` in example.clutch is not a file",
+        ),
+        (
+            "asset(\"../clutch.toml\")\n",
+            "invalid asset name `../clutch.toml`",
+        ),
+        ("asset(\"/htmx.js\")\n", "invalid asset name `/htmx.js`"),
+        (
+            "val name = \"htmx.js\"\nasset(name)\n",
+            "`asset` takes one string literal",
+        ),
+        (
+            "asset(\"htmx.js\", \"images/dot.png\")\n",
+            "`asset` takes one string literal",
+        ),
+        ("\"htmx.js\" /> asset()\n", "not through `/>`"),
+    ] {
+        let error = compile_inside(source);
+        assert_eq!(error.code.as_str(), "invalid_asset", "{source}");
+        assert!(
+            error.message.contains(message),
+            "{source}: {}",
+            error.message
+        );
+        assert!(error.span.is_some(), "{source}");
+    }
+
+    let outside = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "asset(\"htmx.js\")\n",
+        )
+        .expect_err("a program outside a clutch has no assets");
+    assert_eq!(outside.code.as_str(), "invalid_asset");
+    assert!(
+        outside.message.contains("is not in a clutch"),
+        "{}",
+        outside.message
+    );
+
+    let standalone = compile("standalone.slug", "asset(\"htmx.js\")\n")
+        .expect_err("compiling without a host has no assets");
+    assert_eq!(standalone.code.as_str(), "invalid_asset");
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[cfg(unix)]
+#[test]
+fn assets_cannot_link_outside_their_folder() {
+    let (root, loader) = asset_clutch("clutch-asset-link", "export val x = 1\n");
+    let clutch = root.join("example.clutch");
+    std::os::unix::fs::symlink(clutch.join("clutch.toml"), clutch.join("assets/manifest"))
+        .expect("link outside the assets folder");
+    let error = loader
+        .compile_source(
+            &clutch.join("play.slug").to_string_lossy(),
+            "asset(\"manifest\")\n",
+        )
+        .expect_err("a link out of the folder is not an asset");
+    assert_eq!(error.code.as_str(), "invalid_asset");
+    assert!(
+        error.message.contains("links outside its assets folder"),
+        "{}",
+        error.message
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_assets_folder_that_is_a_link_holds_no_assets() {
+    let (root, loader) = asset_clutch("clutch-assets-folder-link", "export val x = 1\n");
+    let clutch = root.join("example.clutch");
+    let elsewhere = root.join("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("create outside folder");
+    fs::write(elsewhere.join("secret"), "outside").expect("write outside file");
+    fs::remove_dir_all(clutch.join("assets")).expect("remove assets folder");
+    std::os::unix::fs::symlink(&elsewhere, clutch.join("assets")).expect("link the assets folder");
+    let error = loader
+        .compile_source(
+            &clutch.join("play.slug").to_string_lossy(),
+            "asset(\"secret\")\n",
+        )
+        .expect_err("a linked assets folder is not the clutch's");
+    assert_eq!(error.code.as_str(), "invalid_asset");
+    assert!(
+        error.message.contains("links outside its assets folder"),
+        "{}",
+        error.message
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
+#[test]
+fn compiled_artifacts_carry_assets_without_their_clutch() {
+    let (root, loader) = asset_clutch(
+        "clutch-asset-artifact",
+        "export val script = asset(\"htmx.js\")\n",
+    );
+    let artifact = loader
+        .compile_artifact(
+            &root.join("main.slug").to_string_lossy(),
+            "val {script} = import(\"example.assets\")\nval main = fn() { script }\n",
+        )
+        .expect("compile artifact");
+    let bytes = slug_vm::cslug::encode(&artifact).expect("encode artifact");
+    fs::remove_dir_all(&root).expect("remove the clutch before running");
+    let artifact =
+        slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()).expect("decode artifact");
+    let result = slug_frontend::ArtifactHost::new(
+        artifact,
+        slug_vm::Shared::new(slug_vm::EmptyVmConfiguration),
+    )
+    .expect("valid artifact")
+    .run()
+    .expect("run artifact");
+    assert_eq!(result.to_string(), "0x\"7661722068746d783d313b0a\"");
 }

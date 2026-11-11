@@ -66,3 +66,16 @@ val emptyRangesThrow = fn() {
     assertEqual(assertThrows(fn() { r.between(3, 2) }).type, "random.range")
     assertEqual(assertThrows(fn() { r.pick([]) }).type, "random.range")
 }
+
+@test
+val stateContinuesTheSequence = fn() {
+    val r = random.generator(0)
+    r.next()
+    r.below(10)
+    val saved = r.state()
+    val ahead = [r.next(), r.below(1000), r.next()]
+    val resumed = random.generator(saved)
+    assertEqual([resumed.next(), resumed.below(1000), resumed.next()], ahead)
+    assertEqual(random.generator(5).state(), 5)
+    assertEqual(random.generator(0).state(), 0x9E3779B9)
+}

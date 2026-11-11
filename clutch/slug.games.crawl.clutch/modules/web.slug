@@ -1,0 +1,831 @@
+/**
+ * slug.games.crawl.web — Crawl in a web browser
+ *
+ * Serves one world of Crawl over `slug.net.http` to everyone who opens the
+ * page, drawn as HTML from the Mustache templates in the clutch's assets
+ * (`page.mustache`, `game.mustache`, and `pack-item.mustache`), with its
+ * style and script beside them. The engine is `slug.games.crawl`.
+ *
+ * The world runs on a tick (150 milliseconds by default). The page posts
+ * each key the game knows to `/key`, which queues it for that browser's
+ * player; each tick carries out at most one queued key per player with the
+ * engine's `tick`, and the world moves on whether anyone pressed a key or
+ * not: monsters act every fourth tick by default, so a player can move a
+ * few times for each move of theirs. Each open page listens on `/events`, a stream of server-sent events,
+ * and after each tick the server pushes it the parts of the game that
+ * changed, each drawn only when what it shows did: the map as data for the
+ * page to draw (or, with `render: "server"`, as HTML), the rest as HTML.
+ * A player whose page is closed is away: they stay in the world, but their
+ * chunk stands still unless someone present is in it.
+ *
+ * The map is a window onto the world, as big as the page asks for when it
+ * opens `/events` (`cols` and `rows`, at most 80 by 22), stitched from the
+ * chunk the player is in and the ones they remember around it. It starts
+ * centred on the player and scrolls only when they come within a quarter
+ * of its width or height of an edge.
+ *
+ * Given a database, `serve` saves the world in it every few seconds with
+ * `slug.games.crawl.store`, and carries on the world it holds when it
+ * starts, so a restart loses at most the last few seconds.
+ *
+ * Walking into another player opens a menu over the map, to talk, from a
+ * list of phrases, or to give them an item or gold. A box above the game,
+ * outside what each push replaces, says what is typed in it to everyone in
+ * sight (`POST /say`), and one in the header renames the player (`POST
+ * /name`).
+ *
+ * A `crawl` cookie names each browser's player; a browser without one, or
+ * with one this server does not know, joins as a new player. Each id is 128
+ * random bits from `slug.random.secure`, so no one can guess another
+ * player's.
+ *
+ * The page shows what the terminal screen folds into 24 rows on its own: the
+ * map, with squares out of sight dimmed; the player's stats; the pack, whose
+ * items act when clicked; the monsters in view; and a message log. It pages
+ * through `--More--` itself, and the pack is always shown, so `i` is unused.
+ *
+ * ```slug
+ * val tcp = import("slug.net.tcp")
+ * val web = import("slug.games.crawl.web")
+ *
+ * web.serve(tcp.listen("127.0.0.1", 8080), {seed: 7})
+ * ```
+ */
+
+val http = import("slug.net.http")
+val tcp = import("slug.net.tcp")
+val game = import("slug.games.crawl")
+val store = import("slug.games.crawl.store")
+val sqlite = import("slug.db.sqlite")
+val data = import("slug.games.crawl.data")
+val bestiary = import("slug.games.crawl.bestiary")
+val level = import("slug.games.crawl.level")
+val town = import("slug.games.crawl.town")
+val {map, filter, contains, reduce, range} = import("slug.std")
+val {chars, fromBytes} = import("slug.string")
+val math = import("slug.math")
+val mustache = import("slug.text.mustache")
+val secure = import("slug.random.secure")
+val {split, trim, join, toInt} = import("slug.string")
+val {trySend, await} = import("slug.channel")
+val json = import("slug.fmt.json")
+
+// The keys `/key` accepts, as the engine names them. `i` shows the pack in
+// place of the map, which the page does not need.
+val KEYS = chars("abcdefghjklmnopqrstuvwxyz0123456789") + ["left", "down", "up", "right", "space", "enter"]
+
+// The command that uses each kind of item.
+val USES = {food: "e", potion: "q", scroll: "r", weapon: "w", armour: "a"}
+
+// The use button's label for pack entry `e` of player `p`, or nil when using
+// it would do nothing: the weapon in hand, or armour while other armour is
+// worn.
+val useLabel = fn(p:map, e:map):str|nil {
+    match e.item.kind {
+        "food" => "Eat"
+        "potion" => "Quaff"
+        "scroll" => "Read"
+        "weapon" => if (e.letter == p.weapon) { nil } else { "Wield" }
+        "armour" => if (e.letter == p.armour) { "Take off" } else if (p.armour == nil) { "Wear" } else { nil }
+        _ => nil
+    }
+}
+
+// The item kind each item command's prompt asks for; nil for any.
+val PROMPT_KINDS = {e: "food", q: "potion", r: "scroll", w: "weapon", a: "armour", d: nil}
+
+val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]"}
+
+// The class of each map character; capital letters are monsters.
+val CLASSES = {
+    ".": "floor", "#": "corridor", "+": "door", "-": "wall", "|": "wall",
+    "%": "stairs", "<": "stairs", "*": "gold", "!": "potion", "?": "scroll", ":": "food",
+    ")": "weapon", "]": "armour",
+    ",": "scrub", "&": "tree", "~": "water", "^": "rock", "=": "road",
+    "_": "grave", ";": "remains",
+}
+
+// How many messages the log keeps.
+val LOG_SIZE = 60
+
+// How many keys a player can queue ahead of the ticks.
+val QUEUE_SIZE = 4
+
+// How many ticks pass between keep-alive comments on each stream, which
+// find streams whose page has gone.
+val HEARTBEAT = 60
+
+// Each player's log, by id: `log` holds [move, message] pairs, oldest
+// first, and `moves` counts the commands that did something, so the latest
+// move's messages can be told apart.
+var logs = {}
+
+// How many players have joined, which numbers them.
+var joined = 0
+
+// The keys waiting for a tick, `{id, key, shift, text}` in the order they
+// came; `text` is what the key "say" says.
+var queue = []
+
+// The open event streams by player id, each a list of channels, and how
+// many ticks have run.
+var streams = {}
+var ticks = 0
+
+// Each player's window size, `{cols, rows}`, as their page asked, and
+// where their window is, `{left, top, depth, cols, rows}` in world
+// coordinates.
+var sizes = {}
+var cameras = {}
+
+// Whether `serve` is serving, which keeps its ticks going, and on every how
+// many ticks monsters act.
+var serving = false
+var monsterEvery = 4
+
+// How many forks draw the pages each tick (`serve`'s `forks` option): with
+// more than one, `push` shares the players out among them.
+var forks = 1
+
+val percent = fn(part:num, whole:num):num {
+    if (whole <= 0) { 0 } else { math.max(0, math.min(100, math.div(part * 100, whole))) }
+}
+
+// The colour band of a player's health bar.
+val band = fn(hp:num, maxHp:num):str {
+    if (hp * 3 <= maxHp) { "low" } else if (hp * 3 <= maxHp * 2) { "mid" } else { "high" }
+}
+
+// --- Playing -----------------------------------------------------------------
+
+val logOf = fn(id:str):map { logs[id] ?? {log: [], moves: 0} }
+
+// Records the messages of a move that did something.
+val record = fn(id:str, messages:list) {
+    val l = logOf(id)
+    val moves = l.moves + 1
+    val all = l.log + map(messages, fn(message) { [moves, message] })
+    logs = logs + {[id]: {log: if (len(all) > LOG_SIZE) { all[len(all) - LOG_SIZE:] } else { all }, moves: moves}}
+}
+
+/**
+ * Adds a new player to the world and returns their id.
+ */
+export val newPlayer = fn():str {
+    joined = joined + 1
+    val id = secure.token()
+    game.join(id, "Player " + joined)
+    record(id, game.playerOf(id).messages)
+    id
+}
+
+/**
+ * Queues command `key` for the player with `id`, with `shift` held or not,
+ * for a coming tick, and for the key "say" the `text` to say; returns
+ * whether it was queued, which it is not when they already have QUEUE_SIZE
+ * keys waiting.
+ */
+export val press = fn(id:str, key:str, shift:bool, text:str = ""):bool {
+    if (len(filter(queue, fn(a) { a.id == id })) >= QUEUE_SIZE) { return false }
+    queue = queue :+ {id: id, key: key, shift: shift, text: text}
+    true
+}
+
+/**
+ * Runs one tick: carries out the first queued key of each player, moves the
+ * world on, logs what each player was told, and pushes each open page its
+ * game's HTML when it changed.
+ */
+export val tickOnce = fn() {
+    // The first queued key of each player; the rest wait.
+    val firsts = fn(i:num, now:list, later:list, seen:list):list {
+        if (i == len(queue)) { return [now, later] }
+        val a = queue[i]
+        if (contains(seen, a.id)) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen :+ a.id) }
+    }
+    val [actions, rest] = firsts(0, [], [], [])
+    queue = rest
+    val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
+    val wasDead = filter(map(actions, fn(a) { a.id }), fn(id) { game.playerOf(id).dead })
+    game.tick(actions, present, monsterEvery)
+    ticks = ticks + 1
+    // Log what each present player, or each who acted, was told.
+    val actors = map(actions, fn(a) { a.id })
+    val told = actors + filter(present, fn(id) { !contains(actors, id) })
+    val log = fn(i:num) {
+        if (i < len(told)) {
+            val id = told[i]
+            val p = game.playerOf(id)
+            if (contains(wasDead, id) && !p.dead) { logs = logs - id }
+            // A prompt's question is shown above the map, not logged.
+            val said = filter(p.messages, fn(m) { p.prompt == nil || m != p.question })
+            if (contains(actors, id) || len(said) > 0) { record(id, said) }
+            recur(i + 1)
+        }
+    }
+    log(0)
+    push(present)
+}
+
+// Sends each present player's page the parts of their game that changed:
+// the map, as data or as HTML, and each other part whose data changed, drawn
+// only then; a keep-alive comment every HEARTBEAT ticks when nothing did.
+// Drops streams that are closed. With `forks` above one, that many forks
+// each find what a share of the pages need, and this task sends it.
+val push = fn(present:list) {
+    val n = math.min(forks, len(present))
+    // Drawing changes nothing, so each chunk's company is found once.
+    val find = fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) }
+    val found = if (n > 1) {
+        // Every nth player each, as players near each other cost alike.
+        val tasks = map(range(n), fn(w) {
+            val mine = map(range(math.div(len(present) - w + n - 1, n)), fn(i) { present[w + i * n] })
+            fork { find(mine) }
+        })
+        reduce(tasks, [], fn(acc, task) { acc + await(task) })
+    } else {
+        find(present)
+    }
+    map(found, fn(c) { if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") } })
+}
+
+// Sends the player's page what changed since it was last sent anything, or
+// with `everything`, all of it; returns whether anything was sent.
+val sendChanges = fn(id:str, everything:bool = false):bool { send(changesFor(id, everything)) }
+
+// What the player's page needs sent, from what it was sent last, or with
+// `everything`, all of it: `{id, camera, map, parts, events, sent}`, their
+// window, map data and parts' data to keep for next time, the events to
+// send, and whether anything changed. It changes nothing, so a fork can
+// find it; `send` keeps and sends it.
+val changesFor = fn(id:str, everything:bool):map {
+    val p = game.playerOf(id)
+    // The map's data is what it shows, so it tells whether it changed.
+    // The other players here, which the map and the list of what is in
+    // view both need: finding them sorts everyone.
+    val others = game.others(id)
+    val data = mapData(id, p, others)
+    val moved = everything || data != shownMaps[id]
+    val now = partsData(id, p, others)
+    val last = if (everything) { {} } else { shownParts[id] ?? {} }
+    val changed = filter(keys(now), fn(name) { now[name] != last[name] })
+    val drawn = map(changed, fn(name) { partHtml(name, now[name]) })
+    val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, others)) } else { drawn }
+    val events = (if (moved && clientMaps) { [dataEvent("map", data)] } else { [] })
+        + (if (len(html) > 0) { [htmlEvent("parts", join(html, ""))] } else { [] })
+    {id: id, camera: camera(id, p), map: data, parts: now, events: events, sent: moved || len(html) > 0}
+}
+
+// Keeps what `changesFor` found for the player's page and sends it;
+// returns whether anything changed.
+val send = fn(c:map):bool {
+    cameras = cameras + {[c.id]: c.camera}
+    shownMaps = shownMaps + {[c.id]: c.map}
+    shownParts = shownParts + {[c.id]: c.parts}
+    map(c.events, fn(event) { broadcast(c.id, event) })
+    c.sent
+}
+
+// One server-sent event of type `kind` carrying `html`, a line of data for
+// each of its lines.
+val htmlEvent = fn(kind:str, html:str):str {
+    "event: " + kind + "\n" + join(map(split(html, "\n"), fn(line) { "data: " + line }), "\n") + "\n\n"
+}
+
+// Sends `text` to each of the player's streams, dropping closed ones; a
+// stream whose page is too slow to keep up misses this one.
+val broadcast = fn(id:str, text:str) {
+    val open = filter(streams[id] ?? [], fn(channel) {
+        defer onerror(_) { return false }
+        trySend(channel, text)
+        true
+    })
+    streams = streams + {[id]: open}
+}
+
+// --- The view ----------------------------------------------------------------
+//
+// The templates in the clutch's assets draw the game from plain data, which
+// these functions build. Mustache escapes the text they insert.
+
+val GAME_TEXT = fromBytes(asset("game.mustache"))
+val PAGE = mustache.parse(fromBytes(asset("page.mustache")))
+val GAME = mustache.parse(GAME_TEXT)
+
+// The parts of the game, each drawn by its own template, `part-NAME`, in an
+// element with id `part-NAME`: the map, and the rest, which `partsData` gives.
+val PART_NAMES = ["top", "map", "menu", "over", "log", "foes", "stats", "pack"]
+val PART_TEXT = {
+    "part-top": fromBytes(asset("part-top.mustache")),
+    "part-map": fromBytes(asset("part-map.mustache")),
+    "part-menu": fromBytes(asset("part-menu.mustache")),
+    "part-over": fromBytes(asset("part-over.mustache")),
+    "part-log": fromBytes(asset("part-log.mustache")),
+    "part-foes": fromBytes(asset("part-foes.mustache")),
+    "part-stats": fromBytes(asset("part-stats.mustache")),
+    "part-pack": fromBytes(asset("part-pack.mustache")),
+}
+val PARTS = reduce(PART_NAMES, {}, fn(acc, name) { acc + {[name]: mustache.parse(PART_TEXT["part-" + name] ?? "")} })
+val PARTIALS = PART_TEXT + {game: GAME_TEXT, "pack-item": fromBytes(asset("pack-item.mustache"))}
+
+// The HTML of part `name` drawing `data`.
+val partHtml = fn(name:str, data:map):str { mustache.render(PARTS[name], data, PARTIALS) }
+
+// The window of the player with `id` at `p`: where it was, unless it is new,
+// on another depth, another size, or no longer holds them, in which case
+// it is centred on them; then moved just enough to keep them a quarter of
+// its size from each edge. `send` keeps it, for the next tick.
+val camera = fn(id:str, p:map):map {
+    val size = sizes[id] ?? {cols: level.WIDTH, rows: level.HEIGHT}
+    val px = p.cx * level.WIDTH + p.x
+    val py = p.cy * level.HEIGHT + p.y
+    val mx = math.div(size.cols, 4)
+    val my = math.div(size.rows, 4)
+    val was = cameras[id]
+    val fresh = was == nil || was.depth != p.depth || was.cols != size.cols || was.rows != size.rows
+        || px < was.left || px >= was.left + size.cols || py < was.top || py >= was.top + size.rows
+    val left0 = if (fresh) { px - math.div(size.cols, 2) } else { was.left }
+    val top0 = if (fresh) { py - math.div(size.rows, 2) } else { was.top }
+    val keep = fn(at:num, start:num, length:num, margin:num):num {
+        if (at < start + margin) { at - margin } else if (at > start + length - 1 - margin) { at - (length - 1 - margin) } else { start }
+    }
+    val cam = {
+        left: keep(px, left0, size.cols, mx), top: keep(py, top0, size.rows, my),
+        depth: p.depth, cols: size.cols, rows: size.rows,
+    }
+    cam
+}
+
+// How the map draws `c` at (wx, wy) in world coordinates for the player with
+// `id` at `p`: its class, dimmed when the square is out of their sight (not
+// in `sight`, from `game.inView`), and for a monster or another player their
+// name, from `near`; nil for a blank square.
+val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
+    val x = wx - p.cx * level.WIDTH
+    val y = wy - p.cy * level.HEIGHT
+    if (c == "@") {
+        if (x == p.x && y == p.y) { return {cls: "you", title: nil} }
+        return near[game.viewKey(x, y)] ?? {cls: "ally", title: nil}
+    }
+    if (c >= "A" && c <= "Z") {
+        val named = filter(bestiary.monsters, fn(m) { m.letter == c })
+        return {cls: "monster", title: if (len(named) > 0) { named[0].name } else { "monster" }}
+    }
+    // Open ground on the surface is drawn as grass, not a room's floor.
+    val kind = if (c == "." && p.depth == 0) { "ground" } else { CLASSES[c] }
+    if (kind == nil) {
+        {cls: nil, title: nil}
+    } else if (sight[game.viewKey(x, y)] != true) {
+        {cls: kind + " seen", title: nil}
+    } else {
+        {cls: kind, title: nil}
+    }
+}
+
+// Who stands on each square of the chunk the player with `id` is in, by
+// `game.viewKey`, as the look of its `@`: other players first, in id order,
+// then townsfolk.
+val nearby = fn(id:str, others:list):map {
+    val stand = fn(acc:map, x:num, y:num, look:map):map {
+        val k = game.viewKey(x, y)
+        if (acc[k] == nil) { acc + {[k]: look} } else { acc }
+    }
+    val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
+        stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
+    })
+    val near = reduce(others, {}, fn(acc, o) {
+        stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
+    })
+    reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
+}
+
+// One row of the map as runs of characters that look alike.
+val mapRow = fn(p:map, sight:map, near:map, cam:map, row:str, y:num, end:str):map {
+    val wy = cam.top + y
+    val go = fn(x:num, start:num, look:map, out:list):list {
+        if (x == len(row)) { return out :+ (look + {text: row[start:x]}) }
+        val next = cell(p, sight, near, row[x], cam.left + x, wy)
+        if (next == look) { recur(x + 1, start, look, out) } else { recur(x + 1, x, next, out :+ (look + {text: row[start:x]})) }
+    }
+    {runs: go(1, 0, cell(p, sight, near, row[0], cam.left, wy), []), end: end}
+}
+
+// The player's window onto the map, row by row.
+val mapRows = fn(id:str, p:map, others:list):list {
+    val cam = camera(id, p)
+    val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
+    val sight = game.inView(id)
+    val everyone = nearby(id, others)
+    val go = fn(y:num, out:list):list {
+        if (y == cam.rows) { return out }
+        recur(y + 1, out :+ mapRow(p, sight, everyone, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
+    }
+    go(0, [])
+}
+
+val statsView = fn(id:str, p:map):map {
+    val hunger = if (p.food <= 0) { "Faint" } else if (p.food <= 50) { "Weak" } else if (p.food <= 150) { "Hungry" } else { "" }
+    {
+        hp: p.hp, maxHp: p.maxHp, health: percent(p.hp, p.maxHp),
+        band: band(p.hp, p.maxHp),
+        depth: if (p.depth == 0) { "Surface" } else { p.depth }, area: match game.here(id).place {
+            place: map => place.name
+            _ => "" + p.cx + ", " + p.cy
+        }, gold: p.gold, str: p.str, maxStr: p.maxStr,
+        armour: game.armourValue(id), level: p.level, xp: p.xp,
+        // Who holds the land here, and where that is.
+        land: game.land(id).holder ?? "No one", place: game.land(id).place,
+        since: match game.land(id).since {
+            t: str => ", " + t
+            _ => ""
+        },
+        date: game.date().text,
+        conditions: filter([
+            hunger,
+            if (p.confused > 0) { "Confused" } else { "" },
+            if (p.blind > 0) { "Blind" } else { "" },
+            if (p.frozen > 0) { "Frozen" } else { "" },
+            if (p.sense) { "Sensing" } else { "" },
+        ], fn(c) { c != "" }),
+    }
+}
+
+// The pack: while a prompt asks for an item, the items it accepts can be
+// chosen and the rest are disabled; otherwise each item has a button to use
+// it as its kind is used, and one to drop it unless it is worn.
+val packView = fn(id:str, p:map):map {
+    val asking = p.prompt != nil
+    val wanted = if (asking) { PROMPT_KINDS[p.prompt] } else { nil }
+    val item = fn(e:map):map {
+        val kind = e.item.kind
+        val fits = wanted == nil || kind == wanted
+        {
+            letter: e.letter, kind: kind, glyph: GLYPHS[kind] ?? "?", name: game.itemName(id, e.item, e.count),
+            tag: if (e.letter == p.weapon) { "in hand" } else if (e.letter == p.armour) { "worn" } else { nil },
+            choose: asking && fits, disabled: asking && !fits,
+            use: if (asking) { nil } else { {verb: useLabel(p, e), drop: e.letter != p.armour} },
+        }
+    }
+    {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
+}
+
+// Who is in view: other players the player sees, then monsters.
+val foesView = fn(id:str, p:map, others:list):list {
+    val people = filter(others, fn(o) { game.visible(id, o[1].x, o[1].y) })
+    val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
+    val folk = filter(game.here(id).characters ?? [], fn(c) { game.visible(id, c.x, c.y) })
+    map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+        + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
+        + map(seen, fn(m) {
+            val kind = bestiary.monsters[m.kind]
+            {cls: "monster", bar: "foe", letter: kind.letter, name: kind.name, asleep: m.state == "asleep", health: percent(m.hp, m.maxHp)}
+        })
+}
+
+val overView = fn(p:map) {
+    if (p.dead) {
+        {title: "You died.", detail: (if (p.depth == 0) { "On the surface" } else { "On depth " + p.depth }) + ", with " + p.gold + " gold, at experience level " + p.level + "."}
+    } else {
+        nil
+    }
+}
+
+// The data each part of the game draws but the map, by part: above the map,
+// the prompt's question or what the latest move said; over it, an open menu
+// or the end of a game; below it, the older messages; and beside it, what
+// is in view, the stats, and the pack.
+val partsData = fn(id:str, p:map, others:list):map {
+    val prompt = p.prompt != nil
+    val foes = foesView(id, p, others)
+    val l = logOf(id)
+    {
+        top: {
+            prompt: prompt,
+            top: if (prompt) { [p.question] } else { map(filter(l.log, fn(entry) { entry[0] == l.moves }), fn(entry) { entry[1] }) },
+        },
+        menu: {menu: menuView(id)},
+        over: {over: overView(p)},
+        log: {log: map(filter(l.log, fn(entry) { entry[0] != l.moves }), fn(entry) { entry[1] })},
+        foes: {foes: foes, hasFoes: len(foes) > 0},
+        stats: {stats: statsView(id, p)},
+        pack: {pack: packView(id, p)},
+    }
+}
+
+// What the map part draws: the map, or the element that draws it on the page.
+val mapPart = fn(id:str, p:map, others:list):map {
+    if (clientMaps) { {island: true, rows: []} } else { {island: false, rows: mapRows(id, p, others)} }
+}
+
+// The data the whole game template draws: every part's.
+val view = fn(id:str):map {
+    val p = game.playerOf(id)
+    val others = game.others(id)
+    val parts = partsData(id, p, others)
+    reduce(keys(parts), mapPart(id, p, others) + {name: p.name}, fn(acc, part) { acc + parts[part] })
+}
+
+// The menu the player has open, drawn over the map: its entries as
+// buttons, and on the Talk page a way to type something instead.
+val menuView = fn(id:str):map|nil {
+    match game.menu(id) {
+        m: map => {
+            title: m.title,
+            entries: m.entries,
+            talk: m.page == "talk",
+            back: if (m.page == "main") { "Close" } else { "Back" },
+        }
+        _ => nil
+    }
+}
+
+// --- The map as data ---------------------------------------------------------
+//
+// With maps drawn on the page (`renderMaps("client")`, or `serve`'s `render`
+// option), the game's HTML holds an empty `<crawl-map>`, which
+// `crawl-map.js` draws from `map` events: what the player sees, as data,
+// for the page to draw as `mapRow` and `cell` would. The server still
+// decides what each player sees; the page only draws it. A `legend` event
+// first gives what every map shares.
+
+// Whether pages draw their own maps.
+var clientMaps = false
+
+// The map data last sent to each player, by id.
+var shownMaps = {}
+
+// The data of each part last sent to each player, by id.
+var shownParts = {}
+
+/**
+ * Where maps are drawn: "client" sends each page its map as data, for
+ * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
+ */
+export val renderMaps = fn(where:str) { clientMaps = where == "client" }
+
+/**
+ * How many forks draw the pages each tick, as `serve`'s `forks` option
+ * says: with more than one, the players are shared out among them.
+ */
+export val drawInForks = fn(n:num) { forks = math.max(1, n) }
+
+// The first-listed name of the monster each capital letter is.
+val MONSTER_NAMES = reduce(bestiary.monsters, {}, fn(acc, m) {
+    if (acc[m.letter] == nil) { acc + {[m.letter]: m.name} } else { acc }
+})
+
+// What every map shares, as JSON: the chunk's size, the class of each map
+// character, and the monster each capital letter is.
+val LEGEND = json.stringify({width: level.WIDTH, height: level.HEIGHT, classes: CLASSES, monsters: MONSTER_NAMES})
+
+// The player's window onto the map as JSON: its top left corner in world
+// coordinates; their chunk, depth, and square in it; the window's rows, as
+// `game.view` gives them; the `game.viewKey`s of the squares in their sight;
+// and `near`, the look of each `@` that is not them, as [key, class, title].
+val mapData = fn(id:str, p:map, others:list):str {
+    val cam = camera(id, p)
+    val near = nearby(id, others)
+    json.stringify({
+        left: cam.left, top: cam.top, cx: p.cx, cy: p.cy, depth: p.depth, you: [p.x, p.y],
+        rows: game.view(id, cam.left, cam.top, cam.cols, cam.rows),
+        sight: keys(game.inView(id)),
+        near: map(keys(near), fn(k) { [k, near[k].cls, near[k].title] }),
+    })
+}
+
+// A server-sent event of type `kind` carrying `data`, one line of JSON.
+val dataEvent = fn(kind:str, data:str):str { "event: " + kind + "\ndata: " + data + "\n\n" }
+
+/**
+ * The game's HTML for the player with `id`, which the page's `#game`
+ * element holds.
+ */
+export val gameHtml = fn(id:str):str { mustache.render(GAME, view(id), PARTIALS) }
+
+// --- Serving -----------------------------------------------------------------
+
+val html = fn(body:str):map {
+    {status: 200, headers: {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}, body: body}
+}
+
+// A static file from the clutch's assets.
+val file = fn(name:str, body:bytes):map {
+    {status: 200, headers: {"Content-Type": http.mediaType(name), "Cache-Control": "no-cache"}, body: body}
+}
+
+// The id in the request's `crawl` cookie, or nil.
+val cookieId = fn(request:map):str|nil {
+    val pairs = map(split(request.headers.cookie ?? "", ";"), fn(part) { split(trim(part), "=") })
+    val ours = filter(pairs, fn(pair) { len(pair) == 2 && pair[0] == "crawl" })
+    if (len(ours) == 0) { nil } else { ours[0][1] }
+}
+
+// Answers `request` with `respond(id)` for the browser's player: the one its
+// cookie names, or a new player, whose cookie the response sets.
+val asPlayer = fn(request:map, respond:fn):map {
+    val known = match cookieId(request) {
+        id: str => if (game.playing(id)) { id } else { nil }
+        _ => nil
+    }
+    match known {
+        id: str => respond(id)
+        _ => {
+            val id = newPlayer()
+            val response = respond(id)
+            val cookie = "crawl=" + id + "; Path=/; HttpOnly; SameSite=Strict"
+            response copy {headers: (response.headers ?? {}) + {"Set-Cookie": cookie}}
+        }
+    }
+}
+
+val onKey = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val fields = http.form(request)
+        val key = fields.key ?? ""
+        if (contains(KEYS, key)) { press(id, key, fields.shift == "true") }
+        {status: 204}
+    })
+}
+
+// Says the form's `text` aloud, to everyone in sight.
+val onSay = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val text = http.form(request).text ?? ""
+        if (len(trim(text)) > 0) { press(id, "say", false, text) }
+        {status: 204}
+    })
+}
+
+// Gives the player the name in the form's `name`.
+val onName = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val name = http.form(request).name ?? ""
+        if (len(trim(name)) > 0) { press(id, "name", false, name) }
+        {status: 204}
+    })
+}
+
+// Uses a pack item the way its kind is used, eating food or wielding a
+// weapon, or with `action` "drop", drops it: queues the command's key, then
+// the item's letter for the prompt it asks.
+val onUse = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val fields = http.form(request)
+        val letter = fields.letter ?? ""
+        val p = game.playerOf(id)
+        val held = filter(p.pack, fn(e) { e.letter == letter })
+        if (len(held) == 0 || p.prompt != nil || p.dead || len(p.more) > 0) { return {status: 204} }
+        val command = if (fields.action == "drop") { "d" } else { USES[held[0].item.kind] }
+        if (command != nil && press(id, command, false)) { press(id, letter, false) }
+        {status: 204}
+    })
+}
+
+// A number from the query, held between `low` and `high`, or `fallback`.
+val bounded = fn(text, low:num, high:num, fallback:num):num {
+    match toInt(text ?? "") {
+        n: num => math.max(low, math.min(high, n))
+        _ => fallback
+    }
+}
+
+// A stream of the player's game as server-sent events, starting with how it
+// is now, drawn through a window `cols` by `rows` from the query.
+val onEvents = fn(request:map):map {
+    asPlayer(request, fn(id) {
+        val cols = bounded(request.query.cols, 20, level.WIDTH, level.WIDTH)
+        val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
+        sizes = sizes + {[id]: {cols: cols, rows: rows}}
+        val channel = chan(8)
+        if (clientMaps) { trySend(channel, dataEvent("legend", LEGEND)) }
+        // The page may have changed since it was served: everything, now,
+        // to every stream the player has open.
+        streams = streams + {[id]: (streams[id] ?? []) :+ channel}
+        sendChanges(id, true)
+        {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
+    })
+}
+
+/**
+ * The HTTP handler for the game: `GET /` serves the page; `/htmx.js`,
+ * `/crawl.css`, and `/crawl.js` the clutch's assets; and `POST /key`,
+ * `POST /use`, `POST /say`, and `POST /name` play.
+ */
+export val handler = fn():fn {
+    http.router([
+        ["GET", "/", fn(request) { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }],
+        ["GET", "/htmx.js", fn(request) { file("htmx.js", asset("htmx.js")) }],
+        ["GET", "/crawl.css", fn(request) { file("crawl.css", asset("crawl.css")) }],
+        ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
+        ["GET", "/crawl-map.js", fn(request) { file("crawl-map.js", asset("crawl-map.js")) }],
+        ["POST", "/key", onKey],
+        ["POST", "/use", onUse],
+        ["POST", "/say", onSay],
+        ["POST", "/name", onName],
+        ["GET", "/events", onEvents],
+    ])
+}
+
+// Forgets everything about the players but the world, which numbers new
+// players from `players` + 1.
+val reset = fn(players:num) {
+    joined = players
+    logs = {}
+    queue = []
+    streams = {}
+    shownMaps = {}
+    shownParts = {}
+    sizes = {}
+    cameras = {}
+    ticks = 0
+}
+
+/**
+ * Starts a new world with `worldSeed`, with no one in it; `options` go to
+ * the engine's `newGame`.
+ */
+export val start = fn(worldSeed:num, options:map = {}) {
+    game.newGame(worldSeed, options)
+    reset(0)
+}
+
+/**
+ * Carries on the world a snapshot holds, such as `slug.games.crawl.store`'s
+ * `read` gives; its players keep playing when their browsers come back.
+ */
+export val resume = fn(saved:map) {
+    game.load(saved)
+    reset(len(keys(saved.players)))
+}
+
+// Starts a new world as `serve`'s options say.
+val fresh = fn(options:map) {
+    start(options.seed ?? secure.seed(), {
+        regionEvery: options.region ?? 20, empireEvery: options.empire ?? 6000,
+        history: options.history ?? 100, size: options.size ?? 32,
+    })
+}
+
+/**
+ * Serves a world on `listener` until the listener closes, ticking every
+ * `options.tick` milliseconds (default 150), with monsters acting every
+ * `options.pace` ticks (default 4). When it closes, every open page's
+ * stream ends, and with a database the world is saved.
+ *
+ * With `options.db`, a database `slug.games.crawl.store` opened, the world
+ * is saved there every `options.save` ticks (default 20, 3 seconds), and
+ * the world it already holds carries on unless `options.new` is true.
+ * Otherwise, or with no world saved yet, a new world starts with
+ * `options.seed` (default: a fresh one from `slug.random.secure`), whose
+ * region layer visits each chunk every `options.region` ticks (default 20),
+ * whose empire layer takes a step, a season, every `options.empire` ticks
+ * (default 6000, 15 minutes) after `options.history` years of history
+ * (default 100),
+ * `options.size` chunks across and down (default 32).
+ *
+ * `options.forks` forks draw the pages each tick (default 1, this task):
+ * see `drawInForks`.
+ */
+export val serve = fn(listener:tcp.Listener, options:map = {}) {
+    val db = options.db
+    match db {
+        d: sqlite.Database => if (!(options.new ?? false) && store.has(d)) {
+            resume(store.read(d))
+        } else {
+            store.clear(d)
+            fresh(options)
+            store.write(d, game.changes())
+        }
+        _ => fresh(options)
+    }
+    val saveEvery = options.save ?? 20
+    renderMaps(options.render ?? "client")
+    monsterEvery = options.pace ?? 4
+    drawInForks(options.forks ?? 1)
+    serving = true
+    val every = options.tick ?? 150
+    spawn {
+        val loop = fn() {
+            if (serving) {
+                select { after every /> fn(_) { nil } }
+                tickOnce()
+                match db {
+                    d: sqlite.Database => if (ticks % saveEvery == 0) { store.write(d, game.changes()) }
+                    _ => nil
+                }
+                recur()
+            }
+        }
+        loop()
+    }
+    http.serve(listener, handler())
+    serving = false
+    // Ends every open page's stream, so their connections finish and the
+    // program can end.
+    map(keys(streams), fn(id) { map(streams[id], fn(c) { close(c) }) })
+    streams = {}
+    match db {
+        d: sqlite.Database => store.write(d, game.changes())
+        _ => nil
+    }
+}

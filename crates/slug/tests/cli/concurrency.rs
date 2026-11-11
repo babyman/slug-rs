@@ -17,6 +17,33 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn a_task_spawns_while_the_program_waits_for_it_to_finish() {
+    // `main` returns first; the root then waits for its task, which spawns
+    // another, as a server's connections do when it stops.
+    let path = fixture_path("spawn-while-settling");
+    fs::write(
+        &path,
+        "val main = fn() {\n    spawn {\n        select { after 10 /> fn(_) { nil } }\n        spawn { println(\"inner\") }\n    }\n    println(\"main done\")\n}\n",
+    )
+    .expect("write settling spawn source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run settling spawn source");
+    fs::remove_file(path).expect("remove settling spawn source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "main done\ninner\n"
+    );
+}
+
+#[test]
 fn repeated_awaits_return_one_cached_task_completion() {
     let path = fixture_path("repeated-await");
     fs::write(
@@ -577,4 +604,110 @@ fn a_blocked_task_is_reported_where_it_waits() {
         );
         assert_eq!(diagnostic["location"]["line"], line, "{name}: {diagnostic}");
     }
+}
+
+#[test]
+fn a_fork_beyond_the_running_fork_limit_fails_with_a_fork_error() {
+    let path = fixture_path("fork-limit");
+    fs::write(
+        &path,
+        "val main = fn() {\n    val gate = chan(0)\n    val first = fork { select { recv gate } }\n    val second = fork { select { recv gate } }\n    val third = fork { 3 }\n    select { await third }\n}\n",
+    )
+    .expect("write fork limit source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "2")
+        .arg(&path)
+        .output()
+        .expect("run fork limit source");
+    let unlimited = slug().arg(&path).output().expect("run fork limit source");
+    fs::remove_file(path).expect("remove fork limit source");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("this fork cannot start: 2 forks are running already"),
+        "{stderr}"
+    );
+    // Under the default limit the same program gets past the third fork,
+    // then fails only because the first two still wait.
+    assert!(
+        !String::from_utf8(unlimited.stderr)
+            .unwrap()
+            .contains("cannot start"),
+    );
+}
+
+#[test]
+fn slug_max_forks_must_be_a_positive_whole_number() {
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "none")
+        .arg("--version")
+        .output()
+        .expect("run slug with a bad fork limit");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("SLUG_MAX_FORKS must be a positive whole number, got `none`")
+    );
+}
+
+#[test]
+fn a_finished_fork_frees_its_place_before_its_spawner_sees_it_settle() {
+    // At a limit of one, forks awaited one after another always fit.
+    let path = fixture_path("fork-limit-sequential");
+    fs::write(
+        &path,
+        "val run = fn(i:num, total:num):num { if (i == 2000) { total } else { recur(i + 1, total + select { await fork { 1 } }) } }\nval main = fn() { println(run(0, 0)) }\n",
+    )
+    .expect("write sequential forks source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "1")
+        .arg(&path)
+        .output()
+        .expect("run sequential forks source");
+    fs::remove_file(path).expect("remove sequential forks source");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "a finished fork still held its place"
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2000\n");
+}
+
+#[test]
+fn a_fork_cancelled_while_its_children_settle_frees_its_place() {
+    // The first fork's body returns while its child waits on a long timer;
+    // its sibling's failure cancels it there. Its island must stop rather
+    // than keep waiting, so two forks fit under a limit of two afterwards.
+    let path = fixture_path("fork-cancelled-settling");
+    fs::write(
+        &path,
+        "val main = fn() {\n\
+             val run = fn():num {\n\
+                 defer onerror(err) { 0 }\n\
+                 nursery {\n\
+                     fork { spawn { select { after 60000 } }; 1 }\n\
+                     fork { select { after 50 }; throw \"stop\" }\n\
+                 }\n\
+                 1\n\
+             }\n\
+             run()\n\
+             select { after 200 }\n\
+             val a = fork { select { after 20 }; 1 }\n\
+             val b = fork { select { after 20 }; 2 }\n\
+             println(select { await a } + select { await b })\n\
+         }\n",
+    )
+    .expect("write cancelled settling source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "2")
+        .arg(&path)
+        .output()
+        .expect("run cancelled settling source");
+    fs::remove_file(path).expect("remove cancelled settling source");
+
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
 }

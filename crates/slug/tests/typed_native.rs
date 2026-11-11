@@ -8,7 +8,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    rc::Rc,
     sync::{
         LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -137,7 +136,7 @@ fn run(
             &source,
         )
         .map_err(|error| error.to_string())?;
-    Vm::with_host(Rc::new(loader))
+    Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&program, "main")
         .map_err(|error| match &error.native {
             Some(native) => format!("{}: {error}", native.code),
@@ -199,8 +198,11 @@ fn typed_clutch_reports_checked_boundary_failures() {
             "native.interior_nul",
         ),
     ] {
-        let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
-        let error = run(&directory, repository, &body).expect_err(&body);
+        // A fresh directory each time: the last run's library stays loaded
+        // (see `typed_clutch_rejects_null_text_for_a_str_result`).
+        let staging = TemporaryDirectory::new();
+        let repository = typed_clutch(&staging, &MODULE, &MANIFEST, &MANIFEST);
+        let error = run(&staging, repository, &body).expect_err(&body);
         assert!(error.starts_with(expected), "{body}: {error}");
         if expected == "native.resource_closed" {
             assert!(error.contains("native resource is closed"), "{error}");
@@ -334,8 +336,12 @@ fn typed_clutch_rejects_null_text_for_a_str_result() {
     .expect("labels");
     assert_eq!(value.to_string(), "[\"positive\", \"positive\", nil]");
 
-    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
-    let error = run(&directory, repository, "files.label(-1)").expect_err("NULL for `str`");
+    // A native library stays loaded once its module has initialized (see
+    // docs/decisions/2026-11-08-immortal-code-objects.md), and Windows cannot
+    // replace a loaded library, so the second clutch is staged elsewhere.
+    let staging = TemporaryDirectory::new();
+    let repository = typed_clutch(&staging, &MODULE, &MANIFEST, &MANIFEST);
+    let error = run(&staging, repository, "files.label(-1)").expect_err("NULL for `str`");
     assert!(error.starts_with("native.type"), "{error}");
     assert!(
         error.contains("`fixture.files.label` returned NULL for a `str` result"),
@@ -363,7 +369,7 @@ fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
     let directory = TemporaryDirectory::new();
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository.clone());
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     let first = slug_path(&directory.path().join("first.txt"));
     let unwinding = compile_files_program(
         &directory,
@@ -393,7 +399,7 @@ fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
     // The escaped handle keeps the library loaded, so a new loader shares
     // its release count.
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
-    let mut replacement = Vm::with_host(Rc::new(loader.clone()));
+    let mut replacement = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     let count = compile_files_program(&directory, &loader, "files.closedCount()");
     assert_eq!(
         replacement.run_named(&count, "main").unwrap().to_string(),
@@ -408,8 +414,8 @@ fn typed_functions_are_inactive_after_shutdown() {
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let program = compile_files_program(&directory, &loader, "files.add(1, 2)");
-    let mut first = Vm::with_host(Rc::new(loader.clone()));
-    let mut second = Vm::with_host(Rc::new(loader.clone()));
+    let mut first = Vm::with_host(slug_vm::Shared::new(loader.clone()));
+    let mut second = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     assert_eq!(first.run_named(&program, "main").unwrap().to_string(), "3");
     assert_eq!(second.run_named(&program, "main").unwrap().to_string(), "3");
 
@@ -576,7 +582,7 @@ fn typed_scalar_add_benchmark() {
     let directory = TemporaryDirectory::new();
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     print_bench_configuration("typed");
     report_scalar_samples(
         "typed-production",
@@ -618,7 +624,7 @@ fn scalar_call_controls() {
     )
     .expect("write control module source");
     let loader = ModuleLoader::new(directory.path(), None);
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let mut vm = Vm::with_host(slug_vm::Shared::new(loader.clone()));
     vm.define_foreign(
         NativeModule::new("slug.scalar", ())
             .expect("static scalar module is valid")
@@ -676,7 +682,7 @@ fn a_module_importing_its_sibling_during_initialization_shares_the_activation() 
             "val more = import(\"fixture.more\")\nmore.both()\n",
         )
         .expect("compile sibling-import program");
-    let value = Vm::with_host(Rc::new(loader))
+    let value = Vm::with_host(slug_vm::Shared::new(loader))
         .run_named(&program, "main")
         .expect("run sibling-import program");
     assert_eq!(value.to_string(), "[3, 7]");

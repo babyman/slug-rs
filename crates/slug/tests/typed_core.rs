@@ -1,4 +1,4 @@
-//! `slug.io.stdin`, `slug.math`, and `slug.string` on typed native bindings, built from the
+//! `slug.io.stdin`, `slug.os.signal`, `slug.math`, and `slug.string` on typed native bindings, built from the
 //! `slug.core` clutch as clutch staging builds it. Each native binding is exercised here against
 //! a freshly built library; the modules' behaviour is tested in Slug, by the clutch's own tests,
 //! which `make test-clutches` runs.
@@ -9,7 +9,7 @@ use std::{
     fs,
     io::Write as _,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -66,8 +66,10 @@ fn slug_home(directory: &TemporaryDirectory) {
         "clutch.toml",
         "modules/std.slug",
         "modules/stdin.slug",
+        "modules/signal.slug",
         "modules/math.slug",
         "modules/string.slug",
+        "modules/bytes.slug",
         "modules/toml.slug",
         "modules/test.slug",
         "native/source/core.c",
@@ -83,8 +85,10 @@ fn slug_home(directory: &TemporaryDirectory) {
         "[modules]\n\
          \"slug.std\" = \"slug.core.clutch\"\n\
          \"slug.io.stdin\" = \"slug.core.clutch\"\n\
+         \"slug.os.signal\" = \"slug.core.clutch\"\n\
          \"slug.math\" = \"slug.core.clutch\"\n\
          \"slug.string\" = \"slug.core.clutch\"\n\
+         \"slug.bytes\" = \"slug.core.clutch\"\n\
          \"slug.fmt.toml\" = \"slug.core.clutch\"\n\
          \"slug.test\" = \"slug.core.clutch\"\n",
     )
@@ -105,20 +109,25 @@ fn slug_home(directory: &TemporaryDirectory) {
     .expect("copy builtin module");
 }
 
-/// Runs `source` through the CLI with `input` on standard input.
-fn run_cli(source: &str, input: &[u8]) -> Output {
-    let directory = TemporaryDirectory::new();
-    slug_home(&directory);
+/// Starts `source` in the CLI, with every standard stream piped.
+fn start_cli(directory: &TemporaryDirectory, source: &str) -> Child {
+    slug_home(directory);
     let program = directory.path().join("cli.slug");
     fs::write(&program, source).expect("write CLI program");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+    Command::new(env!("CARGO_BIN_EXE_slug"))
         .env("SLUG_HOME", directory.path())
         .arg(&program)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("run slug CLI");
+        .expect("run slug CLI")
+}
+
+/// Runs `source` through the CLI with `input` on standard input.
+fn run_cli(source: &str, input: &[u8]) -> Output {
+    let directory = TemporaryDirectory::new();
+    let mut child = start_cli(&directory, source);
     child
         .stdin
         .take()
@@ -182,6 +191,36 @@ fn adds_and_takes_square_roots() {
 }
 
 #[test]
+fn a_compiled_artifact_calls_installed_native_bindings() {
+    let directory = TemporaryDirectory::new();
+    slug_home(&directory);
+    let program = directory.path().join("sums.slug");
+    let artifact = directory.path().join("sums.cslug");
+    fs::write(
+        &program,
+        "val math = import(\"slug.math\")\n\
+         val main = fn() { println(math.add(20, 22), math.sqrt(16)) }\n",
+    )
+    .expect("write program");
+    let slug = |arguments: &[&Path]| {
+        Command::new(env!("CARGO_BIN_EXE_slug"))
+            .env("SLUG_HOME", directory.path())
+            .args(arguments)
+            .output()
+            .expect("run slug CLI")
+    };
+    let compile = slug(&[Path::new("compile"), &program, &artifact]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let run = slug(&[Path::new("run"), &artifact]);
+    assert_eq!(stdout(&run), "42 4\n");
+}
+
+#[test]
 fn converts_characters_and_unicode_scalar_values() {
     let output = run_cli(
         "val {ord, chr} = import(\"slug.string\")\n\
@@ -193,4 +232,107 @@ fn converts_characters_and_unicode_scalar_values() {
         stdout(&output),
         "65 233 8364 128512 1114111\nA \u{e9} \u{20ac} \u{1f600} true\n"
     );
+}
+
+/// Forks on several threads call the same typed native bindings at once;
+/// the adapter's per-call state must not be shared unsafely between them.
+#[cfg(feature = "threads")]
+#[test]
+fn forks_call_typed_natives_at_once() {
+    let output = run_cli(
+        "val {ord, chr} = import(\"slug.string\")\n\
+         val {map, range, reduce} = import(\"slug.std\")\n\
+         val spin = fn(n:num):num { reduce(range(n), 0, fn(total, i) { total + ord(chr(65 + i % 26)) }) }\n\
+         val main = fn() {\n\
+             val forks = map(range(8), fn(_) { fork { spin(20000) } })\n\
+             println(reduce(forks, 0, fn(total, t) { total + select { await t } }))\n\
+         }\n",
+        b"",
+    );
+    assert_eq!(stdout(&output), "12399520\n");
+}
+
+/// Starts `source`, waits until it prints `ready`, sends it `signal` once
+/// for each of `waits` (pausing that long first), and returns its output.
+#[cfg(unix)]
+fn signalled(source: &str, signal: &str, waits: &[u64]) -> Output {
+    use std::io::{BufRead, BufReader};
+    let directory = TemporaryDirectory::new();
+    let mut child = start_cli(&directory, source);
+    let mut lines = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut first = String::new();
+    lines.read_line(&mut first).expect("read the ready line");
+    assert_eq!(first, "ready\n");
+    for wait in waits {
+        std::thread::sleep(std::time::Duration::from_millis(*wait));
+        let sent = Command::new("kill")
+            .args([format!("-{signal}"), child.id().to_string()])
+            .status()
+            .expect("run kill");
+        assert!(sent.success());
+    }
+    let mut output = child.wait_with_output().expect("collect CLI output");
+    let mut rest = String::new();
+    std::io::Read::read_to_string(&mut lines, &mut rest).expect("read the rest");
+    output.stdout = rest.into_bytes();
+    output
+}
+
+#[cfg(unix)]
+/// Waits for a signal on the channel; with `hang`, keeps running after it
+/// until the next signal ends it. The loop needs no timers, which builds
+/// without `concurrency` lack, so the tests run there too.
+const WAITS_FOR_A_SIGNAL: &str = "val signal = import(\"slug.os.signal\")\n\
+    val stop = signal.notify([\"int\", \"term\"])\n\
+    val hang = fn(i:num):num { recur(i + 1) }\n\
+    val main = fn() {\n\
+        defer println(\"stopped\")\n\
+        println(\"ready\")\n\
+        println(select { recv stop })\n\
+        if (cfg(\"hang\", false)) { hang(0) }\n\
+    }\n";
+
+#[cfg(unix)]
+#[test]
+fn a_signal_arrives_on_the_channel_and_the_program_ends_as_it_chooses() {
+    for (signal, name) in [("INT", "int"), ("TERM", "term")] {
+        let output = signalled(WAITS_FOR_A_SIGNAL, signal, &[100]);
+        assert_eq!(stdout(&output), format!("{name}\nstopped\n"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_second_signal_ends_a_program_that_does_not_stop() {
+    use std::os::unix::process::ExitStatusExt;
+    let source = WAITS_FOR_A_SIGNAL.replace("cfg(\"hang\", false)", "true");
+    let output = signalled(&source, "INT", &[100, 300]);
+    assert_eq!(output.status.signal(), Some(2));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "int\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_program_that_does_not_ask_ends_on_a_signal_as_before() {
+    use std::os::unix::process::ExitStatusExt;
+    let source = "val hang = fn(i:num):num { recur(i + 1) }\n\
+        val main = fn() {\n\
+        println(\"ready\")\n\
+        hang(0)\n\
+    }\n";
+    let output = signalled(source, "TERM", &[100]);
+    assert_eq!(output.status.signal(), Some(15));
+}
+
+#[test]
+fn unknown_signal_names_are_refused() {
+    let output = run_cli(
+        "val signal = import(\"slug.os.signal\")\n\
+         val main = fn() {\n\
+             defer onerror(error) { println(error.type) }\n\
+             signal.notify([\"int\", \"hup\"])\n\
+         }\n",
+        b"",
+    );
+    assert_eq!(stdout(&output), "signal.name\n");
 }

@@ -2,6 +2,923 @@
 
 ## Unreleased
 
+- Fork lifecycle and nested reads, from the third review:
+  - A fork's island settles its children in its own loop, which a
+    cancellation ends: before, once the fork's body had returned, a
+    cancellation woke the island and it went back to waiting on a child's
+    timer or producer, holding its worker and its place among the running
+    forks.
+  - A finished fork frees its place before its spawner can see it settle;
+    at `SLUG_MAX_FORKS=1`, forks awaited one after another failed now and
+    then with "cannot start" (3 of 5 runs of 2,000).
+  - Comparing values with `==`, and checking what leaves a fork, read a
+    module `var` inside a value, such as an import map, through the running
+    task's snapshot, as `counter.count` does; before, they read the
+    module's own cell, from another thread. Each thread records the view of
+    the task it runs. Freestanding builds, which run one thread and have no
+    thread-locals, still compare such a value against the variable itself.
+
+- `scripts/fork-oversubscription.py` measures what running more CPU-bound
+  forks than cores costs. On an 8-core machine, up to 16 times as many cost
+  nothing measurable in wall time and about 3% in CPU time, so M:N
+  scheduling of islands is parked: it would not buy throughput, only fewer
+  threads for waiting forks (`docs/planning/fork-tasks.md`).
+
+- HTTP and assets, from the security review:
+  - `slug.net.http` answers a response whose header name is not a token,
+    or whose header value holds a line break or another control
+    character, with `500`; before, a handler echoing input into a header
+    could split the response and add headers of the client's choosing.
+  - `http.serve` takes `maxConnections`, opt-in: at the limit it accepts
+    no more connections until one closes, and those arriving meanwhile wait
+    in the listener's queue.
+  - `tcp.accept` returns `nil`, as documented, when the listener closes
+    after reporting a connection ready; it threw a closed-resource error.
+  - A nursery, the root's included, drops tasks that have settled with
+    nothing to report (a value, or a failure something awaited), pruning
+    whenever its list has doubled; a server starting a task per connection
+    kept every one, and its result, until it stopped.
+  - A clutch's assets are read from its own `assets` folder: one that is a
+    link to elsewhere passed for the folder, so a file it pointed to was
+    read as an asset.
+
+- Worker lifecycle, from the security review:
+  - A cancelled fork's island cleans up before its worker takes another:
+    it leaves the queue it waits in, cancels its nursery (each task
+    leaving the channels and timers it waits on, and nested forks being
+    cancelled), and waits for nested forks to report back, discarding what
+    they post. Before, a later send could hand its value to a receiver in
+    the cancelled fork that would never run, and nested forks ran on,
+    unowned, posting to whichever island next used the thread
+    (`fork/cancel-releases-waits`).
+  - At most 256 forks run at once in a process, each on a worker thread;
+    `slug_vm::set_fork_limit` changes it, and the `slug` runner reads
+    `SLUG_MAX_FORKS`. A fork beyond it fails with a fork error rather than
+    waiting, which could deadlock with the forks it would wait for. A thread
+    that cannot be started fails its fork the same way, instead of
+    panicking. Idle workers are kept for reuse only up to the forks that ran
+    at once, so threads stay within the limit too.
+
+- Native and host boundaries, from the security review:
+  - `NativeFunction::declare_thread_safe` now returns a `Result`, and
+    succeeds only for a function of a module made with
+    `NativeModule::new_thread_safe`, whose state must be `Send + Sync`.
+    Before, safe code could mark any function thread-safe, and a fork then
+    read its module's state from another thread: the interactive server did
+    exactly that, its `print` writing an `Rc<RefCell<..>>` output sink from
+    forks, which is now an `Arc<Mutex<..>>`. The typed native adapter's
+    state is read-only after install; its two switches (a table's activity
+    and a binding's NULL-text rejection) are now atomic, and it vouches for
+    the rest through `NativeModule::new_thread_safe_with_scope_unchecked`.
+  - A fork's `describe` of a module not yet initialized fails as its
+    `import` does: describing initializes the module, which ran its code on
+    the spawner's thread wherever it served the fork's request
+    (`fork/describe-uninitialized`).
+
+- Fork isolation, from the security review:
+  - A fork reads a module's `var` through an import map (`counter.count`)
+    from its snapshot, as it reads one by name; before, it read the
+    module's own cell, from another thread, seeing values set after it
+    started (`fork/import-map-snapshot`). Every runtime binding resolution
+    now goes through the task's view (`Value::resolve_in`), and a fork that
+    reaches a `var` it has no snapshot of, from a module initialized after
+    it started, gets an error rather than the live cell.
+  - A fork's error leaves it only if what it carries is sendable, as its
+    result does: its thrown value, a native error's data, and its causes'.
+    One that is not becomes a fork error, with the original, stripped of
+    its values, as its cause; before, a thrown function capturing the
+    fork's `var` reached the parent (`fork/thrown-unsendable`).
+  - A fork's parked receive checks the value it is woken with, closing the
+    window where a sender on another thread read the channel as not yet
+    crossed just before the fork's receive marked it.
+  - A channel drains its native producer under its own lock, so two threads
+    draining at once cannot buffer the producer's values out of order.
+
+- Forks taking turns hold one task per fork domain mid-turn, not one for the
+  whole scheduler. With a single slot, a second fork's yield overwrote the
+  first's, and a task of the first fork could run before its own yielded
+  task resumed: three forks each counting to 100,000 had their readers see
+  9,997 (`fork/turns-within-a-fork` now covers forks yielding at once).
+- The root's settlement only looks at whether its children have settled,
+  using the count its nursery keeps, and leaves running them to `Vm::poll`
+  or the blocking adapter. Before, once the root body returned, one `poll`
+  ran the children for as long as they made progress: two tasks passing
+  messages, or a yielding fork, kept it from returning to the host.
+- `scripts/tsan-forks.py` has TSan write its reports to files, and fails a
+  run on any report whatever the fixture outcome: a fixture expecting an
+  error passed with TSan's exit status, and with `stderr_contains`, even
+  with a race reported after the expected diagnostic.
+
+- A fork's island is built on its worker from an explicit package of fork
+  inputs (its closure, start span, task view, domain, module variables, and
+  host arguments), not from the whole `Vm` its spawner prepared with its
+  parent-owned fields overwritten there. What stays the spawner's (its host,
+  the task, its inbox and thread group, its counters) travels apart and is
+  used only through posts back to it, and the spawner's prepared execution
+  is now released on its own thread. Tasks and islands build their VMs
+  through one constructor whose every field is either inherited or starts
+  empty, so a new `Vm` field cannot cross to a worker unnoticed. The package
+  holds no `std` thread types, so a future core-1 worker on the ESP32-S3 can
+  build from it too: the board stays on one core for now, with forks as
+  islands there the long-term goal (`docs/planning/fork-tasks.md`).
+
+- Every task starts through one scheduler operation. Before, a fork its
+  nursery admitted at once went to a worker from the `fork` instruction,
+  and still left an entry in the ready queue for the scheduler to skip,
+  while a fork that waited for a permit went from the scheduler. Now an
+  admitted fork leaves without a queue entry, and anything else waits in
+  start order to be dispatched from the same place. `fork/mixed-start-order`
+  pins down the order under a nursery limit: spawns and forks take permits
+  in the order they started, whichever kind they are.
+
+- A `nursery` no longer runs its body and children to the end inside the
+  instruction that starts it. The task that starts one suspends until its
+  body settles, as it would awaiting a task, and the body, once it returns,
+  suspends until its children settle; every nursery shares one scheduler.
+  So `Vm::poll` never blocks in a nursery waiting for a timer or a channel,
+  and tasks outside a nursery keep running while it waits
+  (`fork/nursery-waits-without-blocking`; before, they waited for the
+  nursery to finish). A task cancelled while it waits in a nursery cancels
+  the nursery's body and children too, which before ran on unowned
+  (`fork/nursery-cancelled-with-its-task`). Fail-fast settlement is told
+  when a child fails instead of rescanning every child after each turn, and
+  wakes the body ahead of the siblings it cancels.
+
+- Forks take turns on builds without `threads`, such as embedded ones: a
+  fork busy computing yields after 10,000 calls, returns, or `recur`s, so a
+  failing sibling runs and cancels it, as it would on another core
+  (`fork/cancel-busy` and `fork/cancel-nested` hung there). Tasks outside
+  forks still suspend only where the language says, and the tasks of one
+  fork never interleave between suspensions: until a yielded fork runs
+  again, the scheduler holds its domain (`fork/turns-within-a-fork`).
+  Fail-fast settlement looks for a child's failure between scheduler turns
+  rather than after the child it is driving finishes, which a busy child
+  could put off forever. `make cooperative`, part of `make check`, runs
+  slug-vm's tests and the conformance suites on such a build.
+  `scripts/tsan-forks.py` runs the fixtures through the conformance runner
+  (`slug-fixtures --timeout-scale`), so a fixture must also meet its
+  expected outcome and output under TSan, not only avoid races.
+
+- The ESP32-S3 firmware starts again: since the static provider check
+  (735fa7f), it passed its builtins with its module providers to
+  `install_static_providers`, which rejects any function the artifact's
+  imports do not declare, and builtins are the artifact's implicit module,
+  so every build reset at startup with "extra static provider function
+  `slug.builtin.print`". Builtins now register with `register_builtin`, as
+  the host tests do. On the board, the light walk runs, and the tasks demo
+  blinked 920 times in three minutes at the expected 5.08 a second.
+
+- Tasks run on freestanding (`no_std`) builds: the scheduler and timers
+  read a platform clock, `std`'s on hosted builds and, on embedded ones,
+  the microsecond clock a host gives the VM with `Vm::set_clock` or
+  `ArtifactHost::set_clock`. `Vm::next_timer_in` tells a host that drives
+  `poll` how long it may sleep before a timer is due. The ESP32-S3 firmware
+  builds with `concurrency`, provides `chan` and `close` in the embedded
+  `slug.builtin` contract, reads its system timer, and has a tasks demo
+  (`esp32-s3-tasks.toml`, `programs/tasks.slug`): three LEDs blinking at
+  their own pace on timers while the main task counts blinks from a channel.
+
+- The agent evaluation has a `colony` project (phase 6 of the fork plan):
+  its workspace starts with a working one-core ant colony simulation whose
+  module variables hold what Crawl's drawing wrote, scratch context, a memo
+  cache, and counters, and agents make each tick share its work among
+  forks. Its 71 cases come from the starting module's own results, so they
+  check the simulation is unchanged on any number of forks and from spawned
+  tasks; a new `speedup` case kind times one program on one fork and on four
+  (ratio at most 0.6). The reference passes all of them at a ratio of 0.33.
+  The first Codex run (59 cases then) passed every case and found a gap in
+  them: a `task var` cache that another task's `start` cannot clear goes
+  stale in the task that ran the old world. Two cases now start a new world
+  from a spawned task, and the reference's cache follows a world number.
+
+- Under `threads`, a module's binding cells and their names, declared
+  natives' declarations, and the import maps its `val`s hold are immortal
+  once it initializes, with its code: every read of an export, a
+  destructured import, or `game.name` cloned them, and forks on other cores
+  contended on their counts. Map storage is a `slug_vm::Code` (which gains
+  `try_unwrap`), and a native call borrows its member key rather than
+  cloning it. Crawl's 1000 pages on eight forks: 1.26 s to 0.98 s, 0.92 s
+  on 32, 4.1x one fork.
+
+- Crawl's server can draw its pages in forks (`serve`'s `forks` option,
+  `web.drawInForks`, `play.slug --forks=N`), the first real use of `fork`.
+  Each tick, every nth present player goes to each of n forks, which find
+  what each page needs (`changesFor`); the ticker then keeps each player's
+  camera, map and parts and sends the events (`send`). To let forks look as
+  a player, `game.player`, `acting`, and the drawing caches `companies` and
+  `sights` are `task var`s, the read-only queries (`view`, `others`,
+  `here`, `land`, `menu`, ...) use `lookAs`, which saves nothing back, and
+  `rng.within` runs its body on a `task var` generator rather than swapping
+  the game's. The camera is no longer stored as it is computed, only when a
+  page is sent. A new test checks that forks send each page the same events
+  as one task. One thousand players' pages: 4.0 s on one task, 2.2 s on two
+  forks, 1.25-1.6 s on four or more (this 4P+4E laptop); the server's tick
+  in a task of its own measures 0.99x, `crawl-ticks` 0.96x.
+
+- `slug_vm::Code` frees its value after an acquire load of its count rather
+  than an acquire fence, as `Arc` does under ThreadSanitizer, which does not
+  model fences: with the fence, a closure freed on one thread after its last
+  use on another read as a race (CI, `fork/channel-relay`). The ordering is
+  the same; closure-heavy workloads measure 1.00x. `scripts/tsan-forks.py`
+  prints both stacks of a report.
+
+- ThreadSanitizer builds keep the system allocator (`--cfg slug_sanitized`,
+  set by `scripts/tsan-forks.py`): TSan sees only the `malloc` and `free` it
+  intercepts, so memory mimalloc freed on one thread and reused on another,
+  as a fork's posted work is, read as a race on Linux CI. The typed native
+  tests stage each clutch they rebuild in a directory of its own: a native
+  library now stays loaded once its module initializes, and Windows cannot
+  replace a loaded library.
+
+- `make ci` passes with `threads`: the workspace allows clippy's
+  `arc_with_non_send_sync`, since `slug_vm::Shared` is `Arc` there while
+  values and hosts stay unsendable by type (the sendable check and
+  `sync::Sendable` vet what crosses threads); the fork work is formatted, and
+  the language support matrix says forks run on worker threads.
+
+- The `slug.os.signal` tests run in builds without `concurrency` too: a
+  program that keeps running after a signal now spins in `recur` rather than
+  waiting on a timer, which those builds lack, so `select { after }` ended
+  it with an error before the signal could (CI's slim run on Linux).
+
+- `--metrics` and `--profile` count what forks do. A fork's island kept
+  counters of its own that were dropped when it settled, and did not sample
+  call stacks at all; now it samples when its spawner does, and both join
+  the spawner's when the fork settles (counts and times add, peaks keep the
+  larger). A fork's loop now counts as the same loop in a spawned task does
+  (140 027 instructions, where the fork's used to show 19).
+
+- A fork's host calls (importing an initialized module, configuration,
+  warnings) no longer wait for their spawner to wait. Each thread's inbox
+  has an attention flag, raised when a fork queues a host call or the
+  thread's own fork is cancelled; every call, return, and `recur` of any VM
+  on the thread reads it, in place of the cancellation check, and serves
+  the queued calls. A spawner busy in a loop used to stall its forks until
+  it next waited. Against bcc7e4c (5 interleaved PGO rounds): geomean 1.00x
+  tuned, 1.01x hold-out; the outliers re-measured over 11 rounds at 1.00x.
+
+- Debug builds check the rule that lets threads read binding cells and
+  module tables without a lock: a cell another thread has reached panics if
+  it is written while any fork runs, at the write, whether or not the two
+  overlap in time (`slug_vm::sync::solo_check`). A panic on a fork's thread
+  becomes that fork's error rather than leaving its spawner waiting.
+  `scripts/tsan-forks.py` runs the fork fixtures under ThreadSanitizer, and
+  CI runs it on a pinned nightly.
+
+- A fork calls module functions as fast as the main thread does. Every call
+  to a closure from outside the fork took the general call path to check
+  its captures, even with none to check, and its copied arguments made `+`
+  copy strings it could have appended to; only closures with captures take
+  it now. Task views hash variables by address with one multiply instead of
+  SipHash. Experiment 2 on one fork: 16.8 s to 14.5 s, against 13.9 s on
+  the main thread; on eight forks 4.12 s to 3.7 s, as fast as the workers
+  that initialized their own modules (3.7 s). Against f7c695a (5
+  interleaved PGO rounds): geomean 1.01x tuned, 1.03x hold-out; the
+  outliers re-measured over 11 rounds at 1.00x.
+
+- A program's string constants are never counted either, once its module
+  has initialized: strings use `slug_vm::Code`, and each program is walked
+  once when it becomes immortal. A constant pushed on every call no longer
+  contends across forks: 4M calls to `len("a")` took 0.39 s on eight forks
+  and now 0.08 s (0.36 s on one). Experiment 2 on eight forks, paired runs:
+  4.36 s to 4.12 s, 4.1x one fork. Against 35b7abe (5 interleaved PGO
+  rounds): geomean 1.00x tuned, 0.99x hold-out.
+
+- Code that forks share is never counted once its module has initialized
+  (`docs/decisions/2026-11-08-immortal-code-objects.md`). Under `threads`,
+  programs, closures, global tables, and native functions use
+  `slug_vm::Code`, a reference-counted pointer whose count stops when its
+  module finishes initializing: cloning or dropping it then only reads the
+  count, so forks on many cores call shared functions without contending
+  for their cache lines. 4M calls to a shared module function: 1.75 s on
+  eight forks before, 0.12 s now (0.55 s on one). Experiment 2: 16.7 s on
+  one fork, 8.7 s on two, 5.0 s on four, 4.4 s on eight, 3.8x, as against
+  3.9x for workers that each initialized their own modules. Builds without
+  `threads` keep `Rc`. Miri and ThreadSanitizer find nothing. Single
+  threads gain too, since an immortal object's clone and drop skip their
+  atomic operation (5 interleaved PGO rounds against 4509a8e: geomean 0.98x
+  tuned, 0.99x hold-out; Crawl's workloads 0.96-0.98x). A first version,
+  which inlined the freeing path into every drop, measured 1.03x and 1.04x.
+
+- A call no longer clones its closure's program to find the chunk it runs;
+  it borrows it. The clone was an atomic count on the one program every
+  fork shares, made on every call, so calls stopped scaling across threads
+  even to a fork's own closures: 4M calls to such a closure took 0.37 s on
+  one fork and 0.43 s on eight, and now 0.08 s on eight. Experiment 2 on
+  eight forks: 7.0 s to 5.9 s.
+
+- A call no longer counts its program and global table: a closure always
+  holds both, and its frame borrows them from it, so entering a function
+  takes one reference (the closure) instead of three. Under `threads` those
+  counts are atomic on objects every fork shares, so this is where forks
+  contended. Experiment 2 on eight forks: 8.2 s to 7.0 s (one fork
+  unchanged).
+
+- Fixes from rerunning experiment 2 (Crawl's pages drawn by real forks):
+  forks calling the same typed native at once could crash or corrupt
+  values, since the native adapter counted its per-binding state with
+  single-threaded `Rc`s on every call; it now borrows that state for the
+  call instead, which is also cheaper. A fork's own copy of a `task var` is
+  updated in place, as a `var` is, rather than copied whole on every
+  update (24 s to 14.7 s for one fork drawing 1000 players). A fork reads
+  a `val` through its global slot cache, and the cache is written only when
+  it changes. A fork busy computing is cancelled too: an island checks its
+  cancellation flag at every call, return, and `recur`, so a failed
+  sibling stops it and the forks it started (`fork/cancel-busy`,
+  `fork/cancel-nested`). New `typed_core` test
+  `forks_call_typed_natives_at_once`; new fixture `fork/task-var-update`.
+
+- Fix: forks exchanging messages could both wait forever, reported as
+  blocked. A `select` checked its channels and then parked on them as two
+  steps, so a send and a receive on different threads could each see the
+  other absent and both park. A `select` about to wait now locks all its
+  channels, in one order, through its last check and its parking, and the
+  first wake to claim a `select` takes it, so no other case is taken as
+  well. A thread about to sleep also checks for work posted to it a moment
+  before, which the program's deadlock count could otherwise miss. Found by
+  a new fixture, `fork/channel-relay`, in which three producers, a relay,
+  and two consumers trade 6,000 messages. ThreadSanitizer finds no race in
+  the fork fixtures (CLI built with `-Zsanitizer=thread` and `build-std`).
+
+- Phase 4 of `fork`: forks run in parallel. Under `threads`, each fork its
+  nursery admits moves to a worker thread as an island, a VM with its own
+  scheduler; tasks it spawns run there with it. Workers are pooled, and a
+  new one starts when none is idle, so forks waiting on one another never
+  wait for a thread. A fork reaches its spawner only through its result,
+  channels (a wake for a task on another thread is carried there to run),
+  cancellation, and its host, whose calls are served on the spawner's
+  thread; one `Sendable` wrapper is the only claim that any of it may cross
+  threads. A fork nothing can wake is reported blocked, as a spawned task
+  is: the program's threads count those asleep, and when all are, the root
+  reports it. An entry program's `var`s are binding cells, as a module's
+  are, so no global table changes once forks run. Eight CPU-bound forks
+  run 5x faster than in sequence on an eight-core machine. Known gaps: a
+  fork busy computing is cancelled only at its next wait; a fork's host
+  calls wait until its spawner next waits; islands' metrics are not merged.
+
+- Phase 3 of `fork`, first step: a `threads` build feature, on by default
+  for the CLI, counts the VM's shared references atomically (`Arc`), so its
+  values, closures, programs, and channels can later be shared with forks on
+  other threads. Builds without it, embedded ones among them, keep `Rc`.
+  Hosts and tests name the type as `slug_vm::Shared`. Measured against the
+  `Rc` build (11 interleaved PGO rounds): geomean 1.01x tuned, 1.00x
+  hold-out; Crawl's game 1.06x and closure-heavy code up to 1.06x. The
+  inline caches in shared bytecode, each function's global slots and each
+  map-key lookup's hint, are relaxed atomics, which cost nothing measured
+  (0.99x on tuned workloads). Compiled
+  chunks record a capture's name only when it is a `var`, the only name a
+  fork's errors use. Module binding cells and global tables are
+  `SoloCell`s rather than `RefCell`s: forks on other threads may read them
+  at once, which a `RefCell`'s borrow count would race on. Each is written
+  by one thread or only before any fork exists, so release builds read and
+  write them with no bookkeeping; debug builds still check borrows.
+  Under `threads`, a channel's queues sit behind a mutex, its native
+  producer slot is a `OnceLock`, and whether it has crossed into a fork is
+  an atomic flag; other builds keep their single-threaded cells. A
+  binding's recorded kind, a native function's thread-safe flag, and a
+  native module's registration sets are thread-safe too; a `threads` build
+  asserts at compile time that binding names and strings are `Send + Sync`.
+
+- Phase 2 of `fork`: forks run. A fork sees its captures and every module
+  `var` as they were when it started; changing either fails, as does
+  calling a function made outside it that captures a `var`, awaiting a task
+  handle from outside it, returning or sending a task handle, resource, or
+  such a function, calling a native function its clutch does not declare
+  thread-safe, initializing a module, or starting while a module
+  initializes, each a `fork` runtime error. Every task, spawned or forked,
+  owns a copy of each `task var`, taken from its spawner. Forks run one at a
+  time on the owning thread for now; all 30 fork conformance fixtures pass.
+  Chunks record what each capture holds; hosts share a registry of module
+  variables (`VmHost::module_variables`) and say whether a module has
+  initialized (`VmHost::module_initialized`). The CLI's and REPL's
+  builtins are declared thread-safe.
+
+- `fork` may be typed at the REPL prompt: an interactive entry runs after
+  the earlier ones have finished, so it is not reported as forking while a
+  module initializes. REPL entries now get the other compile-time fork
+  checks, which they skipped before.
+
+- Phase 1 of `fork`: the language accepts `fork { ... }` and `task var`.
+  `fork` is a reserved word and compiles to its own instruction, which
+  reports that `fork` is not implemented yet until the runtime lands; `task`
+  is a modifier only directly before `var` at module top level, so it stays
+  usable as a name. The compiler reports what it can see: an assignment
+  inside a fork to a binding declared outside it, other than a `task var`
+  (`fork_write`); a fork in module top-level code
+  (`fork_during_initialization`); and a fork whose result is a task handle
+  or resource (`unsendable_value`). Module metadata and `.cslug` artifacts
+  record `task var`s, and a clutch manifest's native function can declare
+  `thread_safe = true`, as the core clutch's pure functions do. The
+  specification and grammar describe forks and `task var`. Seven of the
+  fork conformance fixtures now pass. The fixture runner rejects a
+  `stderr_contains` fragment that the fixture's own source or path
+  contains, since a diagnostic quotes both.
+
+- Phase 0 of `fork`: the behavior of `fork` and `task var` is written down
+  as 30 conformance fixtures in `tests/conformance/fork/`, covering
+  snapshots, the write rule, sendable values, channels, nurseries, module
+  initialization, and imports, and as two VM tests for native functions and
+  resources. Fixture sidecars gain `pending`, which a fixture must keep
+  failing until its feature lands, and `stderr_contains`, which checks a
+  diagnostic's content without fixing its wording. The decision record now
+  says a closure that captures a `var` is not sendable.
+
+- Accepted a decision for parallel tasks: `fork { ... }` starts a task
+  that sees a snapshot of its captures and every module's globals and may run
+  on another core, while `spawn` keeps its meaning. A fork's writes to shared
+  `var`s are checked errors, except to a module's `task var`s, which every
+  task, spawned or forked, owns a copy of. Channels cross forks. Forks behave
+  the same on single-threaded hosts, and threads are the default build on
+  every multi-core target. A fork shares every `val` and copies only the
+  `var`s, measured at about 1 µs for Crawl's 28.
+
+- New core module `slug.bytes`: `find(data, needle, from = 0)` and
+  `findAny(data, set, from = 0)` search bytes natively for a sequence or
+  for any byte of a set, giving the offset or nil, and throw a
+  `bytes.range` error for a `from` outside the bytes. They are the native
+  searches `slug.string.split` and `slug.fmt.json` use, which keep their
+  own bindings to them: through the module, the extra call per search made
+  Crawl's history about 3% slower. The C searches now give -2 for a `from`
+  out of range, so the module checks it only when nothing is found.
+
+- `slug.fmt.json.stringify` writes a string with nothing to escape whole,
+  found with a native byte search (`slug_core_find_any`), where it looked
+  at every character in Slug. Crawl finds each chunk's players once while it
+  draws pages (`game.steady`), where it sorted them again for every player.
+  A player no longer looks around again when nothing they would see has
+  changed: what they remember holds terrain, items, graves, and remains,
+  so where they stand and a count of each nearby chunk's changes say when.
+  Whether a square holds a player no longer sorts every player in its
+  chunk, which made each player's arrival slower than the last. With 100
+  players in the starting town a tick takes about 0.22 s, from 0.35 s, and
+  200 players join in half the time; what pages are sent is unchanged byte
+  for byte.
+
+- `slug.string.split` finds its separator in native code: the core clutch's
+  library gains `slug_core_find`, a byte search, so splitting costs a few
+  native calls per part where it sliced and compared at every character.
+  `slug.string.sort` merges bottom up, without slicing at each level or
+  measuring both halves at every step, and runs about 2.5 times as fast.
+  Both give the same results as before. Crawl, with 100 players in the
+  starting town, ticks about 10% faster; it joins players about 15% faster.
+
+- Crawl's pages are sent only what changed: after each tick, the map, and
+  each other part of the game (the line above the map, a menu, the end of
+  a game, the log, what is in view, the stats, and the pack) when what it
+  shows changed, drawn only then. The page swaps each part in by its id.
+  The whole game's HTML was drawn and pushed for every player every tick.
+  Maps are drawn by the page by default now (`--render=server` sends them
+  as HTML). With 100 players in the starting town a tick takes about
+  0.4 s, from 0.9 s with whole pages.
+
+- Crawl's web front end can have each page draw its own map:
+  `play.slug --render=client` (or `serve`'s `render` option, or
+  `web.renderMaps("client")`) sends each player what they see as data, in
+  `map` events, and a `<crawl-map>` element in the new `crawl-map.js` draws
+  it, square for square as the server would; the rest of the game is still
+  HTML from the server, swapped in by HTMX. The server still decides what
+  each player sees. With 100 players in the starting town a tick takes
+  about 0.5 s, from 0.9 s. Server-drawn maps stay the default for now.
+
+- Counting builds (`--features metrics`) sample a Slug program's call
+  stacks when `SLUG_PROFILE` names a file, and write them there as folded
+  stacks for flame-graph tools, each function named by its module and line.
+  The benchmarking guide shows how.
+
+- Crawl draws each player's page in time proportional to the players in
+  view, where it grew with their square: every `@` on the map looked up
+  the other players again, sorting every player's id in Slug. With 100
+  players in the starting town, ticking takes about 40% fewer instructions,
+  and pages are unchanged. A `crawl-crowd` source benchmark ticks 30
+  players through the web front end without sockets.
+
+- A program whose tasks spawn more tasks after `main` returns, as a
+  server's open connections do while it stops, no longer panics with
+  `RefCell already borrowed`: waiting for the remaining tasks held the
+  scheduler's task list borrowed while they ran.
+
+- Crawl: a new character no longer freezes the server when the starting
+  town is full. Players who leave stay in the world, so with about a hundred
+  of them every street inside the walls was taken, and the search for a
+  free one never ended; with cooperative tasks, that stopped every page and
+  key. A new character now tries 50 random streets, then takes the open
+  square nearest the middle of the town, inside the walls or outside them,
+  then in the chunks around it, nearest first.
+
+- Assigning a module-level `var` a copy of itself whose last field updates
+  that field, as in `player = player copy {memory: player.memory + entry}`,
+  updates the field's collection in place when nothing else holds it, where
+  it copied the whole map or list. Crawl's ticks run 0.91x as long. Its
+  history, which never runs the new instruction, runs about 1.05x as long in
+  profile-guided builds: the changed training profile leaves a few hot
+  helpers out of the dispatch loop. Compiled artifacts use one more new
+  instruction; older `.cslug` files still load.
+
+- Assigning to a module-level `var` updates its collection in place:
+  `players = players + {[id]: player}`, `items = items :+ item`, and
+  `player = player copy {hp: 3}` copied the whole map, list, or struct,
+  because the variable still held it while the operator ran. The Crawl
+  clutch's 100 years of history run 0.94x as long; other programs are
+  unchanged. A value read from the variable before keeps what it was, and an
+  update that fails leaves the variable as it was. Compiled artifacts use two
+  new instructions; older `.cslug` files still load.
+
+- The source benchmarks run the Crawl clutch as it ships: `crawl-ticks`
+  plays two players through 300 ticks of a fresh world, `crawl-history`
+  runs 100 years of its empires' history, and the hold-out `crawl-pages`
+  renders the web front end's page through `slug.text.mustache` after each
+  of 60 ticks. Profile-guided builds are keyed on the checkout's clutch
+  modules too, since these workloads, like `http-server`, import them.
+
+- Compiling is about 5.7 times faster on a large program: the Crawl clutch
+  (some 6,600 lines in 13 modules) compiles in 0.07 s, from 0.40 s, and
+  starts that much sooner from source. Each imported module is compiled
+  once: the compilation that made its type snapshot for its importers was
+  thrown away and done again to run it (not when an import cycle cut that
+  first compilation short). And the type checker's scopes are shared
+  until changed, where each block, branch, `match` case, and function
+  body copied every binding's type in scope. Compiled programs are
+  unchanged byte for byte.
+
+- `slug run` of a compiled `.cslug` program calls the native bindings of
+  the installed clutches it uses (`slug.math`, `slug.string`, SQLite,
+  `slug.random.secure`, ...). It used to stop at the first one with
+  "foreign function `slug.math.addRaw` is not registered". The clutches
+  are activated, and their declarations checked, as an import from source
+  does.
+- An `import` inside a function resolves from the module that made the
+  function, not from the module that calls it. A relative import such as
+  `import("helper")` in `sub/lib.slug`, run by a call from `main.slug`,
+  used to find nothing, and in a compiled program so did any import in a
+  function called from another module (crawl's SQLite saving failed so).
+  `describe` resolves its module the same way.
+- A module that fails while it is initialized is the cause of the import
+  that failed. The error reads "cannot initialize a.slug: list index is
+  out of bounds" (code `module`) and its `caused by:` is the runtime error
+  itself, with its code (`out_of_bounds`), the failing line, and the
+  imports it was reached through. It used to repeat "runtime error:" (and,
+  from source, "cannot compile") once for each module of the chain, with
+  only the code `module`. New: `ModuleLoadError::Initialization`,
+  `InitializationFailure`, `ImportFailure::Initialization`.
+
+- Crawl's factions have leaders: a name and title in the people's style
+  ("Warlord Gruk Ashmaw", "Thane Dagna Flintbrow", "Chief Yip the Sly",
+  "Lich Morvane the Pale"; human titles are Marshal, Warden and Reeve).
+  A leader dies the likelier the longer they lead (most reigns are some 14
+  years), may fall when their side loses a battle of a war, and falls with
+  the faction's last land; a broken faction rises again under a new one.
+  A new leader brings their own temper, rolling the faction's boldness and
+  aggression afresh, which also ends the long peaces that set in once
+  every faction had calmed to the least aggressive; and a faction now
+  declares war on the other side at least 1% of seasons. Events carry their
+  leader: "Warlord Gruk Ashmaw led the Blacktusk Horde to war with ...",
+  "Wolfby fell to the Sootfang Warren, led by Chief Yip the Sly, in ...",
+  "Under Thane Brokk Greybrow, the Stonebrow Clan fought ...", and the
+  chronicle tells of successions ("... died; ... leads them now."). Townsfolk
+  name their ruler ("... rules us, and taxes us hard."), guards the enemy's
+  leader, and captains the leaders of the land below.
+- Crawl has battlefields. Every battle and siege is counted in its
+  territory's record (`empire.landOf` gives `battles` and `fought`), and
+  land fought over five times or more is strewn, as you come into each of
+  its chunks, with the remains of battle (`;`, `game.REMAINS`, a chunk's
+  `remains`): half a mark for each battle, up to eight a chunk, settlements
+  standing kept clear. Walking onto them says "Old bones and broken blades
+  lie here, where the Gnash Pack fought the Stonebrow Clan.", and coming
+  into the land "Many battles have been fought here." New: `lore.FIELD`,
+  `lore.battlefield`, `lore.remains`, `lore.ruler`, `empire.leaderOf`.
+  About a sixth of the land is a battlefield after a 100-year history, and
+  fewer settlements fall in it (none to four) as the factions fight each
+  other more.
+
+- Crawl's factions go to war. A faction at peace may declare war on a
+  neighbour, the likelier if aggressive or boxed in with no wild land left,
+  the less against its own side if orderly; while at war both sides fight
+  across their border most seasons, and peace comes when one side is worn
+  down to 70% of its strength, the war passes three years, or their border
+  is gone. A faction can fight one war at a time. Wars go into the
+  chronicle ("The Gnash Pack went to war with the Stonebrow Clan.", "...
+  made peace with ..., the richer by two lands.") and, when they end, the
+  annals ("The Gnash Pack fought the Stonebrow Clan until the summer of
+  year 3, and took two lands from them."), which keep the latest 40. In a
+  100-year history, land now changes hands about ten times as often, with
+  a war or two going on at a time, and in play two or three fights a
+  season. A faction driven from all its land may rise again at its home
+  band two years later ("The Mossback Brood rose again ..."). The home
+  band's defence is 125% of a faction's power there, from 150%. Players'
+  kills cost a faction half a percent of its strength each (at least 1),
+  from a flat 1, so a few dozen in a season tell. Dealers say "Prices are
+  up with the war against the Gnash Pack.", and guards "We're at war with
+  the Gnash Pack, since the summer of year 30." New: `empire.enemyOf`,
+  `empire.bleed` (exported), `lore.war`; `empire.atWar` takes a faction's
+  index. A new world's history takes about 40% longer.
+
+- Crawl remembers its players. A character who dies leaves a grave (`_` on
+  the map) where they fell, with everything they carried, and their gold,
+  laid on the free squares around it for anyone to recover; walking onto a
+  grave reads it ("Here lies Mara, level 4, killed by the troll, in the
+  summer of year 102."). Deaths go into the chronicle and the annals, and
+  innkeepers keep a roll of the latest ("Ask after the fallen"). The annals
+  also remember deeds: slaying a dragon, troll, ogre or wraith; a bounty
+  claim of 100 gold or more; the first to reach each new depth from 5
+  (`world.deepest`; "No one has come this deep before."); and ten or more
+  kills of a faction's people in its land in one season, now that kills
+  carry their killer's name (`empire.killed(e, key, kind, who)`). The
+  annals keep the latest 60 of these; news and legends tell of them like
+  any other event. New: `empire.record`, `lore.epitaph`, `lore.fallen`,
+  `game.GRAVE`, a chunk's `graves`.
+
+- Crawl's places tell their history. Coming into new land, by an edge or
+  the stairs, says where it is and who holds it, and since when: "You are
+  now in the shallows under the Ashmoor, held by the Gnash Pack since the
+  autumn of year 34." (or "for as long as anyone remembers", or "which no
+  one holds"), and how many times it has changed hands, if more than once.
+  The stats' "Held by" shows the same "since" when hovered. A ruin's gate
+  stone says who sacked it and when ("A broken stone by the gate reads:
+  sacked by the Gnash Pack in the winter of year 67."), and a standing
+  settlement's walls the assaults they held off. The empire keeps a record
+  of each territory, `lands` (`empire.landOf`: since when its holder has
+  held it, and how many times it has changed hands); ruins' `place`
+  carries the settlement's name as `was`; `game.land` gives `since`; the
+  words are `lore.arriving`, `lore.heldSince` and `lore.settlementPast`.
+
+- Crawl's people tell of the world near them. Innkeepers' rumours, half
+  the time, are news and legends weighed by how near they happened, how
+  lately and how much they mattered: news fades with distance and is
+  forgotten after three years, legends fade only with distance, and
+  neither carries past a handful of regions. Guards name the nearest land a faction from below
+  holds ("The Redaxe Horde hold the land in the shallows under the
+  Ashmoor. They're right under our feet."), or the sieges their walls held;
+  captains say whose land the bounties are for; traders and quartermasters
+  greet you with why prices are what they are ("Prices are up since the
+  Hollow Host took the land ..."), or their faction's greed or generosity;
+  townsfolk pass on news ("Did you hear? ...") or remember their own
+  sieges. Each says it half the time, and their usual lines otherwise. The
+  new module `slug.games.crawl.lore` holds all of it; `empire.news` is
+  gone, and `empire` exports `clause`, `factionName`, `times`, `dateOf` and
+  `atWar` for it.
+
+- Crawl's history is kept as events, not sentences: `{step, kind, by,
+  against, at, name}`, the kinds settled, took, repelled, sacked, held, and
+  broken (a faction driven from the last of its land), told in words by
+  `empire.tell`. The chronicle keeps the latest 40 of them; the new annals
+  keep the great ones for good: each siege as one entry, with how many
+  assaults it held off and whether it fell, and every faction broken.
+  Innkeepers tell legends from them ("Wolfby fell to the Sootfang Warren
+  in the summer of year 53, after holding out six times since the autumn
+  of year 46."). News that began with a settlement's name no longer has
+  it lowercased.
+
+- Crawl has a calendar. Each step of the empire layer is a season, four to
+  a year: a season is 15 minutes of play (`--empire` now defaults to 6000
+  ticks, from 400), and a year about an hour. The stats show the date
+  ("Late spring, year 101"), and everyone playing is told when a new season
+  comes ("Summer comes."). `--history=N` counts years, now 100 by default,
+  run as 400 seasons; about two of a world's settlements fall in that
+  time, none to five. A world saved before this keeps its old pace;
+  start it again with `--new`.
+
+- Crawl has eight more monsters, for nineteen: giant rats and wolves on the
+  surface and in the shallows, goblins (with the orcs), giant ants,
+  skeletons and wraiths (with the undead; a wraith's blows can sap
+  strength), ogres (with the trolls), and, from depth 10, dragons, rare and
+  alone, which never breed. The eval's eleven kinds keep their places and
+  now live on below depth 8, to depth 12 and every depth beyond. The new
+  module `slug.games.crawl.bestiary` is the table the game uses, with the
+  flags `rare`, `solitary` and `weakens`; `slug.games.crawl.data` stays as
+  the eval generates it. Forts post bounties on the new kinds of the
+  peoples below.
+
+- Crawl's players can name their characters: the page's header shows "You
+  are" and the name, which is a box to type a new one in (`POST /name`).
+  The new name, tidied to one line of at most 20 characters, takes on the
+  next tick; the player is told, and so is everyone in sight ("Player 1 is
+  now known as Aria."), and a new character after death keeps it. The
+  engine takes it as the key "name" with `text`, as it does "say".
+
+- Crawl says what a full pack leaves behind: "Your pack is full; you leave
+  a potion of healing." (or, unidentified, "an amber potion"), and at a
+  market "Your pack is full; there's no room for a scroll of identify."
+  The eval's reference keeps its plain "Your pack is full.".
+
+- Crawl's worlds have a history. Before anyone comes, a new world's empires
+  live through years of history (`--history=N`, see the calendar above; the
+  engine's `newGame` runs none unless `options.history` asks), about a
+  second at start. In those years
+  the factions from below can besiege settlements next to the land they
+  hold; walls double a settlement's defence, but every siege it holds off
+  wears them down, and one that falls is a ruin from then on. Most worlds
+  lose a few of their settlements; the start town always stands.
+  A ruin is the settlement as it stood, left to the years: walls fallen in
+  or overgrown, doors gone, roads and floors grown over, no one there,
+  monsters welcome, and the way down inside; the dungeon under it, down to
+  depth 3, holds what the fallen left behind. Players arrive with the
+  chronicle full, and innkeepers tell of falls ("Elmby fell to the Redaxe
+  Horde in the summer of year 32. They say its cellars were never
+  emptied.").
+
+- Crawl has an empire layer. The world's regions, four chunks across, are
+  held at four bands of depth (the surface, the shallows, the middle and
+  the deep) by eight factions of six peoples: humans and dwarfs above;
+  kobolds, orcs, trolls and the undead below. Each faction has a name in its
+  people's style, a home band, and four traits (bold, aggressive, orderly,
+  greedy) that shift as it wins, loses, or lives in peace. About once a
+  minute (`--empire=N`, default 400 ticks) factions earn from their land,
+  turn wealth into strength, which fades with distance from home, and push
+  into the land beside theirs, settling wild land or fighting for held land;
+  towns and forts stay human. What happens goes into a chronicle that
+  innkeepers now tell as news. The layers below follow: a people's monsters
+  thrive where their faction holds the land and fade elsewhere; players'
+  kills weaken the faction; markets charge more while their holder is at
+  war, and more or less as it is greedy; and a new captain in each fort
+  pays standing bounties, a price a head, for the peoples below its region,
+  for kills made in that region. The stats show who holds the land you are
+  in. The new module `slug.games.crawl.empire` holds the rules, as pure
+  functions; worlds saved before gain an empire when they load.
+
+- Crawl's monsters live in populations. A region layer visits each chunk no
+  one is in once every 20 ticks (`--region=N`), a share of the chunks each
+  tick: there its monsters breed, up to what the chunk holds (two on the
+  surface, four at depth 1, rising to eight), die off, faster away from
+  the depths they belong to, crowd out the weakest, and move on to the
+  chunks beside them, across edges and up and down stairs; an empty chunk
+  can gain a wanderer, and loot turns up now and then. Chunks not made yet
+  but beside ones that are keep their monsters as counts, which become
+  real monsters when someone first goes there. Chunks someone is in, and
+  towns and forts, are left alone. This replaces restocking after an
+  absence (`--restock` is gone). The new module `slug.games.crawl.region`
+  holds the rules, as pure functions of counts; the engine's snapshot and
+  `changes` gain `populations`, which the store keeps in its own table.
+
+- Crawl's surface has towns and forts, placed from the world's seed on land:
+  a town nearest the middle, where every new character starts, and about one
+  more town for every 200 chunks and a fort for every 250, each filling a
+  chunk. A town has walls with four gates and roads out, a market, an inn,
+  houses and guards; a fort is a palisade around a way down, with guards and
+  a quartermaster. Their people are characters, who stand in place: walking
+  into one opens their menu. Traders and quartermasters sell at fixed prices
+  (what is bought is known for what it is) and buy for half, but not what you are wielding or wearing; innkeepers tell
+  rumours (hints, for now) and sell a meal, which fills you, and a bed,
+  which heals you; guards and townsfolk talk. Settlements never get
+  monsters. The new module `slug.games.crawl.town` places and builds them
+  and holds the prices and what people say. Worlds saved before this gain
+  settlements on load, but chunks already made stay as they were, so
+  `--new` gives a world with its start town.
+
+- Crawl's players can meet. Walking into another player opens a menu over
+  the map, which takes no time: Talk, a list of phrases one key each
+  ("Hello!", "Follow me.", "Help!"…), and Give, an item from the pack or
+  gold, which the other player gets at once. A box above the game (`/` to
+  type) says anything up to 80 characters to everyone in sight. Running
+  stops at another player without a menu, and players cannot attack each
+  other. The engine adds `menu(id)`, `PHRASES`, and a `text` argument to
+  `command`, for the key "say"; the web server adds `POST /say`.
+
+- New core module `slug.os.signal`: `notify(["int", "term"])` returns a
+  channel that receives `"int"` for Ctrl-C (SIGINT) and `"term"` for
+  SIGTERM (Ctrl-Break on Windows) instead of the program ending, so it can
+  stop the way it chooses, running its `defer`s. A second signal of the
+  same kind ends the program at once. Crawl's `play.slug` uses it to save
+  the world when it stops, and its web server ends open pages' streams
+  when its listener closes, so the program can finish.
+
+- Crawl's world is saved in SQLite, through `slug.db.sqlite`, and outlives
+  the server: `play.slug` keeps it in `crawl.db` (`--db=PATH`), writes what
+  changed every 20 ticks (`--save=N`), about a millisecond a player, and
+  on start carries on the world the database holds, with every player's
+  character waiting for their browser. `--new` starts a new world in its
+  place. The new module `slug.games.crawl.store` keeps each chunk, player
+  and remembered chunk as a row of JSON; the engine's `changes()` says
+  what changed since it was last asked, and `web.resume` carries on a
+  saved world.
+
+- Crawl's world has a surface and bounds. Depth 0 is open country (ground,
+  scrub, woods, lakes and rocky hills) drawn from smooth noise over the
+  whole world, so it runs on across chunk edges and any open square of an
+  edge leads across; each surface chunk has a way down (`%`), and depth 1's
+  stairs up (`<`) lead back to it. Outdoors players see in daylight about 18
+  columns across and 9 rows up and down, not through trees or rock, and on
+  into the chunks beside theirs. The world is 32 by 32 chunks (`--size N`):
+  the surface ends in sea, and dungeon edges at the bounds have no opening.
+  New characters start on the surface near the middle. The engine adds
+  `inView(id)` and `viewKey(x, y)`, so a page works out what a player sees
+  once per render.
+
+- Crawl's chunks have shorter corridors, with rooms as varied in size as
+  before: rooms sit nearer the middle of their cells, at most one cell in a
+  chunk is gone, and there are at most two extra corridors. Over 200 chunks,
+  corridor squares fell from about 150 to 125 a chunk, and the longest
+  straight corridor from 24 squares to 19.
+
+- Crawl has touch controls: on a touch screen a bar stays at the bottom of
+  the page, with a pad of the eight directions (Wait in the middle) and
+  Run, which while on makes every direction run, Stairs, and Wait.
+
+- Crawl's map is a window that follows the player: centred on them at
+  first, it scrolls only when they come within a quarter of its width or
+  height of an edge, and it is stitched from the chunk they are in and the
+  chunks they remember around it, so walking through an opening scrolls on
+  instead of jumping to a new map. The page sizes the window to fit (at most
+  80 by 22) and asks for it on `/events?cols=&rows=`; on a narrow screen the
+  panels go below the map. The engine adds `view(id, left, top, cols, rows)`.
+
+- The `slug.random.secure` clutch gives unpredictable random numbers from
+  the operating system's secure generator (`arc4random_buf`, `getrandom`, or
+  `BCryptGenRandom`), through a small C library: `bytes(n)`, `token(size)`
+  (hex, 128 bits by default), and `seed()`. Crawl's player cookies are now
+  such tokens, so no one can guess another player's, and `play.slug`
+  without `--seed` starts a fresh world each time and prints its seed.
+
+- Crawl's chunks restock: one that no one has been in for 2000 ticks (about
+  5 minutes; `play.slug --restock N`) gets fresh monsters and items, by the
+  rules that first stocked it, when someone next enters it. Its rooms and
+  corridors stay, and so do items players dropped there. `newGame` takes
+  `{restockAfter}`.
+
+- Each item in Crawl's pack panel has its own buttons: the use that fits
+  it (Eat, Quaff, Read, Wield, Wear, or Take off) and Drop, shown only when
+  they would do something. `POST /use` takes `action=drop` to drop an item.
+
+- `slug.net.http` streams a response whose `body` is a channel of strings or
+  bytes, such as server-sent events: it writes each value as it arrives and
+  ends the response, and the connection, when the channel closes. When the
+  client goes away, the server closes the channel, so the next send to it
+  fails.
+
+- Crawl's world runs on a tick (150 milliseconds by default; `play.slug
+  --tick MS`). Keys queue for the next tick, at most four ahead per player,
+  and each tick carries out one per player; monsters move every fourth tick
+  (`--pace N`) whether anyone pressed a key or not, in each chunk where
+  someone is playing. Open
+  pages receive their game's HTML over server-sent events (`/events`) after
+  each tick that changed it. A player whose page is closed is away, and their
+  chunk stands still unless someone present is in it. The engine adds
+  `tick(actions, present, monsterEvery)`; `command` still plays one turn per
+  key.
+
+- Several people can play Crawl's world at once: a `crawl` cookie names
+  each browser's player, and a browser without one joins as a new player.
+  Each command still advances the world at once. Players see each other as
+  `@` in their own colour and in the In View panel, block each other, and
+  each keeps their own log; each monster goes for the nearest player in its
+  chunk. The engine's functions take a player id (`join`, `command`,
+  `text`, `here`, `playerOf`, `others`, and the rest), and `newGame` starts
+  an empty world.
+
+- Crawl's world is endless: chunks of one map each, at (x, y) on every
+  depth, generated from the world's seed when first entered. Walking off a
+  map through the opening on its edge enters the next chunk, and stairs lead
+  down and back up (`enter` takes either). A player who dies starts again
+  as a new character on depth 1, in the same world. The Orb and its win are
+  gone until the game has a new goal, and below depth 8 monsters come from
+  depth 8's table.
+
+- Crawl's engine keeps its state as a world (seed, turn, item appearances,
+  and levels by depth) and a player (position, depth, stats, pack, what they
+  have identified and remember, and their messages), the first step towards
+  an endless world that several people play. `current()` returns `world`,
+  `levels`, and `player`, `here()` the player's level, and snapshots hold
+  the same. Games play exactly as before.
+
+- `slug.random` generators have `state()`, where the sequence has reached;
+  `generator(state)` continues from there, so a saved game can resume its
+  random numbers exactly. Crawl's engine now draws from `slug.random` in place
+  of its own copy of the generator, and plays exactly as before.
+
+- Crawl's web front end draws the game from Mustache templates in its
+  clutch's assets (`page.mustache`, `game.mustache`, `pack-item.mustache`)
+  with `slug.text.mustache`, and serves its style and script as asset files.
+  `slug.games.crawl.web` now builds only the data the templates show.
+
+- The `slug.text.mustache` clutch renders Mustache templates:
+  `parse(template)` and `render(template, data, partials)`, with variables,
+  sections, inverted sections, comments, partials, set delimiters, and
+  inheritance, and syntax errors at exact lines. It passes the Mustache
+  specification's tests for those modules. It is the Mustache eval project's
+  reference, which agents' runs of that project do not see.
+
+- A clutch can ship other files, such as scripts or images, in an `assets`
+  folder. `asset("htmx.js")` in one of its modules, test files, or programs
+  embeds that file's bytes when the module compiles, so `.cslug` artifacts
+  carry it and nothing reads it at run time. A name that is not a string
+  literal, or that names no file with exactly that spelling, is a compile
+  error with the code `invalid_asset`. `slug.games.crawl` now ships htmx as
+  `assets/htmx.js`, unchanged, in place of a generated Slug module.
+
+- `slug.net.http` adds `mediaType(name)`, a file name's media type from its
+  extension, such as `text/javascript; charset=utf-8` for `htmx.js`.
+
+- The `slug.games.crawl` clutch holds Crawl, the roguelike from the agent
+  eval: its engine, unchanged apart from module names, and a web front end,
+  `slug.games.crawl.web`, served by `slug.net.http` and drawn with a
+  vendored HTMX. `slug clutch/slug.games.crawl.clutch/play.slug` serves it
+  on port 8080. Eval runs never install it.
+
+- `slug.net.http` adds `form(request)`, which decodes a
+  `application/x-www-form-urlencoded` body's fields as the query is decoded.
+  A handler that throws an `http.reject` error, as `form` does for a body
+  that does not decode, is answered with that error's status instead of
+  `500`.
+
 - Prepending to a list that nothing else holds shifts its own storage
   instead of copying it into a new one.
 

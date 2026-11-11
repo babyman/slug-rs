@@ -1,0 +1,3 @@
+// A module with a `var` that importers read through its import map.
+export var count = 0
+export val bump = fn() { count = count + 1 }

@@ -31,6 +31,13 @@ opt-level = "z"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# Set by scripts/tsan-forks.py for ThreadSanitizer builds.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(slug_sanitized)"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# Under the `threads` feature, `slug_vm::Shared` is `Arc` so forks can share
+# values and reach hosts, but neither is `Send` or `Sync` by type: what
+# crosses threads is vetted at run time (the sendable check) and carried by
+# `slug_vm::sync::Sendable`, and host calls are forwarded to the host's thread.
+arc_with_non_send_sync = "allow"

@@ -1,0 +1,13 @@
+// A fork sees its captures as they were when it started, outer captures
+// too; a spawned task sees an outer capture live.
+val main = fn() {
+    var n = 1
+    val start = fn(forked:bool) {
+        if (forked) { fork { n } } else { spawn { n } }
+    }
+    val forked = start(true)
+    val spawned = start(false)
+    n = 2
+    println(select { await forked })
+    println(select { await spawned })
+}

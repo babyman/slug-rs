@@ -1,0 +1,4 @@
+schema = 1
+outcome = "success"
+stdout = "outside, while the nursery waits\nnested child\ninner child\n2\n1\n"
+timeout_ms = 5000

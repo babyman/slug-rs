@@ -1,0 +1,56 @@
+/**
+ * slug.games.crawl.bestiary — the monsters of Crawl's world
+ *
+ * The monster table the game uses: the eleven kinds of the eval's Crawl
+ * (`slug.games.crawl.data`, which is generated and stays as the eval has
+ * it), carried on below depth 8, and the kinds this world adds after them.
+ * A monster's `kind` is its index here, so new kinds only ever go at the
+ * end.
+ *
+ * Flags, beyond the eval's (`mean` wakes at once, `flies` flits, `still`
+ * never moves, `paralyses` freezes who strikes it, `stealsGold` and
+ * `stealsItem` steal and vanish, `regenerates` heals as it fights):
+ *
+ * - `rare`: turns up a third as often as other kinds at its depths.
+ * - `solitary`: lives alone, so never breeds.
+ * - `weakens`: a blow that lands may sap strength.
+ */
+val data = import("slug.games.crawl.data")
+val {map} = import("slug.std")
+
+val Monster = data.Monster
+
+/**
+ * How deep the table goes: kinds whose depths reach this live at every
+ * depth below it too.
+ */
+export val DEEPEST = 12
+
+// The eval's kinds that live down to its deepest, depth 8, go on to ours.
+val carried = map(data.monsters, fn(m) {
+    if (m.depths[1] == 8) { m copy {depths: [m.depths[0], DEEPEST]} } else { m }
+})
+
+/**
+ * The kinds this world adds, after the eval's eleven.
+ */
+val added = [
+    Monster {letter: "R", name: "giant rat", level: 1, armour: 3, damage: [1, 3], xp: 1, depths: [1, 4], flags: ["mean"]},
+    Monster {letter: "C", name: "wolf", level: 2, armour: 4, damage: [1, 6], xp: 8, depths: [1, 3], flags: ["mean"]},
+    Monster {letter: "G", name: "goblin", level: 1, armour: 4, damage: [1, 6], xp: 3, depths: [1, 5], flags: ["mean"]},
+    Monster {letter: "A", name: "giant ant", level: 2, armour: 5, damage: [1, 4], xp: 6, depths: [2, 7], flags: ["mean"]},
+    Monster {letter: "X", name: "skeleton", level: 2, armour: 4, damage: [1, 6], xp: 9, depths: [3, 9], flags: ["mean"]},
+    Monster {letter: "M", name: "ogre", level: 4, armour: 5, damage: [2, 8], xp: 40, depths: [5, DEEPEST], flags: ["mean"]},
+    Monster {letter: "W", name: "wraith", level: 5, armour: 6, damage: [1, 8], xp: 60, depths: [7, DEEPEST], flags: ["mean", "weakens"]},
+    Monster {letter: "D", name: "dragon", level: 10, armour: 9, damage: [3, 10], xp: 500, depths: [10, DEEPEST], flags: ["mean", "rare", "solitary"]},
+]
+
+/**
+ * Every kind, by index: the eval's eleven, then this world's.
+ */
+export val monsters = carried + added
+
+/**
+ * The wild kinds that live on the surface, by name.
+ */
+export val SURFACE = ["jackal", "snake", "bat", "giant rat", "wolf"]

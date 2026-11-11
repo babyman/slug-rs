@@ -1,7 +1,7 @@
+use crate::sync::{Rc, Weak};
 use alloc::{
     boxed::Box,
     collections::VecDeque,
-    rc::{Rc, Weak},
     string::{String, ToString},
     sync::{Arc, Weak as SyncWeak},
     vec::Vec,
@@ -221,7 +221,10 @@ impl NativeChannelProducer {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_external_producer(&self) -> bool {
         self.state.producer_leases.load(Ordering::Acquire) > 0 && !self.is_closed()
     }
@@ -393,7 +396,10 @@ impl NativeChannelProducer {
         }
     }
 
-    #[cfg(not(target_os = "none"))]
+    #[cfg_attr(
+        all(target_os = "none", not(feature = "concurrency")),
+        allow(dead_code)
+    )]
     pub(crate) fn has_external_producer(&self) -> bool {
         let state = self.state.borrow();
         state.producer_leases > 0 && !state.closed
@@ -974,8 +980,11 @@ struct NativeModuleInner {
     id: usize,
     name: Rc<str>,
     state: Box<dyn Any>,
-    function_signatures: RefCell<HashSet<(String, NativeArity)>>,
-    resource_types: RefCell<HashSet<String>>,
+    /// Whether `state` is `Send + Sync`, as a module whose functions a fork
+    /// may call, on another thread, must have.
+    thread_safe_state: bool,
+    function_signatures: crate::sync::Lock<HashSet<(String, NativeArity)>>,
+    resource_types: crate::sync::Lock<HashSet<String>>,
 }
 
 impl NativeModule {
@@ -986,6 +995,51 @@ impl NativeModule {
     /// Returns an error when the module name is empty.
     pub fn new<T: Any>(name: impl Into<Rc<str>>, state: T) -> Result<Self, NativeDescriptorError> {
         Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Creates a module whose state is safe to share between threads, so
+    /// its functions may be declared thread-safe
+    /// ([`NativeFunction::declare_thread_safe`]) and called from forks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the module name is empty.
+    pub fn new_thread_safe<T: Any + Send + Sync>(
+        name: impl Into<Rc<str>>,
+        state: T,
+    ) -> Result<Self, NativeDescriptorError> {
+        Self::build(
+            name,
+            Box::new(state),
+            NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
+            true,
+        )
+    }
+
+    /// A module in a shared resource scope whose state may be declared
+    /// thread-safe though its type is not `Send + Sync`.
+    ///
+    /// # Safety
+    ///
+    /// While any of its functions declared thread-safe may run, on any
+    /// thread, the state must be used only through shared references, with
+    /// no reference count changed and nothing mutated but atomically, and it
+    /// must not be dropped on a thread other than the one that made it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the module name is empty.
+    #[doc(hidden)]
+    #[allow(
+        unsafe_code,
+        reason = "the caller vouches for a state the compiler cannot check"
+    )]
+    pub unsafe fn new_thread_safe_with_scope_unchecked<T: Any>(
+        name: impl Into<Rc<str>>,
+        state: T,
+        scope_id: usize,
+    ) -> Result<Self, NativeDescriptorError> {
+        Self::build(name, Box::new(state), scope_id, true)
     }
 
     /// Allocates a resource scope shared by several modules, from the same
@@ -1002,6 +1056,15 @@ impl NativeModule {
         state: T,
         scope_id: usize,
     ) -> Result<Self, NativeDescriptorError> {
+        Self::build(name, Box::new(state), scope_id, false)
+    }
+
+    fn build(
+        name: impl Into<Rc<str>>,
+        state: Box<dyn Any>,
+        scope_id: usize,
+        thread_safe_state: bool,
+    ) -> Result<Self, NativeDescriptorError> {
         let name = name.into();
         if name.trim().is_empty() {
             return Err(NativeDescriptorError::new(
@@ -1012,9 +1075,10 @@ impl NativeModule {
             inner: Rc::new(NativeModuleInner {
                 id: scope_id,
                 name,
-                state: Box::new(state),
-                function_signatures: RefCell::new(HashSet::new()),
-                resource_types: RefCell::new(HashSet::new()),
+                state,
+                thread_safe_state,
+                function_signatures: crate::sync::Lock::new(HashSet::new()),
+                resource_types: crate::sync::Lock::new(HashSet::new()),
             }),
         })
     }
@@ -1039,7 +1103,7 @@ impl NativeModule {
         if !self
             .inner
             .function_signatures
-            .borrow_mut()
+            .lock()
             .insert((name.to_string(), arity))
         {
             return Err(NativeDescriptorError::new(format!(
@@ -1105,12 +1169,7 @@ impl NativeModule {
                 "native resource type name cannot be empty",
             ));
         }
-        if !self
-            .inner
-            .resource_types
-            .borrow_mut()
-            .insert(name.to_string())
-        {
+        if !self.inner.resource_types.lock().insert(name.to_string()) {
             return Err(NativeDescriptorError::new(format!(
                 "native resource type `{}` is already registered in module `{}`",
                 name, self.inner.name
@@ -1137,12 +1196,12 @@ impl NativeModule {
     }
 
     fn resource_type_names(&self) -> HashSet<String> {
-        self.inner.resource_types.borrow().clone()
+        self.inner.resource_types.lock().clone()
     }
 }
 
 #[derive(Clone)]
-pub struct NativeFunction(Rc<NativeFunctionInner>);
+pub struct NativeFunction(crate::sync::Code<NativeFunctionInner>);
 
 struct NativeFunctionInner {
     module: NativeModule,
@@ -1150,6 +1209,8 @@ struct NativeFunctionInner {
     arity: NativeArity,
     member_key: Option<Rc<str>>,
     callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
+    /// Its clutch declares it safe to call from any thread, so a fork may.
+    thread_safe: crate::sync::Flag,
 }
 
 impl NativeFunction {
@@ -1160,13 +1221,46 @@ impl NativeFunction {
         member_key: Option<Rc<str>>,
         callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
     ) -> Self {
-        Self(Rc::new(NativeFunctionInner {
+        Self(crate::sync::Code::new(NativeFunctionInner {
             module,
             name,
             arity,
             member_key,
             callback,
+            thread_safe: crate::sync::Flag::new(false),
         }))
+    }
+
+    /// Stops counting this function: its module has initialized, so it
+    /// lives until the program ends.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn immortalize(&self) {
+        crate::sync::immortalize(&self.0);
+    }
+
+    /// Declares the function safe to call from any thread, as its clutch's
+    /// manifest says, so a fork may call it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function's module was not created with
+    /// [`NativeModule::new_thread_safe`]: a fork would read its state from
+    /// another thread.
+    pub fn declare_thread_safe(&self) -> Result<(), NativeDescriptorError> {
+        if !self.0.module.inner.thread_safe_state {
+            return Err(NativeDescriptorError::new(alloc::format!(
+                "`{}.{}` cannot be declared thread-safe: its module's state is not known to be safe to share between threads; create the module with `NativeModule::new_thread_safe`",
+                self.0.module.inner.name,
+                self.0.name
+            )));
+        }
+        self.0.thread_safe.set(true);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_thread_safe(&self) -> bool {
+        self.0.thread_safe.get()
     }
 
     #[must_use]
@@ -1192,7 +1286,7 @@ impl NativeFunction {
     #[doc(hidden)]
     #[must_use]
     pub fn same_function(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        crate::sync::Code::ptr_eq(&self.0, &other.0)
     }
 
     pub(crate) fn resource_scope_id(&self) -> usize {
@@ -1238,7 +1332,7 @@ impl NativeFunction {
         let mut call = NativeCall {
             arguments,
             module: &self.0.module,
-            member_key: self.0.member_key.clone(),
+            member_key: self.0.member_key.as_deref(),
             outcome: None,
             violation: None,
             resources: Vec::new(),
@@ -1443,13 +1537,13 @@ enum NativeOutcome {
 pub struct NativeCall<'call> {
     arguments: &'call [Value],
     module: &'call NativeModule,
-    member_key: Option<Rc<str>>,
+    member_key: Option<&'call str>,
     outcome: Option<NativeOutcome>,
     violation: Option<String>,
     resources: Vec<Weak<NativeResource>>,
 }
 
-impl NativeCall<'_> {
+impl<'call> NativeCall<'call> {
     #[must_use]
     pub fn argument_count(&self) -> usize {
         self.arguments.len()
@@ -1469,15 +1563,17 @@ impl NativeCall<'_> {
             })
     }
 
+    /// The module's state, borrowed for the whole call, so a callback can
+    /// hold it while it also uses the call.
     #[must_use]
-    pub fn state<T: Any>(&self) -> Option<&T> {
+    pub fn state<T: Any>(&self) -> Option<&'call T> {
         self.module.inner.state.downcast_ref()
     }
 
     /// Returns this callback's opaque module-defined member key, when present.
     #[must_use]
     pub fn member_key(&self) -> Option<&str> {
-        self.member_key.as_deref()
+        self.member_key
     }
 
     pub fn set_result(&mut self, value: NativeOwnedValue) {

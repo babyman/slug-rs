@@ -1,0 +1,9 @@
+// A limited nursery queues forks as it queues spawned tasks.
+val main = fn() {
+    val total = nursery limit 1 {
+        val a = fork { 1 }
+        val b = fork { 2 }
+        (select { await a }) + (select { await b })
+    }
+    println(total)
+}

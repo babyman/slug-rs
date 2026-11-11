@@ -1,0 +1,153 @@
+/**
+ * slug.games.crawl.store — a world of Crawl, saved in SQLite
+ *
+ * Keeps a world in a SQLite database through `slug.db.sqlite`, so a server
+ * can stop and carry on where it left off. The game is still held and run
+ * in memory; the database is where it is written down.
+ *
+ * Each table keeps JSON (`slug.fmt.json`) by key: `meta` the world and the
+ * random generator's state, `chunks` each chunk by its key, `players` each
+ * player by id without their memories, `memories` what each player
+ * remembers of each chunk, so a save writes only the chunks they saw
+ * change, and `populations` the monster counts of chunks not made yet. `write` takes the engine's `changes`, and `read` gives back a
+ * snapshot for the engine's `load`.
+ *
+ * ```slug
+ * val game = import("slug.games.crawl")
+ * val store = import("slug.games.crawl.store")
+ *
+ * val db = store.open("crawl.db")
+ * if (store.has(db)) { game.load(store.read(db)) } else { game.newGame(7) }
+ * store.write(db, game.changes())
+ * ```
+ */
+val sqlite = import("slug.db.sqlite")
+val statement = import("slug.db.sqlite.statement")
+val {transaction} = import("slug.db.sqlite.transaction")
+val json = import("slug.fmt.json")
+val {map, filter, reduce} = import("slug.std")
+
+// The layout of the tables; a database written with another is refused.
+val VERSION = 1
+
+val TABLES = [
+    "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, state TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS players (id TEXT PRIMARY KEY, state TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS memories (player TEXT NOT NULL, chunk TEXT NOT NULL, rows TEXT NOT NULL, PRIMARY KEY (player, chunk))",
+    "CREATE TABLE IF NOT EXISTS populations (key TEXT PRIMARY KEY, counts TEXT NOT NULL)",
+]
+
+val metaOf = fn(db:sqlite.Database, key:str) {
+    match sqlite.query(db, "SELECT value FROM meta WHERE key = ?", key) {
+        [row] => json.parse(row.value)
+        _ => nil
+    }
+}
+
+/**
+ * Opens the database at `path` (`":memory:"` for one that lasts only as
+ * long as the handle), creating its tables when they are not there yet.
+ * Throws an `Error` of type `crawl.store` when the database was written
+ * with a different layout of tables.
+ */
+export val open = fn(path:str):sqlite.Database {
+    val db = sqlite.open(path)
+    // Writes go to a log beside the database, so a save is quick and a
+    // reader never waits.
+    sqlite.query(db, "PRAGMA journal_mode = WAL")
+    sqlite.exec(db, "PRAGMA synchronous = NORMAL")
+    map(TABLES, fn(sql) { sqlite.exec(db, sql) })
+    match metaOf(db, "version") {
+        nil => sqlite.exec(db, "INSERT INTO meta VALUES ('version', ?)", json.stringify(VERSION))
+        v => if (v != VERSION) {
+            sqlite.close(db)
+            throw Error {type: "crawl.store", msg: path + " holds a world saved in layout " + v + ", not " + VERSION}
+        }
+    }
+    db
+}
+
+/**
+ * Closes `db`.
+ */
+export val close = fn(db:sqlite.Database) { sqlite.close(db) }
+
+/**
+ * Whether `db` holds a world.
+ */
+export val has = fn(db:sqlite.Database):bool { metaOf(db, "world") != nil }
+
+/**
+ * The seed of the world `db` holds, or `nil` when it holds none.
+ */
+export val seed = fn(db:sqlite.Database):num|nil {
+    match metaOf(db, "world") {
+        w: map => w.seed
+        _ => nil
+    }
+}
+
+/**
+ * Removes the world `db` holds, if any.
+ */
+export val clear = fn(db:sqlite.Database) {
+    transaction(db, fn(db:sqlite.Database) {
+        sqlite.exec(db, "DELETE FROM meta WHERE key != 'version'")
+        sqlite.exec(db, "DELETE FROM chunks")
+        sqlite.exec(db, "DELETE FROM players")
+        sqlite.exec(db, "DELETE FROM memories")
+        sqlite.exec(db, "DELETE FROM populations")
+    })
+}
+
+/**
+ * Writes the engine's `changes` to `db`, all of them or, if anything goes
+ * wrong, none.
+ */
+export val write = fn(db:sqlite.Database, changes:map) {
+    transaction(db, fn(db:sqlite.Database) {
+        val put = fn(sql:str, rows:list) {
+            val s = statement.prepare(db, sql)
+            defer statement.close(s)
+            map(rows, fn(row) { statement.exec(s, ...row) })
+        }
+        put("INSERT OR REPLACE INTO meta VALUES (?, ?)", [
+            ["world", json.stringify(changes.world)],
+            ["rng", json.stringify(changes.rng)],
+        ])
+        put("INSERT OR REPLACE INTO chunks VALUES (?, ?)",
+            map(keys(changes.levels), fn(k) { [k, json.stringify(changes.levels[k])] }))
+        put("INSERT OR REPLACE INTO players VALUES (?, ?)",
+            map(keys(changes.players), fn(id) { [id, json.stringify(changes.players[id])] }))
+        put("DELETE FROM memories WHERE player = ?", map(changes.forgotten, fn(id) { [id] }))
+        put("INSERT OR REPLACE INTO memories VALUES (?, ?, ?)",
+            map(changes.memories, fn(m) { [m.id, m.key, json.stringify(m.rows)] }))
+        val counts = changes.populations ?? {}
+        val gone = filter(keys(counts), fn(k) { counts[k] == nil })
+        put("DELETE FROM populations WHERE key = ?", map(gone, fn(k) { [k] }))
+        put("INSERT OR REPLACE INTO populations VALUES (?, ?)",
+            map(filter(keys(counts), fn(k) { counts[k] != nil }), fn(k) { [k, json.stringify(counts[k])] }))
+    })
+}
+
+/**
+ * The world `db` holds as a snapshot for the engine's `load`; throws an
+ * `Error` of type `crawl.store` when it holds none.
+ */
+export val read = fn(db:sqlite.Database):map {
+    if (!has(db)) { throw Error {type: "crawl.store", msg: "no world saved"} }
+    val levels = reduce(sqlite.query(db, "SELECT key, state FROM chunks"), {}, fn(acc, row) {
+        acc + {[row.key]: json.parse(row.state)}
+    })
+    val memories = reduce(sqlite.query(db, "SELECT player, chunk, rows FROM memories"), {}, fn(acc, row) {
+        acc + {[row.player]: (acc[row.player] ?? {}) + {[row.chunk]: json.parse(row.rows)}}
+    })
+    val players = reduce(sqlite.query(db, "SELECT id, state FROM players"), {}, fn(acc, row) {
+        acc + {[row.id]: json.parse(row.state) + {memory: memories[row.id] ?? {}}}
+    })
+    val populations = reduce(sqlite.query(db, "SELECT key, counts FROM populations"), {}, fn(acc, row) {
+        acc + {[row.key]: json.parse(row.counts)}
+    })
+    {world: metaOf(db, "world"), rng: metaOf(db, "rng"), levels: levels, players: players, populations: populations}
+}

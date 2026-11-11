@@ -1,0 +1,5 @@
+// Initializing a module runs code that writes its globals, so a fork cannot.
+val main = fn() {
+    val t = fork { import("uninitialized").value }
+    println(select { await t })
+}

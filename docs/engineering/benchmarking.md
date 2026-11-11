@@ -23,6 +23,21 @@ SLUG_DUMP_METRICS=1 target/metrics/release/slug program.slug
 A separate target directory keeps the counting build from replacing the
 release executable the timing runners use.
 
+The same build samples where a Slug program spends its instructions when
+`SLUG_PROFILE` names a file. Every 997 instructions it records the Slug call
+stack, and at the end it writes one folded stack and its count per line, the
+input of flame-graph tools such as `inferno-flamegraph`:
+
+```sh
+SLUG_PROFILE=out.folded target/metrics/release/slug program.slug
+```
+
+Each frame is a function, named `module:line` by the line its code starts
+on; the last entry of a stack is the line the innermost function was
+running. A native profiler sees only the VM's dispatch loop, so this is how
+to find the Slug code to change. Counts are instructions, not time: a native
+call or a large copy counts as one.
+
 `make bench-source` builds the profile-guided `slug` executable (see
 [Profile-guided builds](#profile-guided-builds)) and runs
 `crates/slug-frontend/benches/source.rs`. The runner starts a fresh Slug or CPython

@@ -362,7 +362,7 @@ impl<'a> Analysis<'a> {
             }
             ExprKind::Return { value }
             | ExprKind::Throw { value }
-            | ExprKind::Spawn(value)
+            | ExprKind::Spawn { body: value, .. }
             | ExprKind::Prefix { value, .. }
             | ExprKind::TypeApply { callee: value, .. } => self.walk(value),
             ExprKind::Nursery { limit, body } => {

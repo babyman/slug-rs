@@ -40,6 +40,17 @@ pub(crate) fn load(library: &Path, manifest: &NativeManifest) -> Result<Installe
     let owner: Rc<dyn Any> = Rc::new(lease);
     // SAFETY: the table belongs to the library `owner` keeps loaded, and a
     // generated shim's entries follow the contract for the signatures it lists.
-    unsafe { slug_native_adapter::install(table, &expected, &owner) }
-        .map_err(|error| error.to_string())
+    let installed = unsafe { slug_native_adapter::install(table, &expected, &owner) }
+        .map_err(|error| error.to_string())?;
+    // A fork may call only the functions the manifest declares thread-safe.
+    for binding in manifest.bindings().filter(|binding| binding.thread_safe) {
+        for function in &installed.functions {
+            if function.module_name() == binding.module && function.name() == binding.name {
+                function
+                    .declare_thread_safe()
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    Ok(installed)
 }

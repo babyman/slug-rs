@@ -1,0 +1,17 @@
+// Every task owns a `task var`: a spawned task starts with its spawner's
+// value at the spawn, and neither sees the other's later writes. The main
+// task starts with the declared value.
+task var who = "declared"
+val show = fn():str { who }
+val main = fn() {
+    println(show())
+    who = "spawner"
+    val child = spawn {
+        val before = show()
+        who = "child"
+        before + " then " + show()
+    }
+    who = "spawner again"
+    println(select { await child })
+    println(show())
+}

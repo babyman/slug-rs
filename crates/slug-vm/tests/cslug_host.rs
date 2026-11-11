@@ -42,6 +42,26 @@ fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+fn embedded_chan(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = if call.argument_count() == 0 {
+        0
+    } else {
+        match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => usize::try_from(value).unwrap_or(0),
+            Err(error) => return call.raise(error),
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn embedded_close(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
+}
+
 fn embedded_len(call: &mut NativeCall<'_>) -> NativeStatus {
     let value = match call.argument(0) {
         Ok(value) => value,
@@ -116,6 +136,19 @@ fn register_embedded_builtins(host: &cslug::ArtifactHost) {
         builtins
             .function("keys", NativeArity::Exact(1), returns_nil)
             .expect("valid keys function"),
+        builtins
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                embedded_chan,
+            )
+            .expect("valid chan function"),
+        builtins
+            .function("close", NativeArity::Exact(1), embedded_close)
+            .expect("valid close function"),
     ] {
         host.register_builtin(function)
             .expect("register embedded builtin");
@@ -134,7 +167,7 @@ fn decoded_artifact_host_executes_closed_imports() {
     let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
 
     assert_eq!(
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+        cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
             .expect("valid artifact")
             .run()
             .expect("execute closed import"),
@@ -151,7 +184,7 @@ fn artifact_host_rejects_imports_absent_from_its_graph() {
         )
         .expect("compile artifact with dynamic import");
 
-    let error = cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+    let error = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact")
         .run()
         .expect_err("missing artifact edge is checked");
@@ -166,8 +199,8 @@ fn artifact_host_registers_static_module_qualified_foreign_functions() {
             "val gpio = import(\"slug.gpio\")\nval main = fn() { gpio.write() }\n",
         )
         .expect("compile artifact");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     let module = NativeModule::new("slug.gpio", ()).expect("valid native module");
     artifact
         .register_foreign(
@@ -193,14 +226,15 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
             )
             .expect("compile artifact")
     };
-    let missing = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+    let missing = cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact")
         .install_static_providers([])
         .expect_err("missing provider is rejected");
     assert!(matches!(missing, cslug::StaticProviderError::Missing(_)));
 
-    let extra_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
-        .expect("valid artifact");
+    let extra_host =
+        cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
+            .expect("valid artifact");
     let extra_module = NativeModule::new("slug.extra", ()).expect("valid module");
     let extra = extra_module
         .function("write", NativeArity::Exact(0), returns_seven)
@@ -210,8 +244,9 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
         Err(cslug::StaticProviderError::Extra(_))
     ));
 
-    let duplicate_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
-        .expect("valid artifact");
+    let duplicate_host =
+        cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
+            .expect("valid artifact");
     let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
     let first = gpio
         .function("write", NativeArity::Exact(0), returns_seven)
@@ -225,7 +260,7 @@ fn static_providers_must_exactly_match_artifact_foreign_contracts() {
         Err(cslug::StaticProviderError::Duplicate(_))
     ));
 
-    let host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+    let host = cslug::ArtifactHost::new(compiled(), slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact");
     let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
     let write = gpio
@@ -277,8 +312,8 @@ fn firmware_light_walk_reaches_its_first_gpio_write() {
             include_str!("../../../firmware/slug-esp32-s3/programs/blink.slug"),
         )
         .expect("compile firmware light-walk graph");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     register_embedded_builtins(&artifact);
     let module = NativeModule::new("slug.gpio", ()).expect("valid native module");
     artifact
@@ -321,12 +356,61 @@ fn firmware_artifact_executes_implicit_and_explicit_builtin_calls() {
              }\n",
         )
         .expect("compile embedded builtin users");
-    let artifact =
-        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
     register_embedded_builtins(&artifact);
 
     assert_eq!(
         artifact.run().expect("embedded builtin users execute"),
         Value::Int(5)
     );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn firmware_artifact_runs_tasks_on_channels_and_timers() {
+    let artifact = firmware_host()
+        .compile_artifact(
+            "firmware-tasks.slug",
+            "val main = fn() {\n\
+                 val results = chan(2)\n\
+                 spawn { select { after 5 }; select { send results, 2 } }\n\
+                 spawn { select { send results, 1 } }\n\
+                 val first = select { recv results }\n\
+                 val second = select { recv results }\n\
+                 close(results)\n\
+                 first * 10 + second\n\
+             }\n",
+        )
+        .expect("compile embedded task users");
+    let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
+        .expect("valid artifact");
+    register_embedded_builtins(&artifact);
+
+    assert_eq!(
+        artifact.run().expect("embedded tasks execute"),
+        Value::Int(12)
+    );
+}
+
+#[test]
+fn a_task_var_declaration_survives_encoding() {
+    let artifact = host([])
+        .compile_artifact(
+            "entry.slug",
+            "task var who = \"main\"\nvar count = 0\nval fixed = 1\nval main = fn() { fixed }\n",
+        )
+        .expect("compile task var artifact");
+    let bytes = cslug::encode(&artifact).expect("encode artifact");
+    let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
+    let declarations = artifact.modules[artifact.root].program.declarations();
+    let flags = |name: &str| {
+        declarations
+            .iter()
+            .find(|declaration| declaration.bindings.iter().any(|binding| binding == name))
+            .map(|declaration| (declaration.mutable, declaration.task))
+    };
+    assert_eq!(flags("who"), Some((true, true)));
+    assert_eq!(flags("count"), Some((true, false)));
+    assert_eq!(flags("fixed"), Some((false, false)));
 }

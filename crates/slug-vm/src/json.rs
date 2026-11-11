@@ -99,8 +99,8 @@ fn encode(value: &Value, depth: usize, output: &mut String) {
             output.push('}');
         }
         Value::Binding { cell, .. } => match cell.try_borrow() {
-            Ok(value) => encode(&value, depth, output),
-            Err(_) => encode_opaque("uninitialized", value, output),
+            Some(value) => encode(&value, depth, output),
+            None => encode_opaque("uninitialized", value, output),
         },
         Value::Float(_) => encode_opaque("num", value, output),
         Value::Uninitialized => encode_opaque("uninitialized", value, output),

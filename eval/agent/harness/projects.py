@@ -8,6 +8,11 @@ escaping into Slug source.
 A `program` case is a whole Slug program, `source`, run after the project's
 shared `prelude` from cases.json; it passes when it prints exactly `PASS`.
 `{module}` in either is replaced by the module name.
+
+A `speedup` case is such a program run twice, with `--forks=` its `slow`
+and its `fast` count; both must pass, and the fast run must take at most
+`ratio` times as long as the slow one, each the best of two runs. On a
+machine with fewer cores than `fast` it passes, marked skipped.
 """
 
 import json
@@ -15,6 +20,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import arcade_grader
@@ -70,6 +76,49 @@ val check = fn() {{
   }}
   val actual = json.stringify({value})
   println("FAIL wrote", actual)
+}}
+check()
+""",
+    # A Mustache template rendered from text and from `parse`'s result; data
+    # and partials arrive as JSON.
+    "render": """\
+val mustache = import("{module}")
+val json = import("slug.fmt.json")
+val check = fn() {{
+  defer onerror(err) {{ println("FAIL threw", err) }}
+  val template = cfg("template", "")
+  val data = json.parse(cfg("data", "null"))
+  val partials = json.parse(cfg("partials", "{{}}"))
+  val direct = mustache.render(template, data, partials)
+  val parsed = mustache.render(mustache.parse(template), data, partials)
+  if (direct != cfg("expect", "")) {{
+    println("FAIL got", json.stringify(direct))
+  }} else if (parsed != direct) {{
+    println("FAIL from parse got", json.stringify(parsed))
+  }} else {{
+    println("PASS")
+  }}
+}}
+check()
+""",
+    # A malformed template: `parse` throws, or `render` does for a partial.
+    "syntax_error": """\
+val mustache = import("{module}")
+val json = import("slug.fmt.json")
+val check = fn() {{
+  defer onerror(err) {{
+    match err {{
+      e if e.type == "mustache.syntax" && e.data.line == {line} => println("PASS")
+      e => println("FAIL wrong error", e)
+    }}
+  }}
+  val partials = json.parse(cfg("partials", "{{}}"))
+  val actual = if (len(keys(partials)) == 0) {{
+    mustache.parse(cfg("template", ""))
+  }} else {{
+    mustache.render(cfg("template", ""), json.parse(cfg("data", "null")), partials)
+  }}
+  println("FAIL no error", actual)
 }}
 check()
 """,
@@ -130,7 +179,7 @@ def expand(case):
 
 
 def case_program(case, module, prelude=""):
-    if case["kind"] == "program":
+    if case["kind"] in ("program", "speedup"):
         return (prelude + "\n" + case["source"]).replace("{module}", module)
     offset = case.get("offset")
     return PROGRAMS[case["kind"]].format(
@@ -139,6 +188,7 @@ def case_program(case, module, prelude=""):
         value=case.get("value", "nil"),
         setup=case.get("setup", ""),
         offset="" if offset is None else f" && e.data.offset == {offset}",
+        line=case.get("line"),
     )
 
 
@@ -150,6 +200,10 @@ def case_toml(case):
         lines.append(f"input = {json.dumps(case['input'], ensure_ascii=False)}")
     if case["kind"] in ("stringify", "roundtrip"):
         lines.append(f"expect = {json.dumps(case['expect'], ensure_ascii=False)}")
+    if case["kind"] in ("render", "syntax_error"):
+        for name in ("template", "data", "partials", "expect"):
+            if name in case:
+                lines.append(f"{name} = {json.dumps(case[name], ensure_ascii=False)}")
     return "\n".join(lines) + "\n"
 
 
@@ -176,6 +230,38 @@ def run_case(slug, slug_home, module_path, module, case, prelude=""):
         return passed, detail
 
 
+def run_speedup(slug, slug_home, module_path, module, case, prelude=""):
+    """Returns (passed, detail) for a `speedup` case."""
+    cores = os.cpu_count() or 1
+    if cores < case["fast"]:
+        return True, f"skipped: {cores} cores"
+    with tempfile.TemporaryDirectory(prefix="slug-eval-project-") as directory:
+        shutil.copyfile(module_path, os.path.join(directory, f"{module}.slug"))
+        Path(directory, "case.slug").write_text(case_program(case, module, prelude))
+        Path(directory, "slug.toml").write_text("[case]\n")
+        timings = {}
+        for forks in (case["slow"], case["fast"], case["slow"], case["fast"]):
+            started = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    [slug, "case.slug", f"--forks={forks}"],
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    timeout=case.get("seconds", CASE_TIMEOUT_SECONDS),
+                    env={**os.environ, "SLUG_HOME": str(slug_home)},
+                )
+            except subprocess.TimeoutExpired:
+                return False, f"forks={forks} timed out after {case.get('seconds', CASE_TIMEOUT_SECONDS)} s"
+            elapsed = time.monotonic() - started
+            if completed.returncode != 0 or completed.stdout.strip() != "PASS":
+                return False, f"forks={forks}: " + (completed.stdout.strip() or completed.stderr.strip())[:280]
+            timings[forks] = min(timings.get(forks, elapsed), elapsed)
+        slow, fast = timings[case["slow"]], timings[case["fast"]]
+        detail = f"{case['slow']} fork(s) {slow:.2f} s, {case['fast']} forks {fast:.2f} s, ratio {fast / slow:.2f} (at most {case['ratio']})"
+        return fast <= case["ratio"] * slow, detail
+
+
 def grade(slug, slug_home, project_dir, module_path, module):
     """Runs every case and returns per-case outcomes."""
     suite = load_suite(project_dir)
@@ -186,7 +272,8 @@ def grade(slug, slug_home, project_dir, module_path, module):
     outcomes = []
     prelude = suite.get("prelude", "")
     for case in load_cases(project_dir):
-        passed, detail = run_case(slug, slug_home, module_path, module, case, prelude)
+        run = run_speedup if case["kind"] == "speedup" else run_case
+        passed, detail = run(slug, slug_home, module_path, module, case, prelude)
         outcomes.append({"id": case["id"], "kind": case["kind"], "passed": passed, "detail": detail})
     return outcomes
 

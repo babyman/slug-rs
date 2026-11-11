@@ -1,0 +1,407 @@
+/**
+ * slug.text.mustache — Mustache templates
+ *
+ * `parse(template)` checks a template's syntax and returns it parsed;
+ * `render(template, data, partials)` renders a template, given as text or
+ * parsed, against `data`, with `partials` naming the templates its partial
+ * and parent tags use.
+ *
+ * ```slug
+ * val mustache = import("slug.text.mustache")
+ *
+ * val page = mustache.parse("<h1>{{title}}</h1>{{#items}}<li>{{.}}</li>{{/items}}")
+ * mustache.render(page, {title: "Pack", items: ["mace", "ring mail"]})
+ * ```
+ *
+ * It implements the Mustache specification (v1.4) for variables, sections,
+ * inverted sections, comments, partials, set delimiters, and inheritance
+ * (parent and block tags), with every standalone-line rule; it does not
+ * implement lambdas, dynamic names, or the reindentation of block arguments.
+ *
+ * Data is maps with string keys, lists, strings, numbers, booleans, and
+ * `nil`. `nil`, `false`, and an empty list are falsy; every other value,
+ * including `""`, `0`, and `{}`, is truthy. A name is found in the topmost
+ * map on the context stack that has its key, even when the key's value is
+ * `nil`; a dotted name's later parts are looked up only in the value before
+ * them. `{{name}}` escapes `&`, `<`, `>`, and `"`; numbers and booleans
+ * render as `"" + value` does.
+ *
+ * Partials are parsed when first rendered, with `{{` `}}` delimiters, and a
+ * missing one renders as nothing. A parent tag's block arguments yield to
+ * those its caller was given, so the outermost template's argument wins; an
+ * argument holding a block of its own name renders that block's contents.
+ * A malformed template throws a `mustache.syntax` error whose `data.line` is
+ * the line of the offending tag.
+ */
+
+val {split, join, chars, trim} = import("slug.string")
+val {map, contains} = import("slug.std")
+
+// --- Text ------------------------------------------------------------------------
+
+// The line of `position` in `text`: one more than the line endings before it.
+val lineAt = fn(text:str, position:num):num {
+    val go = fn(i:num, line:num):num {
+        if (i >= position) { return line }
+        recur(i + 1, if (text[i] == "\n") { line + 1 } else { line })
+    }
+    go(0, 1)
+}
+
+val fail = fn(message:str, text:str, position:num) {
+    throw Error {type: "mustache.syntax", msg: message, data: {line: lineAt(text, position)}}
+}
+
+val startsAt = fn(text:str, pattern:str, i:num):bool { text[i:i + len(pattern)] == pattern }
+
+// The position of `pattern` in `text` at or after `from`, or -1.
+val find = fn(text:str, pattern:str, from:num):num {
+    val first = pattern[0]
+    val last = len(text) - len(pattern)
+    val go = fn(i:num):num {
+        if (i > last) { return -1 }
+        if (text[i] == first && startsAt(text, pattern, i)) { i } else { recur(i + 1) }
+    }
+    go(from)
+}
+
+val isBlank = fn(c:str):bool { c == " " || c == "\t" }
+
+val isSpace = fn(c:str):bool { c == " " || c == "\t" || c == "\n" || c == "\r" }
+
+// The whitespace-separated words of `text`.
+val words = fn(text:str):list {
+    val go = fn(i:num, word:str, out:list):list {
+        if (i == len(text)) { return if (word == "") { out } else { out :+ word } }
+        val c = text[i]
+        if (isSpace(c)) {
+            recur(i + 1, "", if (word == "") { out } else { out :+ word })
+        } else {
+            recur(i + 1, word + c, out)
+        }
+    }
+    go(0, "", [])
+}
+
+// `text` with `indent` before each of its lines: at its start and after each
+// line ending other than one that ends it.
+val indentLines = fn(text:str, indent:str):str {
+    if (indent == "") { return text }
+    val lines = split(text, "\n")
+    val last = len(lines) - 1
+    val indented = fn(i:num, out:list):list {
+        if (i > last) { return out }
+        val line = lines[i]
+        recur(i + 1, out :+ (if (i == last && line == "") { line } else { indent + line }))
+    }
+    join(indented(0, []), "\n")
+}
+
+// --- Parsing -----------------------------------------------------------------
+
+// The tags that can stand alone on a line, which then leaves no trace.
+val STANDALONE = ["#", "^", "/", "!", ">", "<", "$", "="]
+
+// The name a tag's content gives, which must be one non-empty word.
+val tagName = fn(content:str, text:str, position:num):str {
+    val name = trim(content)
+    if (name == "" || len(words(name)) != 1) { fail("invalid tag name `" + name + "`", text, position) }
+    name
+}
+
+// `text` as text tokens, one per line: each ends with its line ending, but
+// the last may have none.
+val textTokens = fn(text:str, at:num):list {
+    val go = fn(i:num, start:num, out:list):list {
+        if (i == len(text)) {
+            return if (start == i) { out } else { out :+ {type: "text", text: text[start:], at: at + start} }
+        }
+        if (text[i] == "\n") {
+            recur(i + 1, i + 1, out :+ {type: "text", text: text[start:i + 1], at: at + start})
+        } else {
+            recur(i + 1, start, out)
+        }
+    }
+    go(0, 0, [])
+}
+
+// The template's text and tags, in order. A set delimiter tag changes the
+// delimiters for the tags after it.
+val tokenize = fn(text:str):list {
+    val loop = fn(pos:num, open:str, close:str, out:list):list {
+        val tagAt = find(text, open, pos)
+        if (tagAt < 0) { return out + textTokens(text[pos:], pos) }
+        val before = out + textTokens(text[pos:tagAt], pos)
+        val contentAt = tagAt + len(open)
+        val sigil = if (contentAt < len(text)) { text[contentAt] } else { "" }
+        val ending = if (sigil == "{") { "}" + close } else if (sigil == "=") { "=" + close } else { close }
+        val endAt = find(text, ending, contentAt)
+        if (endAt < 0) { fail("unclosed tag", text, tagAt) }
+        val next = endAt + len(ending)
+        val kind = if (sigil == "{" || sigil == "&") {
+            "raw"
+        } else if (contains(STANDALONE, sigil)) {
+            sigil
+        } else {
+            "var"
+        }
+        val body = if (kind == "var") { text[contentAt:endAt] } else { text[contentAt + 1:endAt] }
+        if (kind == "=") {
+            val pair = words(body)
+            if (len(pair) != 2) { fail("a set delimiter tag needs two delimiters", text, tagAt) }
+            return recur(next, pair[0], pair[1], before :+ {type: "tag", kind: kind, at: tagAt})
+        }
+        val name = if (kind == "!") { "" } else { tagName(body, text, tagAt) }
+        recur(next, open, close, before :+ {type: "tag", kind: kind, name: name, at: tagAt, indent: ""})
+    }
+    loop(0, "{{", "}}", [])
+}
+
+val blankText = fn(text:str):bool {
+    val go = fn(i:num):bool {
+        if (i == len(text)) { return true }
+        val c = text[i]
+        if (isBlank(c) || c == "\n" || (c == "\r" && i + 1 < len(text) && text[i + 1] == "\n")) { recur(i + 1) } else { false }
+    }
+    go(0)
+}
+
+// Whether a line's tokens make it standalone: tags that can stand alone,
+// at least one, with only blanks around them.
+val isStandalone = fn(line:list):bool {
+    val go = fn(i:num, tags:num):bool {
+        if (i == len(line)) { return tags > 0 }
+        val token = line[i]
+        if (token.type == "text") {
+            if (blankText(token.text)) { recur(i + 1, tags) } else { false }
+        } else if (contains(STANDALONE, token.kind)) {
+            recur(i + 1, tags + 1)
+        } else {
+            false
+        }
+    }
+    go(0, 0)
+}
+
+// A standalone line's tags, without its blanks or line ending; partial and
+// parent tags take the blanks before the line's first tag as indentation.
+val standaloneTags = fn(line:list):list {
+    val indent = if (line[0].type == "text") { line[0].text } else { "" }
+    val go = fn(i:num, out:list):list {
+        if (i == len(line)) { return out }
+        val token = line[i]
+        recur(i + 1, if (token.type == "text") {
+            out
+        } else if (token.kind == ">" || token.kind == "<") {
+            out :+ (token copy {indent: indent})
+        } else {
+            out :+ token
+        })
+    }
+    go(0, [])
+}
+
+// The tokens with each standalone line reduced to its tags.
+val trimStandalone = fn(tokens:list):list {
+    val go = fn(i:num, line:list, out:list):list {
+        val ends = i == len(tokens) || (len(line) > 0 && line[len(line) - 1].type == "text" && endsLine(line[len(line) - 1].text))
+        if (ends) {
+            val kept = if (len(line) == 0) { out } else if (isStandalone(line)) { out + standaloneTags(line) } else { out + line }
+            if (i == len(tokens)) { return kept }
+            return recur(i, [], kept)
+        }
+        recur(i + 1, line :+ tokens[i], out)
+    }
+    go(0, [], [])
+}
+
+val endsLine = fn(text:str):bool { len(text) > 0 && text[len(text) - 1] == "\n" }
+
+// The blocks directly inside a parent tag, by name: its arguments.
+val blocksOf = fn(nodes:list):map {
+    val go = fn(i:num, out:map):map {
+        if (i == len(nodes)) { return out }
+        val node = nodes[i]
+        recur(i + 1, if (node.kind == "block") { out + {[node.name]: node.nodes} } else { out })
+    }
+    go(0, {})
+}
+
+/**
+ * Builds the nodes of `tokens` from `start` up to the end tag for `opening`,
+ * the tag that opened them (nil at the top level). Returns the nodes and the
+ * index after the end tag.
+ */
+val build = fn(text:str, tokens:list, start:num, opening):list {
+    val loop = fn(i:num, nodes:list):list {
+        if (i == len(tokens)) {
+            if (opening != nil) { fail("unclosed section `" + opening.name + "`", text, opening.at) }
+            return [nodes, i]
+        }
+        val token = tokens[i]
+        if (token.type == "text") { return recur(i + 1, nodes :+ {kind: "text", text: token.text}) }
+        val kind = token.kind
+        if (kind == "/") {
+            if (opening == nil) { fail("end tag `" + token.name + "` closes no section", text, token.at) }
+            if (token.name != opening.name) {
+                fail("end tag `" + token.name + "` does not close `" + opening.name + "`", text, token.at)
+            }
+            return [nodes, i + 1]
+        }
+        if (kind == "!" || kind == "=") { return recur(i + 1, nodes) }
+        if (kind == "var" || kind == "raw") {
+            return recur(i + 1, nodes :+ {kind: "var", name: token.name, escape: kind == "var"})
+        }
+        if (kind == ">") { return recur(i + 1, nodes :+ {kind: "partial", name: token.name, indent: token.indent}) }
+        val [inner, next] = build(text, tokens, i + 1, token)
+        val node = if (kind == "<") {
+            {kind: "parent", name: token.name, indent: token.indent, blocks: blocksOf(inner)}
+        } else if (kind == "$") {
+            {kind: "block", name: token.name, nodes: inner}
+        } else {
+            {kind: "section", name: token.name, inverted: kind == "^", nodes: inner}
+        }
+        recur(next, nodes :+ node)
+    }
+    loop(start, [])
+}
+
+val parseNodes = fn(text:str):list {
+    build(text, trimStandalone(tokenize(text)), 0, nil)[0]
+}
+
+/**
+ * Parses `template`, which `render` then accepts in its place. Throws a
+ * `mustache.syntax` error, with the line of the fault as `data.line`, when
+ * the template is malformed.
+ */
+export val parse = fn(template:str):map {
+    {mustache: parseNodes(template)}
+}
+
+// --- Rendering ---------------------------------------------------------------
+
+val ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;"}
+
+val escapeHtml = fn(text:str):str {
+    val plain = fn(i:num):bool {
+        if (i == len(text)) { return true }
+        if (ESCAPES[text[i]] != nil) { false } else { recur(i + 1) }
+    }
+    if (plain(0)) { text } else { join(map(chars(text), fn(c) { ESCAPES[c] ?? c }), "") }
+}
+
+val has = fn(value, name:str):bool {
+    match value {
+        m:map => m[name] != nil || contains(keys(m), name)
+        _ => false
+    }
+}
+
+// The value `name` gives on `stack`, whose top is its last item; nil when it
+// does not resolve.
+val lookup = fn(stack:list, name:str) {
+    if (name == ".") { return stack[len(stack) - 1] }
+    val parts = split(name, ".")
+    val first = fn(i:num) {
+        if (i < 0) { return nil }
+        if (has(stack[i], parts[0])) { stack[i][parts[0]] } else { recur(i - 1) }
+    }
+    val rest = fn(i:num, value) {
+        if (i == len(parts)) { return value }
+        if (has(value, parts[i])) { recur(i + 1, value[parts[i]]) } else { nil }
+    }
+    rest(1, first(len(stack) - 1))
+}
+
+val truthy = fn(value):bool {
+    match value {
+        nil => false
+        b:bool => b
+        l:list => len(l) > 0
+        _ => true
+    }
+}
+
+val toText = fn(value):str {
+    match value {
+        nil => ""
+        s:str => s
+        _ => "" + value
+    }
+}
+
+/**
+ * Renders `template`, as text or as `parse` returned it, against `data`.
+ * `partials` maps each partial's name to its template text; a missing one
+ * renders as nothing. Throws a `mustache.syntax` error for a malformed
+ * template or partial.
+ */
+export val render = fn(template, data, partials:map = {}):str {
+    val nodes = match template {
+        t:str => parse(t).mustache
+        p:map => p.mustache
+    }
+    var cache = {}
+    // A partial's nodes, parsed with `indent` before each line; nil when
+    // there is no such partial.
+    val partial = fn(name:str, indent:str) {
+        val key = indent + "\n" + name
+        val cached = cache[key]
+        if (cached != nil) { return cached }
+        val text = partials[name]
+        if (text == nil) { return nil }
+        val parsed = parseNodes(indentLines(text, indent))
+        cache = cache + {[key]: parsed}
+        parsed
+    }
+    val renderNodes = fn(nodes:list, stack:list, blocks:map, out:list):list {
+        val each = fn(i:num, out:list):list {
+            if (i == len(nodes)) { return out }
+            val node = nodes[i]
+            val kind = node.kind
+            val next = if (kind == "text") {
+                out :+ node.text
+            } else if (kind == "var") {
+                val text = toText(lookup(stack, node.name))
+                out :+ (if (node.escape) { escapeHtml(text) } else { text })
+            } else if (kind == "section") {
+                val value = lookup(stack, node.name)
+                if (node.inverted) {
+                    if (truthy(value)) { out } else { renderNodes(node.nodes, stack, blocks, out) }
+                } else {
+                    match value {
+                        items:list => {
+                            val go = fn(j:num, out:list):list {
+                                if (j == len(items)) { return out }
+                                recur(j + 1, renderNodes(node.nodes, stack :+ items[j], blocks, out))
+                            }
+                            go(0, out)
+                        }
+                        _ => if (truthy(value)) { renderNodes(node.nodes, stack :+ value, blocks, out) } else { out }
+                    }
+                }
+            } else if (kind == "block") {
+                // An argument that holds a block of its own name renders that
+                // block's contents, rather than itself again.
+                match blocks[node.name] {
+                    nil => renderNodes(node.nodes, stack, blocks, out)
+                    argument => renderNodes(argument, stack, blocks - node.name, out)
+                }
+            } else {
+                // A partial, or a parent whose arguments yield to any the
+                // template rendering it was given.
+                val parsed = partial(node.name, node.indent)
+                if (parsed == nil) {
+                    out
+                } else {
+                    val given = if (kind == "parent") { node.blocks + blocks } else { blocks }
+                    renderNodes(parsed, stack, given, out)
+                }
+            }
+            recur(i + 1, next)
+        }
+        each(0, out)
+    }
+    join(renderNodes(nodes, [data], {}, []), "")
+}

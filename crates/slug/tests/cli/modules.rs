@@ -583,3 +583,344 @@ fn describes_a_modules_declarations_and_gates_unexported_ones() {
     );
     fs::remove_dir_all(root).expect("remove describe fixture directory");
 }
+
+#[test]
+fn clutch_assets_embed_at_compile_time() {
+    let root = std::env::temp_dir().join(format!("slug-cli-assets-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let clutch = root.join("home/clutch/example.clutch");
+    fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+    fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+    fs::write(
+        root.join("home/clutch/manifest.toml"),
+        "[modules]\n\"example.assets\" = \"example.clutch\"\n",
+    )
+    .expect("write repository manifest");
+    fs::write(
+        clutch.join("clutch.toml"),
+        "[modules]\n\"example.assets\" = { source = \"modules/assets.slug\" }\n",
+    )
+    .expect("write clutch manifest");
+    fs::write(
+        clutch.join("modules/assets.slug"),
+        "export val greeting = asset(\"greeting.txt\")\n",
+    )
+    .expect("write clutch module");
+    fs::write(clutch.join("assets/greeting.txt"), "hello\n").expect("write asset");
+    fs::write(
+        clutch.join("play.slug"),
+        "println(len(asset(\"greeting.txt\")))\n",
+    )
+    .expect("write program in clutch");
+    fs::write(
+        root.join("main.slug"),
+        "val {greeting} = import(\"example.assets\")\nprintln(greeting)\n",
+    )
+    .expect("write importer");
+    fs::write(
+        root.join("outside.slug"),
+        "println(asset(\"greeting.txt\"))\n",
+    )
+    .expect("write program outside clutch");
+    let run = |program: &std::path::Path, json: bool| {
+        let mut command = slug();
+        if json {
+            command.arg("--diagnostic-format=json");
+        }
+        let output = command
+            .env("SLUG_HOME", root.join("home"))
+            .arg(program)
+            .output()
+            .expect("run asset program");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(&root.join("main.slug"), false);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"68656c6c6f0a\"\n");
+    let (code, stdout, stderr) = run(&clutch.join("play.slug"), false);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "6\n");
+
+    let (code, stdout, stderr) = run(&root.join("outside.slug"), false);
+    assert_eq!(code, Some(1));
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("semantic error: no asset `greeting.txt`:")
+            && stderr.contains("is not in a clutch"),
+        "{stderr}"
+    );
+    let (_, _, stderr) = run(&root.join("outside.slug"), true);
+    let diagnostic: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("JSON diagnostic");
+    assert_eq!(diagnostic["code"], "invalid_asset");
+    fs::remove_dir_all(root).expect("remove asset fixture");
+}
+
+/// Runs the program at `path` from source, and compiled into an artifact,
+/// returning both outputs.
+fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 2] {
+    let artifact = path.with_extension("cslug");
+    let source = slug().arg(path).output().expect("run source");
+    let compile = slug()
+        .args([
+            "compile",
+            path.to_str().unwrap(),
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile artifact");
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = slug()
+        .args(["run", artifact.to_str().unwrap()])
+        .output()
+        .expect("run artifact");
+    [source, compiled]
+}
+
+#[test]
+fn a_module_variable_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-module-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // Each assignment updates the collection its module-level variable
+    // holds. A value read from it before keeps what it was, a call in the
+    // right operand that assigns the variable is overwritten as before, and
+    // an update that fails leaves the variable as it was.
+    fs::write(
+        &program,
+        "var m:map = {a: 1}\n\
+         var l:list = [1]\n\
+         var s = \"x\"\n\
+         val S = struct { x, y }\n\
+         val id = fn(v) { v }\n\
+         var r = id(S { x: 1, y: 2 })\n\
+         var c = id({hp: 3})\n\
+         val bump = fn() { m = m + {bumped: true}; {c: 3} }\n\
+         val main = fn() {\n\
+             val before = [m, l, r, c]\n\
+             m = m + {b: 2}\n\
+             val calls = [bump]\n\
+             m = m + calls[0]()\n\
+             m = m - \"a\"\n\
+             l = l :+ 2\n\
+             l = l + [3]\n\
+             s = s + \"y\" + 5\n\
+             r = r copy {y: 9}\n\
+             c = c copy {hp: c.hp - 1}\n\
+             println(before)\n\
+             println(m, l, s, r, c)\n\
+             val fail = fn(update) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 update()\n\
+             }\n\
+             fail(fn() { l = l + id(5) })\n\
+             fail(fn() { m = m - id(fn() { 1 }) })\n\
+             fail(fn() { r = r copy {z: 1} })\n\
+             fail(fn() { c = c + 1 })\n\
+             println(m, l, r, c)\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines[..2],
+            [
+                "[{\"a\": 1}, [1], struct {\"x\": 1, \"y\": 2}, {\"hp\": 3}]",
+                "{\"c\": 3, \"b\": 2} [1, 2, 3] xy5 struct {\"x\": 1, \"y\": 9} {\"hp\": 2}",
+            ],
+            "{stdout}"
+        );
+        assert_eq!(
+            lines[6], "{\"c\": 3, \"b\": 2} [1, 2, 3] struct {\"x\": 1, \"y\": 9} {\"hp\": 2}",
+            "{stdout}"
+        );
+        assert_eq!(lines.len(), 7, "{stdout}");
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
+}
+
+#[test]
+fn a_module_variable_field_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-module-field-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create field update fixture directory");
+    let program = root.join("main.slug");
+    // Each copy's last field updates that field of the variable, which the
+    // copy then holds alone. Values read before keep what they were, an
+    // update that fails in its operator or an earlier field leaves the
+    // variable as it was, and a copy of another value reads the variable's
+    // field without changing it.
+    fs::write(
+        &program,
+        "val id = fn(v) { v }\n\
+         val P = struct { name, memory, log }\n\
+         var p = id(P { name: \"a\", memory: {}, log: [] })\n\
+         var d:map = {players: {}, levels: {\"zz\": 0}, n: 0}\n\
+         val main = fn() {\n\
+             p = p copy {memory: p.memory + {k1: 1}}\n\
+             val keepP = p\n\
+             val keepMemory = p.memory\n\
+             p = p copy {memory: p.memory + {k2: 2}}\n\
+             p = p copy {name: \"b\", log: p.log :+ \"x\"}\n\
+             p = p copy {log: p.log + [\"y\"]}\n\
+             println(keepP, keepMemory, p)\n\
+             d = d copy {players: d.players + {a: true}}\n\
+             d = d copy {n: d.n + 1, levels: d.levels - \"zz\"}\n\
+             val keepD = d\n\
+             d = d copy {levels: d.levels + {\"0,0\": 1}}\n\
+             println(keepD, d)\n\
+             val fail = fn(update) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 update()\n\
+             }\n\
+             fail(fn() { p = p copy {memory: p.memory + id(1)} })\n\
+             fail(fn() { p = p copy {name: id(nil).x, memory: p.memory + {k3: 3}} })\n\
+             fail(fn() { d = d copy {players: d.players - id(fn() { 1 })} })\n\
+             fail(fn() { p = id(P { name: \"c\", memory: {}, log: [] }) copy {memory: p.memory + {k4: 4}} })\n\
+             println(p, d)\n\
+         }\n",
+    )
+    .expect("write field update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "struct {\"name\": \"a\", \"memory\": {\"k1\": 1}, \"log\": []} {\"k1\": 1} \
+             struct {\"name\": \"b\", \"memory\": {\"k1\": 1, \"k2\": 2}, \"log\": [\"x\", \"y\"]}\n\
+             {\"players\": {\"a\": true}, \"levels\": {}, \"n\": 1} \
+             {\"players\": {\"a\": true}, \"levels\": {\"0,0\": 1}, \"n\": 1}\n\
+             expected numbers, got map and num\n\
+             cannot index nil\n\
+             fn cannot be used as a map key\n\
+             struct {\"name\": \"c\", \"memory\": {\"k1\": 1, \"k2\": 2, \"k4\": 4}, \"log\": []} \
+             {\"players\": {\"a\": true}, \"levels\": {\"0,0\": 1}, \"n\": 1}\n"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove field update fixture");
+}
+
+#[test]
+fn an_import_in_a_function_resolves_from_the_module_that_made_it() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-import-in-function-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("sub")).expect("create import fixture directory");
+    // `helper` is beside `lib`, not beside `main`, so it resolves only from
+    // `lib`, whose function `main` calls.
+    fs::write(
+        root.join("sub/lib.slug"),
+        "export val hello = fn() { import(\"helper\").message }\n",
+    )
+    .expect("write importing module");
+    fs::write(
+        root.join("sub/helper.slug"),
+        "export val message = \"from helper\"\n",
+    )
+    .expect("write imported module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val lib = import(\"sub.lib\")\nval main = fn() { println(lib.hello()) }\n",
+    )
+    .expect("write program");
+
+    let outputs = run_as_source_and_artifact(&path);
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+    for output in outputs {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "from helper\n");
+    }
+}
+
+#[test]
+fn a_module_that_fails_to_initialize_is_the_cause_of_its_import() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-initialization-failure-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(root.join("c.slug"), "export val x = [1][5]\n").expect("write failing module");
+    fs::write(
+        root.join("b.slug"),
+        "val c = import(\"c\")\nexport val y = 1\n",
+    )
+    .expect("write middle module");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val z = 1\n",
+    )
+    .expect("write outer module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val a = import(\"a\")\nval main = fn() { println(a.z) }\n",
+    )
+    .expect("write program");
+
+    let outputs = run_as_source_and_artifact(&path);
+    let c = root
+        .join("c.slug")
+        .canonicalize()
+        .expect("canonical module path");
+    let b = root
+        .join("b.slug")
+        .canonicalize()
+        .expect("canonical module path");
+    fs::remove_dir_all(&root).expect("remove import fixture directory");
+    for output in outputs {
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let (import, cause) = stderr
+            .split_once("\n\ncaused by: ")
+            .unwrap_or_else(|| panic!("the failure is the cause: {stderr}"));
+        assert!(
+            import.starts_with("slug: runtime error: cannot initialize ")
+                && import.contains(": list index is out of bounds\n")
+                && import.ends_with("= code: module"),
+            "{stderr}"
+        );
+        assert!(
+            cause.starts_with(&format!(
+                "runtime error: list index is out of bounds\n    --> {}:1:19\n",
+                c.display()
+            )),
+            "{stderr}"
+        );
+        assert!(
+            cause.contains(&format!("\n  in main at {}:1:9\n", b.display())),
+            "{stderr}"
+        );
+        assert!(cause.ends_with("= code: out_of_bounds\n"), "{stderr}");
+        assert_eq!(stderr.matches("runtime error:").count(), 2, "{stderr}");
+    }
+}

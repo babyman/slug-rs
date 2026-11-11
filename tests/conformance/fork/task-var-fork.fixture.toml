@@ -1,0 +1,4 @@
+schema = 1
+outcome = "success"
+stdout = "spawner / fork again / fork\nspawner\n"
+stderr = ""
