@@ -1496,6 +1496,14 @@ turns there: one busy computing yields after a while to the other tasks, so
 a failing sibling can still cancel it. The tasks of one fork never
 interleave between suspensions, on any build.
 
+A build with threads runs each fork on a thread of its own, and may bound
+how many run at once; a fork started beyond the bound fails with a fork
+error rather than waiting, since the forks running may be waiting for it. A
+fork that waits costs no processor time, so the bound is well above the
+number of cores; a program pacing work to the cores does so with
+`nursery limit`. A cancelled fork's tasks and nested forks are cancelled
+with it, and stop waiting on anything outside it.
+
 ```slug
 val main = fn() {
   val total = fork { sum(numbers) }

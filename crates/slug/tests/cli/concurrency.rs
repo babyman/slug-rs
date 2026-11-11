@@ -605,3 +605,49 @@ fn a_blocked_task_is_reported_where_it_waits() {
         assert_eq!(diagnostic["location"]["line"], line, "{name}: {diagnostic}");
     }
 }
+
+#[test]
+fn a_fork_beyond_the_running_fork_limit_fails_with_a_fork_error() {
+    let path = fixture_path("fork-limit");
+    fs::write(
+        &path,
+        "val main = fn() {\n    val gate = chan(0)\n    val first = fork { select { recv gate } }\n    val second = fork { select { recv gate } }\n    val third = fork { 3 }\n    select { await third }\n}\n",
+    )
+    .expect("write fork limit source");
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "2")
+        .arg(&path)
+        .output()
+        .expect("run fork limit source");
+    let unlimited = slug().arg(&path).output().expect("run fork limit source");
+    fs::remove_file(path).expect("remove fork limit source");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("this fork cannot start: 2 forks are running already"),
+        "{stderr}"
+    );
+    // Under the default limit the same program gets past the third fork,
+    // then fails only because the first two still wait.
+    assert!(
+        !String::from_utf8(unlimited.stderr)
+            .unwrap()
+            .contains("cannot start"),
+    );
+}
+
+#[test]
+fn slug_max_forks_must_be_a_positive_whole_number() {
+    let output = slug()
+        .env("SLUG_MAX_FORKS", "none")
+        .arg("--version")
+        .output()
+        .expect("run slug with a bad fork limit");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("SLUG_MAX_FORKS must be a positive whole number, got `none`")
+    );
+}

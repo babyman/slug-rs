@@ -401,6 +401,16 @@ KB); static RAM is unchanged. On the board (2026-11-10) the tasks demo ran
 three minutes, 920 blinks at the expected 5.08 a second, after a startup
 bug from 735fa7f was fixed (builtins passed as module providers).
 
+Later (2026-11-10): an M:N experiment. Each island holds a thread for its
+whole life, so forks beyond the core count that compute at once are
+time-sliced by the operating system, and forks that wait hold a sleeping
+thread each (now capped at 256). A pool of about one worker per core that
+resumes any ready island would bound threads by cores and avoid
+oversubscription, at the cost of islands resuming on any thread, which
+their per-thread inbox, wake routing, and single-threaded cells rule out
+today. First measure what oversubscription costs: a benchmark running, say,
+four times as many CPU-bound forks as cores.
+
 Decision (2026-11-10): the ESP32-S3 stays on one core for now, forks taking
 turns, which passes the fork suite there; its programs so far wait on timers
 and pins, so a second core would buy nothing measurable yet. The long-term

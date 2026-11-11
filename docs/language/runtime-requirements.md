@@ -65,6 +65,10 @@ configured library root for `<program>.slug`. This supports installed tools
 such as `slug hello Ada` when `$SLUG_HOME/lib/hello.slug` is available. An
 explicit `.slug` extension is retained during the fallback lookup.
 
+`SLUG_MAX_FORKS`, a positive whole number, sets how many forks the runner
+lets run at once (256 when unset); a fork started beyond it fails with a
+fork error.
+
 Successful execution exits with status zero, unless `main` returns a number,
 which becomes the exit status (see [Program entrypoint](language-specification.md#program-entrypoint)).
 Parse, semantic, module-loading, or runtime failure exits nonzero and writes a

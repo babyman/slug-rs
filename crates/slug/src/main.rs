@@ -192,6 +192,29 @@ fn register_native_modules(vm: &mut Vm) {
     }
 }
 
+/// Applies `SLUG_MAX_FORKS`, how many forks may run at once, when set.
+fn configure_fork_limit() -> Result<(), String> {
+    let Some(value) = env::var_os("SLUG_MAX_FORKS") else {
+        return Ok(());
+    };
+    let limit = value
+        .to_str()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| {
+            format!(
+                "SLUG_MAX_FORKS must be a positive whole number, got `{}`",
+                value.to_string_lossy()
+            )
+        })?;
+    #[cfg(feature = "threads")]
+    slug_vm::set_fork_limit(limit);
+    // Forks run as tasks on one thread here, so there is nothing to bound.
+    #[cfg(not(feature = "threads"))]
+    let _ = limit;
+    Ok(())
+}
+
 fn main() -> ExitCode {
     if env::args_os()
         .nth(1)
@@ -212,6 +235,10 @@ fn main() -> ExitCode {
             _ => break,
         }
         remaining.next();
+    }
+    if let Err(message) = configure_fork_limit() {
+        eprint_startup_error("usage", "environment", message, json);
+        return ExitCode::from(1);
     }
     match remaining.next().as_deref() {
         Some("--version" | "-V") => {

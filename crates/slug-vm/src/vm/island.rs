@@ -264,24 +264,90 @@ impl IslandControl {
     }
 }
 
+/// How many forks may run at once in this process, each on a thread of its
+/// own (see [`set_fork_limit`]).
+const DEFAULT_FORK_LIMIT: usize = 256;
+
+static FORK_LIMIT: AtomicUsize = AtomicUsize::new(DEFAULT_FORK_LIMIT);
+
+/// Islands running now, each holding a worker thread.
+static RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets how many forks may run at once in this process, 256 unless set; at
+/// least one. A fork started beyond it fails with a fork error, rather than
+/// waiting, since the forks running might be waiting for it. Each running
+/// fork holds a thread, which is what the limit bounds: forks that wait
+/// sleep and cost no processor time, so the limit is well above the number
+/// of cores, and a program pacing work to the cores does so with
+/// `nursery limit`.
+pub fn set_fork_limit(limit: usize) {
+    FORK_LIMIT.store(limit.max(1), Ordering::Release);
+}
+
+/// How many forks may run at once in this process.
+#[must_use]
+pub fn fork_limit() -> usize {
+    FORK_LIMIT.load(Ordering::Acquire)
+}
+
+/// Takes one of the running forks' places, if one is free.
+fn reserve_place() -> bool {
+    let limit = fork_limit();
+    RUNNING
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |running| {
+            (running < limit).then_some(running + 1)
+        })
+        .is_ok()
+}
+
+fn release_place() {
+    RUNNING.fetch_sub(1, Ordering::AcqRel);
+}
+
 /// Ships `task`, a fork its nursery has admitted, to an island on a worker
-/// thread. Returns whether it did.
+/// thread. Returns whether it took the task: shipped, or failed because no
+/// fork may start now; `false` leaves a fork not yet admitted queued.
 pub(super) fn ship(task: &Rc<Task>) -> bool {
     let control = Arc::new(IslandControl::new());
     let Some(execution) = task.take_for_island(&control) else {
         return false;
     };
+    // Built here, where the fork's start is still known, for either failure.
+    let mut failure = execution
+        .vm
+        .error_at(crate::RuntimeErrorKind::Fork, String::new());
+    if !reserve_place() {
+        drop(execution);
+        failure.message = alloc::format!(
+            "this fork cannot start: {} forks are running already, the most this program may run at once; start fewer at a time, such as with `nursery limit`",
+            fork_limit()
+        );
+        task.cancel(&failure);
+        return true;
+    }
     let parent = Inbox::current();
     let (inputs, link) = ForkInputs::take(execution, task.clone(), parent.clone(), control);
     link.group.join();
     parent.remote.fetch_add(1, Ordering::AcqRel);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_started();
+    let group = link.group.clone();
     let package = Sendable::new((inputs, link));
-    submit(Sendable::new(Box::new(move || {
+    let started = submit(Sendable::new(Box::new(move || {
         let (inputs, link) = package.into_inner();
         run(inputs, link);
     })));
+    if let Err(error) = started {
+        // The package, and the task handle in it, dropped here with the job.
+        group.leave();
+        parent.remote.fetch_sub(1, Ordering::AcqRel);
+        #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
+        crate::sync::solo_check::fork_ended();
+        release_place();
+        failure.message =
+            alloc::format!("this fork cannot start: no thread could be started for it: {error}");
+        task.cancel(&failure);
+    }
     true
 }
 
@@ -481,6 +547,7 @@ fn run(inputs: ForkInputs, link: ParentLink) {
         parent.post(move || drop(task));
     }
     parent.remote.fetch_sub(1, Ordering::AcqRel);
+    release_place();
     // After the post, which counts the parent awake if it slept.
     group.leave();
     parent.signal.notify();
@@ -562,6 +629,49 @@ impl Vm {
     fn run_island(&mut self, control: &IslandControl) -> Option<VmResult<Value>> {
         let root = RootWaiter::new();
         self.current_waiter = Some(Waiter::root(root.clone()));
+        let outcome = self.run_island_root(control, &root);
+        if control.cancelled() {
+            self.release_cancelled(&root);
+            return None;
+        }
+        outcome
+    }
+
+    /// After its fork is cancelled, takes this island's tasks out of every
+    /// queue they wait in, cancels its nested forks, and waits until they
+    /// have reported back, so that nothing they post reaches the next
+    /// island on this thread. Otherwise a send could hand its value to a
+    /// receiver here that will never run.
+    fn release_cancelled(&mut self, root: &RootWaiter) {
+        if let Some(wait_registration) = self.wait_registration.take() {
+            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
+        }
+        // Cancelling a task leaves the queues it waits in, cancels a nursery
+        // it waits for, and cancels a fork running elsewhere.
+        let error = self.cancelled_error();
+        self.nursery.cancel_all(&error);
+        let inbox = self.attention.clone();
+        let waiter = inbox.signal().blocking_waiter();
+        loop {
+            let observed = inbox.signal().snapshot();
+            // Nested forks' results and host calls, and wakes of tasks
+            // already cancelled, which take nothing.
+            inbox.drain();
+            if !inbox.has_remote() {
+                break;
+            }
+            waiter.wait(inbox.signal(), observed, None);
+        }
+        // A nested fork posts its result before it stops counting.
+        inbox.drain();
+        self.nursery.clear();
+    }
+
+    fn run_island_root(
+        &mut self,
+        control: &IslandControl,
+        root: &RootWaiter,
+    ) -> Option<VmResult<Value>> {
         loop {
             if control.cancelled() {
                 return None;
@@ -597,14 +707,16 @@ type Worker = std::sync::mpsc::Sender<Job>;
 
 static IDLE: Mutex<Vec<Worker>> = Mutex::new(Vec::new());
 
-fn submit(mut job: Job) {
+/// Runs `job` on an idle worker, or a new one; an error when no thread could
+/// be started for it, the job dropped.
+fn submit(mut job: Job) -> Result<(), std::io::Error> {
     loop {
         let idle = IDLE.lock().unwrap_or_else(PoisonError::into_inner).pop();
         let Some(worker) = idle else {
             break;
         };
         match worker.send(job) {
-            Ok(()) => return,
+            Ok(()) => return Ok(()),
             Err(std::sync::mpsc::SendError(returned)) => job = returned,
         }
     }
@@ -624,9 +736,7 @@ fn submit(mut job: Job) {
                 }
             }
         });
-    if let Err(error) = started {
-        panic!("cannot start a fork worker thread: {error}");
-    }
+    started.map(drop)
 }
 
 /// The spawner's host, reached from an island: each call runs on the

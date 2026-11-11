@@ -84,6 +84,8 @@ pub use vm::InteractiveExecution;
 pub use vm::InteractiveTask;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+pub use vm::island::{fork_limit, set_fork_limit};
 pub use vm::{
     CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
     NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,

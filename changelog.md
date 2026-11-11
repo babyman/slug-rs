@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Worker lifecycle, from the security review:
+  - A cancelled fork's island cleans up before its worker takes another:
+    it leaves the queue it waits in, cancels its nursery (each task
+    leaving the channels and timers it waits on, and nested forks being
+    cancelled), and waits for nested forks to report back, discarding what
+    they post. Before, a later send could hand its value to a receiver in
+    the cancelled fork that would never run, and nested forks ran on,
+    unowned, posting to whichever island next used the thread
+    (`fork/cancel-releases-waits`).
+  - At most 256 forks run at once in a process, each on a worker thread;
+    `slug_vm::set_fork_limit` changes it, and the `slug` runner reads
+    `SLUG_MAX_FORKS`. A fork beyond it fails with a fork error rather than
+    waiting, which could deadlock with the forks it would wait for. A thread
+    that cannot be started fails its fork the same way, instead of
+    panicking. Idle workers are kept for reuse only up to the forks that ran
+    at once, so threads stay within the limit too.
+
 - Native and host boundaries, from the security review:
   - `NativeFunction::declare_thread_safe` now returns a `Result`, and
     succeeds only for a function of a module made with
