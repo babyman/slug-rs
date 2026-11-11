@@ -46,7 +46,9 @@ pub(crate) fn load(library: &Path, manifest: &NativeManifest) -> Result<Installe
     for binding in manifest.bindings().filter(|binding| binding.thread_safe) {
         for function in &installed.functions {
             if function.module_name() == binding.module && function.name() == binding.name {
-                function.declare_thread_safe();
+                function
+                    .declare_thread_safe()
+                    .map_err(|error| error.to_string())?;
             }
         }
     }

@@ -1002,6 +1002,37 @@ mod minted_producers {
 // `docs/planning/fork-tasks.md`.
 
 #[test]
+fn only_a_module_with_thread_safe_state_declares_functions_thread_safe() {
+    fn answer(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::integer(42))
+    }
+    // State a fork on another thread must not read.
+    let local = NativeModule::new("test.local_state", std::rc::Rc::new(Cell::new(0))).unwrap();
+    let function = local
+        .function("answer", NativeArity::Exact(0), answer)
+        .unwrap();
+    let error = function
+        .declare_thread_safe()
+        .expect_err("local state cannot be shared");
+    assert!(error.to_string().contains("new_thread_safe"), "{error}");
+    assert!(!function.is_thread_safe());
+
+    let shared = NativeModule::new_thread_safe("test.shared_state", ()).unwrap();
+    let function = shared
+        .function("answer", NativeArity::Exact(0), answer)
+        .unwrap();
+    function.declare_thread_safe().unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    let program = compile(
+        "fork-thread-safe-native.slug",
+        "val main = fn() {\n    val t = fork { answer() }\n    select { await t }\n}\n",
+    )
+    .expect("compile thread-safe native source");
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(42));
+}
+
+#[test]
 fn a_fork_cannot_call_a_native_function_not_declared_thread_safe() {
     fn answer(call: &mut NativeCall<'_>) -> NativeStatus {
         call.return_value(NativeOwnedValue::integer(42))

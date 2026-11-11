@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Native and host boundaries, from the security review:
+  - `NativeFunction::declare_thread_safe` now returns a `Result`, and
+    succeeds only for a function of a module made with
+    `NativeModule::new_thread_safe`, whose state must be `Send + Sync`.
+    Before, safe code could mark any function thread-safe, and a fork then
+    read its module's state from another thread: the interactive server did
+    exactly that, its `print` writing an `Rc<RefCell<..>>` output sink from
+    forks, which is now an `Arc<Mutex<..>>`. The typed native adapter's
+    state is read-only after install; its two switches (a table's activity
+    and a binding's NULL-text rejection) are now atomic, and it vouches for
+    the rest through `NativeModule::new_thread_safe_with_scope_unchecked`.
+  - A fork's `describe` of a module not yet initialized fails as its
+    `import` does: describing initializes the module, which ran its code on
+    the spawner's thread wherever it served the fork's request
+    (`fork/describe-uninitialized`).
+
 - Fork isolation, from the security review:
   - A fork reads a module's `var` through an import map (`counter.count`)
     from its snapshot, as it reads one by name; before, it read the

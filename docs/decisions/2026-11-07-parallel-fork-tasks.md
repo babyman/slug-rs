@@ -227,11 +227,18 @@ Two cases follow from `val` cells being written at initialization:
   clutch's pure functions are declared, and its stdin reader and signal
   registration, which start threads and change process state, are not.
   Running undeclared calls on the owner thread instead is possible later
-  without changing any program that works.
+  without changing any program that works. A host registering functions in
+  Rust declares one thread-safe with `NativeFunction::declare_thread_safe`,
+  which succeeds only when the module was made with
+  `NativeModule::new_thread_safe`, whose state must be `Send + Sync`, so a
+  fork cannot reach thread-local state through safe code (2026-11-10). The
+  typed native adapter, whose state is read-only after install but for two
+  atomic switches, vouches for its own through an `unsafe` constructor.
 - **Imports read; initialization writes.** Importing a module that is
   already initialized is allowed in a fork. Importing one that is not yet
   initialized is an error, because initializing it runs top-level code that
-  writes its globals.
+  writes its globals. `describe` initializes the module it describes, so
+  the same rule holds for it (2026-11-10).
 
 ### Sendable values
 

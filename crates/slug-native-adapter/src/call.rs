@@ -75,7 +75,7 @@ pub(crate) struct RuntimeBinding {
     /// Results return to Slug as a list because the binding has `out` values.
     pub list: bool,
     /// A NULL `cstr` return fails with `native.type` instead of becoming nil.
-    pub reject_null_text: Rc<core::cell::Cell<bool>>,
+    pub reject_null_text: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
 }
 
 pub(crate) struct ResourceSlot {
@@ -84,6 +84,10 @@ pub(crate) struct ResourceSlot {
     pub release_results: usize,
 }
 
+/// A typed module's state. Forks on other threads may call its functions,
+/// so after install it is only read, through shared references, never
+/// counted or changed, but for the atomic `activity` and each binding's
+/// `reject_null_text`: what makes it safe to declare thread-safe.
 pub(crate) struct ModuleState {
     /// Keeps the shim's library loaded while any function or resource lives.
     pub _owner: Rc<dyn Any>,
@@ -238,7 +242,12 @@ fn collect_results(
         let Some((result, kind)) = cells.first().zip(binding.results.first()) else {
             return Ok(NativeOwnedValue::nil());
         };
-        if binding.reject_null_text.get() && matches!(kind, Kind::Cstr) && result.address() == 0 {
+        if binding
+            .reject_null_text
+            .load(core::sync::atomic::Ordering::Acquire)
+            && matches!(kind, Kind::Cstr)
+            && result.address() == 0
+        {
             return Err(NativeError::new(
                 "native.type",
                 format!("`{}` returned NULL for a `str` result", binding.qualified),

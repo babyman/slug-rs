@@ -980,6 +980,9 @@ struct NativeModuleInner {
     id: usize,
     name: Rc<str>,
     state: Box<dyn Any>,
+    /// Whether `state` is `Send + Sync`, as a module whose functions a fork
+    /// may call, on another thread, must have.
+    thread_safe_state: bool,
     function_signatures: crate::sync::Lock<HashSet<(String, NativeArity)>>,
     resource_types: crate::sync::Lock<HashSet<String>>,
 }
@@ -992,6 +995,51 @@ impl NativeModule {
     /// Returns an error when the module name is empty.
     pub fn new<T: Any>(name: impl Into<Rc<str>>, state: T) -> Result<Self, NativeDescriptorError> {
         Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Creates a module whose state is safe to share between threads, so
+    /// its functions may be declared thread-safe
+    /// ([`NativeFunction::declare_thread_safe`]) and called from forks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the module name is empty.
+    pub fn new_thread_safe<T: Any + Send + Sync>(
+        name: impl Into<Rc<str>>,
+        state: T,
+    ) -> Result<Self, NativeDescriptorError> {
+        Self::build(
+            name,
+            Box::new(state),
+            NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
+            true,
+        )
+    }
+
+    /// A module in a shared resource scope whose state may be declared
+    /// thread-safe though its type is not `Send + Sync`.
+    ///
+    /// # Safety
+    ///
+    /// While any of its functions declared thread-safe may run, on any
+    /// thread, the state must be used only through shared references, with
+    /// no reference count changed and nothing mutated but atomically, and it
+    /// must not be dropped on a thread other than the one that made it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the module name is empty.
+    #[doc(hidden)]
+    #[allow(
+        unsafe_code,
+        reason = "the caller vouches for a state the compiler cannot check"
+    )]
+    pub unsafe fn new_thread_safe_with_scope_unchecked<T: Any>(
+        name: impl Into<Rc<str>>,
+        state: T,
+        scope_id: usize,
+    ) -> Result<Self, NativeDescriptorError> {
+        Self::build(name, Box::new(state), scope_id, true)
     }
 
     /// Allocates a resource scope shared by several modules, from the same
@@ -1008,6 +1056,15 @@ impl NativeModule {
         state: T,
         scope_id: usize,
     ) -> Result<Self, NativeDescriptorError> {
+        Self::build(name, Box::new(state), scope_id, false)
+    }
+
+    fn build(
+        name: impl Into<Rc<str>>,
+        state: Box<dyn Any>,
+        scope_id: usize,
+        thread_safe_state: bool,
+    ) -> Result<Self, NativeDescriptorError> {
         let name = name.into();
         if name.trim().is_empty() {
             return Err(NativeDescriptorError::new(
@@ -1018,7 +1075,8 @@ impl NativeModule {
             inner: Rc::new(NativeModuleInner {
                 id: scope_id,
                 name,
-                state: Box::new(state),
+                state,
+                thread_safe_state,
                 function_signatures: crate::sync::Lock::new(HashSet::new()),
                 resource_types: crate::sync::Lock::new(HashSet::new()),
             }),
@@ -1173,8 +1231,6 @@ impl NativeFunction {
         }))
     }
 
-    /// Declares the function safe to call from any thread, as its clutch's
-    /// manifest says, so a fork may call it.
     /// Stops counting this function: its module has initialized, so it
     /// lives until the program ends.
     #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
@@ -1182,8 +1238,24 @@ impl NativeFunction {
         crate::sync::immortalize(&self.0);
     }
 
-    pub fn declare_thread_safe(&self) {
+    /// Declares the function safe to call from any thread, as its clutch's
+    /// manifest says, so a fork may call it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function's module was not created with
+    /// [`NativeModule::new_thread_safe`]: a fork would read its state from
+    /// another thread.
+    pub fn declare_thread_safe(&self) -> Result<(), NativeDescriptorError> {
+        if !self.0.module.inner.thread_safe_state {
+            return Err(NativeDescriptorError::new(alloc::format!(
+                "`{}.{}` cannot be declared thread-safe: its module's state is not known to be safe to share between threads; create the module with `NativeModule::new_thread_safe`",
+                self.0.module.inner.name,
+                self.0.name
+            )));
+        }
         self.0.thread_safe.set(true);
+        Ok(())
     }
 
     #[must_use]

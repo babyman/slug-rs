@@ -146,7 +146,8 @@ fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
 }
 
 fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
-    let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
+    let builtins =
+        NativeModule::new_thread_safe("slug.builtin", ()).expect("static native module is valid");
     vec![
         builtins
             .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
@@ -183,7 +184,9 @@ fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
 fn register_native_modules(vm: &mut Vm) {
     for function in builtin_functions() {
         // Printing, lengths, keys, and channels are safe from any thread.
-        function.declare_thread_safe();
+        function
+            .declare_thread_safe()
+            .expect("builtins have no state to share");
         vm.define_builtin(function)
             .expect("static builtin binding is unique");
     }

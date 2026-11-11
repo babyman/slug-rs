@@ -1,12 +1,10 @@
 //! Native bindings installed into each interactive server VM.
 
-use std::{cell::RefCell, rc::Rc};
-
 use slug_vm::{
     NativeCall, NativeError, NativeOwnedValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
 
-use super::{OutputSink, OutputStream};
+use super::OutputStream;
 
 pub(super) type NativeCallback = for<'call> fn(&mut NativeCall<'call>) -> NativeStatus;
 
@@ -94,13 +92,13 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
     } else {
         output
     };
-    let Some(sink) = call.state::<Rc<RefCell<OutputSink>>>() else {
+    let Some(sink) = call.state::<super::SharedOutput>() else {
         return call.raise(NativeError::new(
             "native.output",
             "interactive output sink is unavailable",
         ));
     };
-    if !sink.borrow_mut().write_active(OutputStream::Stdout, output) {
+    if !super::locked(sink).write_active(OutputStream::Stdout, output) {
         return call.raise(NativeError::new(
             "native.output",
             "interactive output was produced outside a submission",

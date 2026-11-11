@@ -4221,6 +4221,29 @@ impl Vm {
         self.nursery.settle(result, &cancellation, &blocked)
     }
 
+    /// In a fork, fails `operation` (`import` or `describe`) on the module
+    /// `name` if that would initialize it: initializing runs the module's
+    /// code, which sets variables the rest of the program shares, on the
+    /// spawner's thread at whatever point it serves the fork's request.
+    #[cfg(feature = "concurrency")]
+    fn check_fork_may_load(
+        &self,
+        host: &dyn VmHost,
+        importer: Option<&str>,
+        name: &str,
+        operation: &str,
+    ) -> VmResult<()> {
+        if self.fork_context().is_some() && host.module_initialized(importer, name) == Some(false) {
+            return Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                format!(
+                    "a fork cannot initialize `{name}`, as `{operation}` would: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Settles the body of an explicit nursery, this VM's, without waiting:
     /// `None` while a child is pending.
     #[cfg(feature = "concurrency")]
@@ -4379,16 +4402,7 @@ impl Vm {
                 ));
             };
             #[cfg(feature = "concurrency")]
-            if self.fork_context().is_some()
-                && host.module_initialized(importer, &name) == Some(false)
-            {
-                return Err(self.error_at(
-                    RuntimeErrorKind::Fork,
-                    format!(
-                        "a fork cannot initialize `{name}`: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
-                    ),
-                ));
-            }
+            self.check_fork_may_load(host.as_ref(), importer, &name, "import")?;
             let instance = host
                 .import_module(importer, &name)
                 .map_err(|error| self.import_error(&error, self.owned_span(None)))?;
@@ -5081,6 +5095,9 @@ impl Vm {
             ));
         }
         let importer = self.running_module_key();
+        // Describing a module initializes it, which a fork may not do.
+        #[cfg(feature = "concurrency")]
+        self.check_fork_may_load(host.as_ref(), importer, name, "describe")?;
         let description = host
             .describe_module(importer, name)
             .map_err(|error| self.import_error(&error, span.clone()))?;
