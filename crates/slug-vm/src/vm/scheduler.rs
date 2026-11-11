@@ -11,6 +11,9 @@ use crate::{
 
 use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 
+/// The fewest tasks a nursery keeps before it drops settled ones.
+const PRUNE_FLOOR: usize = 64;
+
 /// The tasks a root, or an explicit `nursery`, started, and how it settles
 /// them. Either kind cancels pending children when the owner's body fails.
 ///
@@ -18,7 +21,13 @@ use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 /// parent's ready queue and timers, so a host's `poll` makes progress on
 /// all of them, and none ever waits for another to finish.
 pub(super) struct Nursery {
+    /// The tasks it started that are pending, or settled with a failure
+    /// nothing has awaited, in start order; others are dropped from time to
+    /// time, so a server starting a task per connection does not keep them
+    /// all.
     tasks: RefCell<Vec<Rc<Task>>>,
+    /// The length at which `tasks` is next pruned.
+    prune_at: core::cell::Cell<usize>,
     /// An explicit nursery's: the first unobserved child failure cancels the
     /// remaining children. The root, without one, reports an unobserved
     /// child failure once every task has settled.
@@ -48,6 +57,7 @@ impl Nursery {
     ) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            prune_at: core::cell::Cell::new(PRUNE_FLOOR),
             watch: Rc::new(NurseryWatch::default()),
             fail_fast: false,
             #[cfg(all(
@@ -71,6 +81,7 @@ impl Nursery {
     pub(super) fn explicit(parent: &Self) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            prune_at: core::cell::Cell::new(PRUNE_FLOOR),
             watch: Rc::new(NurseryWatch::default()),
             fail_fast: true,
             #[cfg(all(
@@ -105,7 +116,16 @@ impl Nursery {
     /// order, and is dispatched from there when the scheduler admits it.
     pub(super) fn start(&self, task: Rc<Task>) {
         task.join(self.watch.clone());
-        self.tasks.borrow_mut().push(task.clone());
+        {
+            let mut tasks = self.tasks.borrow_mut();
+            // Pruned when it has doubled since, so each start costs a
+            // constant on average.
+            if tasks.len() >= self.prune_at.get() {
+                tasks.retain(|task| !task.is_done_with());
+                self.prune_at.set((tasks.len() * 2).max(PRUNE_FLOOR));
+            }
+            tasks.push(task.clone());
+        }
         if !Self::dispatch_remote(&task) {
             self.enqueue(task);
         }

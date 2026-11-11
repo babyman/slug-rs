@@ -744,7 +744,8 @@ const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
 /// the clutch at `root`. Each segment must name a directory entry exactly,
 /// case included, even on a file system that ignores case, so a program
 /// that builds on one host builds on every other; and the file must stay in
-/// the folder once links resolve.
+/// the folder once links resolve. The folder is the clutch's own `assets`
+/// directory, not wherever a link of that name points.
 #[doc(hidden)]
 pub fn read_asset(root: &Path, name: &str) -> Result<Vec<u8>, String> {
     let clutch = root.file_name().map_or_else(
@@ -777,7 +778,9 @@ pub fn read_asset(root: &Path, name: &str) -> Result<Vec<u8>, String> {
     }
     let read_error =
         |error: std::io::Error| format!("cannot read asset `{name}` in {clutch}: {error}");
-    let folder = fs::canonicalize(&folder).map_err(read_error)?;
+    // The clutch's resolved root, then `assets` as written: were `assets`
+    // itself a link, its target would pass for the folder.
+    let folder = fs::canonicalize(root).map_err(read_error)?.join("assets");
     let path = fs::canonicalize(&path).map_err(read_error)?;
     if !path.starts_with(&folder) {
         return Err(format!(

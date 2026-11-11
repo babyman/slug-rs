@@ -31,7 +31,8 @@
  * value as it is received, and ends the response and closes the connection
  * when the channel is closed. When the client goes away, the server closes
  * the channel, so the next send to it fails. A handler that throws, or returns something that is
- * not a response, is answered with `500`, except that an `http.reject` error,
+ * not a response, such as one with a header name that is not a token or a
+ * header value with a line break, is answered with `500`, except that an `http.reject` error,
  * such as `form`'s for a body that does not decode, is answered with its
  * status.
  *
@@ -72,6 +73,29 @@ val isToken = fn(text:str):bool {
     }
     val go = fn(i:num):bool { if (i == len(text)) { true } else if (ok(text[i])) { recur(i + 1) } else { false } }
     len(text) > 0 && go(0)
+}
+
+// Whether `text` may be a header field's value: visible characters, spaces,
+// and tabs. A line break would end the field early and let what follows be
+// read as another field, or as the body.
+val isFieldValue = fn(text:str):bool {
+    val ok = fn(c:str):bool { c == "\t" || (ord(c) >= 32 && ord(c) != 127) }
+    val go = fn(i:num):bool { if (i == len(text)) { true } else if (ok(text[i])) { recur(i + 1) } else { false } }
+    go(0)
+}
+
+// Whether every one of a response's `headers` has a token for a name and a
+// field value, as written.
+val validHeaders = fn(headers:map):bool {
+    val names = keys(headers)
+    val go = fn(i:num):bool {
+        if (i == len(names)) { return true }
+        val name = names[i]
+        val value = headers[name]
+        if (!isToken("$name") || !isFieldValue("$value")) { return false }
+        recur(i + 1)
+    }
+    go(0)
 }
 
 val contains = fn(values:list, value):bool {
@@ -406,7 +430,8 @@ val reason = fn(status:num):str {
 }
 
 // A handler's result as a response map, or a `500` when it is not a valid
-// response.
+// response: among others, one with a header whose name is not a token or
+// whose value holds a line break.
 val normalize = fn(response):map {
     val valid = match response {
         _:str => true
@@ -422,6 +447,12 @@ val normalize = fn(response):map {
         given:map => given
         _ => {status: 500}
     }
+    val headersValid = match result.headers {
+        nil => true
+        given:map => validHeaders(given)
+        _ => false
+    }
+    if (!headersValid) { return {status: 500} }
     match result.body {
         nil => result
         _:str => result
@@ -572,14 +603,42 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
  * - `headerTimeout`, 5000: milliseconds from a request's first byte until its
  *   header section is complete, before the server answers `408`;
  * - `maxHeaderBytes`, 8192: the largest request line and header section;
- * - `maxBodyBytes`, 1048576: the largest body, after chunked decoding.
+ * - `maxBodyBytes`, 1048576: the largest body, after chunked decoding;
+ * - `maxConnections`, unlimited: the most connections served at once; at
+ *   the limit the server accepts no more until one closes, and those that
+ *   arrive meanwhile wait in the listener's queue.
  */
 export val serve = fn(listener:tcp.Listener, handler:fn, options:map = {}) {
+    val limit = options.maxConnections
+    // One token per connection being served, when they are limited: taking
+    // one waits while every token is out.
+    val slots = match limit {
+        nil => nil
+        count:num => {
+            if (int(count) != count || count < 1) {
+                throw Error {type: "http.options", msg: "maxConnections must be a positive whole number"}
+            }
+            chan(count)
+        }
+        _ => throw Error {type: "http.options", msg: "maxConnections must be a positive whole number"}
+    }
     val accept = fn() {
+        match slots {
+            nil => nil
+            tokens => send(tokens, true)
+        }
         match tcp.accept(listener) {
             nil => nil
             connection => {
-                spawn { serveConnection(connection, handler, options) }
+                spawn {
+                    defer {
+                        match slots {
+                            nil => nil
+                            tokens => recv(tokens)
+                        }
+                    }
+                    serveConnection(connection, handler, options)
+                }
                 recur()
             }
         }

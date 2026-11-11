@@ -3019,6 +3019,31 @@ fn assets_cannot_link_outside_their_folder() {
     fs::remove_dir_all(root).expect("remove asset root");
 }
 
+#[cfg(unix)]
+#[test]
+fn an_assets_folder_that_is_a_link_holds_no_assets() {
+    let (root, loader) = asset_clutch("clutch-assets-folder-link", "export val x = 1\n");
+    let clutch = root.join("example.clutch");
+    let elsewhere = root.join("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("create outside folder");
+    fs::write(elsewhere.join("secret"), "outside").expect("write outside file");
+    fs::remove_dir_all(clutch.join("assets")).expect("remove assets folder");
+    std::os::unix::fs::symlink(&elsewhere, clutch.join("assets")).expect("link the assets folder");
+    let error = loader
+        .compile_source(
+            &clutch.join("play.slug").to_string_lossy(),
+            "asset(\"secret\")\n",
+        )
+        .expect_err("a linked assets folder is not the clutch's");
+    assert_eq!(error.code.as_str(), "invalid_asset");
+    assert!(
+        error.message.contains("links outside its assets folder"),
+        "{}",
+        error.message
+    );
+    fs::remove_dir_all(root).expect("remove asset root");
+}
+
 #[test]
 fn compiled_artifacts_carry_assets_without_their_clutch() {
     let (root, loader) = asset_clutch(

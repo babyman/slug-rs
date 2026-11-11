@@ -1238,3 +1238,39 @@ fn an_admitted_fork_leaves_for_a_worker_without_a_ready_queue_entry() {
     // to a worker.
     assert_eq!(vm.metrics().peak_ready_queue, 1);
 }
+
+#[test]
+fn a_nursery_lets_go_of_tasks_that_have_settled() {
+    // A server starts a task per connection: once one settles with nothing
+    // to report, its nursery must not keep it, or its result, alive.
+    fn destroyed_so_far(call: &mut NativeCall<'_>) -> NativeStatus {
+        let count = call.state::<Rc<Cell<usize>>>().unwrap().get();
+        call.return_value(NativeOwnedValue::integer(i64::try_from(count).unwrap()))
+    }
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed, destroyed.clone());
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+    let counter = NativeModule::new("test.counter", destroyed).unwrap();
+    vm.define_native(
+        counter
+            .function("destroyed_so_far", NativeArity::Exact(0), destroyed_so_far)
+            .unwrap(),
+    )
+    .unwrap();
+    let program = compile(
+        "settled-tasks.slug",
+        "val run = fn(i:num) { if (i < 300) { val t = spawn { make_resource() }; select { await t }; recur(i + 1) } }\n\
+         run(0)\n\
+         destroyed_so_far()\n",
+    )
+    .expect("compile settled tasks source");
+    let Value::Int(destroyed) = vm.run_program(&program).unwrap() else {
+        panic!("expected a count");
+    };
+    assert!(
+        destroyed >= 200,
+        "only {destroyed} of 300 results were released"
+    );
+}

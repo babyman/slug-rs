@@ -111,6 +111,21 @@ export val localPort = fn(listener:Listener):num {
     localPortRaw(listener.handle)
 }
 
+// The connection `listener` has ready, or `nil` when there is none, as when
+// the listener was closed after it reported one ready.
+val adopt = fn(listener:Listener):Connection|nil {
+    defer onerror(error) {
+        return match error {
+            {type: "native.resource_closed"} => nil
+            _ => throw error
+        }
+    }
+    match adoptRaw(listener.handle) {
+        [0, handle] => connection(handle)
+        _ => nil
+    }
+}
+
 /**
  * Waits for the next connection on `listener` and returns it, or `nil` once
  * the listener is closed. With `timeout`, in milliseconds, throws a
@@ -128,10 +143,7 @@ export val accept = fn(listener:Listener, timeout:num|nil = nil):Connection|nil 
     match tick {
         nil => nil
         "timeout" => throw Error {type: "net.timeout", msg: "no connection arrived in time"}
-        0 => match adoptRaw(listener.handle) {
-            [0, handle] => connection(handle)
-            _ => nil
-        }
+        0 => adopt(listener)
         // A fatal accept error, as -errno; the channel closes after it.
         code => fail(4, -code)
     }

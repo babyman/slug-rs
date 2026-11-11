@@ -1295,6 +1295,17 @@ impl Task {
         }
     }
 
+    /// Whether the task has settled with nothing left for its nursery to
+    /// report: a value, or a failure something has awaited.
+    pub(crate) fn is_done_with(&self) -> bool {
+        let state = self.state.borrow();
+        match &state.phase {
+            TaskPhase::Settled(Ok(_)) => true,
+            TaskPhase::Settled(Err(_)) => state.observed,
+            _ => false,
+        }
+    }
+
     pub(crate) fn unobserved_error(&self) -> Option<crate::RuntimeError> {
         let state = self.state.borrow();
         if state.observed {

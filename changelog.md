@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- HTTP and assets, from the security review:
+  - `slug.net.http` answers a response whose header name is not a token,
+    or whose header value holds a line break or another control
+    character, with `500`; before, a handler echoing input into a header
+    could split the response and add headers of the client's choosing.
+  - `http.serve` takes `maxConnections`, opt-in: at the limit it accepts
+    no more connections until one closes, and those arriving meanwhile wait
+    in the listener's queue.
+  - `tcp.accept` returns `nil`, as documented, when the listener closes
+    after reporting a connection ready; it threw a closed-resource error.
+  - A nursery, the root's included, drops tasks that have settled with
+    nothing to report (a value, or a failure something awaited), pruning
+    whenever its list has doubled; a server starting a task per connection
+    kept every one, and its result, until it stopped.
+  - A clutch's assets are read from its own `assets` folder: one that is a
+    link to elsewhere passed for the folder, so a file it pointed to was
+    read as an asset.
+
 - Worker lifecycle, from the security review:
   - A cancelled fork's island cleans up before its worker takes another:
     it leaves the queue it waits in, cancels its nursery (each task

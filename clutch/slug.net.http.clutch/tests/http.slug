@@ -137,3 +137,35 @@ val closesAStreamWhoseClientLeaves = fn() {
     tcp.close(listener)
     await(server)
 }
+
+@test
+val answersAHeaderThatWouldSplitTheResponseWith500 = fn() {
+    val injected = fn(request) { {status: 200, headers: {Location: "/a\r\nSet-Cookie: stolen=1"}, body: "x"} }
+    val answer = exchange(injected, "GET / HTTP/1.0\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    val badName = fn(request) { {status: 200, headers: {"X-A: b\r\nX-C": "d"}, body: "x"} }
+    assertEqual(exchange(badName, "GET / HTTP/1.0\r\n\r\n"), answer)
+}
+
+@test
+val servesAtMostMaxConnectionsAtOnce = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, fn(request) { "ok" }, {idleTimeout: 2000, maxConnections: 1}) }
+    val request = "GET / HTTP/1.1\r\nHost: test\r\n\r\n"
+    val first = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(first, request)
+    assertEqual(tcp.read(first, timeout = 5000) == nil, false)
+    // The first connection stays open, so the second waits to be accepted.
+    val second = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(second, request)
+    val answeredWithin = fn(connection, ms:num):bool {
+        defer onerror(_) { return false }
+        tcp.read(connection, timeout = ms) != nil
+    }
+    assertEqual(answeredWithin(second, 300), false)
+    tcp.close(first)
+    assertEqual(tcp.read(second, timeout = 5000) == nil, false)
+    tcp.close(second)
+    tcp.close(listener)
+    await(server)
+}
