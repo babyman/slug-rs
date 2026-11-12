@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- From the seventh review:
+  - A value that reaches itself, as an import map does through a module
+    `var` holding it, no longer hangs a fork's sendability check, which
+    now walks each container, binding, and function once, nor overflows
+    `==`, which compares identical containers at once and, past 32
+    bindings followed inside each other, compares bindings by identity
+    (`fork/cyclic-result`). Values cannot change, so only bindings can
+    make one reach itself.
+  - Enum patterns compare through the task's view, as literal and pinned
+    patterns do.
+  - A worker that catches a panic in its island cancels the island's
+    forks and waits for them before reporting, as every other exit does.
+  - A host call queued by a fork that was cancelled before it was served
+    is skipped rather than run for nobody.
+
 - From the sixth review:
   - An island waits for the forks it started on every exit, not only when
     it was cancelled, and a finished island tells its program's root: a

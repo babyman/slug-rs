@@ -517,23 +517,48 @@ fn captured_var(closure: &crate::Closure) -> Option<String> {
 /// a `var`, reading each module binding inside it through `read`.
 pub(crate) fn unsendable(value: &Value, read: crate::value::BindingReader<'_>) -> Option<String> {
     let mut pending = alloc::vec![value.clone()];
-    let mut closures = HashSet::new();
+    // Each container, binding, and function is walked once, so a value that
+    // reaches itself, as an import map can through a module variable,
+    // still ends.
+    let mut seen = HashSet::new();
+    let mut first_visit =
+        |kind: u8, address: usize, start: u32, end: u32| seen.insert((kind, address, start, end));
     while let Some(value) = pending.pop() {
         match value {
             Value::Task(_) => return Some("a task handle".into()),
             Value::NativeResource(_) => return Some("a native resource".into()),
-            Value::List(list) => pending.extend(list.iter().cloned()),
-            Value::Map(map) => {
-                for (key, value) in map.iter() {
-                    pending.push(key.clone());
-                    pending.push(value.clone());
+            Value::List(list) => {
+                let (address, start, end) = list.identity();
+                if first_visit(0, address, start, end) {
+                    pending.extend(list.iter().cloned());
                 }
             }
-            Value::Struct(value) => pending.extend(value.values.iter().cloned()),
+            Value::Map(map) => {
+                if first_visit(1, map.identity(), 0, 0) {
+                    for (key, value) in map.iter() {
+                        pending.push(key.clone());
+                        pending.push(value.clone());
+                    }
+                }
+            }
+            Value::Struct(value) => {
+                if first_visit(2, Rc::as_ptr(&value) as usize, 0, 0) {
+                    pending.extend(value.values.iter().cloned());
+                }
+            }
             Value::Overloads(values) => pending.extend(values.iter().cloned()),
-            Value::Binding { cell, name } => pending.push(read(&cell, &name)),
+            Value::Binding { cell, name } => {
+                if first_visit(3, cell_key(&cell), 0, 0) {
+                    pending.push(read(&cell, &name));
+                }
+            }
             Value::Closure(closure) => {
-                if !closures.insert(crate::sync::Code::as_ptr(&closure).cast::<()>() as usize) {
+                if !first_visit(
+                    4,
+                    crate::sync::Code::as_ptr(&closure).cast::<()>() as usize,
+                    0,
+                    0,
+                ) {
                     continue;
                 }
                 if let Some(name) = captured_var(&closure) {

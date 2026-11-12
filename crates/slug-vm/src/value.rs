@@ -1626,6 +1626,10 @@ impl Value {
     }
 }
 
+/// How many module bindings one equality follows inside each other before
+/// it compares bindings by identity alone.
+const BINDING_DEPTH: u32 = 32;
+
 /// How an equality reads a module binding it meets inside a value: as the
 /// task comparing sees it, which in a fork is its snapshot.
 pub(crate) type BindingReader<'a> =
@@ -1647,14 +1651,31 @@ impl Value {
     /// Whether `self` equals `other`, reading each module binding inside
     /// either through `read`. A `val` reads the same to every task, so it is
     /// compared in place.
-    #[allow(clippy::float_cmp, reason = "Slug's equality is exact")]
     pub(crate) fn equals_with(&self, other: &Self, read: BindingReader<'_>) -> bool {
+        self.equals_at(other, read, 0)
+    }
+
+    /// [`Self::equals_with`] at `depth` module bindings followed. Values
+    /// cannot change, so only a binding, a module variable holding a value
+    /// that reaches the binding again, can make one reach itself: past
+    /// [`BINDING_DEPTH`] bindings, two compare equal only if they are the
+    /// same, so even such a value's comparison ends.
+    #[allow(clippy::float_cmp, reason = "Slug's equality is exact")]
+    pub(crate) fn equals_at(&self, other: &Self, read: BindingReader<'_>, depth: u32) -> bool {
         match (self, other) {
+            (Self::Binding { cell, .. }, Self::Binding { cell: other, .. })
+                if crate::sync::Code::ptr_eq(cell, other) =>
+            {
+                true
+            }
+            (Self::Binding { .. }, _) | (_, Self::Binding { .. }) if depth >= BINDING_DEPTH => {
+                false
+            }
             (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
                 if name.kind() == crate::variables::BindingKind::Val {
-                    cell.borrow().equals_with(value, read)
+                    cell.borrow().equals_at(value, read, depth + 1)
                 } else {
-                    read(cell, name).equals_with(value, read)
+                    read(cell, name).equals_at(value, read, depth + 1)
                 }
             }
             (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
@@ -1667,12 +1688,21 @@ impl Value {
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) => {
-                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.equals_with(b, read))
+                a.identity() == b.identity()
+                    || (a.len() == b.len()
+                        && a.iter()
+                            .zip(b.iter())
+                            .all(|(a, b)| a.equals_at(b, read, depth)))
             }
             (Self::Overloads(a), Self::Overloads(b)) => {
-                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.equals_with(b, read))
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(a, b)| a.equals_at(b, read, depth))
             }
-            (Self::Map(a), Self::Map(b)) => a.equals_with(b, read),
+            (Self::Map(a), Self::Map(b)) => {
+                a.identity() == b.identity() || a.equals_at(b, read, depth)
+            }
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema)
@@ -1680,7 +1710,7 @@ impl Value {
                     && a.values
                         .iter()
                         .zip(&b.values)
-                        .all(|(a, b)| a.equals_with(b, read))
+                        .all(|(a, b)| a.equals_at(b, read, depth))
             }
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),

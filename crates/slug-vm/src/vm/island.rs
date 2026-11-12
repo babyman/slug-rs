@@ -614,7 +614,16 @@ fn run(inputs: ForkInputs, link: ParentLink) {
         vm.run_island(&control)
             .map(|result| vm.sendable_outcome(result))
     }))
-    .unwrap_or_else(|panic| Some(Err(vm.island_panic_error(panic.as_ref()))));
+    .unwrap_or_else(|panic| {
+        let error = vm.island_panic_error(panic.as_ref());
+        // The panic skipped the island's own exit: its forks are cancelled
+        // and report back here, before this island does, as on any exit.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            vm.nursery.cancel_all(&error);
+            vm.attention.join_remote();
+        }));
+        Some(Err(error))
+    });
     // Posted before the result, so the spawner has merged them by the time
     // it sees the fork settle.
     #[cfg(feature = "metrics")]
@@ -846,7 +855,13 @@ impl Remote {
         let reply = Arc::new((Mutex::new(None::<Sendable<R>>), Condvar::new()));
         let host = self.host.clone();
         let answer = reply.clone();
+        let control = self.control.clone();
         self.parent.request(move || {
+            // A fork cancelled before its call is served no longer waits for
+            // it: the host is not called for it at all.
+            if control.cancelled() {
+                return;
+            }
             let result = request(&*host);
             *answer.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Sendable::new(result));
             answer.1.notify_all();

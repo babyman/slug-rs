@@ -369,7 +369,7 @@ pub(super) fn matches_pattern(
         MatchPattern::Literal(expected) => Ok(value.equals_with(expected, read)),
         MatchPattern::Enum(index) => operands
             .get(*index)
-            .map(|expected| value == expected)
+            .map(|expected| value.equals_with(expected, read))
             .ok_or_else(|| {
                 (
                     RuntimeErrorKind::InvalidBytecode,

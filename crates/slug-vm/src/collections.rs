@@ -438,6 +438,14 @@ impl Deref for List {
     }
 }
 
+impl List {
+    /// What makes this list itself: its storage and the range it shows, as
+    /// a walk that must visit each list once tells them apart.
+    pub(crate) fn identity(&self) -> (usize, u32, u32) {
+        (Rc::as_ptr(&self.values) as usize, self.start, self.end)
+    }
+}
+
 impl PartialEq for List {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
@@ -945,14 +953,24 @@ impl Map {
         Ok(Self(crate::sync::Code::new(storage)))
     }
 
+    /// The address of this map's storage, which its copies share.
+    pub(crate) fn identity(&self) -> usize {
+        crate::sync::Code::as_ptr(&self.0).cast::<()>() as usize
+    }
+
     /// Whether the maps hold equal values under the same keys, reading the
     /// module bindings among them through `read`.
-    pub(crate) fn equals_with(&self, other: &Self, read: crate::value::BindingReader<'_>) -> bool {
+    pub(crate) fn equals_at(
+        &self,
+        other: &Self,
+        read: crate::value::BindingReader<'_>,
+        depth: u32,
+    ) -> bool {
         self.len() == other.len()
             && self.iter().all(|(key, value)| {
                 other
                     .get(key)
-                    .is_some_and(|other| other.equals_with(value, read))
+                    .is_some_and(|other| other.equals_at(value, read, depth))
             })
     }
 

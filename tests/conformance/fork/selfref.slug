@@ -1,0 +1,3 @@
+// A module whose `var` holds its own import map, for `cyclic-result`.
+export var me = 0
+me = import("selfref")
