@@ -125,6 +125,9 @@ const CANCELLED: u8 = 2;
 
 std::thread_local! {
     static CURRENT: Arc<Inbox> = Arc::new(Inbox::new());
+    /// Set on a worker whose island could not be cleaned up after a panic:
+    /// it ends rather than take another.
+    static RETIRE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
 impl Inbox {
@@ -610,18 +613,21 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     // spawner waiting for a result that never comes, so it becomes the
     // fork's error instead, and the island's bookkeeping still runs. Release
     // builds abort on a panic, which cannot leave the spawner waiting either.
+    let root = RootWaiter::new();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        vm.run_island(&control)
+        vm.run_island(&control, &root)
             .map(|result| vm.sendable_outcome(result))
     }))
     .unwrap_or_else(|panic| {
         let error = vm.island_panic_error(panic.as_ref());
-        // The panic skipped the island's own exit: its forks are cancelled
-        // and report back here, before this island does, as on any exit.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            vm.nursery.cancel_all(&error);
-            vm.attention.join_remote();
-        }));
+        // The panic skipped the island's own exit: it is released here as a
+        // cancelled one is, before it reports. Should that fail too, this
+        // worker takes no further island: its thread's state is suspect.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_island(&root)))
+            .is_err()
+        {
+            RETIRE.with(|retire| retire.set(true));
+        }
         Some(Err(error))
     });
     // Posted before the result, so the spawner has merged them by the time
@@ -721,12 +727,15 @@ impl Vm {
 
     /// Runs this island's fork to settlement, as the root runs `main`, or
     /// `None` once its spawner cancels it.
-    fn run_island(&mut self, control: &IslandControl) -> Option<VmResult<Value>> {
-        let root = RootWaiter::new();
+    fn run_island(
+        &mut self,
+        control: &IslandControl,
+        root: &RootWaiter,
+    ) -> Option<VmResult<Value>> {
         self.current_waiter = Some(Waiter::root(root.clone()));
-        let outcome = self.run_island_root(control, &root);
+        let outcome = self.run_island_root(control, root);
         if control.cancelled() {
-            self.release_cancelled(&root);
+            self.release_island(root);
             return None;
         }
         // Forks a failed body's settlement cancelled may still be stopping:
@@ -735,12 +744,13 @@ impl Vm {
         outcome
     }
 
-    /// After its fork is cancelled, takes this island's tasks out of every
-    /// queue they wait in, cancels its nested forks, and waits until they
-    /// have reported back, so that nothing they post reaches the next
-    /// island on this thread. Otherwise a send could hand its value to a
-    /// receiver here that will never run.
-    fn release_cancelled(&mut self, root: &RootWaiter) {
+    /// After its fork is cancelled, or its worker caught a panic in it,
+    /// takes this island's root and tasks out of every queue they wait in,
+    /// cancels its nested forks, and waits until they have reported back, so
+    /// that nothing they post reaches the next island on this thread.
+    /// Otherwise a send could hand its value to a receiver here that will
+    /// never run.
+    fn release_island(&mut self, root: &RootWaiter) {
         if let Some(wait_registration) = self.wait_registration.take() {
             wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
         }
@@ -822,6 +832,9 @@ fn submit(mut job: Job) -> Result<(), std::io::Error> {
             let mut job = job;
             loop {
                 (job.into_inner())();
+                if RETIRE.with(core::cell::Cell::get) {
+                    return;
+                }
                 IDLE.lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(sender.clone());
@@ -884,9 +897,16 @@ impl Remote {
         }
     }
 
+    /// Asks the spawner's host to run `request`, not waiting for it; one a
+    /// fork cancelled before it is served is skipped, as `call`'s is.
     fn tell(&self, request: impl FnOnce(&dyn VmHost) + 'static) {
         let host = self.host.clone();
-        self.parent.request(move || request(&*host));
+        let control = self.control.clone();
+        self.parent.request(move || {
+            if !control.cancelled() {
+                request(&*host);
+            }
+        });
     }
 }
 

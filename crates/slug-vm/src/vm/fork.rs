@@ -432,6 +432,22 @@ impl Vm {
         self.check_sendable(value, "a value sent on a channel a fork uses")
     }
 
+    /// Whether this task's fork has been cancelled, on a build where a fork
+    /// runs on a thread of its own.
+    #[cfg_attr(
+        not(all(feature = "threads", not(target_os = "none"))),
+        allow(clippy::unused_self)
+    )]
+    fn is_cancelled(&self) -> bool {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        return self
+            .cancel
+            .as_ref()
+            .is_some_and(|control| control.cancelled());
+        #[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+        false
+    }
+
     /// `value`, a fork's result, when it is sendable.
     pub(super) fn sendable_result(&self, value: Value) -> VmResult<Value> {
         self.check_sendable(&value, "this fork's result")?;
@@ -456,7 +472,10 @@ impl Vm {
                 .into_iter()
                 .chain(link.native.as_ref().and_then(|native| native.data.as_ref()));
             for value in carried {
-                if let Some(reason) = unsendable(value, &|cell, name| self.seen_binding(cell, name))
+                if let Some(reason) =
+                    unsendable_until(value, &|cell, name| self.seen_binding(cell, name), &|| {
+                        self.is_cancelled()
+                    })
                 {
                     let mut stripped = error.clone();
                     strip_values(&mut stripped);
@@ -477,7 +496,11 @@ impl Vm {
 
     pub(super) fn check_sendable(&self, value: &Value, what: &str) -> VmResult<()> {
         // Through this task's view, on every build.
-        match unsendable(value, &|cell, name| self.seen_binding(cell, name)) {
+        match unsendable_until(
+            value,
+            &|cell, name| self.seen_binding(cell, name),
+            &|| self.is_cancelled(),
+        ) {
             Some(reason) => Err(self.error_at(
                 RuntimeErrorKind::Fork,
                 alloc::format!(
@@ -516,55 +539,117 @@ fn captured_var(closure: &crate::Closure) -> Option<String> {
 /// what in it is a task handle, a native resource, or a function capturing
 /// a `var`, reading each module binding inside it through `read`.
 pub(crate) fn unsendable(value: &Value, read: crate::value::BindingReader<'_>) -> Option<String> {
-    let mut pending = alloc::vec![value.clone()];
-    // Each container, binding, and function is walked once, so a value that
-    // reaches itself, as an import map can through a module variable,
-    // still ends.
+    unsendable_until(value, read, &|| false)
+}
+
+/// What the walk of [`unsendable_until`] is in the middle of: a container
+/// and the position of its next part.
+enum Cursor {
+    List(crate::collections::List, usize),
+    Map(crate::collections::Map, usize),
+    Struct(Rc<crate::value::StructValue>, usize),
+    Overloads(Rc<alloc::vec::Vec<Value>>, usize),
+    Captures(crate::sync::Code<crate::Closure>, usize),
+}
+
+impl Cursor {
+    /// The next part of the container, moving past it.
+    fn next(&mut self) -> Option<Value> {
+        let part = match self {
+            Self::List(list, at) => list.get(*at).cloned(),
+            Self::Map(map, at) => map.entry_at(*at / 2).map(|(key, value)| {
+                if *at % 2 == 0 {
+                    key.clone()
+                } else {
+                    value.clone()
+                }
+            }),
+            Self::Struct(value, at) => value.values.get(*at).cloned(),
+            Self::Overloads(values, at) => values.get(*at).cloned(),
+            Self::Captures(closure, at) => {
+                closure.captures.get(*at).map(|cell| cell.borrow().clone())
+            }
+        };
+        match self {
+            Self::List(_, at)
+            | Self::Map(_, at)
+            | Self::Struct(_, at)
+            | Self::Overloads(_, at)
+            | Self::Captures(_, at) => *at += 1,
+        }
+        part
+    }
+}
+
+/// How many parts the walk visits between checks of whether to stop.
+const STOP_CHECK_EVERY: usize = 4096;
+
+/// [`unsendable`], stopping early, as if the value were not sendable, once
+/// `stop` says to, which it is asked every few thousand parts: a cancelled
+/// fork need not finish checking a large value. The walk keeps one cursor
+/// per container it is inside, so what it holds grows with the value's
+/// depth rather than its size, and it visits each container, binding, and
+/// function once, so a value that reaches itself, as an import map can
+/// through a module variable, still ends.
+pub(crate) fn unsendable_until(
+    value: &Value,
+    read: crate::value::BindingReader<'_>,
+    stop: &dyn Fn() -> bool,
+) -> Option<String> {
+    let mut cursors: alloc::vec::Vec<Cursor> = alloc::vec::Vec::new();
     let mut seen = HashSet::new();
-    let mut first_visit =
-        |kind: u8, address: usize, start: u32, end: u32| seen.insert((kind, address, start, end));
-    while let Some(value) = pending.pop() {
+    let mut next = Some(value.clone());
+    let mut visited = 0usize;
+    loop {
+        let value = if let Some(value) = next.take() {
+            value
+        } else if let Some(part) = cursors.last_mut()?.next() {
+            part
+        } else {
+            cursors.pop();
+            continue;
+        };
+        visited += 1;
+        if visited.is_multiple_of(STOP_CHECK_EVERY) && stop() {
+            return Some("a value whose check stopped when its fork was cancelled".into());
+        }
+        let mut first_visit = |kind: u8, address: usize, start: u32, end: u32| {
+            seen.insert((kind, address, start, end))
+        };
         match value {
             Value::Task(_) => return Some("a task handle".into()),
             Value::NativeResource(_) => return Some("a native resource".into()),
             Value::List(list) => {
                 let (address, start, end) = list.identity();
                 if first_visit(0, address, start, end) {
-                    pending.extend(list.iter().cloned());
+                    cursors.push(Cursor::List(list, 0));
                 }
             }
             Value::Map(map) => {
                 if first_visit(1, map.identity(), 0, 0) {
-                    for (key, value) in map.iter() {
-                        pending.push(key.clone());
-                        pending.push(value.clone());
-                    }
+                    cursors.push(Cursor::Map(map, 0));
                 }
             }
             Value::Struct(value) => {
                 if first_visit(2, Rc::as_ptr(&value) as usize, 0, 0) {
-                    pending.extend(value.values.iter().cloned());
+                    cursors.push(Cursor::Struct(value, 0));
                 }
             }
-            Value::Overloads(values) => pending.extend(values.iter().cloned()),
+            Value::Overloads(values) => cursors.push(Cursor::Overloads(values, 0)),
             Value::Binding { cell, name } => {
                 if first_visit(3, cell_key(&cell), 0, 0) {
-                    pending.push(read(&cell, &name));
+                    next = Some(read(&cell, &name));
                 }
             }
             Value::Closure(closure) => {
-                if !first_visit(
-                    4,
-                    crate::sync::Code::as_ptr(&closure).cast::<()>() as usize,
-                    0,
-                    0,
-                ) {
+                let address = crate::sync::Code::as_ptr(&closure).cast::<()>() as usize;
+                if !first_visit(4, address, 0, 0) {
                     continue;
                 }
                 if let Some(name) = captured_var(&closure) {
                     return Some(alloc::format!("a function that captures `{name}`, a `var`"));
                 }
-                pending.extend(closure.captures.iter().map(|cell| cell.borrow().clone()));
+                cursors.push(Cursor::Captures(closure, 0));
             }
             Value::Uninitialized
             | Value::Nil
@@ -581,7 +666,6 @@ pub(crate) fn unsendable(value: &Value, read: crate::value::BindingReader<'_>) -
             | Value::Builtin(_) => {}
         }
     }
-    None
 }
 
 impl Vm {

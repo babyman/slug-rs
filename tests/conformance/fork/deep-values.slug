@@ -1,0 +1,9 @@
+// Values nested deeper than the native stack can hold still cross out of a
+// fork, compare, and are dropped when the program ends.
+val nest = fn(i:num, acc):any { if (i == 0) { acc } else { recur(i - 1, [{inner: acc}]) } }
+val main = fn() {
+    val t = fork { nest(200000, 0) }
+    val theirs = select { await t }
+    println(theirs == nest(200000, 0))
+    println(theirs == nest(200000, 1))
+}

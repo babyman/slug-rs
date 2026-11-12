@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- From the eighth review:
+  - Values nested deeper than the native stack can hold no longer crash:
+    `==` recurses only 64 levels, through containers and module bindings,
+    then goes on with a stack of its own that compares each pair of
+    containers once; and dropping a list, map, or struct takes apart the
+    nested values it alone holds with a loop. Before, comparing two lists
+    nested 200,000 deep overflowed the stack, and so did merely dropping
+    one when the program ended (`fork/deep-values`). The deep phase also
+    ends any cycle through a module variable, replacing the binding-depth
+    rule.
+  - A fork's sendability check keeps one cursor per container it is
+    inside, rather than every part it has yet to visit, and stops when the
+    fork is cancelled, checking every 4,096 parts.
+  - A worker that catches a panic in its island cleans it up as a
+    cancelled one is, taking its root off whatever it waits on, and ends
+    if that cleanup fails too, rather than take another island. A one-way
+    host request (`warn`, native globals) from a fork cancelled before it
+    is served is skipped, as a host call is.
+
 - From the seventh review:
   - A value that reaches itself, as an import map does through a module
     `var` holding it, no longer hangs a fork's sendability check, which
