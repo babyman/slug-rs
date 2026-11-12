@@ -48,6 +48,10 @@ pub(crate) struct Inbox {
 /// none is active, none ever will be: a deadlock, which the root reports.
 pub(crate) struct Group {
     active: AtomicUsize,
+    /// The program's islands that have not finished: what its run, or its
+    /// VM's shutdown, waits for, rather than every fork of its thread,
+    /// which may belong to another VM there.
+    islands: AtomicUsize,
     deadlocked: AtomicBool,
     root: Arc<Inbox>,
 }
@@ -56,17 +60,49 @@ impl Group {
     pub(crate) fn new(root: Arc<Inbox>) -> Self {
         Self {
             active: AtomicUsize::new(1),
+            islands: AtomicUsize::new(0),
             deadlocked: AtomicBool::new(false),
             root,
         }
     }
 
+    /// A thread of the program counts as active, as when it wakes.
     fn join(&self) {
         self.active.fetch_add(1, Ordering::AcqRel);
     }
 
     fn leave(&self) {
         self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// A fork starts on an island of this program, which is active.
+    fn island_started(&self) {
+        self.islands.fetch_add(1, Ordering::AcqRel);
+        self.join();
+    }
+
+    /// An island of this program has finished, its last work posted.
+    fn island_finished(&self) {
+        self.leave();
+        self.islands.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// Runs what this thread is posted, including the destruction of
+    /// resources the program's forks let go of last, until every island of
+    /// the program has finished. An island waits for its own forks before
+    /// it finishes, so none is missed.
+    pub(crate) fn join_islands(&self, inbox: &Inbox) {
+        let waiter = inbox.signal.blocking_waiter();
+        loop {
+            let observed = inbox.signal.snapshot();
+            inbox.drain();
+            if self.islands.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            waiter.wait(&inbox.signal, observed, None);
+        }
+        // An island posts its last work before it stops counting.
+        inbox.drain();
     }
 
     pub(crate) fn deadlocked(&self) -> bool {
@@ -359,7 +395,7 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     }
     let parent = Inbox::current();
     let (inputs, link) = ForkInputs::take(execution, task.clone(), parent.clone(), control);
-    link.group.join();
+    link.group.island_started();
     parent.remote.fetch_add(1, Ordering::AcqRel);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_started();
@@ -371,7 +407,7 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     })));
     if let Err(error) = started {
         // The package, and the task handle in it, dropped here with the job.
-        group.leave();
+        group.island_finished();
         parent.remote.fetch_sub(1, Ordering::AcqRel);
         #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
         crate::sync::solo_check::fork_ended();
@@ -584,7 +620,7 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     }
     parent.remote.fetch_sub(1, Ordering::AcqRel);
     // After the post, which counts the parent awake if it slept.
-    group.leave();
+    group.island_finished();
     parent.signal.notify();
 }
 
@@ -973,9 +1009,22 @@ struct ForkConfiguration {
 
 impl VmConfiguration for ForkConfiguration {
     fn resolve(&self, key: &str, fallback: &Value) -> Value {
+        // The fork checked its fallback before it asked; the host's answer
+        // is checked here, on the spawner's thread, before it crosses back.
         let (key, given) = (String::from(key), fallback.clone());
         self.remote
-            .call(move |host| host.configuration().resolve(&key, &given))
+            .call(move |host| {
+                let value = host.configuration().resolve(&key, &given);
+                match super::fork::unsendable(&value, &crate::value::running_reader) {
+                    None => value,
+                    Some(reason) => {
+                        host.warn(alloc::format!(
+                            "configuration `{key}` holds {reason}, which a fork cannot receive; the fork gets its fallback"
+                        ));
+                        given
+                    }
+                }
+            })
             .unwrap_or_else(|| fallback.clone())
     }
 

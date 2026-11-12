@@ -1626,24 +1626,36 @@ impl Value {
     }
 }
 
-/// Whether a module binding's value, as the running task sees it, which in
-/// a fork is its snapshot, equals `value`. A `val` reads the same to every
-/// task, so it is compared in place.
-fn binding_equals(cell: &BindingCell, name: &crate::variables::BindingName, value: &Value) -> bool {
+/// How an equality reads a module binding it meets inside a value: as the
+/// task comparing sees it, which in a fork is its snapshot.
+pub(crate) type BindingReader<'a> =
+    &'a dyn Fn(&BindingCell, &crate::variables::BindingName) -> Value;
+
+/// The reader `==` on values uses outside a VM: the running task's view,
+/// recorded per thread on hosted builds, or the binding itself.
+pub(crate) fn running_reader(cell: &BindingCell, name: &crate::variables::BindingName) -> Value {
     #[cfg(feature = "concurrency")]
-    if name.kind() != crate::variables::BindingKind::Val {
-        return crate::vm::seen_binding(cell, name).eq(value);
-    }
+    return crate::vm::seen_binding(cell, name);
     #[cfg(not(feature = "concurrency"))]
-    let _ = name;
-    cell.borrow().eq(value)
+    {
+        let _ = name;
+        cell.borrow().clone()
+    }
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
+impl Value {
+    /// Whether `self` equals `other`, reading each module binding inside
+    /// either through `read`. A `val` reads the same to every task, so it is
+    /// compared in place.
+    #[allow(clippy::float_cmp, reason = "Slug's equality is exact")]
+    pub(crate) fn equals_with(&self, other: &Self, read: BindingReader<'_>) -> bool {
         match (self, other) {
             (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
-                binding_equals(cell, name, value)
+                if name.kind() == crate::variables::BindingKind::Val {
+                    cell.borrow().equals_with(value, read)
+                } else {
+                    read(cell, name).equals_with(value, read)
+                }
             }
             (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
@@ -1654,12 +1666,21 @@ impl PartialEq for Value {
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::List(a), Self::List(b)) => a == b,
-            (Self::Overloads(a), Self::Overloads(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => a.clone().equals(&b.clone()),
+            (Self::List(a), Self::List(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.equals_with(b, read))
+            }
+            (Self::Overloads(a), Self::Overloads(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.equals_with(b, read))
+            }
+            (Self::Map(a), Self::Map(b)) => a.equals_with(b, read),
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
-                Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
+                Rc::ptr_eq(&a.schema, &b.schema)
+                    && a.values.len() == b.values.len()
+                    && a.values
+                        .iter()
+                        .zip(&b.values)
+                        .all(|(a, b)| a.equals_with(b, read))
             }
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
@@ -1677,6 +1698,12 @@ impl PartialEq for Value {
             (Self::Builtin(a), Self::Builtin(b)) => a == b,
             _ => false,
         }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals_with(other, &running_reader)
     }
 }
 

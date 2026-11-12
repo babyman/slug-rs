@@ -422,8 +422,6 @@ impl Vm {
             Ok(value) => return self.sendable_result(value),
             Err(error) => error,
         };
-        #[cfg(not(target_os = "none"))]
-        let _view = enter_view(self.view.as_ref());
         let mut current = Some(&error);
         while let Some(link) = current {
             let carried = link
@@ -432,7 +430,8 @@ impl Vm {
                 .into_iter()
                 .chain(link.native.as_ref().and_then(|native| native.data.as_ref()));
             for value in carried {
-                if let Some(reason) = unsendable(value) {
+                if let Some(reason) = unsendable(value, &|cell, name| self.seen_binding(cell, name))
+                {
                     let mut stripped = error.clone();
                     strip_values(&mut stripped);
                     let mut replacement = self.error_at(
@@ -451,10 +450,8 @@ impl Vm {
     }
 
     pub(super) fn check_sendable(&self, value: &Value, what: &str) -> VmResult<()> {
-        // Through this task's view, whichever task this thread ran last.
-        #[cfg(not(target_os = "none"))]
-        let _view = enter_view(self.view.as_ref());
-        match unsendable(value) {
+        // Through this task's view, on every build.
+        match unsendable(value, &|cell, name| self.seen_binding(cell, name)) {
             Some(reason) => Err(self.error_at(
                 RuntimeErrorKind::Fork,
                 alloc::format!(
@@ -491,8 +488,8 @@ fn captured_var(closure: &crate::Closure) -> Option<String> {
 
 /// Why `value` cannot cross between a fork and the rest of the program:
 /// what in it is a task handle, a native resource, or a function capturing
-/// a `var`.
-pub(crate) fn unsendable(value: &Value) -> Option<String> {
+/// a `var`, reading each module binding inside it through `read`.
+pub(crate) fn unsendable(value: &Value, read: crate::value::BindingReader<'_>) -> Option<String> {
     let mut pending = alloc::vec![value.clone()];
     let mut closures = HashSet::new();
     while let Some(value) = pending.pop() {
@@ -508,7 +505,7 @@ pub(crate) fn unsendable(value: &Value) -> Option<String> {
             }
             Value::Struct(value) => pending.extend(value.values.iter().cloned()),
             Value::Overloads(values) => pending.extend(values.iter().cloned()),
-            Value::Binding { cell, name } => pending.push(seen_binding(&cell, &name)),
+            Value::Binding { cell, name } => pending.push(read(&cell, &name)),
             Value::Closure(closure) => {
                 if !closures.insert(crate::sync::Code::as_ptr(&closure).cast::<()>() as usize) {
                     continue;

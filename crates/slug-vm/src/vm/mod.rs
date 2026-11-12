@@ -387,6 +387,34 @@ impl VmMetrics {
     }
 }
 
+impl Vm {
+    /// `==` as this task sees its operands: a module `var` inside either is
+    /// read through the task's view, which in a fork is its snapshot, on
+    /// every build.
+    fn values_equal(&self, left: &Value, right: &Value) -> bool {
+        left.equals_with(right, &|cell, name| self.seen_binding(cell, name))
+    }
+
+    /// The value of the module binding `cell`, `name`, as this task sees it.
+    /// One a fork has no snapshot of reads as uninitialized.
+    #[cfg_attr(not(feature = "concurrency"), allow(clippy::unused_self))]
+    fn seen_binding(
+        &self,
+        cell: &crate::value::BindingCell,
+        name: &crate::variables::BindingName,
+    ) -> Value {
+        #[cfg(feature = "concurrency")]
+        match self.viewed_binding(cell, name) {
+            Ok(Some(value)) => return value,
+            Ok(None) => {}
+            Err(_) => return Value::Uninitialized,
+        }
+        #[cfg(not(feature = "concurrency"))]
+        let _ = name;
+        cell.borrow().clone()
+    }
+}
+
 /// Why `value` cannot cross between a fork and the rest of the program, if
 /// it cannot.
 #[cfg(feature = "concurrency")]
@@ -394,7 +422,7 @@ pub(crate) use fork::seen_binding;
 
 #[cfg(feature = "concurrency")]
 pub(crate) fn unsendable_reason(value: &Value) -> Option<String> {
-    fork::unsendable(value)
+    fork::unsendable(value, &crate::value::running_reader)
 }
 
 /// Reported when no task can make progress while one is still waiting.
@@ -943,7 +971,7 @@ impl Vm {
         // Forks it cancelled report back, and what they let go of last is
         // destroyed here, before the host goes.
         #[cfg(all(feature = "threads", not(target_os = "none")))]
-        self.attention.join_remote();
+        self.progress.group().join_islands(&self.attention);
         if let Some(host) = &self.host {
             host.shutdown();
         }
@@ -2104,7 +2132,7 @@ impl Vm {
         self.after_forks(result)
     }
 
-    /// `result`, once every fork this thread started has reported back:
+    /// `result`, once every fork of this program has reported back:
     /// those a failure cancelled may still be stopping, and what they let go
     /// of last is destroyed on this thread. Only a whole program's run
     /// waits so; a module initializing during one must not wait for its
@@ -2115,7 +2143,7 @@ impl Vm {
     )]
     fn after_forks(&self, result: VmResult<Value>) -> VmResult<Value> {
         #[cfg(all(feature = "threads", not(target_os = "none")))]
-        self.attention.join_remote();
+        self.progress.group().join_islands(&self.attention);
         result
     }
 
@@ -2663,7 +2691,8 @@ impl Vm {
             }
             PackedOpcode::Equal => {
                 let (left, right) = self.pop_pair()?;
-                self.stack.push(Value::Bool(left == right));
+                self.stack
+                    .push(Value::Bool(self.values_equal(&left, &right)));
             }
             PackedOpcode::Greater => self.compare(cmp::Ordering::Greater)?,
             PackedOpcode::GreaterNum => {
@@ -2966,7 +2995,7 @@ impl Vm {
             BinaryOperator::DivideNum => divide_num(left, right).map_err(fault)?,
             BinaryOperator::Modulo => modulo(left, right).map_err(fault)?,
             BinaryOperator::ModuloNum => modulo_num(left, right).map_err(fault)?,
-            BinaryOperator::Equal => Value::Bool(left == right),
+            BinaryOperator::Equal => Value::Bool(self.values_equal(&left, &right)),
             BinaryOperator::Greater => {
                 Value::Bool(self.compare_values(left, right, cmp::Ordering::Greater)?)
             }
@@ -5037,6 +5066,11 @@ impl Vm {
                 } else {
                     format!("{}.{}", program.module_name(), key)
                 };
+                // A fork asks its spawner's host, so its fallback crosses.
+                #[cfg(feature = "concurrency")]
+                if self.fork_context().is_some() {
+                    self.check_sendable(&arguments[1], "a `cfg` fallback in a fork")?;
+                }
                 let value = configuration.resolve(&key, &arguments[1]);
                 if value.contains_non_finite_number() {
                     return Err(self.error(

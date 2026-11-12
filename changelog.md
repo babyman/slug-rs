@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- From the fifth review:
+  - A whole program's run and `Vm::shutdown` wait only for that program's
+    forks, counted by its thread group, not for every fork of the thread:
+    a host running several VMs on one thread no longer has one wait for
+    another's fork, and a host callback that runs a program cannot wait for
+    the fork waiting on the callback.
+  - `cfg` in a fork checks its fallback is sendable before asking the
+    spawner's host (`fork/cfg-fallback-unsendable`), and the host's answer
+    is checked before it crosses back; one that is not sendable gives the
+    fork its fallback, with a warning.
+  - Equality is one implementation that reads module bindings through a
+    given reader: the VM's `==` reads them through its task's view, on
+    every build, so freestanding builds now compare a fork's value holding
+    a module `var` against its snapshot too; `PartialEq` elsewhere keeps the
+    running view. The sendability checks a fork makes read through its own
+    view the same way.
+
 - From the fourth review:
   - A whole program's run (`run_program`, `run_named`, `blocking_run`, and
     the others) and `Vm::shutdown` return only once every fork the thread

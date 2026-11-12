@@ -1389,3 +1389,33 @@ fn a_fork_holds_but_cannot_use_its_spawners_resource_whose_thread_destroys_it() 
     assert_eq!(destroyed, vec![std::thread::current().id()]);
     drop(vm);
 }
+
+#[test]
+#[cfg(feature = "threads")]
+fn a_run_waits_only_for_its_own_programs_forks() {
+    // Two VMs on one thread, as a host running several programs has: the
+    // second's run must not wait for the first's fork.
+    let waiting = compile(
+        "other-programs-fork.slug",
+        "val wait = fn() {\n    val t = fork { select { after 2000 }; 1 }\n    select { await t }\n}\nwait()\n",
+    )
+    .expect("compile waiting source");
+    let mut first = Vm::new();
+    first
+        .start_named(&waiting, "main")
+        .expect("start the first program");
+    let progress = first.run_until_stalled();
+    assert!(matches!(progress, VmProgress::Stalled), "{progress:?}");
+
+    let quick = compile("quick.slug", "val main = fn() { 7 }\n").expect("compile quick source");
+    let mut second = Vm::new();
+    let started = std::time::Instant::now();
+    assert_eq!(second.run_program(&quick).unwrap(), Value::Int(7));
+    second.shutdown();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "the second program waited {:?} for the first's fork",
+        started.elapsed()
+    );
+    first.shutdown();
+}

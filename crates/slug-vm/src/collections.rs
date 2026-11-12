@@ -945,11 +945,15 @@ impl Map {
         Ok(Self(crate::sync::Code::new(storage)))
     }
 
-    pub(crate) fn equals(&self, other: &Self) -> bool {
+    /// Whether the maps hold equal values under the same keys, reading the
+    /// module bindings among them through `read`.
+    pub(crate) fn equals_with(&self, other: &Self, read: crate::value::BindingReader<'_>) -> bool {
         self.len() == other.len()
-            && self
-                .iter()
-                .all(|(key, value)| other.get(key).is_some_and(|other| other == value))
+            && self.iter().all(|(key, value)| {
+                other
+                    .get(key)
+                    .is_some_and(|other| other.equals_with(value, read))
+            })
     }
 
     fn into_storage(self) -> MapStorage {

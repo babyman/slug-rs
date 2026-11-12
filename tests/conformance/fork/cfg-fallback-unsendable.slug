@@ -1,0 +1,9 @@
+// A fork's `cfg` asks its spawner's host, so its fallback must be sendable,
+// even when the fork never returns it.
+val main = fn() {
+    val t = fork {
+        val looked = cfg("missing.setting", [spawn { 1 }])
+        1
+    }
+    println(select { await t })
+}
