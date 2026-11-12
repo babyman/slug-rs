@@ -533,12 +533,17 @@ impl VmHost for ArtifactHost {
             .map(|exports| VmModuleExports { exports })
     }
 
-    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleExports, VmHostError>> {
         let module = &self.state.artifact.modules[self.import_target(importer, name)?];
-        Some(
-            self.state.instances.borrow().contains_key(&module.key)
-                && !self.state.initializing.borrow().contains(&module.key),
-        )
+        if self.state.initializing.borrow().contains(&module.key) {
+            return None;
+        }
+        let exports = self.state.instances.borrow().get(&module.key).cloned()?;
+        Some(Ok(VmModuleExports { exports }))
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {

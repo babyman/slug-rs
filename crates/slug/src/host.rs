@@ -369,11 +369,32 @@ impl DesktopLoader {
 }
 
 impl VmHost for DesktopLoader {
-    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleExports, VmHostError>> {
         let importer = importer.map(ModuleKey::new);
-        self.state
+        let instance = self
+            .state
             .graph
-            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+            .initialized_instance(self, ModuleRequest::new(importer.as_ref(), name))?;
+        Some(Ok(VmModuleExports {
+            exports: instance.live_exports(),
+        }))
+    }
+
+    fn describe_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleDescription, VmHostError>> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .state
+            .graph
+            .initialized_instance(self, ModuleRequest::new(importer.as_ref(), name))?;
+        Some(Ok(instance.description()))
     }
 
     fn import_module(

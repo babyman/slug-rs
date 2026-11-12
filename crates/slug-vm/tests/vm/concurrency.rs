@@ -1110,8 +1110,12 @@ impl slug_vm::VmHost for ServingHost {
         })
     }
 
-    fn module_initialized(&self, _importer: Option<&str>, _name: &str) -> Option<bool> {
-        Some(true)
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<slug_vm::VmModuleExports, slug_vm::VmHostError>> {
+        Some(self.import_module(importer, name))
     }
 
     fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
@@ -1366,7 +1370,22 @@ fn a_fork_holds_but_cannot_use_its_spawners_resource_whose_thread_destroys_it() 
     .expect("compile resource drop source");
     owned_resources::DESTROYED_ON.lock().unwrap().clear();
     vm.run_program(&drops).unwrap();
-    drop(vm);
     let destroyed = owned_resources::DESTROYED_ON.lock().unwrap().clone();
     assert_eq!(destroyed, vec![std::thread::current().id()]);
+
+    // A failure cancels the fork holding the last reference; the run still
+    // returns only once it has reported back and the payload is destroyed
+    // here, not when no thread is left to run the destruction.
+    let cancels = compile(
+        "fork-cancelled-with-resource.slug",
+        "val start = fn() {\n    val r = make_it()\n    fork { val kept = r; select { after 5000 }; 1 }\n}\nval main = fn() {\n    val t = start()\n    select { after 20 }\n    throw \"stop\"\n}\n",
+    )
+    .expect("compile cancelled resource source");
+    owned_resources::DESTROYED_ON.lock().unwrap().clear();
+    let started = std::time::Instant::now();
+    vm.run_program(&cancels).expect_err("the program throws");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    let destroyed = owned_resources::DESTROYED_ON.lock().unwrap().clone();
+    assert_eq!(destroyed, vec![std::thread::current().id()]);
+    drop(vm);
 }

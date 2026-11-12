@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- From the fourth review:
+  - A whole program's run (`run_program`, `run_named`, `blocking_run`, and
+    the others) and `Vm::shutdown` return only once every fork the thread
+    started has reported back, draining what they post: a fork a failure
+    cancelled may hold the last reference to a resource, whose destruction
+    it posts home, and that ran only if the thread happened to pump again.
+    Module initialization does not wait, since forks may be waiting on it.
+    An inbox dropped with work queued leaks it rather than drop a payload
+    on another thread.
+  - A fork's island rechecks cancellation after taking its wake snapshot,
+    so a cancellation between its last check and its sleep no longer
+    leaves it asleep; a fork waiting on a host call stops waiting once
+    cancelled, its host answering with an error or nothing.
+  - The running task's view, which `==` and the sendability checks read
+    through, is installed for one execution and restored after it, and a
+    fork's own outcome is checked through its own view: a task inside the
+    fork that ran last, holding an unsendable `task var` copy, made the
+    fork's result fail (`fork/outcome-own-view`).
+  - Closing a channel revokes a native producer under the lock that
+    publishes one, so one attached as the channel closes is not left open.
+  - A fork imports or describes through `VmHost::import_initialized` and
+    `describe_initialized`, which find and give an initialized module in
+    one lookup and never initialize one, replacing `module_initialized`; a
+    changing resolver can no longer approve one module and load another,
+    and the virtual `slug.builtin` is answered too.
+
 - The immortal-code decision records the retention it accepts: every fresh
   module graph, VM, or `run_program` call allocates code that is never
   freed, and immortal binding cells keep their values' data reachable; fine

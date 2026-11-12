@@ -78,9 +78,11 @@ std::thread_local! {
     static RUNNING_VIEW: RefCell<Option<Rc<TaskView>>> = const { RefCell::new(None) };
 }
 
-/// Records `view` as that of the task this thread runs from now on.
+/// Records `view` as that of the task this thread runs until the scope it
+/// returns ends, which restores the one before: a view never outlives the
+/// execution that installed it.
 #[cfg(not(target_os = "none"))]
-pub(super) fn set_running_view(view: Option<&Rc<TaskView>>) {
+pub(super) fn enter_view(view: Option<&Rc<TaskView>>) -> ViewScope {
     RUNNING_VIEW.with(|running| {
         let mut running = running.borrow_mut();
         // The same task runs turn after turn: only a change is written.
@@ -89,10 +91,36 @@ pub(super) fn set_running_view(view: Option<&Rc<TaskView>>) {
             (None, None) => true,
             _ => false,
         };
-        if !same {
-            *running = view.cloned();
+        if same {
+            ViewScope {
+                restore: false,
+                previous: None,
+            }
+        } else {
+            ViewScope {
+                restore: true,
+                previous: core::mem::replace(&mut *running, view.cloned()),
+            }
         }
-    });
+    })
+}
+
+/// Restores the view a call of [`enter_view`] replaced, when it did.
+#[cfg(not(target_os = "none"))]
+pub(super) struct ViewScope {
+    restore: bool,
+    previous: Option<Rc<TaskView>>,
+}
+
+#[cfg(not(target_os = "none"))]
+impl Drop for ViewScope {
+    fn drop(&mut self) {
+        if self.restore {
+            let previous = self.previous.take();
+            // A thread being torn down has no view to restore.
+            let _ = RUNNING_VIEW.try_with(|running| *running.borrow_mut() = previous);
+        }
+    }
 }
 
 /// The value of the module binding `cell`, `name`, as the task running on
@@ -394,6 +422,8 @@ impl Vm {
             Ok(value) => return self.sendable_result(value),
             Err(error) => error,
         };
+        #[cfg(not(target_os = "none"))]
+        let _view = enter_view(self.view.as_ref());
         let mut current = Some(&error);
         while let Some(link) = current {
             let carried = link
@@ -421,6 +451,9 @@ impl Vm {
     }
 
     pub(super) fn check_sendable(&self, value: &Value, what: &str) -> VmResult<()> {
+        // Through this task's view, whichever task this thread ran last.
+        #[cfg(not(target_os = "none"))]
+        let _view = enter_view(self.view.as_ref());
         match unsendable(value) {
             Some(reason) => Err(self.error_at(
                 RuntimeErrorKind::Fork,

@@ -701,8 +701,10 @@ impl Channel {
     }
 
     pub(crate) fn close(&self) {
-        self.revoke_native_producer();
+        // Under the lock that publishes a first producer, so one attached
+        // as the channel closes is either revoked here or made closed.
         let mut state = self.state.lock();
+        self.revoke_native_producer();
         if state.closed {
             return;
         }
