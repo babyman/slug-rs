@@ -1529,3 +1529,20 @@ fn a_fork_does_not_start_with_an_unsendable_host_argument_map() {
         error.message
     );
 }
+
+#[test]
+fn a_deep_chain_of_closures_and_lists_drops_on_either_path() {
+    // Each closure captures a list holding the closure before it, 200,000
+    // deep: dropping the chain must not grow the native stack with it, on a
+    // hosted build or with the work list a freestanding build uses.
+    let program = compile(
+        "closure-chain.slug",
+        "val chain = fn(i:num, acc):any { if (i == 0) { acc } else { recur(i - 1, fn() { [acc] }) } }\nval main = fn() { chain(200000, 0) }\n",
+    )
+    .expect("compile closure chain source");
+    let hosted = Vm::new().run_program(&program).unwrap();
+    assert!(matches!(hosted, Value::Closure(_)));
+    drop(hosted);
+    let freestanding = Vm::new().run_program(&program).unwrap();
+    slug_vm::drop_with_work_list(freestanding);
+}

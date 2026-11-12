@@ -1447,7 +1447,6 @@ pub(crate) fn guarded_drop<T>(items: Vec<T>, spill: impl FnOnce(Vec<T>, &mut Vec
     }
 }
 
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 /// Drops `pending` and everything in it that nothing else holds, taking
 /// nested lists, maps, and structs apart one at a time from a stack of its
 /// own, so the native stack does not grow with the value's depth.
@@ -1461,8 +1460,39 @@ pub(crate) fn dismantle(mut pending: Vec<Value>) {
                     pending.append(&mut value.values);
                 }
             }
+            Value::Closure(mut closure) => {
+                if let Some(closure) = crate::sync::Code::get_mut(&mut closure) {
+                    release_captures(core::mem::take(&mut closure.captures), &mut pending);
+                }
+            }
             _ => {}
         }
+    }
+}
+
+/// Hands the values of the capture cells a closure alone holds to
+/// `pending`, for [`dismantle`] or a deferred drop.
+fn release_captures(captures: Vec<BindingCell>, pending: &mut Vec<Value>) {
+    for mut cell in captures {
+        if let Some(cell) = crate::sync::Code::get_mut(&mut cell) {
+            pending.push(core::mem::replace(&mut *cell.borrow_mut(), Value::Nil));
+        }
+    }
+}
+
+/// Drops `value` with the work list freestanding builds use, which hosted
+/// builds otherwise do not: for tests, which cannot run on a freestanding
+/// build, to exercise it on a deep value.
+#[doc(hidden)]
+pub fn drop_with_work_list(value: Value) {
+    dismantle(alloc::vec![value]);
+}
+
+impl Drop for Closure {
+    /// As a list's storage does: a chain of closures capturing values that
+    /// hold closures drops without the native stack growing with it.
+    fn drop(&mut self) {
+        guarded_drop(core::mem::take(&mut self.captures), release_captures);
     }
 }
 
@@ -1723,6 +1753,11 @@ impl Value {
 /// reaches itself through a module variable still ends.
 const NESTING_LIMIT: u32 = 64;
 
+/// How many steps through containers and bindings one comparison takes
+/// before it goes on with pair tracking, so that values sharing their parts
+/// many times over compare in time bounded by their size.
+const STEP_BUDGET: u32 = 4096;
+
 /// How an equality reads a module binding it meets inside a value: as the
 /// task comparing sees it, which in a fork is its snapshot.
 pub(crate) type BindingReader<'a> =
@@ -1762,61 +1797,111 @@ impl Value {
     /// Whether dropping this value may drop others nested in it.
     #[cfg_attr(not(target_os = "none"), allow(dead_code))]
     pub(crate) fn holds_values(&self) -> bool {
-        matches!(self, Self::List(_) | Self::Map(_) | Self::Struct(_))
+        matches!(
+            self,
+            Self::List(_) | Self::Map(_) | Self::Struct(_) | Self::Closure(_)
+        )
     }
 
     /// Whether `self` equals `other`, reading each module binding inside
-    /// either through `read`.
+    /// either through `read`. The comparison first recurses, which is fast
+    /// for ordinary values; one that nests deeper than [`NESTING_LIMIT`] or
+    /// takes more than [`STEP_BUDGET`] steps through containers and
+    /// bindings, as two values sharing their parts many times over can,
+    /// starts again in the deep phase, whose work is bounded by the values'
+    /// size, however their parts are shared.
     pub(crate) fn equals_with(&self, other: &Self, read: BindingReader<'_>) -> bool {
-        self.equals_at(other, read, 0)
+        let mut steps = 0;
+        self.equals_shallow(other, read, 0, &mut steps)
+            .unwrap_or_else(|| self.equals_deep(other, read))
     }
 
-    /// [`Self::equals_with`], `nesting` containers and bindings deep.
-    pub(crate) fn equals_at(&self, other: &Self, read: BindingReader<'_>, nesting: u32) -> bool {
+    /// The shallow phase: the answer, or `None` past either limit.
+    fn equals_shallow(
+        &self,
+        other: &Self,
+        read: BindingReader<'_>,
+        nesting: u32,
+        steps: &mut u32,
+    ) -> Option<bool> {
         if nesting >= NESTING_LIMIT {
-            return self.equals_deep(other, read);
+            return None;
         }
         let nesting = nesting + 1;
-        match (self, other) {
+        let mut step = || {
+            *steps += 1;
+            (*steps <= STEP_BUDGET).then_some(())
+        };
+        Some(match (self, other) {
             (Self::Binding { cell, .. }, Self::Binding { cell: other, .. })
                 if crate::sync::Code::ptr_eq(cell, other) =>
             {
                 true
             }
             (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
-                compared_binding(cell, name, read).equals_at(value, read, nesting)
+                step()?;
+                return compared_binding(cell, name, read)
+                    .equals_shallow(value, read, nesting, steps);
             }
             (Self::List(a), Self::List(b)) => {
-                a.identity() == b.identity()
-                    || (a.len() == b.len()
-                        && a.iter()
-                            .zip(b.iter())
-                            .all(|(a, b)| a.equals_at(b, read, nesting)))
+                if a.identity() == b.identity() {
+                    return Some(true);
+                }
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (a, b) in a.iter().zip(b.iter()) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
             }
             (Self::Overloads(a), Self::Overloads(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(a, b)| a.equals_at(b, read, nesting))
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (a, b) in a.iter().zip(b.iter()) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
             }
             (Self::Map(a), Self::Map(b)) => {
-                a.identity() == b.identity()
-                    || (a.len() == b.len()
-                        && a.iter().all(|(key, value)| {
-                            b.get(key)
-                                .is_some_and(|other| value.equals_at(other, read, nesting))
-                        }))
+                if a.identity() == b.identity() {
+                    return Some(true);
+                }
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (key, value) in a.iter() {
+                    let Some(other) = b.get(key) else {
+                        return Some(false);
+                    };
+                    if !value.equals_shallow(other, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
             }
             (Self::Struct(a), Self::Struct(b)) => {
-                Rc::ptr_eq(&a.schema, &b.schema)
-                    && a.values.len() == b.values.len()
-                    && a.values
-                        .iter()
-                        .zip(&b.values)
-                        .all(|(a, b)| a.equals_at(b, read, nesting))
+                if !Rc::ptr_eq(&a.schema, &b.schema) || a.values.len() != b.values.len() {
+                    return Some(false);
+                }
+                step()?;
+                for (a, b) in a.values.iter().zip(&b.values) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
             }
             _ => self.equals_leaf(other),
-        }
+        })
     }
 
     /// The deep phase of a comparison: the same rules, with a stack of its

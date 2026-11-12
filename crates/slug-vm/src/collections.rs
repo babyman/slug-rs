@@ -468,7 +468,6 @@ impl Drop for Elements {
 impl List {
     /// Hands this list's elements to `pending` when it alone holds them,
     /// for [`crate::value::dismantle`].
-    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
     pub(crate) fn release_into(mut self, pending: &mut Vec<Value>) {
         if let Some(elements) = Rc::get_mut(&mut self.values) {
             pending.append(&mut elements.0);
@@ -1004,7 +1003,6 @@ impl Map {
 
     /// Hands this map's keys and values to `pending` when it alone holds
     /// them, for [`crate::value::dismantle`].
-    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
     pub(crate) fn release_into(mut self, pending: &mut Vec<Value>) {
         if let Some(storage) = crate::sync::Code::get_mut(&mut self.0) {
             storage.index = None;

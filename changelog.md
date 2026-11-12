@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- From the ninth review:
+  - `==` takes time bounded by the size of what it compares: it recurses
+    for at most 4,096 steps through containers and bindings, then starts
+    again tracking the pairs of containers it has compared. Two lists
+    built by doubling 40 times, `[acc, acc]`, share their parts 2^40 ways
+    over, and comparing them never finished (`fork/shared-parts-equality`).
+  - A chain of closures capturing values that hold closures drops without
+    growing the native stack, on hosted builds and with the work list
+    freestanding builds use, which hosted tests can now drive
+    (`slug_vm::drop_with_work_list`); a 200,000-long chain of closures and
+    lists overflowed it.
+  - The spawner's check of a host's `cfg` answer for a fork stops once the
+    fork is cancelled.
+  - Recovering from a panic in an island, a failure taking its root off
+    what it waits on no longer skips cancelling and joining its forks.
+
 - From the eighth review:
   - Values nested deeper than the native stack can hold no longer crash:
     `==` recurses only 64 levels, through containers and module bindings,

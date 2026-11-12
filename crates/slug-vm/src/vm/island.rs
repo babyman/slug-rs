@@ -623,9 +623,13 @@ fn run(inputs: ForkInputs, link: ParentLink) {
         // The panic skipped the island's own exit: it is released here as a
         // cancelled one is, before it reports. Should that fail too, this
         // worker takes no further island: its thread's state is suspect.
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_island(&root)))
-            .is_err()
-        {
+        // Each part on its own, so a failure taking the root off what it
+        // waits on still leaves the island's forks cancelled and joined.
+        let root_released =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_root(&root)));
+        let descendants_released =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_descendants()));
+        if root_released.is_err() || descendants_released.is_err() {
             RETIRE.with(|retire| retire.set(true));
         }
         Some(Err(error))
@@ -751,9 +755,20 @@ impl Vm {
     /// Otherwise a send could hand its value to a receiver here that will
     /// never run.
     fn release_island(&mut self, root: &RootWaiter) {
+        self.release_root(root);
+        self.release_descendants();
+    }
+
+    /// Takes the island's root out of whatever it waits on.
+    fn release_root(&mut self, root: &RootWaiter) {
         if let Some(wait_registration) = self.wait_registration.take() {
             wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
         }
+    }
+
+    /// Cancels the island's tasks and nested forks and waits until those
+    /// have reported back.
+    fn release_descendants(&mut self) {
         // Cancelling a task leaves the queues it waits in, cancels a nursery
         // it waits for, and cancels a fork running elsewhere.
         let error = self.cancelled_error();
@@ -1065,10 +1080,14 @@ impl VmConfiguration for ForkConfiguration {
         // The fork checked its fallback before it asked; the host's answer
         // is checked here, on the spawner's thread, before it crosses back.
         let (key, given) = (String::from(key), fallback.clone());
+        let control = self.remote.control.clone();
         self.remote
             .call(move |host| {
                 let value = host.configuration().resolve(&key, &given);
-                match super::fork::unsendable(&value, &crate::value::running_reader) {
+                // A fork cancelled meanwhile no longer waits for the reply.
+                match super::fork::unsendable_until(&value, &crate::value::running_reader, &|| {
+                    control.cancelled()
+                }) {
                     None => value,
                     Some(reason) => {
                         host.warn(alloc::format!(
