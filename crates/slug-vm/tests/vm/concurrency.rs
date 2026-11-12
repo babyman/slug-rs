@@ -1419,3 +1419,113 @@ fn a_run_waits_only_for_its_own_programs_forks() {
     );
     first.shutdown();
 }
+
+/// A host whose argument map is whatever a program stashed in it, so a test
+/// can give one a fork must not receive.
+#[cfg(feature = "threads")]
+struct StashingHost {
+    arguments: StashedArguments,
+    native_resources: slug_vm::NativeResourceRegistry,
+}
+
+#[cfg(feature = "threads")]
+struct StashedArguments(Rc<std::cell::RefCell<Value>>);
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmConfiguration for StashedArguments {
+    fn resolve(&self, _: &str, fallback: &Value) -> Value {
+        fallback.clone()
+    }
+
+    fn arguments(&self) -> &[String] {
+        &[]
+    }
+
+    fn argument_map(&self) -> Value {
+        self.0.borrow().clone()
+    }
+}
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmHost for StashingHost {
+    fn import_module(
+        &self,
+        _importer: Option<&str>,
+        name: &str,
+    ) -> Result<slug_vm::VmModuleExports, slug_vm::VmHostError> {
+        Err(slug_vm::VmHostError::not_found(format!("missing {name}")))
+    }
+
+    fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn native_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn foreign_function(&self, _module: &str, _name: &str) -> Option<slug_vm::NativeFunction> {
+        None
+    }
+
+    fn define_foreign_batch(
+        &self,
+        _functions: Vec<slug_vm::NativeFunction>,
+    ) -> Result<(), slug_vm::NativeDescriptorError> {
+        Ok(())
+    }
+
+    fn define_native_global(&self, _name: String, _value: Value) {}
+
+    fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
+        self.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
+    fn configuration(&self) -> &dyn slug_vm::VmConfiguration {
+        &self.arguments
+    }
+
+    fn warn(&self, _message: String) {}
+
+    fn shutdown(&self) {}
+}
+
+#[test]
+#[cfg(feature = "threads")]
+fn a_fork_does_not_start_with_an_unsendable_host_argument_map() {
+    let stashed = Rc::new(std::cell::RefCell::new(Value::Map(Vec::new().into())));
+    let host: slug_vm::Shared<dyn slug_vm::VmHost> = slug_vm::Shared::new(StashingHost {
+        arguments: StashedArguments(stashed.clone()),
+        native_resources: slug_vm::native_resource_registry(),
+    });
+    let mut vm = Vm::with_host(host);
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed, destroyed);
+    native_resource_fixture::install(&mut vm, &module);
+    // The host's argument map comes to hold a native resource.
+    let keeps = compile("keeps-resource.slug", "val kept = make_resource()\n")
+        .expect("compile keeping source");
+    vm.run_program(&keeps).unwrap();
+    let kept = vm.global("kept").expect("the resource is kept");
+    *stashed.borrow_mut() = Value::Map(vec![(Value::string("held"), kept)].into());
+    let program = compile(
+        "unsendable-arguments.slug",
+        "val main = fn() {\n    val t = fork { 1 }\n    select { await t }\n}\n",
+    )
+    .expect("compile argument map source");
+    let error = vm
+        .run_program(&program)
+        .expect_err("a fork cannot receive the host's argument map");
+    assert!(
+        error
+            .message
+            .contains("the host's argument map holds a native resource"),
+        "{}",
+        error.message
+    );
+}

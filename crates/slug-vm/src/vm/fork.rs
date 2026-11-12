@@ -283,7 +283,18 @@ impl Vm {
         cell: &BindingCell,
         name: &crate::variables::BindingName,
     ) -> Result<Option<Value>, String> {
-        let Some(view) = &self.view else {
+        viewed_through(self.view.as_deref(), cell, name)
+    }
+}
+
+/// [`Vm::viewed_binding`] for a task whose view is `view`.
+pub(super) fn viewed_through(
+    view: Option<&TaskView>,
+    cell: &BindingCell,
+    name: &crate::variables::BindingName,
+) -> Result<Option<Value>, String> {
+    {
+        let Some(view) = view else {
             return Ok(None);
         };
         let kind = name.kind();
@@ -299,6 +310,21 @@ impl Vm {
             ));
         }
         Ok(None)
+    }
+}
+
+/// A module binding's value as a task whose view is `view` sees it, for an
+/// equality or a sendability check: one a fork has no snapshot of reads as
+/// uninitialized, since no error can be raised there.
+pub(super) fn seen_through(
+    view: Option<&TaskView>,
+    cell: &BindingCell,
+    name: &crate::variables::BindingName,
+) -> Value {
+    match viewed_through(view, cell, name) {
+        Ok(Some(value)) => value,
+        Ok(None) => cell.borrow().clone(),
+        Err(_) => Value::Uninitialized,
     }
 }
 

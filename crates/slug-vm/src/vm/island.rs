@@ -81,10 +81,13 @@ impl Group {
         self.join();
     }
 
-    /// An island of this program has finished, its last work posted.
+    /// An island of this program has finished, its last work posted. The
+    /// root hears of it too, wherever it was started, since it may be
+    /// waiting for the program's last island.
     fn island_finished(&self) {
         self.leave();
         self.islands.fetch_sub(1, Ordering::AcqRel);
+        self.root.signal.notify();
     }
 
     /// Runs what this thread is posted, including the destruction of
@@ -395,6 +398,18 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     }
     let parent = Inbox::current();
     let (inputs, link) = ForkInputs::take(execution, task.clone(), parent.clone(), control);
+    // The host's arguments cross to the worker: a host may give any value.
+    if let Some((_, argument_map)) = &inputs.configuration
+        && let Some(reason) = super::fork::unsendable(argument_map, &crate::value::running_reader)
+    {
+        drop((inputs, link));
+        release_place();
+        failure.message = alloc::format!(
+            "this fork cannot start: the host's argument map holds {reason}, which a fork cannot receive"
+        );
+        task.cancel(&failure);
+        return true;
+    }
     link.group.island_started();
     parent.remote.fetch_add(1, Ordering::AcqRel);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
@@ -705,6 +720,9 @@ impl Vm {
             self.release_cancelled(&root);
             return None;
         }
+        // Forks a failed body's settlement cancelled may still be stopping:
+        // they report back before this island does, on every exit.
+        self.attention.join_remote();
         outcome
     }
 

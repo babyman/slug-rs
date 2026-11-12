@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- From the sixth review:
+  - An island waits for the forks it started on every exit, not only when
+    it was cancelled, and a finished island tells its program's root: a
+    fork whose body failed reported back while the fork it started was
+    still stopping, and the program's run then waited for that fork with
+    nothing left to wake it, hanging 98 times in 100
+    (`fork/nested-outlives-failed-body`).
+  - A fork does not start when its host's argument map is not sendable:
+    a custom host can give any value there, which crossed to the worker
+    unchecked.
+  - Literal and pinned patterns compare as `==` does, reading module
+    bindings through the task's view, so a fork matching a pinned import
+    map agrees with `==` on every build.
+
 - From the fifth review:
   - A whole program's run and `Vm::shutdown` wait only for that program's
     forks, counted by its thread group, not for every fork of the thread:

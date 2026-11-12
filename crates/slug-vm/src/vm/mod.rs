@@ -404,13 +404,35 @@ impl Vm {
         name: &crate::variables::BindingName,
     ) -> Value {
         #[cfg(feature = "concurrency")]
-        match self.viewed_binding(cell, name) {
-            Ok(Some(value)) => return value,
-            Ok(None) => {}
-            Err(_) => return Value::Uninitialized,
-        }
+        return fork::seen_through(self.view.as_deref(), cell, name);
         #[cfg(not(feature = "concurrency"))]
-        let _ = name;
+        {
+            let _ = name;
+            cell.borrow().clone()
+        }
+    }
+}
+
+/// A task's view of the variables, by reference, or nothing on a build
+/// without tasks.
+#[cfg(feature = "concurrency")]
+type ViewRef<'a> = Option<&'a fork::TaskView>;
+#[cfg(not(feature = "concurrency"))]
+type ViewRef<'a> = Option<&'a ()>;
+
+/// A module binding as the task whose view is `view` sees it, for a
+/// comparison: a reader borrowing only the view, so it can be passed beside
+/// the VM's stack.
+fn read_binding(
+    view: ViewRef<'_>,
+    cell: &crate::value::BindingCell,
+    name: &crate::variables::BindingName,
+) -> Value {
+    #[cfg(feature = "concurrency")]
+    return fork::seen_through(view, cell, name);
+    #[cfg(not(feature = "concurrency"))]
+    {
+        let _ = (view, name);
         cell.borrow().clone()
     }
 }
@@ -3595,12 +3617,17 @@ impl Vm {
         let value = self.pop()?;
         let start = self.stack.len();
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let matched = matches_pattern(
             pattern,
             &value,
             &operands,
             &mut self.stack,
             &mut list_views_created,
+            &|cell, name| read_binding(view, cell, name),
         );
         #[cfg(feature = "metrics")]
         {
@@ -3635,6 +3662,10 @@ impl Vm {
         let start = self.stack.len();
         let locals = &self.frames.last().expect("active frame was checked").locals;
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let mut matched = Ok(true);
         for (item, local) in items.iter().zip(locals) {
             let result = match local {
@@ -3644,6 +3675,7 @@ impl Vm {
                     &operands,
                     &mut self.stack,
                     &mut list_views_created,
+                    &|cell, name| read_binding(view, cell, name),
                 ),
                 LocalSlot::Captured(cell) => matches_pattern(
                     item,
@@ -3651,6 +3683,7 @@ impl Vm {
                     &operands,
                     &mut self.stack,
                     &mut list_views_created,
+                    &|cell, name| read_binding(view, cell, name),
                 ),
             };
             if !matches!(result, Ok(true)) {
@@ -3684,12 +3717,17 @@ impl Vm {
         // Bindings go straight onto the operand stack, where they belong.
         let start = self.stack.len();
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let matched = matches_pattern(
             pattern,
             &value,
             &operands,
             &mut self.stack,
             &mut list_views_created,
+            &|cell, name| read_binding(view, cell, name),
         )
         .map_err(|(kind, message)| self.error_at(kind, message))?;
         #[cfg(feature = "metrics")]

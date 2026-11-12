@@ -7,7 +7,12 @@ val main = fn() {
         wait(0)
         // Comparing the import map whole reads its `var` from the snapshot
         // too, not from the module.
-        [counter.count, counter == {count: 0, bump: counter.bump}]
+        val snapshot = {count: 0, bump: counter.bump}
+        val pinned = match counter {
+            ^snapshot => true
+            _ => false
+        }
+        [counter.count, counter == snapshot, pinned]
     }
     counter.bump()
     counter.bump()
