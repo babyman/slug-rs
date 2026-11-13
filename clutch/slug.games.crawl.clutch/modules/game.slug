@@ -569,20 +569,32 @@ val roomAt = fn(x:num, y:num):map|nil {
     go(0)
 }
 
-// Whether the acting player can see (x, y); see `visible`.
-val canSee = fn(x:num, y:num):bool {
+// Whether the acting player can see (x, y), as `seer` works it out; see
+// `visible`.
+val canSee = fn(x:num, y:num):bool { seer()(x, y) }
+
+// Whether the acting player, as they are now, can see (x, y): a function of
+// (x, y) that holds what it needs, so testing many squares looks once at
+// what the player sees from where they stand.
+val seer = fn():fn {
     val p = player
-    val dx = x - p.x
-    val dy = y - p.y
-    if (p.blind > 0) {
-        false
-    } else if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
-        true
-    } else if (site().outdoor == true) {
-        outdoorSight()[viewKey(x, y)] == true
-    } else {
-        val room = roomAt(p.x, p.y)
-        room != nil && !room.dark && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h
+    if (p.blind > 0) { return fn(x:num, y:num):bool { false } }
+    val near = fn(x:num, y:num):bool {
+        val dx = x - p.x
+        val dy = y - p.y
+        dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1
+    }
+    if (site().outdoor == true) {
+        val sight = outdoorSight()
+        return fn(x:num, y:num):bool { near(x, y) || sight[viewKey(x, y)] == true }
+    }
+    match roomAt(p.x, p.y) {
+        room: map => if (room.dark) { near } else {
+            fn(x:num, y:num):bool {
+                near(x, y) || (x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h)
+            }
+        }
+        _ => near
     }
 }
 
@@ -2651,12 +2663,13 @@ val perform = fn(key:str, shift:bool, text:str = "") {
 // The map of the acting player's chunk as they know it, with the monsters
 // and players they can see on it.
 val mapRows = fn():list {
+    val sees = seer()
     val monsters = fn(i:num, rows:list):list {
         if (i == len(site().monsters)) {
             rows
         } else {
             val m = site().monsters[i]
-            val shown = player.sense || canSee(m.x, m.y)
+            val shown = player.sense || sees(m.x, m.y)
             recur(i + 1, if (shown) { write(rows, m.x, m.y, bestiary.monsters[m.kind].letter) } else { rows })
         }
     }
@@ -2666,14 +2679,14 @@ val mapRows = fn():list {
             rows
         } else {
             val o = company[i][1]
-            recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
+            recur(i + 1, if (sees(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
         }
     }
     val people = site().characters ?? []
     val characters = fn(i:num, rows:list):list {
         if (i == len(people)) { return rows }
         val c = people[i]
-        recur(i + 1, if (canSee(c.x, c.y)) { write(rows, c.x, c.y, "@") } else { rows })
+        recur(i + 1, if (sees(c.x, c.y)) { write(rows, c.x, c.y, "@") } else { rows })
     }
     write(others(0, characters(0, monsters(0, memory()))), player.x, player.y, "@")
 }
@@ -2903,6 +2916,13 @@ export val here = fn(id:str):map { lookAs(id, site) }
  * neighbours, or they are in a lit room whose rectangle holds it.
  */
 export val visible = fn(id:str, x:num, y:num):bool { lookAs(id, fn() { canSee(x, y) }) }
+
+/**
+ * What the player with `id` sees from where they stand now, as a function
+ * of (x, y) that says what `visible` would: for testing many squares, it
+ * looks once.
+ */
+export val seeing = fn(id:str):fn { lookAs(id, seer) }
 
 /**
  * Every square the player with `id` can see, as a map from `viewKey(x, y)`

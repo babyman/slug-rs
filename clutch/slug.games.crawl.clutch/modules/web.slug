@@ -382,11 +382,14 @@ val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
     }
 }
 
-// Who stands on each square of the chunk the player with `id` is in, by
-// `game.viewKey`, as the look of its `@`: other players first, in id order,
-// then townsfolk.
+// Who stands on each square of the chunk the player with `id` is in and
+// sees, by `game.viewKey`, as the look of its `@`: other players first, in
+// id order, then townsfolk. The map draws an `@` only where they see one,
+// so the people out of sight would never be looked up.
 val nearby = fn(id:str, others:list):map {
+    val sees = game.seeing(id)
     val stand = fn(acc:map, x:num, y:num, look:map):map {
+        if (!sees(x, y)) { return acc }
         val k = game.viewKey(x, y)
         if (acc[k] == nil) { acc + {[k]: look} } else { acc }
     }
@@ -471,9 +474,10 @@ val packView = fn(id:str, p:map):map {
 
 // Who is in view: other players the player sees, then monsters.
 val foesView = fn(id:str, p:map, others:list):list {
-    val people = filter(others, fn(o) { game.visible(id, o[1].x, o[1].y) })
-    val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
-    val folk = filter(game.here(id).characters ?? [], fn(c) { game.visible(id, c.x, c.y) })
+    val sees = game.seeing(id)
+    val people = filter(others, fn(o) { sees(o[1].x, o[1].y) })
+    val seen = filter(game.here(id).monsters, fn(m) { p.sense || sees(m.x, m.y) })
+    val folk = filter(game.here(id).characters ?? [], fn(c) { sees(c.x, c.y) })
     map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
         + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
         + map(seen, fn(m) {

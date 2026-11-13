@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Crawl's pages look once at what their player sees, not once for each
+  person or monster they check. `game.seeing(id)` gives a function of
+  (x, y) that says what `visible` would, worked out once from where the
+  player stands (blindness, outdoor sight, the lit room); the engine's own
+  `canSee` and `mapRows` use the same `seer`. Pages filter who is in view
+  with it, and a map's `near` list now holds only the people its player
+  sees, as the map draws an `@` nowhere else, so a page is no longer sent
+  its map again when someone out of sight moves. In a crowd of 500 players
+  in one chunk a tick takes 0.57 s, from 0.81, and of 1000, 1.77 s, from
+  3.25 (four forks, client maps). Pages drawn by the server are unchanged
+  byte for byte, and pages drawn by `crawl-map.js` look the same.
+
 - Strings interpolate `${expression}`, as JavaScript, Kotlin, and Dart do:
   any expression, such as `"${total(values)}"`, `"${m.a}"`,
   `"${m["key"]}"`, or `"${if (ok) { "yes" } else { "no" }}"`, with braces
