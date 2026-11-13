@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Strings interpolate `${expression}`, as JavaScript, Kotlin, and Dart do:
+  any expression, such as `"${total(values)}"`, `"${m.a}"`,
+  `"${m["key"]}"`, or `"${if (ok) { "yes" } else { "no" }}"`, with braces
+  and strings nesting inside. Each evaluates once, left to right, and
+  becomes text as `$name` does. Before, `${...}` was silently left as text:
+  agents wrote `"${total(values)}"` in eval runs and got that text, and a
+  header check in `slug.net.http` validated the text `${headers[name]}`
+  instead of the header. This reverses the earlier rule that strings
+  interpolate only names. `\${` writes a literal `${`; an empty or
+  unterminated `${` is a syntax error. The parser binds each expression to
+  a hidden name in a block, so every later pass is unchanged.
+
 - From the ninth review:
   - `==` takes time bounded by the size of what it compares: it recurses
     for at most 4,096 steps through containers and bindings, then starts

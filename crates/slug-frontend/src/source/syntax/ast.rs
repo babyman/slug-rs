@@ -405,6 +405,9 @@ pub(super) enum SelectCaseKind {
 pub(super) enum StringPart {
     Text(String),
     Name(String),
+    /// `${expression}`: its tokens, which the parser reads as one
+    /// expression, ending with `End`.
+    Expr(Vec<Token>),
 }
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {

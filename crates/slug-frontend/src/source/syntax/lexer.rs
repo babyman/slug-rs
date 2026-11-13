@@ -69,7 +69,7 @@ impl Lexer {
         &mut self,
         delimiter: char,
         raw: bool,
-        span: SourceSpan,
+        span: &SourceSpan,
     ) -> Result<Vec<StringPart>, SourceError> {
         self.next();
         let triple =
@@ -101,7 +101,12 @@ impl Lexer {
                 )
                 .with_end(self.position())
             })?;
-            if !raw
+            if !raw && value == '$' && self.peek() == Some('{') {
+                if !text.is_empty() {
+                    parts.push(StringPart::Text(std::mem::take(&mut text)));
+                }
+                parts.push(StringPart::Expr(self.interpolation(span)?));
+            } else if !raw
                 && value == '$'
                 && self
                     .peek()
@@ -119,42 +124,7 @@ impl Lexer {
                 }
                 parts.push(StringPart::Name(name));
             } else if !raw && value == '\\' {
-                match self.next() {
-                    Some('n') => text.push('\n'),
-                    Some('r') => text.push('\r'),
-                    Some('t') => text.push('\t'),
-                    Some('b') => text.push('\u{8}'),
-                    Some('f') => text.push('\u{c}'),
-                    Some('"') => text.push('"'),
-                    Some('\\') => text.push('\\'),
-                    Some('$') => text.push('$'),
-                    Some(first @ '0'..='7') => {
-                        let mut digits = String::from(first);
-                        for _ in 0..2 {
-                            if let Some(value @ '0'..='7') = self.peek() {
-                                digits.push(value);
-                                self.next();
-                            } else {
-                                break;
-                            }
-                        }
-                        let value = u32::from_str_radix(&digits, 8)
-                            .expect("one to three octal digits always parse");
-                        text.push(char::from_u32(value).expect("three octal digits fit in char"));
-                    }
-                    Some(value) => {
-                        text.push('\\');
-                        text.push(value);
-                    }
-                    None => {
-                        return Err(SourceError::at(
-                            SourceErrorCode::UnterminatedLiteral,
-                            "unterminated string",
-                            span,
-                        )
-                        .with_end(self.position()));
-                    }
-                }
+                self.escape(&mut text, span)?;
             } else {
                 text.push(value);
             }
@@ -171,6 +141,140 @@ impl Lexer {
             parts.push(StringPart::Text(text));
         }
         Ok(parts)
+    }
+
+    /// The escape after a backslash in a double-quoted string, added to
+    /// `text`.
+    fn escape(&mut self, text: &mut String, span: &SourceSpan) -> Result<(), SourceError> {
+        match self.next() {
+            Some('n') => text.push('\n'),
+            Some('r') => text.push('\r'),
+            Some('t') => text.push('\t'),
+            Some('b') => text.push('\u{8}'),
+            Some('f') => text.push('\u{c}'),
+            Some('"') => text.push('"'),
+            Some('\\') => text.push('\\'),
+            Some('$') => text.push('$'),
+            Some(first @ '0'..='7') => {
+                let mut digits = String::from(first);
+                for _ in 0..2 {
+                    if let Some(value @ '0'..='7') = self.peek() {
+                        digits.push(value);
+                        self.next();
+                    } else {
+                        break;
+                    }
+                }
+                let value = u32::from_str_radix(&digits, 8)
+                    .expect("one to three octal digits always parse");
+                text.push(char::from_u32(value).expect("three octal digits fit in char"));
+            }
+            Some(value) => {
+                text.push('\\');
+                text.push(value);
+            }
+            None => {
+                return Err(SourceError::at(
+                    SourceErrorCode::UnterminatedLiteral,
+                    "unterminated string",
+                    span.clone(),
+                )
+                .with_end(self.position()));
+            }
+        }
+        Ok(())
+    }
+
+    /// The tokens of a `${...}` in a string, the `$` already read and `{`
+    /// next, which it reads through the matching `}`: braces and strings
+    /// inside nest, strings with interpolations of their own included.
+    fn interpolation(&mut self, string: &SourceSpan) -> Result<Vec<Token>, SourceError> {
+        self.next();
+        let (line, column) = (self.line, self.column);
+        let start = self.index;
+        self.skip_interpolation(string)?;
+        // The closing brace is not the expression's.
+        let source: String = self.input[start..self.index - 1].iter().collect();
+        if source.trim().is_empty() {
+            return Err(SourceError::at(
+                SourceErrorCode::ExpectedSyntax,
+                "expected an expression inside `${}`",
+                SourceSpan::new(self.path.clone(), line, column),
+            ));
+        }
+        Self {
+            path: self.path.clone(),
+            input: source.chars().collect(),
+            index: 0,
+            line,
+            column,
+        }
+        .tokens()
+    }
+
+    /// Reads past the `}` that closes a `${`, whose `{` has been read.
+    fn skip_interpolation(&mut self, string: &SourceSpan) -> Result<(), SourceError> {
+        let mut depth = 1usize;
+        loop {
+            let Some(value) = self.next() else {
+                return Err(SourceError::at(
+                    SourceErrorCode::UnterminatedLiteral,
+                    "unterminated `${` in string",
+                    string.clone(),
+                )
+                .with_end(self.position()));
+            };
+            match value {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Ok(());
+                    }
+                }
+                '"' | '\'' => self.skip_string(value, string)?,
+                _ => {}
+            }
+        }
+    }
+
+    /// Reads past a string inside an interpolation, its opening quote read:
+    /// its escapes and its own interpolations are skipped whole.
+    fn skip_string(&mut self, delimiter: char, string: &SourceSpan) -> Result<(), SourceError> {
+        let raw = delimiter == '\'';
+        let triple =
+            self.peek() == Some(delimiter) && self.input.get(self.index + 1) == Some(&delimiter);
+        if triple {
+            self.next();
+            self.next();
+        }
+        loop {
+            let Some(value) = self.next() else {
+                return Err(SourceError::at(
+                    SourceErrorCode::UnterminatedLiteral,
+                    "unterminated string",
+                    string.clone(),
+                )
+                .with_end(self.position()));
+            };
+            if value == delimiter
+                && (!triple
+                    || (self.peek() == Some(delimiter)
+                        && self.input.get(self.index + 1) == Some(&delimiter)))
+            {
+                if triple {
+                    self.next();
+                    self.next();
+                }
+                return Ok(());
+            }
+            if !raw && value == '\\' {
+                self.next();
+            } else if !raw && value == '$' && self.peek() == Some('{') {
+                self.next();
+                self.skip_interpolation(string)?;
+            }
+        }
     }
 
     pub(super) fn new(path: &str, input: &str) -> Self {
@@ -857,11 +961,11 @@ impl Lexer {
                     }
                 }
                 '"' => {
-                    let kind = TokenKind::Interpolated(self.string('"', false, span.clone())?);
+                    let kind = TokenKind::Interpolated(self.string('"', false, &span)?);
                     self.push(&mut result, kind, span);
                 }
                 '\'' => {
-                    let kind = TokenKind::Interpolated(self.string('\'', true, span.clone())?);
+                    let kind = TokenKind::Interpolated(self.string('\'', true, &span)?);
                     self.push(&mut result, kind, span);
                 }
                 value if value == '_' || value.is_alphabetic() => {

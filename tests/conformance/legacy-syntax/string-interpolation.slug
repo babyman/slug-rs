@@ -1,0 +1,18 @@
+// `$name` and `${expression}` interpolation: any expression, nested braces
+// and strings, left-to-right evaluation, and the literal `$` forms.
+val total = fn(values:list):num { if (len(values) == 0) { 0 } else { values[0] + total(values[1:]) } }
+val main = fn() {
+    val m = {key: "v", n: 2}
+    val xs = [1, 2, 3]
+    var order = ""
+    val mark = fn(label:str):str { order = order + label; label }
+    println("name: $xs and ${xs}")
+    println("call: ${total(xs)}, member: ${m.n}, index: ${m["key"]}${xs[1]}")
+    println("nested: ${"inner ${m.n + 1}"}")
+    println("map: ${{a: 1}} braces: ${ {x: "}"}.x }")
+    println("if: ${if (m.n > 1) { "big" } else { "small" }}")
+    println("order: ${mark("a")}${mark("b")}${mark("c")} = $order")
+    println("""triple: ${xs[0] + xs[2]}""")
+    println('raw: ${xs}')
+    println("literal: \${xs} $5 $ $m.n")
+}
