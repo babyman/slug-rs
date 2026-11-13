@@ -687,6 +687,63 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
 }
 
 #[test]
+fn bytes_variables_updated_in_place_keep_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-bytes-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // A module-level and a captured bytes variable, appended to and
+    // concatenated in place: values read before keep what they were, and
+    // an append that fails (not a byte) leaves the variable as it was.
+    fs::write(
+        &program,
+        "var g = 0x\"01\"\n\
+         val id = fn(v) { v }\n\
+         val main = fn() {\n\
+             var c = 0x\"0a\"\n\
+             val before = [g, c]\n\
+             val grow = fn(i:num) { if (i < 3) { g = g :+ i; c = c :+ (i + 16); recur(i + 1) } }\n\
+             grow(0)\n\
+             val join = fn() { g = g + 0x\"ff\"; c = c + 0x\"ee\" }\n\
+             join()\n\
+             println(before)\n\
+             println([g, c])\n\
+             val fail = fn(change) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 change()\n\
+             }\n\
+             fail(fn() { g = g :+ id(300) })\n\
+             fail(fn() { c = c :+ id(\"no\") })\n\
+             println([g, c])\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            [
+                "[0x\"01\", 0x\"0a\"]",
+                "[0x\"01000102ff\", 0x\"0a101112ee\"]",
+                "value for :+ on bytes must be an integer from 0 through 255",
+                "value for :+ on bytes must be an integer from 0 through 255 or one byte",
+                "[0x\"01000102ff\", 0x\"0a101112ee\"]",
+            ],
+            "{stdout}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
+}
+
+#[test]
 fn a_captured_variable_updated_in_place_keeps_value_semantics() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-captured-variable-updates-{}",

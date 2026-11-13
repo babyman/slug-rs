@@ -2591,3 +2591,18 @@ PGO, interleaved, seven rounds against `673666c`: tuned 1.00x, hold-out
 1.00x; `crawl-ticks` 0.96x, `crawl-crowd` and `crawl-game` 0.98x, all others
 within their spread. Crawl's 1000 joins: 9.17 s to 8.93 s; its captured
 maps hold a few hundred entries, so the copies were a small share there.
+
+### Bytes in fused updates (2026-11-13)
+
+Splitting the copy counters by kind showed that the corpus's large shared
+copies were bytes, not maps: `crawl-game` 95.2M of 95.3M elements,
+`invaders-game` 76.2M of 76.3M; maps peaked at 2.7M (1000 Crawl joins).
+`update_cannot_fail` listed no bytes case, so `UpdateGlobal` and
+`UpdateCapture` kept the binding's reference for `bytes :+ byte` and
+`bytes + bytes`. With both listed (an appended value must be an integer
+0-255 or one byte, as `list_append` requires), `crawl-game` copies 74k
+elements and runs 0.94x; tuned 0.99x, hold-out 0.99x. Invaders is
+unchanged: its `write` rebuilds the 7168-byte video RAM from slices on every
+call, starting from the shared constant `0x""`, so the copying is the
+program's algorithm, not a missed release.
+

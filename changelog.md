@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `bytes` held by a module-level or captured `var` update in place too:
+  `buf = buf :+ byte` and `buf = buf + more` let go of the variable's own
+  reference first, as maps, lists, and strings already did, when the update
+  cannot fail (a byte is an integer from 0 through 255, or one byte).
+  `crawl-game`, whose text renderer builds each row with `line = line :+
+  ...` in a nested function, copied 95 million bytes and now copies 74
+  thousand elements in all; it runs 0.94x as long. PGO A/B: tuned 0.99x,
+  hold-out 0.99x.
+
 - `slug.std` exports `each(vs, f)`, which calls `f` with each element in
   order for what it does and returns `nil`, keeping none of the results.
   Loops run for their effects used `map`, which keeps every result, and an

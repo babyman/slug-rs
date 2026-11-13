@@ -267,8 +267,13 @@ fn update_cannot_fail(operator: GlobalUpdate, left: &Value, right: &Value) -> bo
     match (operator, left, right) {
         (GlobalUpdate::Add, Value::Map(_), Value::Map(_))
         | (GlobalUpdate::Add, Value::List(_), Value::List(_))
+        | (GlobalUpdate::Add, Value::Bytes(_), Value::Bytes(_))
         | (GlobalUpdate::Add, Value::Str(_), _)
         | (GlobalUpdate::Append, Value::List(_), _) => true,
+        // A byte, as `:+` on bytes accepts: an integer from 0 through 255,
+        // or bytes of length one.
+        (GlobalUpdate::Append, Value::Bytes(_), Value::Int(value)) => (0..=255).contains(value),
+        (GlobalUpdate::Append, Value::Bytes(_), Value::Bytes(value)) => value.len() == 1,
         (GlobalUpdate::Subtract, Value::Map(_), key) => is_map_key(key),
         _ => false,
     }
