@@ -2586,7 +2586,8 @@ impl Vm {
             }
             PackedOpcode::UpdateGlobal
             | PackedOpcode::CopyGlobal
-            | PackedOpcode::CopyGlobalUpdate => self.fused_global_update(program, instruction)?,
+            | PackedOpcode::CopyGlobalUpdate
+            | PackedOpcode::UpdateCapture => self.fused_update(program, instruction)?,
             PackedOpcode::GetIndexConstant => {
                 self.get_index_constant(program, operand)?;
             }

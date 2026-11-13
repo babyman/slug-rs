@@ -607,6 +607,25 @@ fn a_blocked_task_is_reported_where_it_waits() {
 }
 
 #[test]
+fn a_fork_cannot_update_a_variable_it_captured() {
+    // `found = found + ...` compiles to one instruction that updates in
+    // place. A fork that reaches it through a function made outside it
+    // fails as before, and the variable keeps its value.
+    let path = fixture_path("fork-captured-update");
+    fs::write(
+        &path,
+        "val main = fn() {\n    var found = {a: 1}\n    val add = fn() { found = found + {b: 2} }\n    val t = fork { add(); 1 }\n    val result = fn() {\n        defer onerror(e) { println(e.msg) }\n        select { await t }\n    }\n    result()\n    println(found)\n}\n",
+    )
+    .expect("write fork update source");
+    let output = slug().arg(&path).output().expect("run fork update source");
+    fs::remove_file(path).expect("remove fork update source");
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("a fork cannot "), "{stdout}");
+    assert!(stdout.ends_with("{\"a\": 1}\n"), "{stdout}");
+}
+
+#[test]
 fn a_fork_beyond_the_running_fork_limit_fails_with_a_fork_error() {
     let path = fixture_path("fork-limit");
     fs::write(

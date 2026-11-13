@@ -687,6 +687,67 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
 }
 
 #[test]
+fn a_captured_variable_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-captured-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // Closures update `var`s they capture from `main`. A value read before
+    // keeps what it was, another closure sharing the variable sees each
+    // update, a call in the right operand that assigns the variable is
+    // overwritten as before, and an update that fails leaves it as it was.
+    fs::write(
+        &program,
+        "val id = fn(v) { v }\n\
+         val main = fn() {\n\
+             var m:map = {a: 1}\n\
+             var l:list = [1]\n\
+             var s = \"x\"\n\
+             val before = [m, l]\n\
+             val bump = fn() { m = m + {bumped: true}; {c: 3} }\n\
+             val read = fn() { [m, l, s] }\n\
+             val update = fn() {\n\
+                 val go = fn(i:num) { if (i < 3) { m = m + {[\"k\" + i]: i}; l = l :+ i; recur(i + 1) } }\n\
+                 go(0)\n\
+                 val calls = [bump]\n\
+                 m = m + calls[0]()\n\
+                 m = m - \"a\"\n\
+                 l = l + [9]\n\
+                 s = s + \"y\" + 5\n\
+             }\n\
+             update()\n\
+             println(before)\n\
+             println(read())\n\
+             val fail = fn(change) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 change()\n\
+             }\n\
+             fail(fn() { l = l + id(5) })\n\
+             fail(fn() { m = m - id(fn() { 1 }) })\n\
+             println(read())\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        let after = "[{\"c\": 3, \"k0\": 0, \"k1\": 1, \"k2\": 2}, [1, 0, 1, 2, 9], \"xy5\"]";
+        assert_eq!(lines[0], "[{\"a\": 1}, [1]]", "{stdout}");
+        assert_eq!(lines[1], after, "{stdout}");
+        assert_eq!(lines[4], after, "{stdout}");
+        assert_eq!(lines.len(), 5, "{stdout}");
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
+}
+
+#[test]
 fn a_module_variable_updated_in_place_keeps_value_semantics() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-module-variable-updates-{}",

@@ -762,6 +762,12 @@ impl Program {
             Op::SetLocal(v) => (PackedOpcode::SetLocal, operand(*v), 0, 0),
             Op::GetCapture(v) => (PackedOpcode::GetCapture, operand(*v), 0, 0),
             Op::SetCapture(v) => (PackedOpcode::SetCapture, operand(*v), 0, 0),
+            Op::UpdateCapture { slot, operator } => (
+                PackedOpcode::UpdateCapture,
+                operand(*slot),
+                operator.code(),
+                0,
+            ),
             Op::GetGlobalPooled(v) => (PackedOpcode::GetGlobal, v.0, 0, 0),
             Op::NotImplemented => (PackedOpcode::NotImplemented, 0, 0, 0),
             Op::DefineGlobalPooled(v) => (PackedOpcode::DefineGlobal, v.0, 0, 0),
@@ -956,6 +962,12 @@ impl Program {
             PackedOpcode::SetLocal => Op::SetLocal(n(instruction.a)),
             PackedOpcode::GetCapture => Op::GetCapture(n(instruction.a)),
             PackedOpcode::SetCapture => Op::SetCapture(n(instruction.a)),
+            PackedOpcode::UpdateCapture => Op::UpdateCapture {
+                slot: n(instruction.a),
+                operator: GlobalUpdate::from_code(instruction.b).ok_or_else(|| {
+                    String::from("packed instruction references missing update operator")
+                })?,
+            },
             PackedOpcode::GetGlobal => Op::GetGlobalPooled(GlobalNameId(instruction.a)),
             PackedOpcode::NotImplemented => Op::NotImplemented,
             PackedOpcode::DefineGlobal => Op::DefineGlobalPooled(GlobalNameId(instruction.a)),
@@ -1905,6 +1917,7 @@ impl Program {
             | Op::GetIndex
             | Op::UpdateGlobal { .. }
             | Op::UpdateGlobalPooled { .. }
+            | Op::UpdateCapture { .. }
             | Op::Add
             | Op::AddNum
             | Op::Subtract

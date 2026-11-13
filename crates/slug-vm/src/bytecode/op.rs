@@ -261,6 +261,17 @@ pub enum Op {
         fields: StructFieldsId,
         operator: GlobalUpdate,
     },
+    /// Applies `operator` to the two values on top of the stack, assigns the
+    /// result to the closure's capture `slot`, and pushes it: the fused form
+    /// of the operator, `Duplicate`, `SetCapture(slot)`. A captured `var`
+    /// lives in a cell its closures share, so while the operator runs the
+    /// cell holds the left value too; when the operation cannot fail, the
+    /// cell is emptied first, so that a collection nothing else holds is
+    /// updated in place, as `found = found + {[key]: true}` in a loop wants.
+    UpdateCapture {
+        slot: usize,
+        operator: GlobalUpdate,
+    },
 }
 
 /// The operator of an `UpdateGlobal` instruction, which behaves exactly like

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- A `var` that a closure captures updates its collection in place. An
+  assignment to a captured `var` whose value is a `+`, `-`, or `:+`
+  compiles to one instruction, `UpdateCapture`, which empties the
+  variable's cell before an operation that cannot fail, as `UpdateGlobal`
+  does for a module-level name. Before, the cell kept its reference while
+  the operator ran, so every update copied the whole collection: a loop
+  adding 20,000 entries to `var found = {}` through a nested function, the
+  usual shape of a Slug loop, copied 200 million elements and took 0.87 s,
+  where a module variable took 0.01 s; 80,000 entries now take 0.03 s.
+  Values read from the variable before keep what they were, a fork still
+  cannot change a `var` it captured, and an update that fails leaves the
+  variable as it was. Crawl's 1000 joins take 0.97x as long; PGO A/B:
+  tuned 1.00x, hold-out 1.00x, `crawl-ticks` 0.96x.
+
 - Crawl finds who a player sees by square in a crowd, and no longer sorts
   everyone to find one player. `game.peopleSeen(id)` gives the other
   players in the chunk whom a player sees, looking up who stands on each

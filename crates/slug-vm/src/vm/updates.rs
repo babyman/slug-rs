@@ -24,11 +24,12 @@ use super::{
 };
 
 impl Vm {
-    /// Runs an `UpdateGlobal`, `CopyGlobal`, or `CopyGlobalUpdate`. The
-    /// dispatch loop has one call for the three, which decodes its own
-    /// operands, so that they add as little as possible to the loop.
+    /// Runs an `UpdateGlobal`, `CopyGlobal`, `CopyGlobalUpdate`, or
+    /// `UpdateCapture`. The dispatch loop has one call for the four, which
+    /// decodes its own operands, so that they add as little as possible to
+    /// the loop.
     #[inline(never)]
-    pub(super) fn fused_global_update(
+    pub(super) fn fused_update(
         &mut self,
         program: &Program,
         instruction: &PackedInstruction,
@@ -39,6 +40,9 @@ impl Vm {
             PackedOpcode::UpdateGlobal => self.update_global(program, id, operator(instruction.b)),
             PackedOpcode::CopyGlobal => {
                 self.copy_global(program, id, StructFieldsId::new(instruction.b))
+            }
+            PackedOpcode::UpdateCapture => {
+                self.update_capture(instruction.a as usize, instruction.b)
             }
             _ => self.copy_global_update(
                 program,
@@ -147,6 +151,53 @@ impl Vm {
         let value = copy_value(value, fields, &replacements)
             .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
         self.assign_global(program, id, value)
+    }
+
+    /// Runs an `UpdateCapture`: applies the operator `code` names to the two
+    /// values on the stack, assigns the result to the active closure's
+    /// capture `slot`, and pushes it.
+    ///
+    /// A captured `var` lives in a cell the closures that capture it share,
+    /// so `found = found + entry` reads a clone of the cell's value and the
+    /// cell keeps its own reference while the operator runs. When the
+    /// operation cannot fail, the cell is emptied first, as `release_global`
+    /// does for a module-level binding: nothing runs between, and the cell
+    /// is assigned at once. A fork cannot change a `var` it captured, as
+    /// with `SetCapture`, and the check comes before the cell is touched.
+    fn update_capture(&mut self, slot: usize, code: u32) -> VmResult<()> {
+        let operator = GlobalUpdate::from_code(code).expect("validated update operator");
+        let cell = self
+            .frames
+            .last()
+            .and_then(|frame| frame.closure.captures.get(slot))
+            .cloned()
+            .ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("capture {slot} does not exist"),
+                )
+            })?;
+        #[cfg(feature = "concurrency")]
+        if let Some(fork) = self.view.as_ref().and_then(|view| view.fork.as_ref())
+            && fork.is_frozen(&cell)
+        {
+            return Err(self.error_at(
+                RuntimeErrorKind::Fork,
+                format!(
+                    "a fork cannot change a variable it captured from outside it: the fork{} sees a snapshot of it, so the change would never reach the code that declared it; return the value from the fork instead",
+                    fork.location()
+                ),
+            ));
+        }
+        let (left, right) = self.pop_pair()?;
+        if update_cannot_fail(operator, &left, &right) {
+            // Dropped once the cell is no longer borrowed.
+            drop(cell.replace(Value::Nil));
+        }
+        let value = self.apply_update(operator, left, right)?;
+        drop(cell.replace(value.clone()));
+        self.stack.push(value);
+        Ok(())
     }
 
     /// Drops the value of the module-level `id`, which the instruction is

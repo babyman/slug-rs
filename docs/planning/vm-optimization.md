@@ -2558,3 +2558,36 @@ the training profile shifts, and the PGO build calls `numeric_binary` (from
 `#[inline(always)]` on `numeric_binary` alone did not recover history
 (1.06x) and was reverted. Accepted by the user; making the PGO build's
 inlining of hot helpers deliberate is separate work.
+
+## Captured variables updated in place (2026-11-13)
+
+Found while profiling Crawl's joins: `var found = {}` updated by a nested
+function, `found = found + {[k]: true}`, copied the whole map on every
+update. `GetCapture` clones the value out of the variable's shared cell, so
+the cell still holds it while the operator runs; module variables had the
+same problem until `UpdateGlobal`, and locals move on their last read, but
+captures had neither. Every update was a shared-owner update: 20,000 of them
+copied 200,030,000 elements in 0.87 s, against 0.01 s for the same loop on a
+module or `task var`, or threading the map through `recur`. Since Slug loops
+are `recur` in nested functions, a local `var` accumulated in a loop is
+almost always captured.
+
+`UpdateCapture { slot, operator }` fuses `+`, `-`, or `:+` with the
+assignment to a captured `var`, as `UpdateGlobal` does (same peephole, no
+jump may land after the operator). It checks, as `SetCapture` does, that a
+fork is not changing a captured variable before it touches the cell, then
+empties the cell when the operation cannot fail. It shares the fused
+updates' one out-of-line dispatch call (a first version with its own arm in
+the loop measured `fib` 1.02x, just outside its spread). A captured local's own frame still
+clones (`LocalSlot::Captured`); updates there rarely run in a loop, since
+`recur` restarts the frame.
+
+Not fixed, and not a bug: an assignment evaluates to the value assigned, so
+`map(xs, fn(i) { g = g + {...} })` keeps every version of `g` in its result
+and each update must copy (40,000 keys took 73 s). Persistent maps (the
+collection redesign's stage 7) would make that cheap.
+
+PGO, interleaved, seven rounds against `673666c`: tuned 1.00x, hold-out
+1.00x; `crawl-ticks` 0.96x, `crawl-crowd` and `crawl-game` 0.98x, all others
+within their spread. Crawl's 1000 joins: 9.17 s to 8.93 s; its captured
+maps hold a few hundred entries, so the copies were a small share there.

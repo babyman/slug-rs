@@ -6337,6 +6337,45 @@ mod tests {
     }
 
     #[test]
+    fn captured_variable_updates_assign_in_the_operator() {
+        use slug_vm::PackedOpcode::{Add, ListAppend, SetCapture, Subtract, UpdateCapture};
+        // Every chunk's opcodes: the closure's are among them.
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            (0..)
+                .map_while(|index| program.chunk(index))
+                .flat_map(|chunk| chunk.code.iter().map(|instruction| instruction.opcode))
+                .collect::<Vec<_>>()
+        };
+        for (source, absent) in [
+            (
+                "val main = fn() { var m = {}\n val f = fn(k) { m = m + {[k]: 1} }\n f(\"a\") }",
+                Add,
+            ),
+            (
+                "val main = fn() { var m = {a: 1}\n val f = fn(k) { m = m - k }\n f(\"a\") }",
+                Subtract,
+            ),
+            (
+                "val main = fn() { var l = []\n val f = fn(v) { l = l :+ v }\n f(1) }",
+                ListAppend,
+            ),
+        ] {
+            let opcodes = opcodes(source);
+            assert!(opcodes.contains(&UpdateCapture), "{source}: {opcodes:?}");
+            assert!(
+                !opcodes.contains(&absent) && !opcodes.contains(&SetCapture),
+                "{source}: {opcodes:?}"
+            );
+        }
+        // A jump past the operator would skip the assignment it now makes.
+        let branched = opcodes(
+            "val main = fn() { var m = {}\n val f = fn(c) { m = if (c) { m + {a: 1} } else { m + {b: 2} } }\n f(true) }",
+        );
+        assert!(branched.contains(&SetCapture), "{branched:?}");
+    }
+
+    #[test]
     fn module_function_calls_read_their_callee_after_the_arguments() {
         use slug_vm::PackedOpcode::{CallGlobal, CallPositional, GetGlobal};
         let counts = |source: &str| {

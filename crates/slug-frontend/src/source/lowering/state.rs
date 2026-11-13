@@ -211,6 +211,26 @@ impl State {
         *op = fused;
         true
     }
+    /// Makes the `+`, `-`, or `:+` just emitted for the value of an
+    /// assignment to the captured `var` in `slot` assign it as well, as
+    /// `fuse_global_update` does for a module-level name. No jump may land
+    /// after the operator.
+    pub(super) fn fuse_capture_update(&mut self, slot: usize) -> bool {
+        let Some(index) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > index {
+            return false;
+        }
+        let op = &mut self.chunk.code[index].op;
+        match GlobalUpdate::of(op) {
+            Some(operator) => {
+                *op = Op::UpdateCapture { slot, operator };
+                true
+            }
+            None => false,
+        }
+    }
     /// Removes the `GetGlobal` just emitted for a call's callee and returns
     /// its name, so that `CallGlobal` reads the name after the arguments.
     /// A jump to the `GetGlobal` lands on the arguments instead.

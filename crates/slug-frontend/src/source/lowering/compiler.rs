@@ -780,8 +780,15 @@ impl Compiler {
                         .with_extent(expression));
                     }
                     self.expression(state, value)?;
-                    if !matches!(binding, Binding::Global { .. }) || !state.fuse_global_update(name)
-                    {
+                    // A module-level binding or a captured `var` updated by
+                    // `+`, `-`, `:+`, or `copy` assigns in the operator, so
+                    // the collection can change in place.
+                    let fused = match binding {
+                        Binding::Global { .. } => state.fuse_global_update(name),
+                        Binding::Capture { slot, .. } => state.fuse_capture_update(slot),
+                        _ => false,
+                    };
+                    if !fused {
                         // Stores consume their operand, while assignment expressions evaluate to it.
                         state.emit(Op::Duplicate, &expression.span);
                         match binding {
