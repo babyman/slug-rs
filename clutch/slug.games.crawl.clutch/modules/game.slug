@@ -314,6 +314,15 @@ val playerIn = fn(key:str, x:num, y:num):bool {
 
 val playerAt = fn(x:num, y:num):bool { playerIn(playerKey(), x, y) }
 
+// The squares of chunk (cx, cy) on `depth` where living players stand, as a
+// map from "x,y" to true: one look at everyone, for asking of many squares.
+val occupied = fn(cx:num, cy:num, depth:num):map {
+    reduce(keys(players), {}, fn(acc, id) {
+        val p = if (id == acting) { player } else { players[id] }
+        if (!p.dead && p.cx == cx && p.cy == cy && p.depth == depth) { acc + {["" + p.x + "," + p.y]: true} } else { acc }
+    })
+}
+
 // The index of the character at (x, y) in the acting player's chunk, or -1.
 val characterAt = fn(x:num, y:num):num { indexAt(site().characters ?? [], x, y) }
 
@@ -1218,13 +1227,13 @@ val newCharacter = fn() {
     val middle = math.div(world.size ?? 0, 2)
     val cx = if (home != nil) { home.cx } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
     val cy = if (home != nil) { home.cy } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
-    val key = chunkKey(cx, cy, 0)
     // A few random squares first; players who leave stay in the world, so
     // the town fills up, and then the nearest open square around it.
+    val taken = occupied(cx, cy, 0)
     val tries = fn(lv:map, n:num):map|nil {
         if (n == SPAWN_TRIES) { return nil }
         val spot = if (lv.walls != nil) { insideSpot(lv) } else { level.freeSpot(lv) }
-        if (playerIn(key, spot.x, spot.y)) { recur(lv, n + 1) } else { spot }
+        if (taken["" + spot.x + "," + spot.y] == true) { recur(lv, n + 1) } else { spot }
     }
     match tries(chunk(cx, cy, 0), 0) {
         spot: map => enter(cx, cy, 0, fn(_) { spot })
@@ -1265,32 +1274,55 @@ val ringLength = fn(r:num):num { if (r == 0) { 1 } else { 8 * r } }
 // outside them.
 val nearestOpen = fn(cx:num, cy:num):map|nil {
     val lv = chunk(cx, cy, 0)
-    val key = chunkKey(cx, cy, 0)
     val spotKey = fn(x:num, y:num):str { "" + x + "," + y }
     val mark = fn(acc:map, t:map):map { acc + {[spotKey(t.x, t.y)]: true} }
     val things = (lv.items ?? []) + (lv.characters ?? []) + (lv.monsters ?? [])
-    val taken = reduce(map(companyIn(key), fn(pair) { pair[1] }), reduce(things, {}, mark), mark)
+    val taken = reduce(things, occupied(cx, cy, 0), mark)
+    val order = groundOrder(chunkKey(cx, cy, 0), lv)
+    val go = fn(i:num):map|nil {
+        if (i == len(order)) { return nil }
+        val [x, y, k] = order[i]
+        if (taken[k] == true) { recur(i + 1) } else { {x: x, y: y} }
+    }
+    go(0)
+}
+
+// The squares of surface chunk `lv` a new character may start on, nearest
+// its middle (its walls' middle in a settlement) first, ring by ring, as
+// [x, y, "x,y"]: streets inside a settlement's walls (any open square in a
+// fort's), or ground outside them. Terrain stays as it is made, so each
+// chunk's list is kept, by `key`, while its map is the same.
+val groundOrder = fn(key:str, lv:map):list {
+    match groundOrders[key] {
+        kept: map => if (kept.map == lv.map) { return kept.order }
+        _ => nil
+    }
     val w = lv.walls
-    val open = fn(x:num, y:num):bool {
+    val ground = fn(x:num, y:num):bool {
         val c = lv.map[y][x]
         val inside = w != nil && x > w.left && x < w.right && y > w.top && y < w.bottom
-        val ground = if (inside) {
+        if (inside) {
             c == level.ROAD || (lv.place.kind == "fort" && c == level.FLOOR)
         } else {
             c == level.FLOOR || c == level.SCRUB || c == level.ROAD
         }
-        ground && taken[spotKey(x, y)] != true
     }
     val ox = if (w != nil) { math.div(w.left + w.right, 2) } else { math.div(level.WIDTH, 2) }
     val oy = if (w != nil) { math.div(w.top + w.bottom, 2) } else { math.div(level.HEIGHT, 2) }
-    val search = fn(r:num, j:num):map|nil {
-        if (r > level.WIDTH) { return nil }
-        if (j == ringLength(r)) { return recur(r + 1, 0) }
+    val walk = fn(r:num, j:num, acc:list):list {
+        if (r > level.WIDTH) { return acc }
+        if (j == ringLength(r)) { return recur(r + 1, 0, acc) }
         val [x, y] = ringPoint(ox, oy, r, j)
-        if (inBounds(x, y) && open(x, y)) { {x: x, y: y} } else { recur(r, j + 1) }
+        recur(r, j + 1, if (inBounds(x, y) && ground(x, y)) { acc :+ [x, y, "" + x + "," + y] } else { acc })
     }
-    search(0, 0)
+    val order = walk(0, 0, [])
+    groundOrders = groundOrders + {[key]: {map: lv.map, order: order}}
+    order
 }
+
+// Each surface chunk's `groundOrder` once found, by key. A cache, so each
+// task has its own.
+task var groundOrders = {}
 
 // Where a new character starts when random tries found the town at (cx, cy)
 // full, as [cx, cy, spot]: the nearest open square in its chunk, inside the

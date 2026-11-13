@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Crawl places a new character without looking at every player for each
+  square it tries. Once the start town fills, a join tried 50 random squares
+  each asking of every player whether they stood there, then walked the
+  rings around the town's middle square by square, rebuilding the set of
+  taken squares from the chunk's sorted company. Now one look at everyone
+  finds the squares players stand on (`occupied`), and each surface chunk's
+  open ground is listed once, nearest its middle first (`groundOrder`, kept
+  per task while the chunk's map is unchanged), so a join only skips the
+  taken squares in that list. A thousand players join in 4.4 s, from 8.9;
+  each lands where it did before.
+
 - A `var` that a closure captures updates its collection in place. An
   assignment to a captured `var` whose value is a `+`, `-`, or `:+`
   compiles to one instruction, `UpdateCapture`, which empties the
