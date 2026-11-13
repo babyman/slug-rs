@@ -711,3 +711,32 @@ fn a_fork_cancelled_while_its_children_settle_frees_its_place() {
     assert_eq!(String::from_utf8_lossy(&output.stderr), "");
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
 }
+
+#[test]
+fn a_fork_cannot_import_a_module_whose_initialization_is_still_running() {
+    // `main` imports a module that takes a while to initialize; a fork asks
+    // for it meanwhile. Only threads make the two overlap.
+    let directory =
+        std::env::temp_dir().join(format!("slug-cli-initializing-{}", std::process::id()));
+    fs::create_dir_all(&directory).expect("create module directory");
+    fs::write(
+        directory.join("slowinit.slug"),
+        "val spin = fn(i:num):num { if (i == 0) { 0 } else { recur(i - 1) } }\nspin(3000000)\nexport val value = 5\n",
+    )
+    .expect("write slow module");
+    let path = directory.join("main.slug");
+    fs::write(
+        &path,
+        "val main = fn() {\n    val t = fork { select { after 50 }; import(\"slowinit\").value }\n    println(import(\"slowinit\").value)\n    println(select { await t })\n}\n",
+    )
+    .expect("write importing source");
+    let output = slug().arg(&path).output().expect("run importing source");
+    fs::remove_dir_all(&directory).expect("remove module directory");
+
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "5\n");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("a fork cannot initialize `slowinit`, as `import` would"),
+        "{stderr}"
+    );
+}

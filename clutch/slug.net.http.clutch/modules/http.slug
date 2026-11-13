@@ -507,7 +507,10 @@ val respond = fn(connection:tcp.Connection, response, head:bool, closing:bool):b
         val given = keysGiven[i]
         val name = "$given"
         val key = lower(name)
-        if (key == "content-length" || (bodiless && key == "content-type")) {
+        // The server frames the response and decides whether the
+        // connection stays open: a handler's own framing headers would
+        // contradict its `Content-Length`.
+        if (key == "content-length" || key == "transfer-encoding" || key == "connection" || (bodiless && key == "content-type")) {
             return recur(i + 1, out, seen)
         }
         val value = headers[given]

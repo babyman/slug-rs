@@ -1,0 +1,14 @@
+// What leaves a fork is checked through the fork's own view: a task inside
+// it that set its copy of a `task var` to a function capturing a `var`, and
+// ran last, does not make the fork's result unsendable.
+val slots = import("taskslot")
+val main = fn() {
+    val t = fork {
+        spawn {
+            var n = 0
+            slots.put(fn():num { n = n + 1; n })
+        }
+        slots
+    }
+    println(select { await t }.slot)
+}

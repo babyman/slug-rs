@@ -1,0 +1,9 @@
+// A fork whose body fails cancels the fork it started, which may still be
+// stopping when the outer fork is done: the program still ends.
+val main = fn() {
+    val t = fork {
+        fork { select { after 2000 } }
+        throw "stop"
+    }
+    select { await t }
+}

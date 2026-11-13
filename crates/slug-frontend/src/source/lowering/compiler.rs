@@ -585,6 +585,9 @@ impl Compiler {
                                 )?;
                                 text.push(String::new());
                             }
+                            StringPart::Expr(_) => {
+                                unreachable!("the parser binds each `${{...}}` to a name")
+                            }
                         }
                     }
                     state.emit(Op::Interpolate(text), &expression.span);

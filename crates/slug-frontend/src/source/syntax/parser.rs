@@ -21,6 +21,9 @@ pub(super) struct Parser {
     chain: u32,
     match_subject_nesting: Option<usize>,
     pipeline_enabled: bool,
+    /// How many hidden bindings `${...}` interpolations have introduced, so
+    /// each gets a name of its own, the same on every parse.
+    interpolations: usize,
 }
 
 enum DocumentationPrefix {
@@ -38,7 +41,67 @@ impl Parser {
             chain: 0,
             match_subject_nesting: None,
             pipeline_enabled: true,
+            interpolations: 0,
         }
+    }
+
+    /// A string literal's expression: a plain string; an interpolation of
+    /// names; or, with `${expression}` parts, a block that binds each such
+    /// expression, in order, to a name no source can write and interpolates
+    /// those names, so every later pass sees only constructs it knows.
+    fn interpolated(
+        &mut self,
+        parts: Vec<StringPart>,
+        span: &SourceSpan,
+        end: SourcePosition,
+    ) -> Result<ExprKind, SourceError> {
+        if let [StringPart::Text(value)] = parts.as_slice() {
+            return Ok(ExprKind::Value(Value::string(value.clone())));
+        }
+        if !parts.iter().any(|part| matches!(part, StringPart::Expr(_))) {
+            return Ok(ExprKind::Interpolate(parts));
+        }
+        let mut block = Vec::new();
+        let mut named = Vec::with_capacity(parts.len());
+        for part in parts {
+            let StringPart::Expr(tokens) = part else {
+                named.push(part);
+                continue;
+            };
+            let mut parser = Self::new(tokens);
+            parser.interpolations = self.interpolations;
+            parser.separators();
+            let value = parser.expression()?;
+            parser.separators();
+            if !parser.matches(&TokenKind::End) {
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected `}` after the interpolated expression",
+                    parser.peek(),
+                ));
+            }
+            self.interpolations = parser.interpolations;
+            let name = format!("#{}", self.interpolations);
+            self.interpolations += 1;
+            let (value_span, value_end) = (value.span.clone(), value.end);
+            block.push(Expr::new(
+                ExprKind::Declare {
+                    mutable: false,
+                    task: false,
+                    exported: false,
+                    pattern: Pattern::Binding(name.clone()),
+                    documentation: None,
+                    tags: Vec::new(),
+                    annotation: None,
+                    value: Box::new(value),
+                },
+                value_span,
+                value_end,
+            ));
+            named.push(StringPart::Name(name));
+        }
+        block.push(Expr::new(ExprKind::Interpolate(named), span.clone(), end));
+        Ok(ExprKind::Block(block))
     }
 
     fn peek(&self) -> &Token {
@@ -1198,13 +1261,7 @@ impl Parser {
                 TokenKind::Int(value) => ExprKind::Value(Value::Int(value)),
                 TokenKind::Float(value) => ExprKind::Value(Value::Float(value)),
                 TokenKind::Bytes(value) => ExprKind::Value(Value::Bytes(value.into())),
-                TokenKind::Interpolated(parts) => {
-                    if let [StringPart::Text(value)] = parts.as_slice() {
-                        ExprKind::Value(Value::string(value.clone()))
-                    } else {
-                        ExprKind::Interpolate(parts)
-                    }
-                }
+                TokenKind::Interpolated(parts) => self.interpolated(parts, &span, token.end)?,
                 TokenKind::True => ExprKind::Value(Value::Bool(true)),
                 TokenKind::False => ExprKind::Value(Value::Bool(false)),
                 TokenKind::Nil => ExprKind::Value(Value::Nil),
@@ -1701,11 +1758,7 @@ impl Parser {
                             Value::string(Self::key_name(kind).expect("checked above")),
                         ),
                         TokenKind::Interpolated(parts) => {
-                            if let [StringPart::Text(value)] = parts.as_slice() {
-                                ExprKind::Value(Value::string(value.clone()))
-                            } else {
-                                ExprKind::Interpolate(parts)
-                            }
+                            self.interpolated(parts, &token.span, token.end)?
                         }
                         _ => {
                             return Err(SourceError::at(

@@ -2,6 +2,156 @@
 
 ## Unreleased
 
+- Strings interpolate `${expression}`, as JavaScript, Kotlin, and Dart do:
+  any expression, such as `"${total(values)}"`, `"${m.a}"`,
+  `"${m["key"]}"`, or `"${if (ok) { "yes" } else { "no" }}"`, with braces
+  and strings nesting inside. Each evaluates once, left to right, and
+  becomes text as `$name` does. Before, `${...}` was silently left as text:
+  agents wrote `"${total(values)}"` in eval runs and got that text, and a
+  header check in `slug.net.http` validated the text `${headers[name]}`
+  instead of the header. This reverses the earlier rule that strings
+  interpolate only names. `\${` writes a literal `${`; an empty or
+  unterminated `${` is a syntax error. The parser binds each expression to
+  a hidden name in a block, so every later pass is unchanged.
+
+- From the ninth review:
+  - `==` takes time bounded by the size of what it compares: it recurses
+    for at most 4,096 steps through containers and bindings, then starts
+    again tracking the pairs of containers it has compared. Two lists
+    built by doubling 40 times, `[acc, acc]`, share their parts 2^40 ways
+    over, and comparing them never finished (`fork/shared-parts-equality`).
+  - A chain of closures capturing values that hold closures drops without
+    growing the native stack, on hosted builds and with the work list
+    freestanding builds use, which hosted tests can now drive
+    (`slug_vm::drop_with_work_list`); a 200,000-long chain of closures and
+    lists overflowed it.
+  - The spawner's check of a host's `cfg` answer for a fork stops once the
+    fork is cancelled.
+  - Recovering from a panic in an island, a failure taking its root off
+    what it waits on no longer skips cancelling and joining its forks.
+
+- From the eighth review:
+  - Values nested deeper than the native stack can hold no longer crash:
+    `==` recurses only 64 levels, through containers and module bindings,
+    then goes on with a stack of its own that compares each pair of
+    containers once; and dropping a list, map, or struct takes apart the
+    nested values it alone holds with a loop. Before, comparing two lists
+    nested 200,000 deep overflowed the stack, and so did merely dropping
+    one when the program ended (`fork/deep-values`). The deep phase also
+    ends any cycle through a module variable, replacing the binding-depth
+    rule.
+  - A fork's sendability check keeps one cursor per container it is
+    inside, rather than every part it has yet to visit, and stops when the
+    fork is cancelled, checking every 4,096 parts.
+  - A worker that catches a panic in its island cleans it up as a
+    cancelled one is, taking its root off whatever it waits on, and ends
+    if that cleanup fails too, rather than take another island. A one-way
+    host request (`warn`, native globals) from a fork cancelled before it
+    is served is skipped, as a host call is.
+
+- From the seventh review:
+  - A value that reaches itself, as an import map does through a module
+    `var` holding it, no longer hangs a fork's sendability check, which
+    now walks each container, binding, and function once, nor overflows
+    `==`, which compares identical containers at once and, past 32
+    bindings followed inside each other, compares bindings by identity
+    (`fork/cyclic-result`). Values cannot change, so only bindings can
+    make one reach itself.
+  - Enum patterns compare through the task's view, as literal and pinned
+    patterns do.
+  - A worker that catches a panic in its island cancels the island's
+    forks and waits for them before reporting, as every other exit does.
+  - A host call queued by a fork that was cancelled before it was served
+    is skipped rather than run for nobody.
+
+- From the sixth review:
+  - An island waits for the forks it started on every exit, not only when
+    it was cancelled, and a finished island tells its program's root: a
+    fork whose body failed reported back while the fork it started was
+    still stopping, and the program's run then waited for that fork with
+    nothing left to wake it, hanging 98 times in 100
+    (`fork/nested-outlives-failed-body`).
+  - A fork does not start when its host's argument map is not sendable:
+    a custom host can give any value there, which crossed to the worker
+    unchecked.
+  - Literal and pinned patterns compare as `==` does, reading module
+    bindings through the task's view, so a fork matching a pinned import
+    map agrees with `==` on every build.
+
+- From the fifth review:
+  - A whole program's run and `Vm::shutdown` wait only for that program's
+    forks, counted by its thread group, not for every fork of the thread:
+    a host running several VMs on one thread no longer has one wait for
+    another's fork, and a host callback that runs a program cannot wait for
+    the fork waiting on the callback.
+  - `cfg` in a fork checks its fallback is sendable before asking the
+    spawner's host (`fork/cfg-fallback-unsendable`), and the host's answer
+    is checked before it crosses back; one that is not sendable gives the
+    fork its fallback, with a warning.
+  - Equality is one implementation that reads module bindings through a
+    given reader: the VM's `==` reads them through its task's view, on
+    every build, so freestanding builds now compare a fork's value holding
+    a module `var` against its snapshot too; `PartialEq` elsewhere keeps the
+    running view. The sendability checks a fork makes read through its own
+    view the same way.
+
+- From the fourth review:
+  - A whole program's run (`run_program`, `run_named`, `blocking_run`, and
+    the others) and `Vm::shutdown` return only once every fork the thread
+    started has reported back, draining what they post: a fork a failure
+    cancelled may hold the last reference to a resource, whose destruction
+    it posts home, and that ran only if the thread happened to pump again.
+    Module initialization does not wait, since forks may be waiting on it.
+    An inbox dropped with work queued leaks it rather than drop a payload
+    on another thread.
+  - A fork's island rechecks cancellation after taking its wake snapshot,
+    so a cancellation between its last check and its sleep no longer
+    leaves it asleep; a fork waiting on a host call stops waiting once
+    cancelled, its host answering with an error or nothing.
+  - The running task's view, which `==` and the sendability checks read
+    through, is installed for one execution and restored after it, and a
+    fork's own outcome is checked through its own view: a task inside the
+    fork that ran last, holding an unsendable `task var` copy, made the
+    fork's result fail (`fork/outcome-own-view`).
+  - Closing a channel revokes a native producer under the lock that
+    publishes one, so one attached as the channel closes is not left open.
+  - A fork imports or describes through `VmHost::import_initialized` and
+    `describe_initialized`, which find and give an initialized module in
+    one lookup and never initialize one, replacing `module_initialized`; a
+    changing resolver can no longer approve one module and load another,
+    and the virtual `slug.builtin` is answered too.
+
+- The immortal-code decision records the retention it accepts: every fresh
+  module graph, VM, or `run_program` call allocates code that is never
+  freed, and immortal binding cells keep their values' data reachable; fine
+  for process-lifetime module graphs, to revisit if long-lived embedding
+  becomes a supported workload.
+
+- Smaller fixes from the third review:
+  - A module whose code is still running is not initialized: a fork
+    importing or describing it meanwhile fails, as for one not yet
+    started; before, it got the module's exports before they were set. A
+    fork now needs a host's definite yes, and `ArtifactHost`, which said
+    nothing, answers.
+  - A channel's first native producer is published under the channel's
+    lock, so two threads attaching at once share one producer instead of
+    one sending into a producer the channel never drains.
+  - A fork's receive rejects an unsendable value before the wake leaves the
+    sender's thread, so the value never reaches the fork's thread.
+  - `slug.net.http` frames a buffered response itself: a handler's
+    `Transfer-Encoding` or `Connection` header is dropped, as its
+    `Content-Length` was, rather than sent beside the server's.
+
+- Native resources belong to the fork domain that made them, from the
+  third review: a fork may hold its spawner's resource, as before, but a
+  native call using it there, even of a function declared thread-safe on a
+  thread-safe module, fails with `native.resource_owner` before the
+  resource's state or payload is touched, which are the spawner's thread's.
+  A resource whose last holder lets go on another thread has its payload
+  destroyed on the thread that made it, posted there. Resource type
+  registrations are `Send + Sync`, so a module holding its resource types
+  can be made with `NativeModule::new_thread_safe`.
+
 - Fork lifecycle and nested reads, from the third review:
   - A fork's island settles its children in its own loop, which a
     cancellation ends: before, once the fork's body had returned, a

@@ -1110,8 +1110,12 @@ impl slug_vm::VmHost for ServingHost {
         })
     }
 
-    fn module_initialized(&self, _importer: Option<&str>, _name: &str) -> Option<bool> {
-        Some(true)
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<slug_vm::VmModuleExports, slug_vm::VmHostError>> {
+        Some(self.import_module(importer, name))
     }
 
     fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
@@ -1273,4 +1277,272 @@ fn a_nursery_lets_go_of_tasks_that_have_settled() {
         destroyed >= 200,
         "only {destroyed} of 300 results were released"
     );
+}
+
+/// A thread-safe module with a resource type, as a typed clutch declaring
+/// `thread_safe = true` on a function that takes a handle would make.
+#[cfg(feature = "threads")]
+mod owned_resources {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use super::*;
+
+    pub struct Payload;
+
+    type Kind = Arc<OnceLock<NativeResourceType<Payload>>>;
+    type Callback = for<'call> fn(&mut NativeCall<'call>) -> NativeStatus;
+
+    /// Where each payload was destroyed.
+    pub static DESTROYED_ON: Mutex<Vec<std::thread::ThreadId>> = Mutex::new(Vec::new());
+
+    fn destroy(_: Payload) {
+        DESTROYED_ON
+            .lock()
+            .unwrap()
+            .push(std::thread::current().id());
+    }
+
+    fn kind(call: &NativeCall<'_>) -> NativeResourceType<Payload> {
+        call.state::<Kind>().unwrap().get().unwrap().clone()
+    }
+
+    fn make_it(call: &mut NativeCall<'_>) -> NativeStatus {
+        let kind = kind(call);
+        let resource = call.resource(&kind, Payload).unwrap();
+        call.return_value(resource)
+    }
+
+    fn use_it(call: &mut NativeCall<'_>) -> NativeStatus {
+        let kind = kind(call);
+        match call.with_resource(0, &kind, |_| 7) {
+            Ok(value) => call.return_value(NativeOwnedValue::integer(value)),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    pub fn vm() -> Vm {
+        let kind: Kind = Arc::default();
+        let module = NativeModule::new_thread_safe("test.owned", kind.clone()).unwrap();
+        kind.set(module.resource_type("thing", |_| {}, destroy).unwrap())
+            .ok()
+            .unwrap();
+        let mut vm = Vm::new();
+        let callbacks: [(&str, NativeArity, Callback); 2] = [
+            ("make_it", NativeArity::Exact(0), make_it),
+            ("use_it", NativeArity::Exact(1), use_it),
+        ];
+        for (name, arity, callback) in callbacks {
+            let function = module.function(name, arity, callback).unwrap();
+            function.declare_thread_safe().unwrap();
+            vm.define_native(function).unwrap();
+        }
+        vm
+    }
+}
+
+// One test, as both programs record where payloads are destroyed.
+#[test]
+#[cfg(feature = "threads")]
+fn a_fork_holds_but_cannot_use_its_spawners_resource_whose_thread_destroys_it() {
+    let mut vm = owned_resources::vm();
+    let uses = compile(
+        "fork-uses-resource.slug",
+        "val main = fn() {\n    val r = make_it()\n    val direct = use_it(r)\n    val own = select { await fork { use_it(make_it()) } }\n    val t = fork { use_it(r) }\n    [direct, own, select { await t }]\n}\n",
+    )
+    .expect("compile resource owner source");
+    let error = vm
+        .run_program(&uses)
+        .expect_err("a fork using its spawner's resource fails");
+    assert!(
+        error
+            .message
+            .contains("made outside this fork, which may hold it but not use it"),
+        "{}",
+        error.message
+    );
+
+    // `start` returns before its fork ends, so the fork's copy of the
+    // resource is the last; the spawner's thread still destroys it.
+    let drops = compile(
+        "fork-drops-resource.slug",
+        "val start = fn() {\n    val r = make_it()\n    fork { val kept = r; select { after 50 }; 1 }\n}\nval main = fn() {\n    val t = start()\n    select { await t }\n    select { after 50 }\n}\n",
+    )
+    .expect("compile resource drop source");
+    owned_resources::DESTROYED_ON.lock().unwrap().clear();
+    vm.run_program(&drops).unwrap();
+    let destroyed = owned_resources::DESTROYED_ON.lock().unwrap().clone();
+    assert_eq!(destroyed, vec![std::thread::current().id()]);
+
+    // A failure cancels the fork holding the last reference; the run still
+    // returns only once it has reported back and the payload is destroyed
+    // here, not when no thread is left to run the destruction.
+    let cancels = compile(
+        "fork-cancelled-with-resource.slug",
+        "val start = fn() {\n    val r = make_it()\n    fork { val kept = r; select { after 5000 }; 1 }\n}\nval main = fn() {\n    val t = start()\n    select { after 20 }\n    throw \"stop\"\n}\n",
+    )
+    .expect("compile cancelled resource source");
+    owned_resources::DESTROYED_ON.lock().unwrap().clear();
+    let started = std::time::Instant::now();
+    vm.run_program(&cancels).expect_err("the program throws");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    let destroyed = owned_resources::DESTROYED_ON.lock().unwrap().clone();
+    assert_eq!(destroyed, vec![std::thread::current().id()]);
+    drop(vm);
+}
+
+#[test]
+#[cfg(feature = "threads")]
+fn a_run_waits_only_for_its_own_programs_forks() {
+    // Two VMs on one thread, as a host running several programs has: the
+    // second's run must not wait for the first's fork.
+    let waiting = compile(
+        "other-programs-fork.slug",
+        "val wait = fn() {\n    val t = fork { select { after 2000 }; 1 }\n    select { await t }\n}\nwait()\n",
+    )
+    .expect("compile waiting source");
+    let mut first = Vm::new();
+    first
+        .start_named(&waiting, "main")
+        .expect("start the first program");
+    let progress = first.run_until_stalled();
+    assert!(matches!(progress, VmProgress::Stalled), "{progress:?}");
+
+    let quick = compile("quick.slug", "val main = fn() { 7 }\n").expect("compile quick source");
+    let mut second = Vm::new();
+    let started = std::time::Instant::now();
+    assert_eq!(second.run_program(&quick).unwrap(), Value::Int(7));
+    second.shutdown();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "the second program waited {:?} for the first's fork",
+        started.elapsed()
+    );
+    first.shutdown();
+}
+
+/// A host whose argument map is whatever a program stashed in it, so a test
+/// can give one a fork must not receive.
+#[cfg(feature = "threads")]
+struct StashingHost {
+    arguments: StashedArguments,
+    native_resources: slug_vm::NativeResourceRegistry,
+}
+
+#[cfg(feature = "threads")]
+struct StashedArguments(Rc<std::cell::RefCell<Value>>);
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmConfiguration for StashedArguments {
+    fn resolve(&self, _: &str, fallback: &Value) -> Value {
+        fallback.clone()
+    }
+
+    fn arguments(&self) -> &[String] {
+        &[]
+    }
+
+    fn argument_map(&self) -> Value {
+        self.0.borrow().clone()
+    }
+}
+
+#[cfg(feature = "threads")]
+impl slug_vm::VmHost for StashingHost {
+    fn import_module(
+        &self,
+        _importer: Option<&str>,
+        name: &str,
+    ) -> Result<slug_vm::VmModuleExports, slug_vm::VmHostError> {
+        Err(slug_vm::VmHostError::not_found(format!("missing {name}")))
+    }
+
+    fn builtin_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn native_globals(&self) -> std::collections::HashMap<String, Value> {
+        std::collections::HashMap::new()
+    }
+
+    fn foreign_function(&self, _module: &str, _name: &str) -> Option<slug_vm::NativeFunction> {
+        None
+    }
+
+    fn define_foreign_batch(
+        &self,
+        _functions: Vec<slug_vm::NativeFunction>,
+    ) -> Result<(), slug_vm::NativeDescriptorError> {
+        Ok(())
+    }
+
+    fn define_native_global(&self, _name: String, _value: Value) {}
+
+    fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
+        self.native_resources.clone()
+    }
+
+    fn module_variables(&self) -> slug_vm::ModuleVariables {
+        slug_vm::module_variables()
+    }
+
+    fn configuration(&self) -> &dyn slug_vm::VmConfiguration {
+        &self.arguments
+    }
+
+    fn warn(&self, _message: String) {}
+
+    fn shutdown(&self) {}
+}
+
+#[test]
+#[cfg(feature = "threads")]
+fn a_fork_does_not_start_with_an_unsendable_host_argument_map() {
+    let stashed = Rc::new(std::cell::RefCell::new(Value::Map(Vec::new().into())));
+    let host: slug_vm::Shared<dyn slug_vm::VmHost> = slug_vm::Shared::new(StashingHost {
+        arguments: StashedArguments(stashed.clone()),
+        native_resources: slug_vm::native_resource_registry(),
+    });
+    let mut vm = Vm::with_host(host);
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed, destroyed);
+    native_resource_fixture::install(&mut vm, &module);
+    // The host's argument map comes to hold a native resource.
+    let keeps = compile("keeps-resource.slug", "val kept = make_resource()\n")
+        .expect("compile keeping source");
+    vm.run_program(&keeps).unwrap();
+    let kept = vm.global("kept").expect("the resource is kept");
+    *stashed.borrow_mut() = Value::Map(vec![(Value::string("held"), kept)].into());
+    let program = compile(
+        "unsendable-arguments.slug",
+        "val main = fn() {\n    val t = fork { 1 }\n    select { await t }\n}\n",
+    )
+    .expect("compile argument map source");
+    let error = vm
+        .run_program(&program)
+        .expect_err("a fork cannot receive the host's argument map");
+    assert!(
+        error
+            .message
+            .contains("the host's argument map holds a native resource"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn a_deep_chain_of_closures_and_lists_drops_on_either_path() {
+    // Each closure captures a list holding the closure before it, 200,000
+    // deep: dropping the chain must not grow the native stack with it, on a
+    // hosted build or with the work list a freestanding build uses.
+    let program = compile(
+        "closure-chain.slug",
+        "val chain = fn(i:num, acc):any { if (i == 0) { acc } else { recur(i - 1, fn() { [acc] }) } }\nval main = fn() { chain(200000, 0) }\n",
+    )
+    .expect("compile closure chain source");
+    let hosted = Vm::new().run_program(&program).unwrap();
+    assert!(matches!(hosted, Value::Closure(_)));
+    drop(hosted);
+    let freestanding = Vm::new().run_program(&program).unwrap();
+    slug_vm::drop_with_work_list(freestanding);
 }

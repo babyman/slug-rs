@@ -48,6 +48,10 @@ pub(crate) struct Inbox {
 /// none is active, none ever will be: a deadlock, which the root reports.
 pub(crate) struct Group {
     active: AtomicUsize,
+    /// The program's islands that have not finished: what its run, or its
+    /// VM's shutdown, waits for, rather than every fork of its thread,
+    /// which may belong to another VM there.
+    islands: AtomicUsize,
     deadlocked: AtomicBool,
     root: Arc<Inbox>,
 }
@@ -56,17 +60,52 @@ impl Group {
     pub(crate) fn new(root: Arc<Inbox>) -> Self {
         Self {
             active: AtomicUsize::new(1),
+            islands: AtomicUsize::new(0),
             deadlocked: AtomicBool::new(false),
             root,
         }
     }
 
+    /// A thread of the program counts as active, as when it wakes.
     fn join(&self) {
         self.active.fetch_add(1, Ordering::AcqRel);
     }
 
     fn leave(&self) {
         self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// A fork starts on an island of this program, which is active.
+    fn island_started(&self) {
+        self.islands.fetch_add(1, Ordering::AcqRel);
+        self.join();
+    }
+
+    /// An island of this program has finished, its last work posted. The
+    /// root hears of it too, wherever it was started, since it may be
+    /// waiting for the program's last island.
+    fn island_finished(&self) {
+        self.leave();
+        self.islands.fetch_sub(1, Ordering::AcqRel);
+        self.root.signal.notify();
+    }
+
+    /// Runs what this thread is posted, including the destruction of
+    /// resources the program's forks let go of last, until every island of
+    /// the program has finished. An island waits for its own forks before
+    /// it finishes, so none is missed.
+    pub(crate) fn join_islands(&self, inbox: &Inbox) {
+        let waiter = inbox.signal.blocking_waiter();
+        loop {
+            let observed = inbox.signal.snapshot();
+            inbox.drain();
+            if self.islands.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            waiter.wait(&inbox.signal, observed, None);
+        }
+        // An island posts its last work before it stops counting.
+        inbox.drain();
     }
 
     pub(crate) fn deadlocked(&self) -> bool {
@@ -86,6 +125,9 @@ const CANCELLED: u8 = 2;
 
 std::thread_local! {
     static CURRENT: Arc<Inbox> = Arc::new(Inbox::new());
+    /// Set on a worker whose island could not be cleaned up after a panic:
+    /// it ends rather than take another.
+    static RETIRE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
 impl Inbox {
@@ -231,6 +273,38 @@ impl Inbox {
     pub(crate) fn has_remote(&self) -> bool {
         self.remote.load(Ordering::Acquire) > 0
     }
+
+    /// Runs what this thread's forks post, including the destruction of
+    /// resources they let go of last, until every one has reported back.
+    pub(crate) fn join_remote(&self) {
+        let waiter = self.signal.blocking_waiter();
+        loop {
+            let observed = self.signal.snapshot();
+            self.drain();
+            if !self.has_remote() {
+                break;
+            }
+            waiter.wait(&self.signal, observed, None);
+        }
+        // A fork posts its last work before it stops counting.
+        self.drain();
+    }
+}
+
+impl Drop for Inbox {
+    /// Work left for a thread that is gone is never run, and not dropped
+    /// here, perhaps on another thread: it may hold that thread's values,
+    /// such as a resource's payload awaiting destruction.
+    fn drop(&mut self) {
+        let queue = core::mem::take(self.queue.get_mut().unwrap_or_else(PoisonError::into_inner));
+        let requests = core::mem::take(
+            self.requests
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        core::mem::forget(queue);
+        core::mem::forget(requests);
+    }
 }
 
 /// What a fork's spawner and its island share: whether it was cancelled,
@@ -327,7 +401,19 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     }
     let parent = Inbox::current();
     let (inputs, link) = ForkInputs::take(execution, task.clone(), parent.clone(), control);
-    link.group.join();
+    // The host's arguments cross to the worker: a host may give any value.
+    if let Some((_, argument_map)) = &inputs.configuration
+        && let Some(reason) = super::fork::unsendable(argument_map, &crate::value::running_reader)
+    {
+        drop((inputs, link));
+        release_place();
+        failure.message = alloc::format!(
+            "this fork cannot start: the host's argument map holds {reason}, which a fork cannot receive"
+        );
+        task.cancel(&failure);
+        return true;
+    }
+    link.group.island_started();
     parent.remote.fetch_add(1, Ordering::AcqRel);
     #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
     crate::sync::solo_check::fork_started();
@@ -339,7 +425,7 @@ pub(super) fn ship(task: &Rc<Task>) -> bool {
     })));
     if let Err(error) = started {
         // The package, and the task handle in it, dropped here with the job.
-        group.leave();
+        group.island_finished();
         parent.remote.fetch_sub(1, Ordering::AcqRel);
         #[cfg(all(debug_assertions, feature = "threads", not(target_os = "none")))]
         crate::sync::solo_check::fork_ended();
@@ -465,6 +551,7 @@ impl ForkInputs {
             Rc::new(ForkHost::new(
                 host,
                 link.parent.clone(),
+                link.control.clone(),
                 arguments,
                 argument_map,
                 variables.clone(),
@@ -526,11 +613,27 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     // spawner waiting for a result that never comes, so it becomes the
     // fork's error instead, and the island's bookkeeping still runs. Release
     // builds abort on a panic, which cannot leave the spawner waiting either.
+    let root = RootWaiter::new();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        vm.run_island(&control)
+        vm.run_island(&control, &root)
             .map(|result| vm.sendable_outcome(result))
     }))
-    .unwrap_or_else(|panic| Some(Err(vm.island_panic_error(panic.as_ref()))));
+    .unwrap_or_else(|panic| {
+        let error = vm.island_panic_error(panic.as_ref());
+        // The panic skipped the island's own exit: it is released here as a
+        // cancelled one is, before it reports. Should that fail too, this
+        // worker takes no further island: its thread's state is suspect.
+        // Each part on its own, so a failure taking the root off what it
+        // waits on still leaves the island's forks cancelled and joined.
+        let root_released =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_root(&root)));
+        let descendants_released =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.release_descendants()));
+        if root_released.is_err() || descendants_released.is_err() {
+            RETIRE.with(|retire| retire.set(true));
+        }
+        Some(Err(error))
+    });
     // Posted before the result, so the spawner has merged them by the time
     // it sees the fork settle.
     #[cfg(feature = "metrics")]
@@ -551,7 +654,7 @@ fn run(inputs: ForkInputs, link: ParentLink) {
     }
     parent.remote.fetch_sub(1, Ordering::AcqRel);
     // After the post, which counts the parent awake if it slept.
-    group.leave();
+    group.island_finished();
     parent.signal.notify();
 }
 
@@ -628,44 +731,51 @@ impl Vm {
 
     /// Runs this island's fork to settlement, as the root runs `main`, or
     /// `None` once its spawner cancels it.
-    fn run_island(&mut self, control: &IslandControl) -> Option<VmResult<Value>> {
-        let root = RootWaiter::new();
+    fn run_island(
+        &mut self,
+        control: &IslandControl,
+        root: &RootWaiter,
+    ) -> Option<VmResult<Value>> {
         self.current_waiter = Some(Waiter::root(root.clone()));
-        let outcome = self.run_island_root(control, &root);
+        let outcome = self.run_island_root(control, root);
         if control.cancelled() {
-            self.release_cancelled(&root);
+            self.release_island(root);
             return None;
         }
+        // Forks a failed body's settlement cancelled may still be stopping:
+        // they report back before this island does, on every exit.
+        self.attention.join_remote();
         outcome
     }
 
-    /// After its fork is cancelled, takes this island's tasks out of every
-    /// queue they wait in, cancels its nested forks, and waits until they
-    /// have reported back, so that nothing they post reaches the next
-    /// island on this thread. Otherwise a send could hand its value to a
-    /// receiver here that will never run.
-    fn release_cancelled(&mut self, root: &RootWaiter) {
+    /// After its fork is cancelled, or its worker caught a panic in it,
+    /// takes this island's root and tasks out of every queue they wait in,
+    /// cancels its nested forks, and waits until they have reported back, so
+    /// that nothing they post reaches the next island on this thread.
+    /// Otherwise a send could hand its value to a receiver here that will
+    /// never run.
+    fn release_island(&mut self, root: &RootWaiter) {
+        self.release_root(root);
+        self.release_descendants();
+    }
+
+    /// Takes the island's root out of whatever it waits on.
+    fn release_root(&mut self, root: &RootWaiter) {
         if let Some(wait_registration) = self.wait_registration.take() {
             wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
         }
+    }
+
+    /// Cancels the island's tasks and nested forks and waits until those
+    /// have reported back.
+    fn release_descendants(&mut self) {
         // Cancelling a task leaves the queues it waits in, cancels a nursery
         // it waits for, and cancels a fork running elsewhere.
         let error = self.cancelled_error();
         self.nursery.cancel_all(&error);
-        let inbox = self.attention.clone();
-        let waiter = inbox.signal().blocking_waiter();
-        loop {
-            let observed = inbox.signal().snapshot();
-            // Nested forks' results and host calls, and wakes of tasks
-            // already cancelled, which take nothing.
-            inbox.drain();
-            if !inbox.has_remote() {
-                break;
-            }
-            waiter.wait(inbox.signal(), observed, None);
-        }
-        // A nested fork posts its result before it stops counting.
-        inbox.drain();
+        // Nested forks' results and host calls, and wakes of tasks already
+        // cancelled, which take nothing.
+        self.attention.join_remote();
         self.nursery.clear();
     }
 
@@ -737,6 +847,9 @@ fn submit(mut job: Job) -> Result<(), std::io::Error> {
             let mut job = job;
             loop {
                 (job.into_inner())();
+                if RETIRE.with(core::cell::Cell::get) {
+                    return;
+                }
                 IDLE.lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(sender.clone());
@@ -755,14 +868,28 @@ fn submit(mut job: Job) -> Result<(), std::io::Error> {
 struct Remote {
     host: Rc<dyn VmHost>,
     parent: Arc<Inbox>,
+    /// The fork's: a host call it waits on ends when it is cancelled, since
+    /// its spawner may never serve the call then.
+    control: Arc<IslandControl>,
 }
 
+/// How often a fork waiting on a host call checks whether it was cancelled.
+const HOST_CALL_RECHECK: std::time::Duration = std::time::Duration::from_millis(10);
+
 impl Remote {
-    fn call<R: 'static>(&self, request: impl FnOnce(&dyn VmHost) -> R + 'static) -> R {
+    /// The spawner's answer to `request`, or `None` once the fork is
+    /// cancelled.
+    fn call<R: 'static>(&self, request: impl FnOnce(&dyn VmHost) -> R + 'static) -> Option<R> {
         let reply = Arc::new((Mutex::new(None::<Sendable<R>>), Condvar::new()));
         let host = self.host.clone();
         let answer = reply.clone();
+        let control = self.control.clone();
         self.parent.request(move || {
+            // A fork cancelled before its call is served no longer waits for
+            // it: the host is not called for it at all.
+            if control.cancelled() {
+                return;
+            }
             let result = request(&*host);
             *answer.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Sendable::new(result));
             answer.1.notify_all();
@@ -770,16 +897,37 @@ impl Remote {
         let mut slot = reply.0.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
             if let Some(result) = slot.take() {
-                return result.into_inner();
+                return Some(result.into_inner());
             }
-            slot = reply.1.wait(slot).unwrap_or_else(PoisonError::into_inner);
+            // An answer that comes later is dropped on the spawner's thread,
+            // with the request's last handle on the reply.
+            if self.control.cancelled() {
+                return None;
+            }
+            slot = reply
+                .1
+                .wait_timeout(slot, HOST_CALL_RECHECK)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
     }
 
+    /// Asks the spawner's host to run `request`, not waiting for it; one a
+    /// fork cancelled before it is served is skipped, as `call`'s is.
     fn tell(&self, request: impl FnOnce(&dyn VmHost) + 'static) {
         let host = self.host.clone();
-        self.parent.request(move || request(&*host));
+        let control = self.control.clone();
+        self.parent.request(move || {
+            if !control.cancelled() {
+                request(&*host);
+            }
+        });
     }
+}
+
+/// What a host call answers once the fork that made it is cancelled.
+fn cancelled_call() -> VmHostError {
+    VmHostError::new("this fork was cancelled")
 }
 
 struct ForkHost {
@@ -793,11 +941,16 @@ impl ForkHost {
     fn new(
         host: Rc<dyn VmHost>,
         parent: Arc<Inbox>,
+        control: Arc<IslandControl>,
         arguments: Vec<String>,
         argument_map: Value,
         variables: crate::ModuleVariables,
     ) -> Self {
-        let remote = Rc::new(Remote { host, parent });
+        let remote = Rc::new(Remote {
+            host,
+            parent,
+            control,
+        });
         Self {
             configuration: ForkConfiguration {
                 remote: remote.clone(),
@@ -820,6 +973,7 @@ impl VmHost for ForkHost {
         let (importer, name) = (importer.map(String::from), String::from(name));
         self.remote
             .call(move |host| host.import_module(importer.as_deref(), &name))
+            .unwrap_or_else(|| Err(cancelled_call()))
     }
 
     fn describe_module(
@@ -830,25 +984,33 @@ impl VmHost for ForkHost {
         let (importer, name) = (importer.map(String::from), String::from(name));
         self.remote
             .call(move |host| host.describe_module(importer.as_deref(), &name))
+            .unwrap_or_else(|| Err(cancelled_call()))
     }
 
     fn permits(&self, permission: &str) -> bool {
         let permission = String::from(permission);
-        self.remote.call(move |host| host.permits(&permission))
+        self.remote
+            .call(move |host| host.permits(&permission))
+            .unwrap_or(false)
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
-        self.remote.call(|host| host.builtin_globals())
+        self.remote
+            .call(|host| host.builtin_globals())
+            .unwrap_or_default()
     }
 
     fn native_globals(&self) -> HashMap<String, Value> {
-        self.remote.call(|host| host.native_globals())
+        self.remote
+            .call(|host| host.native_globals())
+            .unwrap_or_default()
     }
 
     fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
         let (module, name) = (String::from(module), String::from(name));
         self.remote
             .call(move |host| host.foreign_function(&module, &name))
+            .flatten()
     }
 
     fn define_foreign_batch(
@@ -857,6 +1019,7 @@ impl VmHost for ForkHost {
     ) -> Result<(), NativeDescriptorError> {
         self.remote
             .call(move |host| host.define_foreign_batch(functions))
+            .unwrap_or_else(|| Err(NativeDescriptorError::new("this fork was cancelled")))
     }
 
     fn define_native_global(&self, name: String, value: Value) {
@@ -868,10 +1031,26 @@ impl VmHost for ForkHost {
         self.resources.clone()
     }
 
-    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleExports, VmHostError>> {
         let (importer, name) = (importer.map(String::from), String::from(name));
         self.remote
-            .call(move |host| host.module_initialized(importer.as_deref(), &name))
+            .call(move |host| host.import_initialized(importer.as_deref(), &name))
+            .unwrap_or_else(|| Some(Err(cancelled_call())))
+    }
+
+    fn describe_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleDescription, VmHostError>> {
+        let (importer, name) = (importer.map(String::from), String::from(name));
+        self.remote
+            .call(move |host| host.describe_initialized(importer.as_deref(), &name))
+            .unwrap_or_else(|| Some(Err(cancelled_call())))
     }
 
     fn module_variables(&self) -> crate::ModuleVariables {
@@ -898,9 +1077,27 @@ struct ForkConfiguration {
 
 impl VmConfiguration for ForkConfiguration {
     fn resolve(&self, key: &str, fallback: &Value) -> Value {
-        let (key, fallback) = (String::from(key), fallback.clone());
+        // The fork checked its fallback before it asked; the host's answer
+        // is checked here, on the spawner's thread, before it crosses back.
+        let (key, given) = (String::from(key), fallback.clone());
+        let control = self.remote.control.clone();
         self.remote
-            .call(move |host| host.configuration().resolve(&key, &fallback))
+            .call(move |host| {
+                let value = host.configuration().resolve(&key, &given);
+                // A fork cancelled meanwhile no longer waits for the reply.
+                match super::fork::unsendable_until(&value, &crate::value::running_reader, &|| {
+                    control.cancelled()
+                }) {
+                    None => value,
+                    Some(reason) => {
+                        host.warn(alloc::format!(
+                            "configuration `{key}` holds {reason}, which a fork cannot receive; the fork gets its fallback"
+                        ));
+                        given
+                    }
+                }
+            })
+            .unwrap_or_else(|| fallback.clone())
     }
 
     fn arguments(&self) -> &[String] {

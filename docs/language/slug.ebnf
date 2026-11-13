@@ -272,8 +272,9 @@ bytes = "0x" , '"' , [ HEXDIGIT , { HEXDIGIT } ] , '"' ;
 
 string = double_string | raw_string | triple_string | triple_raw_string | interpolated_string ;
 
-(* Interpolation uses $identifier in non-raw strings. *)
-interpolated_string = string_segment , { "$" , identifier , string_segment } ;
+(* Interpolation uses $identifier or ${expression} in non-raw strings. Braces
+   and strings nest inside the expression. *)
+interpolated_string = string_segment , { "$" , ( identifier | "{" , expression , "}" ) , string_segment } ;
 string_segment = double_string | triple_string ;
 
 double_string = '"' , { string_char } , '"' ;

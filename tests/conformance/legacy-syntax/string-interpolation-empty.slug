@@ -1,0 +1,2 @@
+// An empty `${}` is a syntax error, not literal text.
+val main = fn() { println("value: ${}") }

@@ -355,18 +355,21 @@ fn byte_collection_element(value: &Value, operator: &str) -> Result<u8, String> 
 }
 
 #[allow(clippy::too_many_lines)]
+/// Whether `value` matches `pattern`, binding what it captures, and reading
+/// any module binding it compares through `read`, as `==` does.
 pub(super) fn matches_pattern(
     pattern: &MatchPattern,
     value: &Value,
     operands: &[Value],
     bindings: &mut Vec<Value>,
     list_views_created: &mut usize,
+    read: crate::value::BindingReader<'_>,
 ) -> Result<bool, (RuntimeErrorKind, String)> {
     match pattern {
-        MatchPattern::Literal(expected) => Ok(value == expected),
+        MatchPattern::Literal(expected) => Ok(value.equals_with(expected, read)),
         MatchPattern::Enum(index) => operands
             .get(*index)
-            .map(|expected| value == expected)
+            .map(|expected| value.equals_with(expected, read))
             .ok_or_else(|| {
                 (
                     RuntimeErrorKind::InvalidBytecode,
@@ -380,7 +383,7 @@ pub(super) fn matches_pattern(
         }
         MatchPattern::Pinned(index) => operands
             .get(*index)
-            .map(|expected| value == expected)
+            .map(|expected| value.equals_with(expected, read))
             .ok_or_else(|| {
                 (
                     RuntimeErrorKind::InvalidBytecode,
@@ -390,7 +393,7 @@ pub(super) fn matches_pattern(
         MatchPattern::At(pattern) => {
             let binding_start = bindings.len();
             bindings.push(value.clone());
-            if matches_pattern(pattern, value, operands, bindings, list_views_created)? {
+            if matches_pattern(pattern, value, operands, bindings, list_views_created, read)? {
                 Ok(true)
             } else {
                 bindings.truncate(binding_start);
@@ -400,7 +403,7 @@ pub(super) fn matches_pattern(
         MatchPattern::Alternatives(patterns) => {
             let binding_start = bindings.len();
             for pattern in patterns {
-                if matches_pattern(pattern, value, operands, bindings, list_views_created)? {
+                if matches_pattern(pattern, value, operands, bindings, list_views_created, read)? {
                     return Ok(true);
                 }
                 bindings.truncate(binding_start);
@@ -427,6 +430,7 @@ pub(super) fn matches_pattern(
                                 operands,
                                 bindings,
                                 list_views_created,
+                                read,
                             )? {
                                 bindings.truncate(binding_start);
                                 return Ok(false);
@@ -455,6 +459,7 @@ pub(super) fn matches_pattern(
                         operands,
                         bindings,
                         list_views_created,
+                        read,
                     )? {
                         bindings.truncate(binding_start);
                         return Ok(false);
@@ -487,8 +492,14 @@ pub(super) fn matches_pattern(
                             bindings.truncate(binding_start);
                             return Ok(false);
                         };
-                        if !matches_pattern(pattern, value, operands, bindings, list_views_created)?
-                        {
+                        if !matches_pattern(
+                            pattern,
+                            value,
+                            operands,
+                            bindings,
+                            list_views_created,
+                            read,
+                        )? {
                             bindings.truncate(binding_start);
                             return Ok(false);
                         }
@@ -527,6 +538,7 @@ pub(super) fn matches_pattern(
                             operands,
                             bindings,
                             list_views_created,
+                            read,
                         )? {
                             bindings.truncate(binding_start);
                             return Ok(false);
@@ -559,7 +571,7 @@ pub(super) fn matches_pattern(
             if !matches_type(constraint, value, operands)? {
                 return Ok(false);
             }
-            matches_pattern(pattern, value, operands, bindings, list_views_created)
+            matches_pattern(pattern, value, operands, bindings, list_views_created, read)
         }
     }
 }

@@ -252,10 +252,26 @@ pub trait VmHost {
     /// Native-resource lifetime registry shared by VMs for this host.
     fn native_resources(&self) -> NativeResourceRegistry;
 
-    /// Whether the module `name`, imported by `importer`, has initialized,
-    /// or `None` when the host cannot tell: a fork may import a module that
-    /// has, but not initialize one.
-    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+    /// The exports of the module `name`, imported by `importer`, only if
+    /// it has already initialized, found in one lookup and never
+    /// initializing it: what a fork imports. `None` when it has not
+    /// initialized, its code is still running, or the host cannot tell,
+    /// which a fork treats alike.
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleExports, VmHostError>> {
+        let _ = (importer, name);
+        None
+    }
+
+    /// [`Self::import_initialized`] for `describe`.
+    fn describe_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleDescription, VmHostError>> {
         let _ = (importer, name);
         None
     }

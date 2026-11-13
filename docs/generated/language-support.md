@@ -12,7 +12,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Double-quoted strings with basic escapes, Unicode-scalar indexing, and slicing | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Raw and triple-quoted strings with basic escapes | implemented | `crates/slug/tests/cli.rs` |
 | One-to-three-digit octal escapes | implemented | `crates/slug/tests/cli.rs` |
-| `$identifier` interpolated strings | implemented | `crates/slug/tests/cli.rs` |
+| `$identifier` and `${expression}` interpolated strings | implemented | `crates/slug/tests/cli.rs` and `tests/conformance/legacy-syntax/string-interpolation.slug` |
 | Boolean and nil literals | implemented | `crates/slug/tests/cli.rs` |
 | Lists and maps, including persistent map merge/removal/copy and the `keys` builtin | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |

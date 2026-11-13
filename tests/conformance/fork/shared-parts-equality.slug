@@ -1,0 +1,8 @@
+// Two values that share their parts many times over, 2^40 paths through
+// 40 levels, compare in time bounded by what they hold, inside a fork too.
+val double = fn(i:num, acc):any { if (i == 0) { acc } else { recur(i - 1, [acc, acc]) } }
+val main = fn() {
+    val t = fork { double(40, 0) == double(40, 0) }
+    println(select { await t })
+    println(double(40, 0) == double(40, 1))
+}

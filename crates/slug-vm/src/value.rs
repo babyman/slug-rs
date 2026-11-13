@@ -73,6 +73,9 @@ pub(crate) enum ChannelReceive {
     Pending,
 }
 
+#[cfg(feature = "concurrency")]
+type Screen = dyn Fn(Result<Value, crate::RuntimeError>) -> Result<Value, crate::RuntimeError>;
+
 #[derive(Clone)]
 pub(crate) struct Waiter {
     identity: usize,
@@ -84,6 +87,11 @@ pub(crate) struct Waiter {
     #[cfg(all(feature = "threads", not(target_os = "none")))]
     home: Arc<crate::vm::island::Inbox>,
     resume: Rc<dyn Fn(Result<Value, crate::RuntimeError>)>,
+    /// Applied to a wake before it is carried to the waiter's thread: a
+    /// fork's receive rejects an unsendable value here, so the value never
+    /// reaches the fork's thread.
+    #[cfg(feature = "concurrency")]
+    screen: Option<Rc<Screen>>,
     reject_closed_send: Rc<dyn Fn()>,
     set_closed_send_error: Rc<dyn Fn(crate::RuntimeError)>,
 }
@@ -94,8 +102,9 @@ pub(crate) enum SelectWake {
         handler: Option<Value>,
     },
     /// A receive case of a fork's `select`: the value it is woken with must
-    /// be sendable, checked as it arrives, since its sender may have sent
-    /// before it saw the channel cross into a fork. `unsendable` is the
+    /// be sendable, checked by the waker before the wake leaves its thread,
+    /// since its sender may have sent before it saw the channel cross into a
+    /// fork. `unsendable` is the
     /// error to report one with, its reason to be added.
     #[cfg(feature = "concurrency")]
     ForkReceive {
@@ -140,6 +149,8 @@ impl Waiter {
                 let root = root.clone();
                 move |result| root.resume(result)
             }),
+            #[cfg(feature = "concurrency")]
+            screen: None,
             reject_closed_send: Rc::new({
                 let root = root.clone();
                 move || root.reject_closed_send()
@@ -160,6 +171,8 @@ impl Waiter {
                 let task = task.clone();
                 move |result| task.resume(result)
             }),
+            #[cfg(feature = "concurrency")]
+            screen: None,
             reject_closed_send: Rc::new({
                 let task = task.clone();
                 move || task.reject_closed_send()
@@ -176,6 +189,26 @@ impl Waiter {
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         let home = state.borrow().waiter.home.clone();
         let resume_state = state.clone();
+        #[cfg(feature = "concurrency")]
+        let screen: Option<Rc<Screen>> = match &wake {
+            SelectWake::ForkReceive { unsendable, .. } => {
+                let unsendable = unsendable.clone();
+                Some(Rc::new(move |result| match result {
+                    Ok(value) => match crate::vm::unsendable_reason(&value) {
+                        Some(reason) => {
+                            let mut error = (*unsendable).clone();
+                            error.message = alloc::format!(
+                                "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
+                            );
+                            Err(error)
+                        }
+                        None => Ok(value),
+                    },
+                    result => result,
+                }))
+            }
+            SelectWake::Value { .. } | SelectWake::TaskAwait { .. } => None,
+        };
         Self {
             identity,
             claim,
@@ -189,26 +222,12 @@ impl Waiter {
                     registrations.remove_for_waiter(&waiter);
                 }
                 let handler = wake.selected();
-                #[cfg(feature = "concurrency")]
-                let result = match (&wake, result) {
-                    (SelectWake::ForkReceive { unsendable, .. }, Ok(value)) => {
-                        match crate::vm::unsendable_reason(&value) {
-                            Some(reason) => {
-                                let mut error = (**unsendable).clone();
-                                error.message = alloc::format!(
-                                    "a value received on a channel is not sendable: it holds {reason}, which stays with the task that made it"
-                                );
-                                Err(error)
-                            }
-                            None => Ok(value),
-                        }
-                    }
-                    (_, result) => result,
-                };
                 waiter.resume(
                     result.map(|value| Value::list(vec![value, handler.unwrap_or(Value::Nil)])),
                 );
             }),
+            #[cfg(feature = "concurrency")]
+            screen,
             reject_closed_send: Rc::new({
                 let state = state.clone();
                 move || state.borrow().waiter.reject_closed_send()
@@ -237,6 +256,11 @@ impl Waiter {
 
     /// Wakes a waiter whose claim this wake already holds.
     pub(crate) fn resume_claimed(&self, result: Result<Value, crate::RuntimeError>) {
+        #[cfg(feature = "concurrency")]
+        let result = match &self.screen {
+            Some(screen) => screen(result),
+            None => result,
+        };
         #[cfg(all(feature = "threads", not(target_os = "none")))]
         if !self.home.is_current() {
             let waiter = self.clone();
@@ -517,8 +541,11 @@ impl Channel {
         if state.closed {
             producer.close();
         }
-        drop(state);
+        // Published before the lock is released, so a second attach on
+        // another thread leases this producer rather than making one the
+        // channel never drains.
         let _ = self.native_producer.set(producer.receiver_handle());
+        drop(state);
         Some(producer)
     }
 
@@ -674,8 +701,10 @@ impl Channel {
     }
 
     pub(crate) fn close(&self) {
-        self.revoke_native_producer();
+        // Under the lock that publishes a first producer, so one attached
+        // as the channel closes is either revoked here or made closed.
         let mut state = self.state.lock();
+        self.revoke_native_producer();
         if state.closed {
             return;
         }
@@ -1346,6 +1375,127 @@ pub struct StructValue {
     pub(crate) values: Vec<Value>,
 }
 
+impl Drop for StructValue {
+    /// As a list's storage does: nested values it alone holds are taken
+    /// apart with a loop.
+    fn drop(&mut self) {
+        drop_values(&mut self.values);
+    }
+}
+
+/// Drops `values`, which a list's or a struct's storage holds.
+pub(crate) fn drop_values(values: &mut Vec<Value>) {
+    guarded_drop(core::mem::take(values), |values, deferred| {
+        deferred.extend(values);
+    });
+}
+
+/// How many containers a drop goes inside each other before it defers what
+/// it reaches.
+#[cfg(not(target_os = "none"))]
+const DROP_DEPTH: u32 = 128;
+
+#[cfg(not(target_os = "none"))]
+std::thread_local! {
+    /// How many container drops this thread is inside.
+    static DROPPING: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    /// What drops deeper than [`DROP_DEPTH`] left for the outermost one.
+    static DEFERRED: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Drops a container's `items`, which `spill` turns into values. A drop
+/// recurses into nested containers as a vector's does, at a cost per
+/// container rather than per element; past [`DROP_DEPTH`] it sets what it
+/// reaches aside, and the outermost drop frees that in batches, each as
+/// shallow, so a value nested deeper than the native stack can hold is
+/// still dropped.
+#[cfg(not(target_os = "none"))]
+pub(crate) fn guarded_drop<T>(items: Vec<T>, spill: impl FnOnce(Vec<T>, &mut Vec<Value>)) {
+    if items.is_empty() {
+        return;
+    }
+    // A thread being torn down drops as a vector does.
+    let Ok(depth) = DROPPING.try_with(core::cell::Cell::get) else {
+        return;
+    };
+    if depth >= DROP_DEPTH {
+        DEFERRED.with(|deferred| spill(items, &mut deferred.borrow_mut()));
+        return;
+    }
+    DROPPING.with(|dropping| dropping.set(depth + 1));
+    drop(items);
+    if depth == 0 {
+        loop {
+            let batch = DEFERRED.with(|deferred| core::mem::take(&mut *deferred.borrow_mut()));
+            if batch.is_empty() {
+                break;
+            }
+            drop(batch);
+        }
+    }
+    DROPPING.with(|dropping| dropping.set(depth));
+}
+
+/// [`guarded_drop`] on a freestanding build, which has no thread-locals:
+/// it takes apart the nested values it alone holds with [`dismantle`].
+#[cfg(target_os = "none")]
+pub(crate) fn guarded_drop<T>(items: Vec<T>, spill: impl FnOnce(Vec<T>, &mut Vec<Value>)) {
+    let mut values = Vec::new();
+    spill(items, &mut values);
+    if values.iter().any(Value::holds_values) {
+        dismantle(values);
+    }
+}
+
+/// Drops `pending` and everything in it that nothing else holds, taking
+/// nested lists, maps, and structs apart one at a time from a stack of its
+/// own, so the native stack does not grow with the value's depth.
+pub(crate) fn dismantle(mut pending: Vec<Value>) {
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::List(list) => list.release_into(&mut pending),
+            Value::Map(map) => map.release_into(&mut pending),
+            Value::Struct(mut value) => {
+                if let Some(value) = Rc::get_mut(&mut value) {
+                    pending.append(&mut value.values);
+                }
+            }
+            Value::Closure(mut closure) => {
+                if let Some(closure) = crate::sync::Code::get_mut(&mut closure) {
+                    release_captures(core::mem::take(&mut closure.captures), &mut pending);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Hands the values of the capture cells a closure alone holds to
+/// `pending`, for [`dismantle`] or a deferred drop.
+fn release_captures(captures: Vec<BindingCell>, pending: &mut Vec<Value>) {
+    for mut cell in captures {
+        if let Some(cell) = crate::sync::Code::get_mut(&mut cell) {
+            pending.push(core::mem::replace(&mut *cell.borrow_mut(), Value::Nil));
+        }
+    }
+}
+
+/// Drops `value` with the work list freestanding builds use, which hosted
+/// builds otherwise do not: for tests, which cannot run on a freestanding
+/// build, to exercise it on a deep value.
+#[doc(hidden)]
+pub fn drop_with_work_list(value: Value) {
+    dismantle(alloc::vec![value]);
+}
+
+impl Drop for Closure {
+    /// As a list's storage does: a chain of closures capturing values that
+    /// hold closures drops without the native stack growing with it.
+    fn drop(&mut self) {
+        guarded_drop(core::mem::take(&mut self.captures), release_captures);
+    }
+}
+
 impl StructValue {
     /// Takes the value of field `name` out of a struct nothing else holds,
     /// leaving `nil`; `None` when it is shared or has no such field.
@@ -1377,17 +1527,17 @@ impl StructValue {
                 return Err(format!("struct has no field '{name}'"));
             }
         }
-        let StructValue { schema, mut values } =
-            Rc::try_unwrap(self).unwrap_or_else(|value| (*value).clone());
+        let mut copy = Rc::try_unwrap(self).unwrap_or_else(|value| (*value).clone());
         for (name, replacement) in names.iter().zip(replacements) {
-            let index = schema
+            let index = copy
+                .schema
                 .fields
                 .iter()
                 .position(|field| field.name.as_ref() == name)
                 .expect("field names were validated");
-            values[index] = replacement.clone();
+            copy.values[index] = replacement.clone();
         }
-        Ok(Rc::new(Self { schema, values }))
+        Ok(Rc::new(copy))
     }
 }
 
@@ -1597,25 +1747,238 @@ impl Value {
     }
 }
 
-/// Whether a module binding's value, as the running task sees it, which in
-/// a fork is its snapshot, equals `value`. A `val` reads the same to every
-/// task, so it is compared in place.
-fn binding_equals(cell: &BindingCell, name: &crate::variables::BindingName, value: &Value) -> bool {
+/// How deep one comparison recurses, through containers and module
+/// bindings, before it goes on with a stack of its own: a value nested
+/// deeper than the native stack can hold still compares, and one that
+/// reaches itself through a module variable still ends.
+const NESTING_LIMIT: u32 = 64;
+
+/// How many steps through containers and bindings one comparison takes
+/// before it goes on with pair tracking, so that values sharing their parts
+/// many times over compare in time bounded by their size.
+const STEP_BUDGET: u32 = 4096;
+
+/// How an equality reads a module binding it meets inside a value: as the
+/// task comparing sees it, which in a fork is its snapshot.
+pub(crate) type BindingReader<'a> =
+    &'a dyn Fn(&BindingCell, &crate::variables::BindingName) -> Value;
+
+/// The reader `==` on values uses outside a VM: the running task's view,
+/// recorded per thread on hosted builds, or the binding itself.
+pub(crate) fn running_reader(cell: &BindingCell, name: &crate::variables::BindingName) -> Value {
     #[cfg(feature = "concurrency")]
-    if name.kind() != crate::variables::BindingKind::Val {
-        return crate::vm::seen_binding(cell, name).eq(value);
-    }
+    return crate::vm::seen_binding(cell, name);
     #[cfg(not(feature = "concurrency"))]
-    let _ = name;
-    cell.borrow().eq(value)
+    {
+        let _ = name;
+        cell.borrow().clone()
+    }
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
-                binding_equals(cell, name, value)
+/// A module binding's value for a comparison: a `val` reads the same to
+/// every task; a variable is read through `read`.
+fn compared_binding(
+    cell: &BindingCell,
+    name: &crate::variables::BindingName,
+    read: BindingReader<'_>,
+) -> Value {
+    if name.kind() == crate::variables::BindingKind::Val {
+        cell.borrow().clone()
+    } else {
+        read(cell, name)
+    }
+}
+
+/// What a comparison of two containers is known by, so that the deep
+/// phase compares each pair once.
+type ComparedPair = (u8, (usize, u32, u32), (usize, u32, u32));
+
+impl Value {
+    /// Whether dropping this value may drop others nested in it.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+    pub(crate) fn holds_values(&self) -> bool {
+        matches!(
+            self,
+            Self::List(_) | Self::Map(_) | Self::Struct(_) | Self::Closure(_)
+        )
+    }
+
+    /// Whether `self` equals `other`, reading each module binding inside
+    /// either through `read`. The comparison first recurses, which is fast
+    /// for ordinary values; one that nests deeper than [`NESTING_LIMIT`] or
+    /// takes more than [`STEP_BUDGET`] steps through containers and
+    /// bindings, as two values sharing their parts many times over can,
+    /// starts again in the deep phase, whose work is bounded by the values'
+    /// size, however their parts are shared.
+    pub(crate) fn equals_with(&self, other: &Self, read: BindingReader<'_>) -> bool {
+        let mut steps = 0;
+        self.equals_shallow(other, read, 0, &mut steps)
+            .unwrap_or_else(|| self.equals_deep(other, read))
+    }
+
+    /// The shallow phase: the answer, or `None` past either limit.
+    fn equals_shallow(
+        &self,
+        other: &Self,
+        read: BindingReader<'_>,
+        nesting: u32,
+        steps: &mut u32,
+    ) -> Option<bool> {
+        if nesting >= NESTING_LIMIT {
+            return None;
+        }
+        let nesting = nesting + 1;
+        let mut step = || {
+            *steps += 1;
+            (*steps <= STEP_BUDGET).then_some(())
+        };
+        Some(match (self, other) {
+            (Self::Binding { cell, .. }, Self::Binding { cell: other, .. })
+                if crate::sync::Code::ptr_eq(cell, other) =>
+            {
+                true
             }
+            (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
+                step()?;
+                return compared_binding(cell, name, read)
+                    .equals_shallow(value, read, nesting, steps);
+            }
+            (Self::List(a), Self::List(b)) => {
+                if a.identity() == b.identity() {
+                    return Some(true);
+                }
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (a, b) in a.iter().zip(b.iter()) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
+            }
+            (Self::Overloads(a), Self::Overloads(b)) => {
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (a, b) in a.iter().zip(b.iter()) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
+            }
+            (Self::Map(a), Self::Map(b)) => {
+                if a.identity() == b.identity() {
+                    return Some(true);
+                }
+                step()?;
+                if a.len() != b.len() {
+                    return Some(false);
+                }
+                for (key, value) in a.iter() {
+                    let Some(other) = b.get(key) else {
+                        return Some(false);
+                    };
+                    if !value.equals_shallow(other, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
+            }
+            (Self::Struct(a), Self::Struct(b)) => {
+                if !Rc::ptr_eq(&a.schema, &b.schema) || a.values.len() != b.values.len() {
+                    return Some(false);
+                }
+                step()?;
+                for (a, b) in a.values.iter().zip(&b.values) {
+                    if !a.equals_shallow(b, read, nesting, steps)? {
+                        return Some(false);
+                    }
+                }
+                true
+            }
+            _ => self.equals_leaf(other),
+        })
+    }
+
+    /// The deep phase of a comparison: the same rules, with a stack of its
+    /// own, comparing each pair of containers once. A pair met again is
+    /// taken as equal, which is what it is unless something else in the
+    /// comparison differs.
+    fn equals_deep(&self, other: &Self, read: BindingReader<'_>) -> bool {
+        let mut pending = alloc::vec![(self.clone(), other.clone())];
+        let mut compared: crate::platform::HashSet<ComparedPair> = crate::platform::HashSet::new();
+        while let Some((left, right)) = pending.pop() {
+            match (&left, &right) {
+                (Self::Binding { cell, .. }, Self::Binding { cell: other, .. })
+                    if crate::sync::Code::ptr_eq(cell, other) => {}
+                (Self::Binding { cell, name }, value) | (value, Self::Binding { cell, name }) => {
+                    pending.push((compared_binding(cell, name, read), value.clone()));
+                }
+                (Self::List(a), Self::List(b)) => {
+                    if a.identity() == b.identity()
+                        || !compared.insert((0, a.identity(), b.identity()))
+                    {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    pending.extend(a.iter().cloned().zip(b.iter().cloned()));
+                }
+                (Self::Overloads(a), Self::Overloads(b)) => {
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    pending.extend(a.iter().cloned().zip(b.iter().cloned()));
+                }
+                (Self::Map(a), Self::Map(b)) => {
+                    let pair = (1, (a.identity(), 0, 0), (b.identity(), 0, 0));
+                    if a.identity() == b.identity() || !compared.insert(pair) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    for (key, value) in a.iter() {
+                        let Some(other) = b.get(key) else {
+                            return false;
+                        };
+                        pending.push((value.clone(), other.clone()));
+                    }
+                }
+                (Self::Struct(a), Self::Struct(b)) => {
+                    if !Rc::ptr_eq(&a.schema, &b.schema) || a.values.len() != b.values.len() {
+                        return false;
+                    }
+                    let pair = (
+                        2,
+                        (Rc::as_ptr(a) as usize, 0, 0),
+                        (Rc::as_ptr(b) as usize, 0, 0),
+                    );
+                    if Rc::ptr_eq(a, b) || !compared.insert(pair) {
+                        continue;
+                    }
+                    pending.extend(a.values.iter().cloned().zip(b.values.iter().cloned()));
+                }
+                _ => {
+                    if !left.equals_leaf(&right) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Equality of values that hold no others: containers and bindings are
+    /// compared by the phases above, and are never equal here.
+    #[allow(clippy::float_cmp, reason = "Slug's equality is exact")]
+    fn equals_leaf(&self, other: &Self) -> bool {
+        match (self, other) {
             (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int(a), Self::Int(b)) => a == b,
@@ -1625,13 +1988,7 @@ impl PartialEq for Value {
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::List(a), Self::List(b)) => a == b,
-            (Self::Overloads(a), Self::Overloads(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => a.clone().equals(&b.clone()),
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
-            (Self::Struct(a), Self::Struct(b)) => {
-                Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
-            }
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
             (Self::Closure(a), Self::Closure(b)) => crate::sync::Code::ptr_eq(a, b),
@@ -1648,6 +2005,12 @@ impl PartialEq for Value {
             (Self::Builtin(a), Self::Builtin(b)) => a == b,
             _ => false,
         }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals_with(other, &running_reader)
     }
 }
 

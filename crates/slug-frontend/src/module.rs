@@ -452,15 +452,30 @@ impl ModuleGraph {
         Ok(())
     }
 
-    /// Whether the module `request` names has an initialized instance, when
-    /// it can be resolved: a fork may import only such a module.
-    pub fn is_initialized<H: ModuleGraphHost>(
+    /// The instance of the module `request` names, only if it has
+    /// initialized: one resolution and one lookup, never initializing it, so
+    /// what a fork is given is what was checked. One whose code is still
+    /// running has not; the virtual `slug.builtin` always has.
+    pub fn initialized_instance<H: ModuleGraphHost>(
         &self,
         host: &H,
         request: ModuleRequest<'_>,
-    ) -> Option<bool> {
-        let source = host.resolve(request).ok()?;
-        Some(self.state.instances.borrow().contains_key(&source.key))
+    ) -> Option<ModuleInstance> {
+        let source = match host.resolve(request) {
+            Ok(source) => source,
+            Err(ModuleLoadError::NotFound { .. })
+                if request.name == "slug.builtin" && !host.builtin_globals().is_empty() =>
+            {
+                return Some(self.virtual_builtin_module(host));
+            }
+            Err(_) => return None,
+        };
+        self.state
+            .instances
+            .borrow()
+            .get(&source.key)
+            .filter(|instance| instance.initialized)
+            .cloned()
     }
 
     /// Resolves, compiles, and initializes one module instance.
@@ -534,11 +549,9 @@ impl ModuleGraph {
             metadata: vm.module_metadata().to_vec(),
             values: HashMap::new(),
             live_exports: vm.live_exported_values(program.program()),
+            initialized: false,
         };
-        self.state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
+        self.record(&source.key, &instance);
         if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&source.key);
             if let Some(staged) = activation.as_ref() {
@@ -569,16 +582,22 @@ impl ModuleGraph {
             exports: vm.exported_values(program.program()),
             metadata: vm.module_metadata().to_vec(),
             values: vm.declared_values(),
+            initialized: true,
             ..instance
         };
-        self.state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
+        self.record(&source.key, &instance);
         if let Some(activation) = activation {
             activation.retain();
         }
         Ok(instance)
+    }
+
+    /// Caches `instance` as the module `key`'s, provisional or initialized.
+    fn record(&self, key: &ModuleKey, instance: &ModuleInstance) {
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(key.clone(), instance.clone());
     }
 
     fn check_foreign_declarations<H: ModuleGraphHost>(
@@ -654,6 +673,7 @@ impl ModuleGraph {
             metadata: Vec::new(),
             values: HashMap::new(),
             live_exports: exports,
+            initialized: true,
         };
         self.state
             .instances
@@ -686,6 +706,9 @@ pub struct ModuleInstance {
     /// not, for `describe`.
     pub values: HashMap<String, Value>,
     pub(crate) live_exports: Value,
+    /// False while its code runs: the entry is provisional then, there so
+    /// an import cycle back to it finds it.
+    pub(crate) initialized: bool,
 }
 
 impl ModuleInstance {
@@ -961,11 +984,32 @@ impl ModuleGraphHost for ModuleHost {
 }
 
 impl VmHost for ModuleHost {
-    fn module_initialized(&self, importer: Option<&str>, name: &str) -> Option<bool> {
+    fn import_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleExports, VmHostError>> {
         let importer = importer.map(ModuleKey::new);
-        self.state
+        let instance = self
+            .state
             .graph
-            .is_initialized(self, ModuleRequest::new(importer.as_ref(), name))
+            .initialized_instance(self, ModuleRequest::new(importer.as_ref(), name))?;
+        Some(Ok(VmModuleExports {
+            exports: instance.live_exports(),
+        }))
+    }
+
+    fn describe_initialized(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Option<Result<VmModuleDescription, VmHostError>> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .state
+            .graph
+            .initialized_instance(self, ModuleRequest::new(importer.as_ref(), name))?;
+        Some(Ok(instance.description()))
     }
 
     fn import_module(

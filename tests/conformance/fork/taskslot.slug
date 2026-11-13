@@ -1,0 +1,3 @@
+// A module with a `task var` and a setter, for `outcome-own-view`.
+export task var slot = 0
+export val put = fn(value) { slot = value }

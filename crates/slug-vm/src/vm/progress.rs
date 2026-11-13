@@ -178,6 +178,16 @@ impl ProgressDriver {
 
     #[cfg(not(target_os = "none"))]
     pub(super) fn wait(&self, observed: u64, timeout: Option<std::time::Duration>) {
+        // Checked after the caller's snapshot: a cancellation that came
+        // before it is seen here, and one after it changes the signal.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if self
+            .island
+            .as_ref()
+            .is_some_and(|control| control.cancelled())
+        {
+            return;
+        }
         self.blocking_waiter.wait(&self.signal, observed, timeout);
     }
 

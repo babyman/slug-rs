@@ -322,7 +322,7 @@ impl PartialEq<&str> for Str {
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct List {
-    values: Rc<Vec<Value>>,
+    values: Rc<Elements>,
     // `u32` bounds keep `Value` at 24 bytes. A list cannot reach 2^32
     // elements: at 24 bytes each its allocation would fail first.
     start: u32,
@@ -333,7 +333,7 @@ impl List {
     pub(crate) fn from_values(values: Vec<Value>) -> Self {
         let end = u32::try_from(values.len()).expect("list length fits in u32");
         Self {
-            values: Rc::new(values),
+            values: Rc::new(Elements(values)),
             start: 0,
             end,
         }
@@ -399,7 +399,8 @@ impl List {
         match Rc::try_unwrap(self.values) {
             // A uniquely owned list drops what lies outside its range and
             // shifts its own storage once to make room for the head.
-            Ok(mut values) => {
+            Ok(values) => {
+                let mut values = values.into_vec();
                 values.truncate(range.end);
                 values.splice(..range.start, [value]);
                 Self::from_values(values)
@@ -423,7 +424,7 @@ impl List {
 
     fn into_values(self) -> Vec<Value> {
         if self.spans_storage() {
-            Rc::try_unwrap(self.values).unwrap_or_else(|values| (*values).clone())
+            Rc::try_unwrap(self.values).map_or_else(|values| values.0.clone(), Elements::into_vec)
         } else {
             self.iter().cloned().collect()
         }
@@ -435,6 +436,48 @@ impl Deref for List {
 
     fn deref(&self) -> &Self::Target {
         &self.values[self.range()]
+    }
+}
+
+/// A list's storage. Dropped, it takes apart the lists, maps, and structs
+/// it alone holds with a loop rather than recursion, so a value nested
+/// deeper than the native stack can hold is still dropped.
+#[derive(Clone)]
+struct Elements(Vec<Value>);
+
+impl Elements {
+    fn into_vec(mut self) -> Vec<Value> {
+        core::mem::take(&mut self.0)
+    }
+}
+
+impl Deref for Elements {
+    type Target = Vec<Value>;
+
+    fn deref(&self) -> &Vec<Value> {
+        &self.0
+    }
+}
+
+impl Drop for Elements {
+    fn drop(&mut self) {
+        crate::value::drop_values(&mut self.0);
+    }
+}
+
+impl List {
+    /// Hands this list's elements to `pending` when it alone holds them,
+    /// for [`crate::value::dismantle`].
+    pub(crate) fn release_into(mut self, pending: &mut Vec<Value>) {
+        if let Some(elements) = Rc::get_mut(&mut self.values) {
+            pending.append(&mut elements.0);
+        }
+    }
+
+    /// What makes this list itself: its storage and the range it shows, as
+    /// a walk that must visit each list once tells them apart.
+    pub(crate) fn identity(&self) -> (usize, u32, u32) {
+        (Rc::as_ptr(&self.values) as usize, self.start, self.end)
     }
 }
 
@@ -589,6 +632,19 @@ struct MapStorage {
     entries: Vec<(Value, Value)>,
     /// Present once the map is larger than `INDEX_THRESHOLD`.
     index: Option<MapIndex>,
+}
+
+impl Drop for MapStorage {
+    /// As a list's storage does: nested values it alone holds are taken
+    /// apart with a loop.
+    fn drop(&mut self) {
+        crate::value::guarded_drop(core::mem::take(&mut self.entries), |entries, deferred| {
+            for (key, value) in entries {
+                deferred.push(key);
+                deferred.push(value);
+            }
+        });
+    }
 }
 
 impl MapStorage {
@@ -945,11 +1001,27 @@ impl Map {
         Ok(Self(crate::sync::Code::new(storage)))
     }
 
-    pub(crate) fn equals(&self, other: &Self) -> bool {
-        self.len() == other.len()
-            && self
-                .iter()
-                .all(|(key, value)| other.get(key).is_some_and(|other| other == value))
+    /// Hands this map's keys and values to `pending` when it alone holds
+    /// them, for [`crate::value::dismantle`].
+    pub(crate) fn release_into(mut self, pending: &mut Vec<Value>) {
+        if let Some(storage) = crate::sync::Code::get_mut(&mut self.0) {
+            storage.index = None;
+            for (key, value) in storage.entries.drain(..) {
+                pending.push(key);
+                pending.push(value);
+            }
+        }
+    }
+
+    /// The entry at `index` in insertion order.
+    #[cfg_attr(not(feature = "concurrency"), allow(dead_code))]
+    pub(crate) fn entry_at(&self, index: usize) -> Option<&(Value, Value)> {
+        self.0.entries.get(index)
+    }
+
+    /// The address of this map's storage, which its copies share.
+    pub(crate) fn identity(&self) -> usize {
+        crate::sync::Code::as_ptr(&self.0).cast::<()>() as usize
     }
 
     fn into_storage(self) -> MapStorage {

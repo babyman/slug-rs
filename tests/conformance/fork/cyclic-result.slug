@@ -1,0 +1,8 @@
+// A value that reaches itself, as an import map can through a module
+// variable holding it, is checked for sendability once per part, so a fork
+// returning it ends.
+val looped = import("selfref")
+val main = fn() {
+    val t = fork { looped }
+    println(select { await t } == looped)
+}

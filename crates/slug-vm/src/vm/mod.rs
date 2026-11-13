@@ -387,6 +387,56 @@ impl VmMetrics {
     }
 }
 
+impl Vm {
+    /// `==` as this task sees its operands: a module `var` inside either is
+    /// read through the task's view, which in a fork is its snapshot, on
+    /// every build.
+    fn values_equal(&self, left: &Value, right: &Value) -> bool {
+        left.equals_with(right, &|cell, name| self.seen_binding(cell, name))
+    }
+
+    /// The value of the module binding `cell`, `name`, as this task sees it.
+    /// One a fork has no snapshot of reads as uninitialized.
+    #[cfg_attr(not(feature = "concurrency"), allow(clippy::unused_self))]
+    fn seen_binding(
+        &self,
+        cell: &crate::value::BindingCell,
+        name: &crate::variables::BindingName,
+    ) -> Value {
+        #[cfg(feature = "concurrency")]
+        return fork::seen_through(self.view.as_deref(), cell, name);
+        #[cfg(not(feature = "concurrency"))]
+        {
+            let _ = name;
+            cell.borrow().clone()
+        }
+    }
+}
+
+/// A task's view of the variables, by reference, or nothing on a build
+/// without tasks.
+#[cfg(feature = "concurrency")]
+type ViewRef<'a> = Option<&'a fork::TaskView>;
+#[cfg(not(feature = "concurrency"))]
+type ViewRef<'a> = Option<&'a ()>;
+
+/// A module binding as the task whose view is `view` sees it, for a
+/// comparison: a reader borrowing only the view, so it can be passed beside
+/// the VM's stack.
+fn read_binding(
+    view: ViewRef<'_>,
+    cell: &crate::value::BindingCell,
+    name: &crate::variables::BindingName,
+) -> Value {
+    #[cfg(feature = "concurrency")]
+    return fork::seen_through(view, cell, name);
+    #[cfg(not(feature = "concurrency"))]
+    {
+        let _ = (view, name);
+        cell.borrow().clone()
+    }
+}
+
 /// Why `value` cannot cross between a fork and the rest of the program, if
 /// it cannot.
 #[cfg(feature = "concurrency")]
@@ -394,7 +444,7 @@ pub(crate) use fork::seen_binding;
 
 #[cfg(feature = "concurrency")]
 pub(crate) fn unsendable_reason(value: &Value) -> Option<String> {
-    fork::unsendable(value)
+    fork::unsendable(value, &crate::value::running_reader)
 }
 
 /// Reported when no task can make progress while one is still waiting.
@@ -940,6 +990,10 @@ impl Vm {
             self.release_host_execution(execution, Some(&cancellation));
         }
         self.native_resources.close_all();
+        // Forks it cancelled report back, and what they let go of last is
+        // destroyed here, before the host goes.
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        self.progress.group().join_islands(&self.attention);
         if let Some(host) = &self.host {
             host.shutdown();
         }
@@ -981,6 +1035,11 @@ impl Vm {
     /// Returns a Slug runtime error when top-level execution or the entrypoint
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
+        let result = self.run_program_settled(program);
+        self.after_forks(result)
+    }
+
+    fn run_program_settled(&mut self, program: &Program) -> VmResult<Value> {
         self.reset_metrics();
         let program = self.install_compat_named(program, "main")?;
         self.install_implicit_builtins(&program.program)?;
@@ -1743,7 +1802,8 @@ impl Vm {
     pub fn run(&mut self, program: &Program, entry: usize) -> VmResult<Value> {
         self.reset_metrics();
         let program = self.install_compat(program, entry)?;
-        self.run_installed_execution(&program)
+        let result = self.run_installed_execution(&program);
+        self.after_forks(result)
     }
 
     /// Starts a zero-argument entry for host-driven execution. Call
@@ -1825,7 +1885,8 @@ impl Vm {
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run_installed(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.reset_metrics();
-        self.run_installed_execution(program)
+        let result = self.run_installed_execution(program);
+        self.after_forks(result)
     }
 
     /// Starts an already installed entry for host-driven execution.
@@ -1841,7 +1902,7 @@ impl Vm {
 
     fn run_installed_execution(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.start_installed_execution(program)?;
-        self.blocking_run()
+        self.blocking_run_until_settled()
     }
 
     fn start_installed_execution(&mut self, installed: &InstalledProgram) -> VmResult<()> {
@@ -1938,7 +1999,8 @@ impl Vm {
     pub fn run_named(&mut self, program: &Program, entry: &str) -> VmResult<Value> {
         self.reset_metrics();
         let program = self.install_compat_named(program, entry)?;
-        self.run_installed_execution(&program)
+        let result = self.run_installed_execution(&program);
+        self.after_forks(result)
     }
 
     /// Starts an entry selected by name for host-driven execution.
@@ -1961,7 +2023,8 @@ impl Vm {
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run_named_installed(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.reset_metrics();
-        self.run_installed_execution(program)
+        let result = self.run_installed_execution(program);
+        self.after_forks(result)
     }
 
     #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
@@ -2087,6 +2150,26 @@ impl Vm {
     /// Returns the execution error, or a checked blocked-task error when no
     /// runnable work or future progress source remains.
     pub fn blocking_run(&mut self) -> VmResult<Value> {
+        let result = self.blocking_run_until_settled();
+        self.after_forks(result)
+    }
+
+    /// `result`, once every fork of this program has reported back:
+    /// those a failure cancelled may still be stopping, and what they let go
+    /// of last is destroyed on this thread. Only a whole program's run
+    /// waits so; a module initializing during one must not wait for its
+    /// forks, which may be waiting for it.
+    #[cfg_attr(
+        not(all(feature = "threads", not(target_os = "none"))),
+        allow(clippy::unused_self)
+    )]
+    fn after_forks(&self, result: VmResult<Value>) -> VmResult<Value> {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        self.progress.group().join_islands(&self.attention);
+        result
+    }
+
+    fn blocking_run_until_settled(&mut self) -> VmResult<Value> {
         loop {
             match self.run_until_stalled() {
                 VmProgress::Completed(value) => return Ok(value),
@@ -2177,7 +2260,7 @@ impl Vm {
     fn execute(&mut self) -> ExecutionOutcome {
         // Reads of module bindings that no VM makes see this task's view.
         #[cfg(all(feature = "concurrency", not(target_os = "none")))]
-        fork::set_running_view(self.view.as_ref());
+        let _view = fork::enter_view(self.view.as_ref());
         // A yielded fork carries on where it stopped, with no value to take.
         #[cfg(all(
             feature = "concurrency",
@@ -2630,7 +2713,8 @@ impl Vm {
             }
             PackedOpcode::Equal => {
                 let (left, right) = self.pop_pair()?;
-                self.stack.push(Value::Bool(left == right));
+                self.stack
+                    .push(Value::Bool(self.values_equal(&left, &right)));
             }
             PackedOpcode::Greater => self.compare(cmp::Ordering::Greater)?,
             PackedOpcode::GreaterNum => {
@@ -2933,7 +3017,7 @@ impl Vm {
             BinaryOperator::DivideNum => divide_num(left, right).map_err(fault)?,
             BinaryOperator::Modulo => modulo(left, right).map_err(fault)?,
             BinaryOperator::ModuloNum => modulo_num(left, right).map_err(fault)?,
-            BinaryOperator::Equal => Value::Bool(left == right),
+            BinaryOperator::Equal => Value::Bool(self.values_equal(&left, &right)),
             BinaryOperator::Greater => {
                 Value::Bool(self.compare_values(left, right, cmp::Ordering::Greater)?)
             }
@@ -3533,12 +3617,17 @@ impl Vm {
         let value = self.pop()?;
         let start = self.stack.len();
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let matched = matches_pattern(
             pattern,
             &value,
             &operands,
             &mut self.stack,
             &mut list_views_created,
+            &|cell, name| read_binding(view, cell, name),
         );
         #[cfg(feature = "metrics")]
         {
@@ -3573,6 +3662,10 @@ impl Vm {
         let start = self.stack.len();
         let locals = &self.frames.last().expect("active frame was checked").locals;
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let mut matched = Ok(true);
         for (item, local) in items.iter().zip(locals) {
             let result = match local {
@@ -3582,6 +3675,7 @@ impl Vm {
                     &operands,
                     &mut self.stack,
                     &mut list_views_created,
+                    &|cell, name| read_binding(view, cell, name),
                 ),
                 LocalSlot::Captured(cell) => matches_pattern(
                     item,
@@ -3589,6 +3683,7 @@ impl Vm {
                     &operands,
                     &mut self.stack,
                     &mut list_views_created,
+                    &|cell, name| read_binding(view, cell, name),
                 ),
             };
             if !matches!(result, Ok(true)) {
@@ -3622,12 +3717,17 @@ impl Vm {
         // Bindings go straight onto the operand stack, where they belong.
         let start = self.stack.len();
         let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
         let matched = matches_pattern(
             pattern,
             &value,
             &operands,
             &mut self.stack,
             &mut list_views_created,
+            &|cell, name| read_binding(view, cell, name),
         )
         .map_err(|(kind, message)| self.error_at(kind, message))?;
         #[cfg(feature = "metrics")]
@@ -4227,27 +4327,61 @@ impl Vm {
         self.nursery.settle(result, &cancellation, &blocked)
     }
 
-    /// In a fork, fails `operation` (`import` or `describe`) on the module
-    /// `name` if that would initialize it: initializing runs the module's
-    /// code, which sets variables the rest of the program shares, on the
-    /// spawner's thread at whatever point it serves the fork's request.
-    #[cfg(feature = "concurrency")]
-    fn check_fork_may_load(
+    /// The description `describe` reads of the module `name`, imported by
+    /// the module whose code is running.
+    fn module_description(
         &self,
         host: &dyn VmHost,
-        importer: Option<&str>,
+        name: &str,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<crate::VmModuleDescription> {
+        let importer = self.running_module_key();
+        self.load_module(
+            name,
+            "describe",
+            || host.describe_initialized(importer, name),
+            || host.describe_module(importer, name),
+        )?
+        .map_err(|error| self.import_error(&error, span.cloned()))
+    }
+
+    /// What `operation` (`import` or `describe`) on the module `name` gives:
+    /// in a fork, only a module already initialized, found and given in one
+    /// lookup (`initialized`), since loading one would initialize it;
+    /// elsewhere, whatever `load` gives.
+    #[cfg_attr(
+        not(feature = "concurrency"),
+        allow(clippy::unused_self, clippy::unnecessary_wraps)
+    )]
+    fn load_module<T>(
+        &self,
         name: &str,
         operation: &str,
-    ) -> VmResult<()> {
-        if self.fork_context().is_some() && host.module_initialized(importer, name) == Some(false) {
-            return Err(self.error_at(
-                RuntimeErrorKind::Fork,
-                format!(
-                    "a fork cannot initialize `{name}`, as `{operation}` would: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
-                ),
-            ));
+        initialized: impl FnOnce() -> Option<Result<T, crate::VmHostError>>,
+        load: impl FnOnce() -> Result<T, crate::VmHostError>,
+    ) -> VmResult<Result<T, crate::VmHostError>> {
+        #[cfg(feature = "concurrency")]
+        if self.fork_context().is_some() {
+            return initialized().ok_or_else(|| self.fork_cannot_load(name, operation));
         }
-        Ok(())
+        #[cfg(not(feature = "concurrency"))]
+        let _ = (name, operation, initialized);
+        Ok(load())
+    }
+
+    /// The error for a fork's `operation` (`import` or `describe`) on the
+    /// module `name`, which has not initialized: initializing it would run
+    /// the module's code, which sets variables the rest of the program
+    /// shares, on the spawner's thread at whatever point it serves the
+    /// fork's request.
+    #[cfg(feature = "concurrency")]
+    fn fork_cannot_load(&self, name: &str, operation: &str) -> RuntimeError {
+        self.error_at(
+            RuntimeErrorKind::Fork,
+            format!(
+                "a fork cannot initialize `{name}`, as `{operation}` would: initializing a module runs code that sets its variables, which the rest of the program would share; import it before the fork starts"
+            ),
+        )
     }
 
     /// Settles the body of an explicit nursery, this VM's, without waiting:
@@ -4407,11 +4541,14 @@ impl Vm {
                     ),
                 ));
             };
-            #[cfg(feature = "concurrency")]
-            self.check_fork_may_load(host.as_ref(), importer, &name, "import")?;
-            let instance = host
-                .import_module(importer, &name)
-                .map_err(|error| self.import_error(&error, self.owned_span(None)))?;
+            let loaded = self.load_module(
+                &name,
+                "import",
+                || host.import_initialized(importer, &name),
+                || host.import_module(importer, &name),
+            )?;
+            let instance =
+                loaded.map_err(|error| self.import_error(&error, self.owned_span(None)))?;
             let Value::Map(module_exports) = instance.exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
@@ -4967,6 +5104,11 @@ impl Vm {
                 } else {
                     format!("{}.{}", program.module_name(), key)
                 };
+                // A fork asks its spawner's host, so its fallback crosses.
+                #[cfg(feature = "concurrency")]
+                if self.fork_context().is_some() {
+                    self.check_sendable(&arguments[1], "a `cfg` fallback in a fork")?;
+                }
                 let value = configuration.resolve(&key, &arguments[1]);
                 if value.contains_non_finite_number() {
                     return Err(self.error(
@@ -5100,13 +5242,7 @@ impl Vm {
                 span,
             ));
         }
-        let importer = self.running_module_key();
-        // Describing a module initializes it, which a fork may not do.
-        #[cfg(feature = "concurrency")]
-        self.check_fork_may_load(host.as_ref(), importer, name, "describe")?;
-        let description = host
-            .describe_module(importer, name)
-            .map_err(|error| self.import_error(&error, span.clone()))?;
+        let description = self.module_description(host.as_ref(), name, span.as_ref())?;
         let mut declarations = Vec::new();
         for declaration in &description.declarations {
             if !declaration.exported && !unexported {
@@ -5618,7 +5754,11 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
-        let invocation = function.invoke(arguments);
+        #[cfg(feature = "concurrency")]
+        let domain = self.domain;
+        #[cfg(not(feature = "concurrency"))]
+        let domain = 0;
+        let invocation = function.invoke(arguments, domain);
         // A producer minted from a channel argument needs progress wakeups,
         // as a native-created channel result does.
         for argument in arguments {
