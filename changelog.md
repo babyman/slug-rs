@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Crawl finds who a player sees by square in a crowd, and no longer sorts
+  everyone to find one player. `game.peopleSeen(id)` gives the other
+  players in the chunk whom a player sees, looking up who stands on each
+  square in their sight (from a per-chunk index that `steady` keeps, as it
+  keeps each chunk's company) when the chunk holds more people than that,
+  and asking of each otherwise; pages use it for the map's `@`s, its `near`
+  list, and the In view list, where they used to ask of everyone in the
+  chunk. A move's bump into another player and a monster's choice of whom
+  to chase scan the players for the first by id, where each sorted the
+  chunk's whole company with `string.sort`, which is written in Slug. A
+  tick in a crowd of 1000 players in one chunk takes 0.75 s, from 1.15,
+  and of 500, 0.29 s, from 0.47 (four forks, client maps); pages are
+  unchanged byte for byte, and the game plays out the same.
+
 - Crawl's "In view" list names only the eight other players nearest you
   (in moves; those as near in the order of their ids), then says how many
   more there are, "and 143 others"; townsfolk and monsters are listed in

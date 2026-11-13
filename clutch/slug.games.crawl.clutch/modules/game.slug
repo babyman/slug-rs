@@ -250,6 +250,27 @@ val companyIn = fn(key:str):list {
 // cache, so each task has its own.
 task var companies = nil
 
+// The living players in the chunk with `key` by the square they stand on:
+// a map from `viewKey` to [id, player] pairs in id order.
+val crowdIn = fn(key:str):map {
+    match crowds {
+        found: map => match found[key] {
+            crowd: map => return crowd
+            _ => nil
+        }
+        _ => nil
+    }
+    val crowd = reduce(companyIn(key), {}, fn(acc, o) {
+        val k = viewKey(o[1].x, o[1].y)
+        acc + {[k]: (acc[k] ?? []) :+ o}
+    })
+    if (crowds != nil) { crowds = (crowds ?? {}) + {[key]: crowd} }
+    crowd
+}
+
+// Each chunk's crowd, by key, while `steady` runs, as `companies`.
+task var crowds = nil
+
 /**
  * Runs `body` and returns what it does, finding the players in each chunk
  * only once meanwhile: for drawing what players see, while no one moves.
@@ -257,8 +278,13 @@ task var companies = nil
  */
 export val steady = fn(body:fn) {
     val outer = companies
+    val outerCrowds = crowds
     companies = companies ?? {}
-    defer { companies = outer }
+    crowds = crowds ?? {}
+    defer {
+        companies = outer
+        crowds = outerCrowds
+    }
     body()
 }
 
@@ -596,6 +622,51 @@ val seer = fn():fn {
         }
         _ => near
     }
+}
+
+// The `viewKey`s of the squares the acting player may see, some more than
+// once: the eight around them and their own, and outdoors what they see,
+// or in a lit room the room. Blind, none.
+val sightKeys = fn():list {
+    val p = player
+    if (p.blind > 0) { return [] }
+    val near = [
+        viewKey(p.x - 1, p.y - 1), viewKey(p.x, p.y - 1), viewKey(p.x + 1, p.y - 1),
+        viewKey(p.x - 1, p.y), viewKey(p.x, p.y), viewKey(p.x + 1, p.y),
+        viewKey(p.x - 1, p.y + 1), viewKey(p.x, p.y + 1), viewKey(p.x + 1, p.y + 1),
+    ]
+    if (site().outdoor == true) { return keys(outdoorSight()) + near }
+    match roomAt(p.x, p.y) {
+        room: map => if (room.dark) { near } else {
+            val go = fn(i:num, acc:list):list {
+                if (i == room.w * room.h) { return acc }
+                recur(i + 1, acc :+ viewKey(room.x + i % room.w, room.y + math.div(i, room.w)))
+            }
+            go(0, near)
+        }
+        _ => near
+    }
+}
+
+// The other living players in the acting player's chunk whom they see, as
+// [id, player] pairs, those on one square together and in id order. In a
+// crowd it looks up who stands on each square they see; among a few, it
+// asks of each whether they are seen.
+val peopleInSight = fn():list {
+    val me = acting
+    val key = playerKey()
+    val company = companyIn(key)
+    val squares = sightKeys()
+    if (len(company) <= len(squares)) {
+        val sees = seer()
+        return filter(company, fn(o) { o[0] != me && sees(o[1].x, o[1].y) })
+    }
+    val crowd = crowdIn(key)
+    // Each square once, though `sightKeys` may give it twice.
+    val unique = reduce(squares, {}, fn(acc, k) { if (crowd[k] == nil) { acc } else { acc + {[k]: true} } })
+    reduce(keys(unique), [], fn(acc, k) {
+        reduce(crowd[k], acc, fn(found, o) { if (o[0] == me) { found } else { found :+ o } })
+    })
 }
 
 // Whether a square (dx, dy) from the player is near enough to see outdoors.
@@ -1691,12 +1762,19 @@ val monsterAct = fn(i:num, dist:map|nil):list {
 // chunk, counting diagonal steps as one, the first by id on a tie; nil when
 // none is left.
 val nearest = fn(m:map):str|nil {
-    val company = companyIn(playerKey())
+    val all = keys(players)
+    val here = player
     val go = fn(i:num, best:str|nil, bestD:num):str|nil {
-        if (i == len(company)) { return best }
-        val p = company[i][1]
+        if (i == len(all)) { return best }
+        val id = all[i]
+        val p = if (id == acting) { here } else { players[id] }
+        if (p.dead || p.cx != here.cx || p.cy != here.cy || p.depth != here.depth) { return recur(i + 1, best, bestD) }
         val d = math.max(math.abs(p.x - m.x), math.abs(p.y - m.y))
-        if (d < bestD) { recur(i + 1, company[i][0], d) } else { recur(i + 1, best, bestD) }
+        val first = match best {
+            b: str => d < bestD || (d == bestD && id < b)
+            _ => true
+        }
+        if (first) { recur(i + 1, id, d) } else { recur(i + 1, best, bestD) }
     }
     go(0, nil, 1000000)
 }
@@ -2160,14 +2238,23 @@ val SAY_LIMIT = 80
 
 // The id of the living player other than the acting one at (x, y) in the
 // chunk with `key`, or nil.
+// The first by id, when more than one stand there.
 val playerIdIn = fn(key:str, x:num, y:num):str|nil {
-    val company = companyIn(key)
-    val go = fn(i:num):str|nil {
-        if (i == len(company)) { return nil }
-        val [id, o] = company[i]
-        if (id != acting && o.x == x && o.y == y) { id } else { recur(i + 1) }
+    // The square first: the chunk's key is made only for those on it.
+    val all = keys(players)
+    val go = fn(i:num, best:str|nil):str|nil {
+        if (i == len(all)) { return best }
+        val id = all[i]
+        val o = players[id]
+        val here = id != acting && o.x == x && o.y == y && !o.dead && chunkKey(o.cx, o.cy, o.depth) == key
+        recur(i + 1, if (!here) { best } else {
+            match best {
+                b: str => if (b < id) { b } else { id }
+                _ => id
+            }
+        })
     }
-    go(0)
+    go(0, nil)
 }
 
 // Where player `o` stands, in the coordinates of the acting player's chunk.
@@ -2673,13 +2760,13 @@ val mapRows = fn():list {
             recur(i + 1, if (shown) { write(rows, m.x, m.y, bestiary.monsters[m.kind].letter) } else { rows })
         }
     }
-    val company = companyIn(playerKey())
+    val company = peopleInSight()
     val others = fn(i:num, rows:list):list {
         if (i == len(company)) {
             rows
         } else {
             val o = company[i][1]
-            recur(i + 1, if (sees(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
+            recur(i + 1, write(rows, o.x, o.y, "@"))
         }
     }
     val people = site().characters ?? []
@@ -2923,6 +3010,14 @@ export val visible = fn(id:str, x:num, y:num):bool { lookAs(id, fn() { canSee(x,
  * looks once.
  */
 export val seeing = fn(id:str):fn { lookAs(id, seer) }
+
+/**
+ * The other living players in the chunk the player with `id` is in whom
+ * they see, as [id, player] pairs: `others` that are `visible`, found
+ * without asking of everyone in a crowd. They come in no set order, but
+ * those on one square come together, in id order.
+ */
+export val peopleSeen = fn(id:str):list { lookAs(id, peopleInSight) }
 
 /**
  * Every square the player with `id` can see, as a map from `viewKey(x, y)`
