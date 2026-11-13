@@ -472,13 +472,43 @@ val packView = fn(id:str, p:map):map {
     {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
 }
 
-// Who is in view: other players the player sees, then monsters.
+// How many of the other players in view the list names, the nearest; the
+// rest are counted.
+val NEAREST = 8
+
+// The `NEAREST` of `people` ([id, player] pairs) nearest `p` in moves,
+// those as near keeping their order.
+val nearest = fn(p:map, people:list):list {
+    val away = fn(o:list):num { math.max(math.abs(o[1].x - p.x), math.abs(o[1].y - p.y)) }
+    // Puts `o` into `kept`, which is in order of distance, after those as
+    // near, keeping no more than NEAREST.
+    val insert = fn(kept:list, o:list):list {
+        val d = away(o)
+        val go = fn(i:num):list {
+            if (i == len(kept) || away(kept[i]) > d) {
+                val placed = kept[:i] + [o] + kept[i:]
+                if (len(placed) > NEAREST) { placed[:NEAREST] } else { placed }
+            } else {
+                recur(i + 1)
+            }
+        }
+        if (len(kept) == NEAREST && away(kept[NEAREST - 1]) <= d) { kept } else { go(0) }
+    }
+    reduce(people, [], insert)
+}
+
+// Who is in view: the nearest other players the player sees and how many
+// more there are, then townsfolk, then monsters.
 val foesView = fn(id:str, p:map, others:list):list {
     val sees = game.seeing(id)
     val people = filter(others, fn(o) { sees(o[1].x, o[1].y) })
+    val named = if (len(people) > NEAREST) { nearest(p, people) } else { people }
+    val rest = len(people) - len(named)
+    val more = if (rest == 0) { [] } else if (rest == 1) { [{more: "and 1 other"}] } else { [{more: "and " + rest + " others"}] }
     val seen = filter(game.here(id).monsters, fn(m) { p.sense || sees(m.x, m.y) })
     val folk = filter(game.here(id).characters ?? [], fn(c) { sees(c.x, c.y) })
-    map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+    map(named, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+        + more
         + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
         + map(seen, fn(m) {
             val kind = bestiary.monsters[m.kind]

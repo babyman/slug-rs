@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Crawl's "In view" list names only the eight other players nearest you
+  (in moves; those as near in the order of their ids), then says how many
+  more there are, "and 143 others"; townsfolk and monsters are listed in
+  full. In a crowded town it listed everyone in sight, often over a hundred
+  names and about 13.5 KB per page, drawn again every tick as people moved.
+  A tick in a crowd of 1000 players in one chunk takes 1.15 s, from 1.77,
+  and of 500, 0.47 s, from 0.57 (four forks, client maps).
+
 - Crawl's pages look once at what their player sees, not once for each
   person or monster they check. `game.seeing(id)` gives a function of
   (x, y) that says what `visible` would, worked out once from where the
