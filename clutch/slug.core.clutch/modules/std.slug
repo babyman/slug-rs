@@ -25,6 +25,27 @@ export val map = fn(vs:list, f:fn, acc:list = []):list match {
 }
 
 /**
+ * calls `f` with each element of `vs`, in order, for what it does, and
+ * returns `nil`, keeping none of its results.
+ *
+ * Use it rather than `map` when the results are not wanted: `map` keeps every
+ * one, and an assignment evaluates to the value assigned, so
+ * `map(xs, fn(x) { seen = seen + {[x]: true} })` keeps a copy of `seen` for
+ * each element.
+ */
+@testWith(
+	[[1,2], fn(n) {n * 2}], nil,
+	[[], fn(n) {n}], nil
+)
+export val each = fn(vs:list, f:fn):nil match {
+	[[], ...] => nil
+	[[h, ...t], ...] => {
+		f(h)
+		recur(t, f)
+	}
+}
+
+/**
  * applies `f` to each element of `vs` and concatenates the resulting lists.
  *
  * `f` must return a list or a single value (which is treated as a one-element list).

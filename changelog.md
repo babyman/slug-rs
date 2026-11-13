@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug.std` exports `each(vs, f)`, which calls `f` with each element in
+  order for what it does and returns `nil`, keeping none of the results.
+  Loops run for their effects used `map`, which keeps every result, and an
+  assignment evaluates to the value assigned, so `map(xs, fn(x) { seen =
+  seen + {[x]: true} })` kept a copy of `seen` for each element: memory and
+  time grew with the square of the length (40,000 keys took 73 s). Crawl's
+  empire layer used `map` so once, for the settlements' holders.
+
 - Crawl places a new character without looking at every player for each
   square it tries. Once the start town fills, a join tried 50 random squares
   each asking of every player whether they stood there, then walked the
