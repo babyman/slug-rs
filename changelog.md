@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl finds who stands on a square without looking at every player. A
+  step asked of everyone whether they stood on the square ahead
+  (`playerIn`, then `playerIdIn` for whom), and a tick checked each present
+  player against the list of those who had acted, so a tick in a crowd
+  grew with the square of the players. `standing` now records the ids on
+  each square by the records in `players`, kept by `savePlayer` wherever
+  the engine saves one and rebuilt on load, and those who acted are a set.
+  With 1000 players in one town a tick takes 0.35 s, from 0.51.
+
 - Crawl works out the rays of outdoor sight once. Sight outdoors is the
   squares on Bresenham lines from the player to the edge of their sight box,
   each as far as they can see and up to the first tree, rock, or wall; the

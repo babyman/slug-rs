@@ -119,6 +119,13 @@ var world = {}
 var levels = {}
 var players = {}
 
+// Who stands where, by the records in `players`: a map from a square's
+// `squareKey` to the set of ids whose record puts them there, dead or alive.
+// `savePlayer` keeps it as `players` changes; the acting player's record
+// may be behind `player`, so those asking where someone stands look at
+// `player` for them.
+var standing = {}
+
 // The monsters of chunks not made yet, beside those that are, as counts by
 // name (see `slug.games.crawl.region`), by chunk key.
 var populations = {}
@@ -164,17 +171,61 @@ export val current = fn():map {
     {world: world, levels: levels, players: all, populations: populations}
 }
 
+// The key `standing` gives the square (x, y) of the chunk with `key`.
+val squareKey = fn(key:str, x:num, y:num):str { key + ":" + x + "," + y }
+
+// The square player record `p` puts them on, as a `squareKey`, or nil for
+// one not placed yet.
+val squareOf = fn(p:map):str|nil {
+    if (p.x == nil) { nil } else { squareKey(chunkKey(p.cx, p.cy, p.depth), p.x, p.y) }
+}
+
+// `standing` for the records `all`, by id.
+val standingOf = fn(all:map):map {
+    reduce(keys(all), {}, fn(acc, id) {
+        match squareOf(all[id]) {
+            k: str => acc + {[k]: (acc[k] ?? {}) + {[id]: true}}
+            _ => acc
+        }
+    })
+}
+
+// Saves `p` as the record of the player with `id`, keeping `standing`.
+val savePlayer = fn(id:str, p:map) {
+    val old = players[id]
+    val moved = old == nil || old.x != p.x || old.y != p.y || old.cx != p.cx || old.cy != p.cy || old.depth != p.depth
+    if (moved) {
+        val from = if (old == nil) { nil } else { squareOf(old) }
+        match from {
+            k: str => {
+                val left = remove(standing[k] ?? {}, id)
+                standing = if (len(left) == 0) { remove(standing, k) } else { standing + {[k]: left} }
+            }
+            _ => nil
+        }
+        match squareOf(p) {
+            k: str => { standing = standing + {[k]: (standing[k] ?? {}) + {[id]: true}} }
+            _ => nil
+        }
+    }
+    players = players + {[id]: p}
+}
+
+// The ids whose records in `players` put them on square (x, y) of the chunk
+// with `key`, in no particular order.
+val standingIn = fn(key:str, x:num, y:num):list { keys(standing[squareKey(key, x, y)] ?? {}) }
+
 // Runs `body` as the player with `id`: the engine's rules all act on
 // `player`, which holds them meanwhile and is saved back after. Nests, as
 // when a monster attacks another player during someone's turn.
 val actAs = fn(id:str, body:fn) {
     val outer = acting
-    if (outer != nil) { players = players + {[outer]: player} }
+    if (outer != nil) { savePlayer(outer, player) }
     acting = id
     player = players[id]
     dirty = dirty copy {players: dirty.players + {[id]: true}}
     val result = body()
-    players = players + {[id]: player}
+    savePlayer(id, player)
     acting = outer
     if (outer != nil) { player = players[outer] }
     result
@@ -302,12 +353,12 @@ val companyOf = fn(key:str):list {
 
 // Whether a living player stands at (x, y) in the chunk with `key`.
 val playerIn = fn(key:str, x:num, y:num):bool {
-    // The square first: the chunk's key is made only for those on it.
-    val all = keys(players)
+    val p = player
+    if (acting != nil && p.x == x && p.y == y && !p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { return true }
+    val there = standingIn(key, x, y)
     val go = fn(i:num):bool {
-        if (i == len(all)) { return false }
-        val p = if (all[i] == acting) { player } else { players[all[i]] }
-        if (p.x == x && p.y == y && !p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { true } else { recur(i + 1) }
+        if (i == len(there)) { return false }
+        if (there[i] != acting && !players[there[i]].dead) { true } else { recur(i + 1) }
     }
     go(0)
 }
@@ -1404,6 +1455,7 @@ export val load = fn(saved:map) {
     }
     levels = saved.levels
     players = saved.players
+    standing = standingOf(players)
     populations = saved.populations ?? {}
     slots = {}
     sights = {}
@@ -1461,6 +1513,7 @@ export val newGame = fn(seed:num, options:map = {}) {
     }
     levels = {}
     players = {}
+    standing = {}
     populations = {}
     slots = {}
     player = {}
@@ -1505,7 +1558,7 @@ export val changes = fn():map {
  */
 export val join = fn(id:str, name:str) {
     if (players[id] == nil) {
-        players = players + {[id]: {name: name}}
+        savePlayer(id, {name: name})
         actAs(id, newCharacter)
     }
 }
@@ -2295,13 +2348,11 @@ val SAY_LIMIT = 80
 // chunk with `key`, or nil.
 // The first by id, when more than one stand there.
 val playerIdIn = fn(key:str, x:num, y:num):str|nil {
-    // The square first: the chunk's key is made only for those on it.
-    val all = keys(players)
+    val there = standingIn(key, x, y)
     val go = fn(i:num, best:str|nil):str|nil {
-        if (i == len(all)) { return best }
-        val id = all[i]
-        val o = players[id]
-        val here = id != acting && o.x == x && o.y == y && !o.dead && chunkKey(o.cx, o.cy, o.depth) == key
+        if (i == len(there)) { return best }
+        val id = there[i]
+        val here = id != acting && !players[id].dead
         recur(i + 1, if (!here) { best } else {
             match best {
                 b: str => if (b < id) { b } else { id }
@@ -2913,14 +2964,14 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     }
     each(present, fn() { player = player copy {messages: [], more: []} })
     var timed = []
-    var acted = []
+    var acted = {}
     val doActions = fn(i:num) {
         if (i < len(actions)) {
             val a = actions[i]
-            val free = players[a.id] != nil && !contains(acted, a.id)
+            val free = players[a.id] != nil && acted[a.id] == nil
                 && (players[a.id].frozen == 0 || players[a.id].dead)
             if (free) {
-                acted = acted :+ a.id
+                acted = acted + {[a.id]: true}
                 actAs(a.id, fn() {
                     spent = false
                     perform(a.key, a.shift ?? false, a.text ?? "")
@@ -2932,7 +2983,7 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     }
     doActions(0)
     each(present, fn() {
-        if (!contains(acted, acting) && !player.dead) {
+        if (acted[acting] == nil && !player.dead) {
             spent = false
             if (player.frozen > 0) {
                 player = player copy {frozen: player.frozen - 1}
