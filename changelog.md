@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Crawl's server draws the pages while the world moves on. A tick used to
+  wait 150 ms, move the world, and then wait for the forks to draw every
+  page before the next could start. Now a tick starts every 150 ms, or as
+  soon as the last ends when it takes longer, and drawing runs alongside
+  it: each drawing starts once the last has been sent, and a tick that ends
+  first leaves it to a later one, which draws the world as it is by then.
+  A page that opens a stream while a drawing is under way was sent
+  everything then, so the drawing's stale result for it is dropped.
+  `tickOnce` still moves the world and draws at once.
+
 - Crawl's outdoor sight finds the chunk a square is in by comparison
   rather than by dividing: sight reaches at most one chunk past the
   player's on each axis. Each step of each ray asked twice. With 1000

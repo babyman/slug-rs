@@ -196,7 +196,12 @@ export val press = fn(id:str, key:str, shift:bool, text:str = ""):bool {
  * world on, logs what each player was told, and pushes each open page its
  * game's HTML when it changed.
  */
-export val tickOnce = fn() {
+export val tickOnce = fn() { push(simulate()) }
+
+// Carries out the first queued key of each player, moves the world on, and
+// logs what each player was told; returns the ids of the players with a page
+// open, for `push`.
+val simulate = fn():list {
     // The first queued key of each player; the rest wait.
     val firsts = fn(i:num, now:list, later:list, seen:list):list {
         if (i == len(queue)) { return [now, later] }
@@ -224,15 +229,18 @@ export val tickOnce = fn() {
         }
     }
     log(0)
-    push(present)
+    present
 }
 
 // Sends each present player's page the parts of their game that changed:
 // the map, as data or as HTML, and each other part whose data changed, drawn
 // only then; a keep-alive comment every HEARTBEAT ticks when nothing did.
 // Drops streams that are closed. With `forks` above one, that many forks
-// each find what a share of the pages need, and this task sends it.
+// each find what a share of the pages need, and this task sends it. A page
+// that opened a stream meanwhile was sent everything then, so what was found
+// for it is stale and not sent.
 val push = fn(present:list) {
+    refreshed = {}
     val n = math.min(forks, len(present))
     // Drawing changes nothing, so each chunk's company is found once.
     val find = fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) }
@@ -246,7 +254,9 @@ val push = fn(present:list) {
     } else {
         find(present)
     }
-    map(found, fn(c) { if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") } })
+    map(filter(found, fn(c) { refreshed[c.id] == nil }), fn(c) {
+        if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") }
+    })
 }
 
 // Sends the player's page what changed since it was last sent anything, or
@@ -602,6 +612,10 @@ var shownMaps = {}
 // The data of each part last sent to each player, by id.
 var shownParts = {}
 
+// The players whose page opened a stream since `push` began finding what
+// the pages need, as a set of ids.
+var refreshed = {}
+
 /**
  * Where maps are drawn: "client" sends each page its map as data, for
  * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
@@ -747,6 +761,7 @@ val onEvents = fn(request:map):map {
         // to every stream the player has open.
         streams = streams + {[id]: (streams[id] ?? []) :+ channel}
         sendChanges(id, true)
+        refreshed = refreshed + {[id]: true}
         {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
     })
 }
@@ -782,6 +797,7 @@ val reset = fn(players:num) {
     shownParts = {}
     sizes = {}
     cameras = {}
+    refreshed = {}
     ticks = 0
 }
 
@@ -849,19 +865,30 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
     drawInForks(options.forks ?? 1)
     serving = true
     val every = options.tick ?? 150
+    // A tick starts every `every` milliseconds, or as soon as the last one
+    // ends when it takes longer. The pages are drawn while the world moves
+    // on: each tick's drawing starts once the last one has been sent, and a
+    // tick that ends before then leaves the drawing to a later one, which
+    // draws the world as it is by then.
     spawn {
-        val loop = fn() {
+        val loop = fn(drawing) {
             if (serving) {
-                select { after every /> fn(_) { nil } }
-                tickOnce()
+                val pace = spawn { select { after every /> fn(_) { nil } } }
+                val present = simulate()
+                val idle = drawing == nil || select {
+                    await drawing /> fn(_) { true }
+                    _ /> fn(_) { false }
+                }
+                val next = if (idle) { spawn { push(present) } } else { drawing }
                 match db {
                     d: sqlite.Database => if (ticks % saveEvery == 0) { store.write(d, game.changes()) }
                     _ => nil
                 }
-                recur()
+                await(pace)
+                recur(next)
             }
         }
-        loop()
+        loop(nil)
     }
     http.serve(listener, handler())
     serving = false
