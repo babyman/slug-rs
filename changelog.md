@@ -12,11 +12,6 @@
   one, where they used twice as much; Crawl's workloads run 2-5% faster on
   one core.
 
-- Crawl's server tells whether a player's map changed from its data rather
-  than from its JSON, and writes the JSON only for a map that changed. In
-  a crowd nearly every map changes each tick, so this saves little there;
-  it saves the writing for players who see nothing move.
-
 - Crawl's server draws the pages while the world moves on. A tick used to
   wait 150 ms, move the world, and then wait for the forks to draw every
   page before the next could start. Now a tick starts every 150 ms, or as
