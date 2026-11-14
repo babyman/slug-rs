@@ -833,6 +833,31 @@ val outdoorSight = fn():map {
     found
 }
 
+// What `glyphAt` shows of the things in chunk `lv`, which has `key`: a map
+// from y * level.WIDTH + x to the glyph of the first item at (x, y), or else
+// a grave, or else remains; squares with none are left out. Kept per task
+// while the chunk's lists of them are unchanged.
+val thingsOf = fn(key:str, lv:map):map {
+    val graves = lv.graves ?? []
+    val remains = lv.remains ?? []
+    match things[key] {
+        kept: map => if (kept.items == lv.items && kept.graves == graves && kept.remains == remains) { return kept.glyphs }
+        _ => nil
+    }
+    val add = fn(glyphs:map, list:list, glyph:fn):map {
+        reduce(list, glyphs, fn(acc, e) {
+            val at = e.y * level.WIDTH + e.x
+            if (acc[at] == nil) { acc + {[at]: glyph(e)} } else { acc }
+        })
+    }
+    val glyphs = add(add(add({}, lv.items, fn(e) { GLYPHS[e.item.kind] }), graves, fn(e) { GRAVE }), remains, fn(e) { REMAINS })
+    things = things + {[key]: {items: lv.items, graves: graves, remains: remains, glyphs: glyphs}}
+    glyphs
+}
+
+// The cache `thingsOf` keeps, by chunk key; each task has its own.
+task var things = {}
+
 // What is seen at (x, y) in chunk `lv`: the item there, or a grave, or the
 // remains of old battles, or the terrain.
 val glyphAt = fn(lv:map, x:num, y:num):str {
@@ -980,20 +1005,22 @@ val seeOutdoors = fn() {
         val bottom = math.min(box.bottom - y0, level.HEIGHT - 1)
         val left = math.max(box.left - x0, 0)
         val right = math.min(box.right - x0, level.WIDTH - 1)
-        val shown = fn(x:num, y:num):str {
-            if (visible[viewKey(x0 + x, y0 + y)] == true) {
-                glyphAt(lv, x, y)
-            } else {
-                rows[y][x]
-            }
-        }
-        val line = fn(y:num, x:num, out:str):str {
-            if (x > right) { out } else { recur(y, x + 1, out + shown(x, y)) }
-        }
+        // What `glyphAt` says of each square, read from the chunk's
+        // things once and its terrain where it has none.
+        val things = thingsOf(key, lv)
+        val corner = viewKey(x0, y0)
         val go = fn(y:num, acc:list):list {
             if (y > bottom) { return acc }
             val row = rows[y]
-            recur(y + 1, acc :+ (row[:left] + line(y, left, "") + row[right + 1:]))
+            val ground = lv.map[y]
+            val keys0 = corner + y * 3 * level.WIDTH
+            val at0 = y * level.WIDTH
+            val line = fn(x:num, out:str):str {
+                if (x > right) { return out }
+                val c = if (visible[keys0 + x] == true) { things[at0 + x] ?? ground[x] } else { row[x] }
+                recur(x + 1, out + c)
+            }
+            recur(y + 1, acc :+ (row[:left] + line(left, "") + row[right + 1:]))
         }
         remember(key, rows[:top] + go(top, []) + rows[bottom + 1:])
     }

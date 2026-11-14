@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl redraws what a player remembers outdoors without asking of each
+  square what is there. For every square they saw, `seeOutdoors` called
+  `glyphAt`, which searched the chunk's items, graves, and remains in turn;
+  now `thingsOf` maps each chunk's squares to the glyph of what lies there
+  once, kept per task while those lists are unchanged, and a row is read
+  from it and the terrain directly. What players remember is unchanged.
+  With 1000 players in one town a tick takes 0.20 s, from 0.36, and 1000
+  joins 6.3 s, from 6.9.
+
 - Crawl finds who stands on a square without looking at every player. A
   step asked of everyone whether they stood on the square ahead
   (`playerIn`, then `playerIdIn` for whom), and a tick checked each present
