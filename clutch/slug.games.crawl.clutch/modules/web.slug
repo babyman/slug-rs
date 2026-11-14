@@ -281,7 +281,7 @@ val changesFor = fn(id:str, everything:bool):map {
     val changed = filter(keys(now), fn(name) { now[name] != last[name] })
     val drawn = map(changed, fn(name) { partHtml(name, now[name]) })
     val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, seen)) } else { drawn }
-    val events = (if (moved && clientMaps) { [dataEvent("map", data)] } else { [] })
+    val events = (if (moved && clientMaps) { [dataEvent("map", json.stringify(data))] } else { [] })
         + (if (len(html) > 0) { [htmlEvent("parts", join(html, ""))] } else { [] })
     {id: id, camera: camera(id, p), map: data, parts: now, events: events, sent: moved || len(html) > 0}
 }
@@ -637,19 +637,20 @@ val MONSTER_NAMES = reduce(bestiary.monsters, {}, fn(acc, m) {
 // character, and the monster each capital letter is.
 val LEGEND = json.stringify({width: level.WIDTH, height: level.HEIGHT, classes: CLASSES, monsters: MONSTER_NAMES})
 
-// The player's window onto the map as JSON: its top left corner in world
+// The player's window onto the map, as data for `map` events, which send it
+// as JSON when it changes: its top left corner in world
 // coordinates; their chunk, depth, and square in it; the window's rows, as
 // `game.view` gives them; the `game.viewKey`s of the squares in their sight;
 // and `near`, the look of each `@` that is not them, as [key, class, title].
-val mapData = fn(id:str, p:map, seen:list):str {
+val mapData = fn(id:str, p:map, seen:list):map {
     val cam = camera(id, p)
     val near = nearby(id, seen)
-    json.stringify({
+    {
         left: cam.left, top: cam.top, cx: p.cx, cy: p.cy, depth: p.depth, you: [p.x, p.y],
         rows: game.view(id, cam.left, cam.top, cam.cols, cam.rows),
         sight: keys(game.inView(id)),
         near: map(keys(near), fn(k) { [k, near[k].cls, near[k].title] }),
-    })
+    }
 }
 
 // A server-sent event of type `kind` carrying `data`, one line of JSON.
