@@ -2622,3 +2622,44 @@ string lookups about 4 ns. PGO, interleaved, seven rounds against
 its spread. The hash is the next map cost; changing it trades away some of
 SipHash's resistance to hash flooding.
 
+
+## Diminishing returns: where VM tuning stands (2026-11-14)
+
+The changes since the Crawl load work have each moved the corpus by about a
+percent: `UpdateCapture` 1.00x (`crawl-ticks` 0.96x), bytes in fused updates
+0.99x (`crawl-game` 0.94x), the map key compare 1.00x / 0.99x (`crawl-crowd`
+0.98x). In the same weeks, changes to Crawl's own algorithms took a
+1000-player tick from 3.25 s to 0.75 s and 1000 joins from 9.2 s to 4.4 s.
+
+Profiles no longer show a dominant cost. Dispatch is about 2 ns an
+instruction; what remains is the ordinary work of each instruction (stack
+traffic, value copies with their reference counts, generic checks) spread
+evenly. Measured on a loop of `s + m[i % 1000]`:
+
+- reading a module-level `val`, a `var`, or a parameter costs about the same
+  (a `var`'s binding cell adds about 4 ns); read plus index of a list is
+  about 25 ns over two instructions, a 1000-entry map lookup about 53 ns, of
+  which the map is about half (SipHash about 8-10 ns, probe and compare,
+  `MapKey::from_value`);
+- a temporary opcode-pair survey (reverted) found a field read
+  (`GetIndexConstant`) at 4-9% of Crawl's instructions, 82-97% of them right
+  after a variable read; elsewhere `fannkuch-redux` 3.5%, `invaders-game`
+  and `http-server` about 1-2%, the rest near zero.
+
+Decision: incremental tuning stops here. Peepholes now buy a few percent
+each, and the corpus is better served by program-level work. Kept for later,
+in order of expected value:
+
+1. A fused variable-read-and-field instruction (local, global, and capture
+   forms): one dispatch and one container copy and drop fewer for 4-9% of
+   Crawl's instructions; estimated 3-6% there, little elsewhere.
+2. A cheaper keyed map hash than SipHash-1-3, about 8-10 ns a lookup; it
+   trades away some resistance to hash flooding, which the Crawl server's
+   JSON input needs, so it waits for a decision on that.
+
+Larger gains need structural work, each weeks for perhaps 10-30%: fewer
+instructions per operation (register operands, or type-specialized
+instructions where the compiler knows the types), compile-time struct field
+positions (runtime hints measured 0.96x and were dropped), and cheaper
+reference counting in `threads` builds (atomic counts cost 2-3%, 4-10% on
+data-heavy programs). Take one up only when VM speed limits a real program.
