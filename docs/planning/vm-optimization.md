@@ -2606,3 +2606,19 @@ unchanged: its `write` rebuilds the 7168-byte video RAM from slices on every
 call, starting from the shared constant `0x""`, so the copying is the
 program's algorithm, not a missed release.
 
+### Map key compare (2026-11-13)
+
+A loop of `s + m[i % 1000]` (1000 integer keys) costs about 53 ns per lookup
+over the same loop without it; indexing a list there instead costs about
+26 ns, so half a lookup is the module-variable read and `Index`, half the
+map. In the map, the profile showed the randomly keyed SipHash
+(`MapIndex::home`, about 13 ns), the probe and key compare (about 11 ns,
+through `Value::eq`, i.e. `equals_with`, `equals_shallow`, `equals_leaf`),
+and `MapKey::from_value`. `same_key` now compares integer and string keys
+inline in the scan, the index probe, and the hinted lookup, and leaves
+other keys to the general comparison: integer lookups about 2 ns faster,
+string lookups about 4 ns. PGO, interleaved, seven rounds against
+`58166c9`: tuned 1.00x, hold-out 0.99x, `crawl-crowd` 0.98x, nothing outside
+its spread. The hash is the next map cost; changing it trades away some of
+SipHash's resistance to hash flooding.
+

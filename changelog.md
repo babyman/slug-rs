@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Map lookups compare integer and string keys inline instead of through the
+  general value comparison, which checks for bindings, containers, and its
+  step budget before reaching the leaf case. A lookup in a 1000-entry map
+  takes about 2 ns less with an integer key and 4 ns less with a string key
+  (of about 50 and 25). PGO A/B: tuned 1.00x, hold-out 0.99x,
+  `crawl-crowd` 0.98x.
+
 - `bytes` held by a module-level or captured `var` update in place too:
   `buf = buf :+ byte` and `buf = buf + more` let go of the variable's own
   reference first, as maps, lists, and strings already did, when the update
