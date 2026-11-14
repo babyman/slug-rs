@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Crawl's outdoor sight finds the chunk a square is in by comparison
+  rather than by dividing: sight reaches at most one chunk past the
+  player's on each axis. Each step of each ray asked twice. With 1000
+  players in one town a tick takes 0.15 s, from 0.20, and 1000 joins 5.2 s,
+  from 6.3.
+
 - Crawl redraws what a player remembers outdoors without asking of each
   square what is there. For every square they saw, `seeOutdoors` called
   `glyphAt`, which searched the chunk's items, graves, and remains in turn;

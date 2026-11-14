@@ -748,9 +748,11 @@ val around = fn(p:map):fn {
         recur(i + 1, acc :+ (if (inWorld(cx, cy)) { chunk(cx, cy, p.depth).map } else { BLANK_ROWS }))
     }
     val maps = fetch(0, [])
+    // Sight reaches at most one chunk past the player's on each axis, so a
+    // comparison finds the chunk where `floorDiv` would.
     fn(x:num, y:num):str {
-        val ox = floorDiv(x, level.WIDTH)
-        val oy = floorDiv(y, level.HEIGHT)
+        val ox = if (x < 0) { -1 } else if (x < level.WIDTH) { 0 } else { 1 }
+        val oy = if (y < 0) { -1 } else if (y < level.HEIGHT) { 0 } else { 1 }
         maps[(oy - oy0) * nx + ox - ox0][y - oy * level.HEIGHT][x - ox * level.WIDTH]
     }
 }
