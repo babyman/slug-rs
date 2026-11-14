@@ -5,14 +5,17 @@
 //! by that local uniquely owned, so `acc :+ x` appends in place instead of
 //! copying.
 //!
-//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, `MakeClosure`, and
-//! `MatchLocals` touch local values. A closure reads the local slots in its
-//! capture list, which keeps them live; once captured, a slot is a shared
-//! cell, which the VM clones rather than moves anyway. A closure whose
-//! capture list is missing keeps every slot live, and so does `MatchLocals`,
-//! which reads the first locals in place. `Recur` assigns every local before it restarts, and
-//! `Return`, `Throw`, `MatchFailure`, and `NotImplemented` leave the frame,
-//! so none of them has a live successor.
+//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, `MakeClosure`,
+//! `MatchLocals`, and a `ReadIndex` or `ReadIndexConstant` of a local touch
+//! local values; a fused read moves its local at the last read as `GetLocal`
+//! does, in bit 31 of its operand `b`. A closure reads the
+//! local slots in its capture list, which keeps them live; once captured, a
+//! slot is a shared cell, which the VM clones rather than moves anyway. A
+//! closure whose capture list is missing keeps every slot live, and so does
+//! `MatchLocals`, which reads the first locals in place. `Recur` assigns
+//! every local before it restarts, and `Return`, `Throw`, `MatchFailure`,
+//! and `NotImplemented` leave the frame, so none of them has a live
+//! successor.
 
 use alloc::{vec, vec::Vec};
 
@@ -46,6 +49,9 @@ pub(crate) fn mark_last_local_reads(
         match instruction.opcode {
             PackedOpcode::GetLocal => instruction.b = 0,
             PackedOpcode::LocalConstantBinary => instruction.c &= !MOVE_LOCAL_OPERAND,
+            PackedOpcode::ReadIndex | PackedOpcode::ReadIndexConstant => {
+                instruction.b &= !MOVE_LOCAL_OPERAND;
+            }
             _ => {}
         }
     }
@@ -84,6 +90,13 @@ pub(crate) fn mark_last_local_reads(
                 if moves {
                     code[index].c |= MOVE_LOCAL_OPERAND;
                 }
+            }
+            // A fused read of a local, kind 0, moves it out at its last read
+            // as `GetLocal` does, so that what it held is no longer shared.
+            PackedOpcode::ReadIndex | PackedOpcode::ReadIndexConstant
+                if code[index].b == 0 && moves =>
+            {
+                code[index].b = MOVE_LOCAL_OPERAND;
             }
             _ => {}
         }
@@ -128,6 +141,12 @@ fn live_before(
         PackedOpcode::GetLocal | PackedOpcode::LocalConstantBinary if slot < locals => {
             live[slot / 64] |= 1 << (slot % 64);
         }
+        // A fused index read of a local, operand `b` 0, reads it in place.
+        PackedOpcode::ReadIndex | PackedOpcode::ReadIndexConstant
+            if instruction.b & !MOVE_LOCAL_OPERAND == 0 && slot < locals =>
+        {
+            live[slot / 64] |= 1 << (slot % 64);
+        }
         PackedOpcode::MakeClosure => match capture_lists.get(instruction.b as usize) {
             Some(captures) => {
                 for capture in captures {
@@ -169,6 +188,31 @@ mod tests {
         mark_last_local_reads(&mut code, 1, &[]);
         assert_eq!(code[0].b, 0);
         assert_eq!(code[1].b, MOVE_LOCAL);
+    }
+
+    #[test]
+    fn a_fused_index_read_of_a_local_keeps_it_live_and_moves_it_last() {
+        // `xs` then `xs[0]` and `xs.size`: neither earlier read may move it,
+        // and the last one does; a fused read of a capture never moves.
+        let mut code = [
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::ReadIndexConstant, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 0, 0, 0),
+            instruction(PackedOpcode::ReadIndex, 0, 0, 0),
+            instruction(PackedOpcode::GetLocal, 1, 0, 0),
+            instruction(PackedOpcode::ReadIndexConstant, 1, 1, 0),
+            instruction(PackedOpcode::Return, 0, 0, 0),
+        ];
+        mark_last_local_reads(&mut code, 2, &[]);
+        assert_eq!(code[0].b, 0);
+        assert_eq!(code[1].b, 0);
+        assert_eq!(code[2].b, 0);
+        // The key of `ReadIndex` is read before the local it indexes.
+        assert_eq!(code[3].b, 0);
+        assert_eq!(code[4].b, MOVE_LOCAL_OPERAND);
+        assert_eq!(code[5].b, MOVE_LOCAL);
+        assert_eq!(code[6].b, 1);
     }
 
     #[test]

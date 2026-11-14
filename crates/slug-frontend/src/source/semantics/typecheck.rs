@@ -6413,6 +6413,7 @@ mod tests {
 
     #[test]
     fn constant_index_keys_lower_to_one_instruction() {
+        use slug_vm::PackedOpcode::{GetIndex, GetIndexConstant, ReadIndex, ReadIndexConstant};
         let opcodes = |source: &str| {
             let program = super::super::compile("test.slug", source).expect("indexing compiles");
             (0..program.chunk_count())
@@ -6428,13 +6429,31 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
+        // A name's member is read in place.
         let member = opcodes("val record = {\"name\": 1}\nrecord.name\n");
-        assert!(member.contains(&slug_vm::PackedOpcode::GetIndexConstant));
-        assert!(!member.contains(&slug_vm::PackedOpcode::GetIndex));
+        assert!(member.contains(&ReadIndexConstant), "{member:?}");
+        assert!(!member.contains(&GetIndexConstant) && !member.contains(&GetIndex));
+        // So is a local's or a capture's.
+        let local = opcodes("val f = fn(r) { val g = fn() { r.a }\n r.b + g() }\n");
+        assert_eq!(
+            local.iter().filter(|op| **op == ReadIndexConstant).count(),
+            2,
+            "{local:?}"
+        );
+        // Another value's member keeps `GetIndexConstant`.
+        let computed = opcodes("val f = fn() { {\"a\": 1} }\nf().a\n");
+        assert!(computed.contains(&GetIndexConstant), "{computed:?}");
+        assert!(!computed.contains(&ReadIndexConstant));
 
-        let dynamic = opcodes("val values = [1, 2]\nval at = fn(index) { values[index] }\n");
-        assert!(dynamic.contains(&slug_vm::PackedOpcode::GetIndex));
-        assert!(!dynamic.contains(&slug_vm::PackedOpcode::GetIndexConstant));
+        // A computed key that cannot assign the name fuses too.
+        let dynamic = opcodes("val values = [1, 2]\nval at = fn(index) { values[index + 1] }\n");
+        assert!(dynamic.contains(&ReadIndex), "{dynamic:?}");
+        assert!(!dynamic.contains(&GetIndex) && !dynamic.contains(&GetIndexConstant));
+        // A key that calls something reads the name first, as written.
+        let called =
+            opcodes("var values = [1, 2]\nval k = fn() { 0 }\nval at = fn() { values[k()] }\n");
+        assert!(called.contains(&GetIndex), "{called:?}");
+        assert!(!called.contains(&ReadIndex));
     }
 
     #[test]

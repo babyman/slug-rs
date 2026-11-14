@@ -272,6 +272,54 @@ pub enum Op {
         slot: usize,
         operator: GlobalUpdate,
     },
+    /// Indexes the value `source` holds with the key on top of the stack,
+    /// without taking a reference to that value: the fused form of reading
+    /// `source`, then the key, then `GetIndex`. The compiler fuses only a key
+    /// that cannot change `source`.
+    ReadIndex {
+        source: ReadSource,
+    },
+    /// Indexes the value `source` holds with the value constant `constant`,
+    /// without taking a reference to that value: the fused form of reading
+    /// `source`, then `GetIndexConstant(constant)`.
+    ReadIndexConstant {
+        source: ReadSource,
+        constant: usize,
+    },
+}
+
+/// Where a fused index read finds its collection. Reading a value pushes a
+/// new reference to it, and taking and releasing references to one value
+/// from several threads makes them wait on each other; a fused read looks
+/// inside the value where it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadSource {
+    Local(usize),
+    Capture(usize),
+    Global(String),
+    GlobalPooled(GlobalNameId),
+}
+
+impl ReadSource {
+    /// Its kind as packed in operand `b`, and its operand `a`.
+    pub(crate) fn packed(&self) -> Option<(u32, u32)> {
+        let operand = |value: usize| u32::try_from(value).ok();
+        match self {
+            ReadSource::Local(slot) => Some((0, operand(*slot)?)),
+            ReadSource::Capture(slot) => Some((1, operand(*slot)?)),
+            ReadSource::GlobalPooled(id) => Some((2, id.0)),
+            ReadSource::Global(_) => None,
+        }
+    }
+
+    pub(crate) fn from_packed(kind: u32, a: u32) -> Option<Self> {
+        match kind {
+            0 => Some(ReadSource::Local(a as usize)),
+            1 => Some(ReadSource::Capture(a as usize)),
+            2 => Some(ReadSource::GlobalPooled(GlobalNameId(a))),
+            _ => None,
+        }
+    }
 }
 
 /// The operator of an `UpdateGlobal` instruction, which behaves exactly like

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Slug indexes a variable's collection where it is. `players[id]`,
+  `record.field`, and `xs[i]`, where the collection is a name, used to take
+  a reference to the whole collection first and drop it after; forks
+  reading the same collection on other cores waited on each other for
+  that count. A fork reads its snapshot of a module variable in place too.
+  A key that calls something is still evaluated after the collection is
+  read, as written. Four forks reading one large map now use the CPU of
+  one, where they used twice as much; Crawl's workloads run 2-5% faster on
+  one core.
+
 - Crawl's server tells whether a player's map changed from its data rather
   than from its JSON, and writes the JSON only for a map that changed. In
   a crowd nearly every map changes each tick, so this saves little there;

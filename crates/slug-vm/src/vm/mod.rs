@@ -57,6 +57,7 @@ mod operations;
 #[cfg(feature = "metrics")]
 mod profile;
 mod progress;
+mod reads;
 #[cfg(feature = "concurrency")]
 mod scheduler;
 mod stack;
@@ -2591,11 +2592,14 @@ impl Vm {
             PackedOpcode::GetIndexConstant => {
                 self.get_index_constant(program, operand)?;
             }
+            PackedOpcode::ReadIndex | PackedOpcode::ReadIndexConstant => {
+                self.read_index(program, instruction)?;
+            }
             PackedOpcode::GetIndex => {
                 let (collection, index) = self.pop_pair()?;
                 self.stack.push(
                     index_value(
-                        collection,
+                        &collection,
                         &index,
                         #[cfg(feature = "metrics")]
                         &self.metrics,
@@ -3856,7 +3860,7 @@ impl Vm {
             return Ok(());
         }
         let value = index_value(
-            collection,
+            &collection,
             key,
             #[cfg(feature = "metrics")]
             &self.metrics,

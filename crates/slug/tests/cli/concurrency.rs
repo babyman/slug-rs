@@ -626,6 +626,25 @@ fn a_fork_cannot_update_a_variable_it_captured() {
 }
 
 #[test]
+fn a_fork_indexes_its_snapshot_of_a_module_variable() {
+    // `table[k]` and `table.b` read the variable in place. A fork reads its
+    // snapshot, though the variable changed after it started; a task var's
+    // own copy, a local, and a capture read as before.
+    let path = fixture_path("fork-indexed-read");
+    fs::write(
+        &path,
+        "var table = {a: 1, b: 2}\ntask var mine = {c: 3}\nval main = fn() {\n    val k = \"a\"\n    val local = {d: 4}\n    val t = fork {\n        val get = fn() { local.d }\n        [table[k], table.b, mine.c, local[\"d\"], get()]\n    }\n    table = {a: 10, b: 20}\n    println(select { await t })\n    println([table[k], table.b])\n}\n",
+    )
+    .expect("write fork read source");
+    let output = slug().arg(&path).output().expect("run fork read source");
+    fs::remove_file(path).expect("remove fork read source");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout, "[1, 2, 3, 4, 4]\n[10, 20]\n", "{stderr}");
+}
+
+#[test]
 fn a_fork_beyond_the_running_fork_limit_fails_with_a_fork_error() {
     let path = fixture_path("fork-limit");
     fs::write(

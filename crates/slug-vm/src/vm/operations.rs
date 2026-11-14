@@ -710,7 +710,7 @@ pub(super) fn map_key_error(value: &Value) -> String {
 }
 
 pub(super) fn index_value(
-    collection: Value,
+    collection: &Value,
     index: &Value,
     #[cfg(feature = "metrics")] metrics: &Rc<RefCell<VmMetrics>>,
 ) -> Result<Value, (RuntimeErrorKind, String)> {
@@ -746,7 +746,7 @@ pub(super) fn index_value(
                     "bytes index must be an integer".into(),
                 ));
             };
-            let values = Bytes::from_shared(values);
+            let values = Bytes::from_shared(values.clone());
             let length = i64::try_from(values.len())
                 .map_err(|_| (RuntimeErrorKind::Type, "bytes are too large".to_owned()))?;
             let index = if *index < 0 { length + *index } else { *index };

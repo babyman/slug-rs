@@ -43,6 +43,12 @@ impl TaskView {
         }
     }
 
+    /// The fork's snapshot of the module `var` `key`, in place, if this task
+    /// is in a fork that has one.
+    pub(super) fn snapshot_var(&self, key: VarKey) -> Option<&Value> {
+        self.fork.as_ref()?.vars.get(&key)
+    }
+
     /// The value of this task's copy of the `task var` `key`, if it has one.
     pub(super) fn own_value(&self, key: VarKey) -> Option<Value> {
         self.own.borrow().get(&key).cloned()

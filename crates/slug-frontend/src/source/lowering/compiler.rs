@@ -1324,12 +1324,35 @@ impl Compiler {
                 }
                 ExprKind::Index { collection, index } => {
                     self.expression(state, collection)?;
-                    if let ExprKind::Value(key) = &index.kind {
-                        let constant = state.constant(key.clone());
-                        state.emit(Op::GetIndexConstant(constant), &expression.span);
+                    // A name's value is indexed where it is, without a
+                    // reference of its own (see `slug_vm`'s `vm::reads`). With
+                    // a computed key the name is read after the key, so only
+                    // a key that cannot assign it is fused.
+                    let source = if matches!(collection.kind, ExprKind::Name(_))
+                        && (matches!(index.kind, ExprKind::Value(_)) || inert_key(index))
+                    {
+                        state.take_trailing_read()
                     } else {
-                        self.expression(state, index)?;
-                        state.emit(Op::GetIndex, &expression.span);
+                        None
+                    };
+                    match (&index.kind, source) {
+                        (ExprKind::Value(key), Some(source)) => {
+                            let constant = state.constant(key.clone());
+                            state
+                                .emit(Op::ReadIndexConstant { source, constant }, &expression.span);
+                        }
+                        (ExprKind::Value(key), None) => {
+                            let constant = state.constant(key.clone());
+                            state.emit(Op::GetIndexConstant(constant), &expression.span);
+                        }
+                        (_, Some(source)) => {
+                            self.expression(state, index)?;
+                            state.emit(Op::ReadIndex { source }, &expression.span);
+                        }
+                        (_, None) => {
+                            self.expression(state, index)?;
+                            state.emit(Op::GetIndex, &expression.span);
+                        }
                     }
                 }
                 ExprKind::Slice {
@@ -2581,4 +2604,21 @@ fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
                 || pattern_contains_scoped_defer(pattern)
         }),
     })
+}
+
+/// Whether evaluating `key` can assign no name: names, literals, indexes,
+/// and operators of those, none of which calls anything. An index read
+/// fuses its collection's read after such a key.
+fn inert_key(key: &Expr) -> bool {
+    match &key.kind {
+        ExprKind::Name(_) | ExprKind::Value(_) => true,
+        ExprKind::Index { collection, index } => inert_key(collection) && inert_key(index),
+        ExprKind::Prefix { value, .. } => inert_key(value),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => !matches!(operator, Binary::Pipeline) && inert_key(left) && inert_key(right),
+        _ => false,
+    }
 }

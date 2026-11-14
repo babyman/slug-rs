@@ -44,8 +44,8 @@ pub use bytecode::{
     CaptureDetail, CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
     ForeignResourceSignature, GlobalNameId, GlobalUpdate, Instruction, MatchMapKey, MatchPattern,
     MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
-    Program, ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
-    StructFieldsId,
+    Program, ProgramBuilder, ReadSource, SchemaField, SchemaFieldsId, SelectCase, SourceId,
+    SourceSpan, SpanId, StructFieldsId,
 };
 #[doc(hidden)]
 pub use native::native_resource_registry;

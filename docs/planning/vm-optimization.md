@@ -2663,3 +2663,38 @@ instructions where the compiler knows the types), compile-time struct field
 positions (runtime hints measured 0.96x and were dropped), and cheaper
 reference counting in `threads` builds (atomic counts cost 2-3%, 4-10% on
 data-heavy programs). Take one up only when VM speed limits a real program.
+
+## Index reads in place, for forks (2026-11-14)
+
+Reading `players[id]` pushed a reference to the whole map, indexed it, and
+dropped the reference. Each is an atomic count on the map, and forks on
+other cores reading the same map take turns at the cache line that holds
+that count: in a loop of `big["k" + (i % 20000)].y[1]` over a 20,000-entry
+module map, 4 forks used twice the CPU of one, and `clone`/`drop` of the
+map's storage were 18.5% of fork time.
+
+`ReadIndex` and `ReadIndexConstant` index a local, a capture, or a module
+binding where it is (`vm/reads.rs`): a `val`, a variable's own cell, or a
+fork's snapshot of a variable, with anything else read as `GetGlobal` reads
+it. The compiler fuses an index whose collection is a name; with a computed
+key the name is read after the key, so it fuses only a key that cannot
+assign anything (names, literals, indexes, and operators but `/>`). At a
+local's last read the fused instruction moves it out of its slot as
+`GetLocal` does (bit 31 of operand `b`, set by `bytecode::liveness`). A
+first version that never moved made Crawl's page drawing 15-20% slower: the
+record stayed alive in its slot, so what it held was shared, and later
+in-place updates of it copied.
+
+Results: in the loop above, 4 forks now use the CPU of one. PGO,
+interleaved, seven rounds against `febd812`: tuned 0.99x, hold-out 0.99x;
+`crawl-game` and `crawl-ticks` 0.95x, `crawl-crowd` 0.96x, `crawl-pages`
+0.98x, and the two crowded workloads' peak memory about 5 MB lower. Crawl's
+crowd drawing (1000 players in one town, PGO, interleaved) scales the same
+as before within noise: about 1.3 s a tick on one fork, 0.8 s on two, 0.5-0.6
+s on four, with CPU per tick up 20-25% at four. The cost that remains there
+is elsewhere: element records every fork reads, and chains such as
+`levels[key].items`, whose first step still clones the element.
+
+Measuring fork scaling needs PGO builds of both sides, run interleaved on a
+quiet machine: builds without PGO differed by 20-50% between the two sides
+here, which showed Crawl not scaling at all.

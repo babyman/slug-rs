@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use slug_vm::{
     BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, Instruction, MatchPattern, Op,
-    SourceSpan, Value,
+    ReadSource, SourceSpan, Value,
 };
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
@@ -242,6 +242,25 @@ impl State {
         let name = name.clone();
         self.chunk.code.pop();
         Some(name)
+    }
+    /// Removes the `GetLocal`, `GetCapture`, or `GetGlobal` just emitted for
+    /// an indexed collection and returns where it reads from, so that a
+    /// `ReadIndex` or `ReadIndexConstant` indexes the value in place. A jump
+    /// may land on the read, which the fused instruction or the key then
+    /// takes over, but not after it.
+    pub(super) fn take_trailing_read(&mut self) -> Option<ReadSource> {
+        let index = self.chunk.code.len().checked_sub(1)?;
+        if self.last_jump_target > index {
+            return None;
+        }
+        let source = match &self.chunk.code[index].op {
+            Op::GetLocal(slot) => ReadSource::Local(*slot),
+            Op::GetCapture(slot) => ReadSource::Capture(*slot),
+            Op::GetGlobal(name) => ReadSource::Global(name.clone()),
+            _ => return None,
+        };
+        self.chunk.code.pop();
+        Some(source)
     }
     /// Replaces a trailing `GetLocal`, `Constant` pair with one
     /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or

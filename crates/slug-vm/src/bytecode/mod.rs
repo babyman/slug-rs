@@ -17,7 +17,9 @@ pub use metadata::{
     ModuleDeclaration, ModuleTag, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
     SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use op::{BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op};
+pub use op::{
+    BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op, ReadSource,
+};
 pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
 
 #[doc(hidden)]
