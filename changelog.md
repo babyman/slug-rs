@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl works out the rays of outdoor sight once. Sight outdoors is the
+  squares on Bresenham lines from the player to the edge of their sight box,
+  each as far as they can see and up to the first tree, rock, or wall; the
+  lines depend only on where they go relative to the player, so
+  `sightRays` holds each ray's steps and `outdoorSight` only walks them,
+  looking up the terrain (opaque terrain is now a set). What a player sees,
+  and in what order, is unchanged. With 1000 players in one town, 1000 joins
+  take 6.3 s, from 7.6, and a tick 0.51 s, from 0.58.
+
 - Map lookups compare integer and string keys inline instead of through the
   general value comparison, which checks for bindings, containers, and its
   step budget before reaching the leaf case. A lookup in a 1000-entry map

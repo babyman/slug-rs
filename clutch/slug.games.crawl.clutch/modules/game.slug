@@ -704,6 +704,44 @@ val around = fn(p:map):fn {
     }
 }
 
+// The rays `outdoorSight` casts from a player to each square on the edge of
+// their sight box, in the order it casts them, each as the [dx, dy, key]
+// steps it takes while the square stays in sight: `key` is the step's
+// `viewKey` less the player's own. A ray goes through the squares next to the
+// player and those `inSight`, and its line, Bresenham's, depends only on
+// where it goes relative to the player, so the rays are worked out once.
+val castSightRays = fn():list {
+    val half = math.div(SIGHT, 2)
+    val ray = fn(x1:num, y1:num):list {
+        val dx = math.abs(x1)
+        val dy = -math.abs(y1)
+        val sx = if (0 < x1) { 1 } else { -1 }
+        val sy = if (0 < y1) { 1 } else { -1 }
+        val go = fn(x:num, y:num, err:num, steps:list):list {
+            if (x == x1 && y == y1) { return steps }
+            val e2 = 2 * err
+            val nx = if (e2 >= dy) { x + sx } else { x }
+            val ny = if (e2 <= dx) { y + sy } else { y }
+            val near = nx >= -1 && nx <= 1 && ny >= -1 && ny <= 1
+            if (!near && !inSight(nx, ny)) { return steps }
+            val next = err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 })
+            recur(nx, ny, next, steps :+ [nx, ny, ny * 3 * level.WIDTH + nx])
+        }
+        go(0, 0, dx + dy, [])
+    }
+    val across = fn(x:num, acc:list):list {
+        if (x > SIGHT) { acc } else { recur(x + 1, acc :+ ray(x, -half) :+ ray(x, half)) }
+    }
+    val down = fn(y:num, acc:list):list {
+        if (y > half) { acc } else { recur(y + 1, acc :+ ray(-SIGHT, y) :+ ray(SIGHT, y)) }
+    }
+    down(-half, across(-SIGHT, []))
+}
+val sightRays = castSightRays()
+
+// The terrain that stops sight, as a set.
+val OPAQUE = reduce(level.OPAQUE, {}, fn(acc, c) { acc + {[c]: true} })
+
 // What each player saw outdoors when last asked, by id: `at`, where they
 // stood, and `found`, what they saw from there. Outdoor terrain never
 // changes, so sight depends only on where a player stands. A cache, so
@@ -723,37 +761,22 @@ val outdoorSight = fn():map {
         _ => nil
     }
     val at = around(p)
+    val base = viewKey(p.x, p.y)
     var found = {}
-    val ray = fn(x1:num, y1:num) {
-        val dx = math.abs(x1 - p.x)
-        val dy = -math.abs(y1 - p.y)
-        val sx = if (p.x < x1) { 1 } else { -1 }
-        val sy = if (p.y < y1) { 1 } else { -1 }
-        val go = fn(x:num, y:num, err:num) {
-            if (x == x1 && y == y1) { return nil }
-            val e2 = 2 * err
-            val nx = if (e2 >= dy) { x + sx } else { x }
-            val ny = if (e2 <= dx) { y + sy } else { y }
-            val near = nx - p.x >= -1 && nx - p.x <= 1 && ny - p.y >= -1 && ny - p.y <= 1
-            if (near || inSight(nx - p.x, ny - p.y)) {
-                found = found + {[viewKey(nx, ny)]: true}
-                val c = at(nx, ny)
-                if (!contains(level.OPAQUE, c)) {
-                    recur(nx, ny, err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 }))
-                }
-            }
+    val cast = fn(steps:list, i:num) {
+        if (i < len(steps)) {
+            val step = steps[i]
+            found = found + {[base + step[2]]: true}
+            if (OPAQUE[at(p.x + step[0], p.y + step[1])] == nil) { recur(steps, i + 1) }
         }
-        go(p.x, p.y, dx + dy)
     }
-    val box = sightBox(p)
-    val across = fn(x:num) {
-        if (x <= box.right) { ray(x, box.top); ray(x, box.bottom); recur(x + 1) }
+    val rays = fn(i:num) {
+        if (i < len(sightRays)) {
+            cast(sightRays[i], 0)
+            recur(i + 1)
+        }
     }
-    across(box.left)
-    val down = fn(y:num) {
-        if (y <= box.bottom) { ray(box.left, y); ray(box.right, y); recur(y + 1) }
-    }
-    down(box.top)
+    rays(0)
     found = found + {[viewKey(p.x, p.y)]: true}
     sights = sights + {[id]: {at: stand, found: found}}
     found
