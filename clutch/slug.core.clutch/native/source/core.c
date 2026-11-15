@@ -2,6 +2,10 @@
 /* nanosleep is POSIX; shims build with -std=c11. */
 #define _POSIX_C_SOURCE 200809L
 #endif
+#if defined(__APPLE__)
+/* CLOCK_UPTIME_RAW is a Darwin extension. */
+#define _DARWIN_C_SOURCE
+#endif
 
 #include "slug_core.h"
 
@@ -414,4 +418,40 @@ int32_t slug_core_notify_signals(int64_t kinds, slug_producer *events) {
    * takes its default action, and the listener is dropped once its channel
    * goes. */
   return watch_signals(kinds) ? SLUG_CORE_SIGNALS_WATCHING : SLUG_CORE_SIGNALS_FAILED;
+}
+
+int64_t slug_core_now_ms(void) {
+#if defined(_WIN32)
+  /* 100-nanosecond intervals since 1601-01-01. */
+  FILETIME file_time;
+  GetSystemTimePreciseAsFileTime(&file_time);
+  ULARGE_INTEGER ticks;
+  ticks.LowPart = file_time.dwLowDateTime;
+  ticks.HighPart = file_time.dwHighDateTime;
+  return (int64_t)(ticks.QuadPart / 10000) - INT64_C(11644473600000);
+#else
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME, &now);
+  return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+}
+
+int64_t slug_core_monotonic_ms(void) {
+#if defined(_WIN32)
+  LARGE_INTEGER frequency, counter;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&counter);
+  return (int64_t)(counter.QuadPart / frequency.QuadPart * 1000 +
+                   counter.QuadPart % frequency.QuadPart * 1000 / frequency.QuadPart);
+#else
+#if defined(__APPLE__)
+  /* What std::time::Instant reads on macOS. */
+  clockid_t clock = CLOCK_UPTIME_RAW;
+#else
+  clockid_t clock = CLOCK_MONOTONIC;
+#endif
+  struct timespec now;
+  clock_gettime(clock, &now);
+  return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
 }

@@ -5,8 +5,9 @@ This standalone package cross-compiles
 `slug.embedded` source contracts through a desktop build dependency into a
 closed version-1 `.cslug` artifact in `OUT_DIR`. Firmware embeds, bounds-checks,
 and executes that artifact through the shared `no_std + alloc` VM on an
-ESP32-S3. It exposes a bounded set of safe, push-pull GPIO outputs and a
-blocking delay provider; it links neither the source frontend nor a desktop
+ESP32-S3. It exposes a bounded set of safe, push-pull GPIO outputs and the
+system timer as `slug.time.monotonicMs`; `slug.time.sleepMs` waits on the VM's
+timers, so it parks only the calling task. It links neither the source frontend nor a desktop
 loader. It is not a member of the desktop Cargo workspace.
 
 `slug.gpio.write(pin, level)` uses physical GPIO numbers. The PinPulse

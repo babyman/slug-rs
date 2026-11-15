@@ -69,11 +69,16 @@ registration, PWM, ADC, or arbitrary electrical configuration.
 When selected for the initial embedded profile, `slug.time` exports:
 
 ```slug
-foreign sleepMs = fn(milliseconds:num):nil
+foreign monotonicMs = fn():num
+val sleepMs = fn(milliseconds:num):nil
 ```
 
-`sleepMs` blocks the current host execution for a finite, non-negative integral
-number of milliseconds within the host's documented bound. Negative,
-fractional, non-finite, or out-of-range values are checked host failures.
-`sleepMs` does not create a timer, task, or background host producer; it is not
-an alternative spelling of `after`.
+`monotonicMs` returns whole milliseconds on the clock the host gives the VM
+for timers (`ArtifactHost::set_clock`), from an arbitrary origin such as the
+board's start. It MUST NOT go backwards. The embedded profile has no wall
+clock, so unlike the desktop module it does not export `nowMs`.
+
+`sleepMs` is Slug code, not a host function: it waits as
+`select { after milliseconds }` does, so only the calling task parks and the
+board's other tasks run. Its argument is checked as `after`'s is. No host
+function in this module blocks the VM.

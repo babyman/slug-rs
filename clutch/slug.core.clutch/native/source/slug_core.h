@@ -70,4 +70,12 @@ int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *n
 int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
                            size_t set_length, int64_t from);
 
+/* Milliseconds since the Unix epoch on the system's wall clock, which can
+ * jump when the clock is set. */
+int64_t slug_core_now_ms(void);
+
+/* Milliseconds since an arbitrary origin on a clock that never goes back:
+ * the one Rust's std::time::Instant reads, which the VM's timers use. */
+int64_t slug_core_monotonic_ms(void);
+
 #endif

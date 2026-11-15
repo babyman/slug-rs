@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug.time` has clocks, on the desktop as well as boards: `nowMs()` is
+  milliseconds since the Unix epoch on the wall clock, and `monotonicMs()`
+  is milliseconds on a clock that never goes back, the one `select { after }`
+  timers use, for durations and deadlines. `sleepMs` now waits as
+  `select { after }` does, parking only the task that calls it, where on a
+  board it used to stall every task. Boards have `monotonicMs` and
+  `sleepMs`, but no `nowMs`.
+
 - A case can match the builtin `Error` with `err: struct<Error>`, in
   source, artifacts, and interactive sessions; a local or module `Error`
   schema still takes its place. Writing a schema as a bare type, such as

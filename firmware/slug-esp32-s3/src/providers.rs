@@ -1,6 +1,6 @@
 //! Firmware-native providers for the closed descriptor-selected artifact.
 //!
-//! These callbacks own the selected outputs and blocking delay facility for the
+//! These callbacks own the selected outputs and read the system timer for the
 //! VM lifetime. A program may select only a physical GPIO listed by the board
 //! profile; the provider configures it lazily on its first write.
 
@@ -8,7 +8,6 @@ use alloc::{format, rc::Rc, string::{String, ToString}, vec, vec::Vec};
 use core::cell::RefCell;
 
 use esp_hal::{
-    delay::Delay,
     gpio::{AnyPin, Level, Output, OutputConfig, Pin},
     peripherals::Peripherals,
 };
@@ -17,8 +16,6 @@ use slug_vm::{
     NativeValueKind, NativeValueRef,
     cslug::{ArtifactHost, StaticProvider, StaticProviderError},
 };
-
-use crate::capabilities::MAXIMUM_SLEEP_MS;
 
 // Typed C providers selected by the target descriptor, built by `build.rs`.
 include!(concat!(env!("OUT_DIR"), "/slug_typed_providers.rs"));
@@ -49,7 +46,7 @@ pub fn register(
         },
     )
     .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
-    let time = NativeModule::new("slug.time", Delay::new())
+    let time = NativeModule::new("slug.time", ())
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
     let builtins = NativeModule::new("slug.builtin", ())
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
@@ -72,7 +69,7 @@ pub fn register(
     }
     let mut functions = vec![
         gpio.function("write", NativeArity::Exact(2), gpio_write),
-        time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
+        time.function("monotonicMs", NativeArity::Exact(0), monotonic_ms),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
@@ -260,49 +257,17 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::integer(length))
 }
 
-fn sleep_ms(call: &mut NativeCall<'_>) -> NativeStatus {
-    let milliseconds = match call.argument(0).and_then(milliseconds_from_value) {
-        Ok(milliseconds) => milliseconds,
-        Err(error) => return call.raise(error),
-    };
-    let Some(delay) = call.state::<Delay>() else {
-        return call.report_contract_violation("time callback has incompatible module state");
-    };
-    if milliseconds > MAXIMUM_SLEEP_MS {
+/// `slug.time.monotonicMs()`: milliseconds on the system timer the VM's
+/// timers read (`main.rs` gives it to `ArtifactHost::set_clock`).
+fn monotonic_ms(call: &mut NativeCall<'_>) -> NativeStatus {
+    let micros = esp_hal::time::Instant::now().duration_since_epoch().as_micros();
+    let Ok(milliseconds) = i64::try_from(micros / 1_000) else {
         return call.raise(NativeError::new(
-            "time.range",
-            format!("sleep duration {milliseconds}ms exceeds host maximum {MAXIMUM_SLEEP_MS}ms"),
+            "native.range",
+            "the monotonic clock exceeds the supported integer range",
         ));
-    }
-    delay.delay_millis(milliseconds);
-    call.return_value(NativeOwnedValue::nil())
-}
-
-fn milliseconds_from_value(value: NativeValueRef<'_>) -> Result<u32, NativeError> {
-    match value.kind() {
-        NativeValueKind::Int => u32::try_from(value.as_i64()?).map_err(|_| invalid_milliseconds()),
-        NativeValueKind::Float => milliseconds_from_float(value.as_f64()?),
-        _ => Err(invalid_milliseconds()),
-    }
-}
-
-fn milliseconds_from_float(value: f64) -> Result<u32, NativeError> {
-    if !value.is_finite() || value < 0.0 || value > f64::from(u32::MAX) {
-        return Err(invalid_milliseconds());
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let milliseconds = value as u32;
-    if f64::from(milliseconds) != value {
-        return Err(invalid_milliseconds());
-    }
-    Ok(milliseconds)
-}
-
-fn invalid_milliseconds() -> NativeError {
-    NativeError::new(
-        "time.milliseconds",
-        "sleep duration must be a whole number of milliseconds",
-    )
+    };
+    call.return_value(NativeOwnedValue::integer(milliseconds))
 }
 
 const fn level_for(level: bool) -> Level {

@@ -10,6 +10,11 @@ repository = "https://github.com/babyman/slug-rs"
 [lints]
 workspace = true
 
+[features]
+default = ["concurrency"]
+# `slug.time.sleepMs` waits on the VM's timers.
+concurrency = ["slug-frontend/concurrency", "slug-vm/concurrency"]
+
 [dependencies]
 slug-frontend = { path = "../slug-frontend", default-features = false }
 slug-loader = { path = "../slug-loader" }

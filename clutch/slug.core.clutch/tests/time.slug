@@ -1,0 +1,34 @@
+val time = import("slug.time")
+val {assertTrue} = import("slug.test")
+
+@test
+val nowIsAfter2026 = fn() {
+    // 2026-01-01T00:00:00Z
+    assertTrue(time.nowMs() > 1767225600000)
+}
+
+@test
+val clocksAreWholeMilliseconds = fn() {
+    assertTrue(time.nowMs() == int(time.nowMs()))
+    assertTrue(time.monotonicMs() == int(time.monotonicMs()))
+}
+
+@test
+val sleepAdvancesTheMonotonicClock = fn() {
+    val start = time.monotonicMs()
+    time.sleepMs(20)
+    assertTrue(time.monotonicMs() - start >= 20)
+}
+
+@test
+val sleepParksOnlyItsTask = fn() {
+    val events = chan(2)
+    nursery {
+        spawn { time.sleepMs(100); select { send events, "slept" } }
+        // Lets the sleeper start; a sleep that blocked the scheduler would
+        // hold this task until the sleeper had sent first.
+        select { after 10 }
+        select { send events, "ran" }
+    }
+    assertTrue(select { recv events } == "ran")
+}

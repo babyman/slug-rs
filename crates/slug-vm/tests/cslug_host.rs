@@ -327,7 +327,7 @@ fn firmware_light_walk_reaches_its_first_gpio_write() {
     artifact
         .register_foreign(
             module
-                .function("sleepMs", NativeArity::Exact(1), returns_nil)
+                .function("monotonicMs", NativeArity::Exact(0), returns_nil)
                 .expect("valid native function"),
         )
         .expect("register time provider");
