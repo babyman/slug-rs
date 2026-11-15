@@ -695,6 +695,8 @@ const STREAM_HEADER: &str = r#"
 #include "slug_producer.h"
 /* Starts a worker thread that sends 1..count, then closes and releases. */
 int32_t stream_start(slug_producer *producer, int64_t count);
+/* Sends one list of every item kind, then closes and releases. */
+int32_t stream_pair(slug_producer *producer);
 #endif
 "#;
 
@@ -754,6 +756,22 @@ static void *worker(void *job) {
 }
 #endif
 
+int32_t stream_pair(slug_producer *producer) {
+  static const uint8_t data[] = {0xca, 0xfe};
+  slug_producer_item items[6];
+  int32_t status;
+  items[0] = slug_producer_item_i64(42);
+  items[1] = slug_producer_item_text("ok", 2);
+  items[2] = slug_producer_item_bytes(data, sizeof data);
+  items[3] = slug_producer_item_nil();
+  items[4] = slug_producer_item_bool(true);
+  items[5] = slug_producer_item_f64(0.5);
+  status = slug_producer_send_list(producer, items, 6);
+  slug_producer_close(producer);
+  slug_producer_release(producer);
+  return status;
+}
+
 int32_t stream_start(slug_producer *producer, int64_t count) {
   stream_job *job = malloc(sizeof *job);
   if (job == NULL) {
@@ -799,7 +817,8 @@ fn a_typed_producer_streams_from_a_c_worker_thread() {
     .expect("write repository manifest");
     fs::write(
         root.join("modules/stream.slug"),
-        "export foreign start = fn(numbers:chan, count:num):num\n",
+        "export foreign start = fn(numbers:chan, count:num):num\n\
+         export foreign pair = fn(items:chan):num\n",
     )
     .expect("write module");
     fs::write(root.join("native/stream.h"), STREAM_HEADER).expect("write header");
@@ -815,7 +834,8 @@ fn a_typed_producer_streams_from_a_c_worker_thread() {
          sources = [\"native/stream.c\"]\n{}\n\
          [native.libraries]\n\"{platform}\" = \"native/{platform}/{library}\"\n\n\
          [native.functions.\"fixture.stream\"]\n\
-         start = {{ symbol = \"stream_start\", signature = \"(producer numbers, i64 count) -> i32\" }}\n",
+         start = {{ symbol = \"stream_start\", signature = \"(producer numbers, i64 count) -> i32\" }}\n\
+         pair = {{ symbol = \"stream_pair\", signature = \"(producer items) -> i32\" }}\n",
         if cfg!(unix) && !cfg!(target_os = "macos") {
             "link = [\"pthread\"]"
         } else {
@@ -848,7 +868,9 @@ fn a_typed_producer_streams_from_a_c_worker_thread() {
            val value = select { recv numbers }\n\
            if (value == nil) { sum } else { recur(sum + value) }\n\
          }\n\
-         println(total(0))\n",
+         println(total(0))\n\
+         val items = chan(1)\n\
+         println(stream.pair(items), select { recv items }, select { recv items })\n",
     )
     .expect("write stream program");
     let output = Command::new(env!("CARGO_BIN_EXE_slug"))
@@ -863,5 +885,9 @@ fn a_typed_producer_streams_from_a_c_worker_thread() {
     );
     // 1 + 2 + ... + 200 through a channel of capacity 4: the worker retries
     // while the channel is full, then closes it.
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "0\n20100\n");
+    // A list from C arrives as one message, then the channel closes.
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "0\n20100\n0 [42, \"ok\", 0x\"cafe\", nil, true, 0.5] nil\n"
+    );
 }

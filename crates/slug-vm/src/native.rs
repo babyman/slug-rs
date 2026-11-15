@@ -36,6 +36,9 @@ pub enum NativeSendValue {
     Float(f64),
     String(String),
     Bytes(Vec<u8>),
+    /// A list, received as one message: a reply of several values arrives
+    /// whole, with one wake of its receiver.
+    List(Vec<NativeSendValue>),
 }
 
 impl NativeSendValue {
@@ -63,6 +66,10 @@ impl NativeSendValue {
     pub fn bytes(value: impl Into<Vec<u8>>) -> Self {
         Self::Bytes(value.into())
     }
+    #[must_use]
+    pub fn list(values: impl Into<Vec<NativeSendValue>>) -> Self {
+        Self::List(values.into())
+    }
 
     pub(crate) fn into_value(self) -> Value {
         match self {
@@ -72,6 +79,7 @@ impl NativeSendValue {
             Self::Float(value) => Value::Float(value),
             Self::String(value) => Value::string(value),
             Self::Bytes(value) => Value::Bytes(Bytes::from_values(value).into_shared()),
+            Self::List(values) => Value::list(values.into_iter().map(Self::into_value).collect()),
         }
     }
 }

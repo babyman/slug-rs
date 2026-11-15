@@ -61,6 +61,22 @@ Errors stay `Error` values of type `native.io`, with the system's reason in
 `msg` and its error code in `data`, so a caller can tell "not found" from
 "permission denied".
 
+#### Lists through producers
+
+Producers send one scalar per message: nil, bool, integer, float, text, or
+bytes. Producer API version 2 adds `send_list(producer, items, count)`, which
+sends a flat list of those scalars as one message. Nested lists and maps stay
+out; the Slug side builds a map from a list in one line.
+
+- One message per reply arrives whole or not at all, so a wrapper never sees
+  half a reply when the channel closes between sends.
+- One wake of the waiting task per reply, not one per value.
+- The new function is appended to the API table, so libraries built against
+  version 1 keep working.
+
+Process control and an HTTP client need multi-value replies too; TCP's
+`chan<bytes|num>`, where a number is an error code, can move to it later.
+
 #### Off the scheduler
 
 Every file operation runs on one shared native I/O thread, as TCP's reads
@@ -70,9 +86,9 @@ disk. `readLine`, `openRead`, and the other existing calls move there too.
 - The module's native profile becomes `events`. An operation queues a request
   with a producer for a reply channel the Slug wrapper made, then waits on
   that channel with `select`, parking only its task.
-- Producers send scalars: nil, bool, integers, floats, text, and bytes. A
-  reply is a status code and then its values in order, such as `stat`'s kind,
-  size, and time; the Slug wrapper turns it into a map or an `Error`.
+- A reply is one message, a flat list `[status, value, ...]`, the shape the
+  synchronous natives already return (`readLineRaw` gives `[0, line]`). The
+  Slug wrapper matches it into a value, a map, or an `Error`.
 - `write` queues its data and returns, as `tcp.write` does, waiting only
   while more than a set amount is queued for that file. A failed write is
   reported by the next `write`, `sync`, or `close`. `sync` waits for the
