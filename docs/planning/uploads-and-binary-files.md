@@ -30,6 +30,9 @@ Each part below is usable alone. They land in the order 1, 2 with 4, then
 
 ### 1. Binary files and directories in `slug.io.fs`
 
+Done 2026-11-15, with the producer lists below. macOS and Linux; the untested
+Windows library entry was dropped, as `slug.net.tcp` never had one.
+
 Files, added to the existing `File` resource:
 
 - `read(file, maxBytes = 65536):bytes|nil`: the next bytes, at most
@@ -89,10 +92,10 @@ disk. `readLine`, `openRead`, and the other existing calls move there too.
 - A reply is one message, a flat list `[status, value, ...]`, the shape the
   synchronous natives already return (`readLineRaw` gives `[0, line]`). The
   Slug wrapper matches it into a value, a map, or an `Error`.
-- `write` queues its data and returns, as `tcp.write` does, waiting only
-  while more than a set amount is queued for that file. A failed write is
-  reported by the next `write`, `sync`, or `close`. `sync` waits for the
-  queue to drain and then for the device.
+- `write` waits for its reply like every other operation, parking only its
+  task, so a failure is reported by the `write` that caused it. A queue that
+  returns at once, as `tcp.write` does, can come later if measurement shows
+  writers waiting on the disk; it would report failures at a later call.
 - One thread serves every file in order, which keeps each file's operations
   ordered without locking. If one slow disk holding up the others shows up
   in practice, the queue can later move to a small pool keyed by file.

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `slug.io.fs` reads and writes bytes (`read`, and `write` of bytes),
+  flushes to disk with `sync`, and works with paths: `stat`, `list`,
+  `makeDirectory`, `rename`, `remove`, `removeAll`, and
+  `temporaryDirectory`. Every operation runs on a native I/O thread, so a
+  slow disk parks only the task waiting on it. Errors name the operation,
+  the path, and the reason, with a portable `code` such as `not_found` in
+  their `data`. The clutch supports macOS and Linux; its untested Windows
+  entry is gone.
+
+- Native producers can send a flat list of scalars as one message
+  (producer API version 2, `slug_producer_send_list`), so a reply of
+  several values arrives whole.
+
 - A runtime built without concurrency reports `spawn`, `nursery`, and timer
   or task-await `select` cases as `capability_unavailable` errors, where
   they were `invalid_call`, so a program or test can tell a missing

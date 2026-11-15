@@ -305,7 +305,7 @@ fn filesystem_failures_throw_error_values_with_native_types() {
             "missing",
             |_| {},
             "report(fn() { fs.openRead(\"ROOT/missing.txt\") })",
-            "native.io: cannot open file\n",
+            "native.io: cannot open ROOT/missing.txt: no such file or directory\n",
         ),
         (
             "long-line",
@@ -332,7 +332,7 @@ fn filesystem_failures_throw_error_values_with_native_types() {
             "val file = fs.openRead(\"ROOT/in.txt\")\n\
              defer fs.close(file)\n\
              report(fn() { fs.write(file, \"text\") })",
-            "native.io: cannot write file\n",
+            "native.io: cannot write file: the file is not open for that\n",
         ),
         (
             "read-writable",
@@ -340,7 +340,7 @@ fn filesystem_failures_throw_error_values_with_native_types() {
             "val file = fs.openWrite(\"ROOT/out.txt\")\n\
              defer fs.close(file)\n\
              report(fn() { fs.readLine(file) })",
-            "native.io: cannot read file\n",
+            "native.io: cannot read file: the file is not open for that\n",
         ),
     ];
     for (name, setup, body, expected) in cases {
@@ -350,6 +350,8 @@ fn filesystem_failures_throw_error_values_with_native_types() {
             "{name}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let root = std::env::temp_dir().join(format!("slug-cli-fs-{name}-{}", std::process::id()));
+        let expected = expected.replace("ROOT", &root.to_string_lossy().replace('\\', "/"));
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{name}");
     }
 }
@@ -361,7 +363,8 @@ fn uncaught_filesystem_failures_report_the_thrown_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("uncaught throw"), "{stderr}");
     assert!(stderr.contains("native.io"), "{stderr}");
-    assert!(stderr.contains("cannot open file"), "{stderr}");
+    assert!(stderr.contains("cannot open"), "{stderr}");
+    assert!(stderr.contains("no such file or directory"), "{stderr}");
 }
 
 #[test]
