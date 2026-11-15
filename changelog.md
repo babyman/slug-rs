@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `scripts/stage-native-clutches.sh --repository DIR` stages the native
+  clutches of any clutch repository, such as a project's: every clutch with
+  a `[native]` table, rather than a fixed list of this checkout's.
+
 - A project indexes its own clutches in `clutch/manifest.toml` at its root,
   layered over the installed ones, so it can ship modules with assets and
   native code beside its source. A module both index is a startup error

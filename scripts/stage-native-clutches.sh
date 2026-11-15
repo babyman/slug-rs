@@ -1,4 +1,11 @@
 #!/bin/sh
+# Builds the native library of each clutch with a `[native]` table in a clutch
+# repository, for the current platform:
+#   stage-native-clutches.sh [--repository DIR] [name.clutch...]
+# The repository defaults to this checkout's `clutch/`. With clutch names,
+# only those are staged. A clutch that needs something built first, such as
+# a vendored static library, provides `native/stage-prerequisites.sh`, which
+# runs from the clutch root with the platform as its argument.
 set -eu
 
 case "$(uname -s)-$(uname -m)" in
@@ -12,13 +19,13 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-# Generates the shim from clutch.toml and builds the library it names.
-stage() {
-  clutch=$1
-  provider=$2
-  cargo run --quiet -p slug-native-manifest --bin slug-native-shim -- \
-    stage "clutch/$clutch/clutch.toml" "$provider" "$platform"
-}
+checkout=$(cd "$(dirname "$0")/.." && pwd)
+repository="$checkout/clutch"
+if [ "${1:-}" = "--repository" ]; then
+  [ "$#" -ge 2 ] || { echo "--repository needs a directory" >&2; exit 1; }
+  repository=$(cd "$2" && pwd)
+  shift 2
+fi
 
 # With arguments, stage only the named clutches; otherwise stage them all.
 selected() {
@@ -31,24 +38,30 @@ selected() {
   return 1
 }
 
-if selected slug.io.fs.clutch "$@"; then
-  stage slug.io.fs.clutch slug_io_fs
-fi
-if selected slug.db.sqlite.clutch "$@"; then
-  stage slug.db.sqlite.clutch slug_db_sqlite
-fi
-if selected slug.net.tcp.clutch "$@"; then
-  stage slug.net.tcp.clutch slug_net_tcp
-fi
-if selected slug.random.secure.clutch "$@"; then
-  stage slug.random.secure.clutch slug_random_secure
-fi
-if selected slug.core.clutch "$@"; then
-  stage slug.core.clutch slug_core
-fi
-if selected slug.arcade.clutch "$@"; then
-  # The shim links the vendored raylib, so build it first.
-  sh clutch/slug.arcade.clutch/native/vendor/build-raylib.sh "$platform" \
-    "clutch/slug.arcade.clutch/native/$platform/libraylib.a"
-  stage slug.arcade.clutch slug_arcade
+for name in "$@"; do
+  if [ ! -f "$repository/$name/clutch.toml" ]; then
+    echo "no clutch $name in $repository" >&2
+    exit 1
+  fi
+done
+
+staged=0
+for root in "$repository"/*.clutch; do
+  [ -f "$root/clutch.toml" ] || continue
+  name=$(basename "$root")
+  selected "$name" "$@" || continue
+  grep -q '^\[native\]' "$root/clutch.toml" || continue
+  if [ -f "$root/native/stage-prerequisites.sh" ]; then
+    (cd "$root" && sh native/stage-prerequisites.sh "$platform")
+  fi
+  # The provider prefixes the shim's symbols: `slug.io.fs` is `slug_io_fs`.
+  provider=$(basename "$name" .clutch | tr . _)
+  cargo run --quiet --manifest-path "$checkout/Cargo.toml" \
+    -p slug-native-manifest --bin slug-native-shim -- \
+    stage "$root/clutch.toml" "$provider" "$platform"
+  staged=$((staged + 1))
+done
+if [ "$#" -gt 0 ] && [ "$staged" -eq 0 ]; then
+  echo "none of $* has a [native] table" >&2
+  exit 1
 fi
