@@ -527,7 +527,8 @@ pub fn project_root(directory: &Path) -> PathBuf {
 ///
 /// # Errors
 ///
-/// Returns an error when an installed clutch manifest cannot be loaded.
+/// Returns an error when the installed or project clutch manifest cannot be
+/// loaded, or when both index the same module.
 pub fn build_default_host_vm(
     source_root: &Path,
     slug_home: Option<&Path>,
@@ -541,12 +542,20 @@ pub fn build_default_host_vm(
         program_arguments,
         entry_module,
     );
-    let clutches = match slug_home {
-        Some(home) if home.join("clutch/manifest.toml").exists() => {
-            ClutchRepository::from_manifest(home.join("clutch"))?
-        }
+    let home = slug_home.map(|home| home.join("clutch"));
+    let mut clutches = match &home {
+        Some(home) if home.join("manifest.toml").exists() => ClutchRepository::from_manifest(home)?,
         _ => ClutchRepository::default(),
     };
+    // A project's clutches layer over the installed ones, unless the project
+    // repository is the installed one, as for a program at `$SLUG_HOME`.
+    let project = source_root.join("clutch");
+    if project.join("manifest.toml").exists()
+        && home.as_deref().and_then(|home| fs::canonicalize(home).ok())
+            != fs::canonicalize(&project).ok()
+    {
+        clutches = clutches.layer(ClutchRepository::from_manifest(&project)?)?;
+    }
     let loader = DesktopLoader::with_resolver(
         DesktopResolver::with_clutch_repository(
             source_root.to_path_buf(),

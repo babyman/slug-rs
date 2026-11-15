@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A project indexes its own clutches in `clutch/manifest.toml` at its root,
+  layered over the installed ones, so it can ship modules with assets and
+  native code beside its source. A module both index is a startup error
+  naming each manifest.
+
 - A `slug.toml` marks a project root. Slug looks for one in the entry
   program's directory and the directories above it, so `slug tests/check.slug`
   imports the project's top-level modules and reads its configuration. With

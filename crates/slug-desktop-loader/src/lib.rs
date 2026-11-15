@@ -27,6 +27,7 @@ mod typed_native;
 use clutch::StagedClutchPlugin;
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
+    ProviderOrigin,
 };
 pub use dynamic_library::NativeLibraryError;
 use slug_native_adapter::TextResults;
@@ -816,6 +817,131 @@ mod tests {
 
         assert_eq!(source.text, "export val answer = 42\n");
         assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    /// Writes a repository at `repository` whose one clutch, `directory`,
+    /// provides `modules` from sources that export their own name, declares
+    /// `tests`, and holds an asset `name.txt`.
+    fn write_repository(
+        repository: &std::path::Path,
+        directory: &str,
+        modules: &[&str],
+        tests: &[&str],
+    ) {
+        use std::fmt::Write as _;
+        let clutch = repository.join(directory);
+        fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+        fs::create_dir_all(clutch.join("tests")).expect("create clutch tests");
+        fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+        fs::write(clutch.join("assets/name.txt"), directory).expect("write asset");
+        let mut index = String::from("[modules]\n");
+        let mut manifest = String::from("[modules]\n");
+        for module in modules {
+            let file = module.replace('.', "_");
+            fs::write(
+                clutch.join(format!("modules/{file}.slug")),
+                format!("export val name = \"{module}\"\n"),
+            )
+            .expect("write clutch module");
+            writeln!(index, "\"{module}\" = \"{directory}\"").unwrap();
+            writeln!(
+                manifest,
+                "\"{module}\" = {{ source = \"modules/{file}.slug\" }}"
+            )
+            .unwrap();
+        }
+        if !tests.is_empty() {
+            let files = tests
+                .iter()
+                .map(|test| {
+                    fs::write(
+                        clutch.join(format!("tests/{test}.slug")),
+                        "export val ok = true\n",
+                    )
+                    .expect("write clutch test");
+                    format!("\"tests/{test}.slug\"")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(manifest, "\n[tests]\nfiles = [{files}]\n").unwrap();
+        }
+        fs::write(repository.join("manifest.toml"), index).expect("write repository manifest");
+        fs::write(clutch.join("clutch.toml"), manifest).expect("write clutch manifest");
+    }
+
+    #[test]
+    fn layered_repositories_resolve_modules_and_assets_from_both() {
+        let root = root();
+        write_repository(&root.join("home"), "base.clutch", &["base.lib"], &[]);
+        write_repository(&root.join("project"), "app.clutch", &["app.lib"], &[]);
+        let home = ClutchRepository::from_manifest(root.join("home")).expect("load home");
+        let project = ClutchRepository::from_manifest(root.join("project")).expect("load project");
+        let resolver = DesktopResolver::with_clutch_repository(
+            &root,
+            None,
+            home.layer(project).expect("layer repositories"),
+        );
+
+        for (module, clutch) in [("base.lib", "base.clutch"), ("app.lib", "app.clutch")] {
+            let source = resolver
+                .resolve(ModuleRequest::new(None, module))
+                .expect("resolve layered module");
+            assert_eq!(source.text, format!("export val name = \"{module}\"\n"));
+            assert_eq!(
+                resolver.asset(&source.key, "name.txt").expect("read asset"),
+                clutch.as_bytes()
+            );
+        }
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[test]
+    fn layered_repositories_reject_a_name_both_index() {
+        type Layer<'a> = (&'a str, &'a [&'a str], &'a [&'a str]);
+        let root = root();
+        let cases: [(Layer, Layer, &str); 3] = [
+            // A module both layers index.
+            (
+                ("base.clutch", &["app.lib"], &[]),
+                ("app.clutch", &["app.lib"], &[]),
+                "app.lib",
+            ),
+            // A test module of same-named clutches in both layers.
+            (
+                ("shared.clutch", &["shared.a"], &["unit"]),
+                ("shared.clutch", &["shared.b"], &["unit"]),
+                "shared.tests.unit",
+            ),
+            // One layer's module named like the other's test module.
+            (
+                ("base.clutch", &["app.tests.unit"], &[]),
+                ("app.clutch", &["app.lib"], &["unit"]),
+                "app.tests.unit",
+            ),
+        ];
+        for ((home_clutch, home_modules, home_tests), (clutch, modules, tests), name) in cases {
+            let _ = fs::remove_dir_all(&root);
+            write_repository(&root.join("home"), home_clutch, home_modules, home_tests);
+            write_repository(&root.join("project"), clutch, modules, tests);
+            let home = ClutchRepository::from_manifest(root.join("home")).expect("load home");
+            let project =
+                ClutchRepository::from_manifest(root.join("project")).expect("load project");
+            let message = home
+                .layer(project)
+                .expect_err("conflicting layers")
+                .to_string();
+            let home_manifest = fs::canonicalize(root.join("home/manifest.toml")).unwrap();
+            let project_manifest = fs::canonicalize(root.join("project/manifest.toml")).unwrap();
+            assert_eq!(
+                message,
+                format!(
+                    "module `{name}` is provided by both `{home_clutch}` in {} and `{clutch}` in {}",
+                    home_manifest.display(),
+                    project_manifest.display()
+                )
+            );
+        }
         fs::remove_dir_all(root).expect("remove temporary resolver directory");
     }
 

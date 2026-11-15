@@ -621,6 +621,95 @@ fn a_configured_root_or_a_library_entry_does_not_search_for_slug_toml() {
     fs::remove_dir_all(root).expect("remove project fixture");
 }
 
+/// Writes a clutch repository at `repository` with one clutch, `directory`,
+/// providing `module` from a source that exports its asset `name.txt`.
+fn write_clutch_repository(repository: &std::path::Path, directory: &str, module: &str) {
+    let clutch = repository.join(directory);
+    fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+    fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+    fs::write(clutch.join("assets/name.txt"), directory).expect("write asset");
+    fs::write(
+        clutch.join("modules/main.slug"),
+        "export val name = asset(\"name.txt\")\n",
+    )
+    .expect("write clutch module");
+    fs::write(
+        clutch.join("clutch.toml"),
+        format!("[modules]\n\"{module}\" = {{ source = \"modules/main.slug\" }}\n"),
+    )
+    .expect("write clutch manifest");
+    fs::write(
+        repository.join("manifest.toml"),
+        format!("[modules]\n\"{module}\" = \"{directory}\"\n"),
+    )
+    .expect("write repository manifest");
+}
+
+#[test]
+fn a_project_clutch_layers_over_the_installed_clutches() {
+    let root = project_fixture("clutch");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    write_clutch_repository(&root.join("clutch"), "app.clutch", "app.greeting");
+    // `slug.string` comes from the installed clutches, `app.greeting` from
+    // the project's.
+    let source = "val {name} = import(\"app.greeting\")\nval {fromBytes, upper} = import(\"slug.string\")\nprintln(upper(fromBytes(name)))\n";
+    fs::write(root.join("main.slug"), source).expect("write program");
+    fs::write(root.join("tests/check.slug"), source).expect("write test program");
+    for program in [root.join("main.slug"), root.join("tests/check.slug")] {
+        let (code, stdout, stderr) = output_text(
+            &slug()
+                .arg(&program)
+                .output()
+                .expect("run project clutch program"),
+        );
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "APP.CLUTCH\n");
+    }
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_module_both_clutch_layers_index_is_a_startup_error() {
+    let root = project_fixture("clutch-conflict");
+    write_clutch_repository(&root.join("home/clutch"), "base.clutch", "app.greeting");
+    write_clutch_repository(&root.join("project/clutch"), "app.clutch", "app.greeting");
+    fs::write(root.join("project/main.slug"), "println(1)\n").expect("write program");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .arg(root.join("project/main.slug"))
+        .output()
+        .expect("run conflicting program");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(1));
+    assert!(stdout.is_empty(), "{stdout}");
+    let canonical = fs::canonicalize(&root).unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "module `app.greeting` is provided by both `base.clutch` in {} and `app.clutch` in {}",
+            canonical.join("home/clutch/manifest.toml").display(),
+            canonical.join("project/clutch/manifest.toml").display()
+        )),
+        "{stderr}"
+    );
+
+    // A program at `$SLUG_HOME` sees one repository, not two copies of it.
+    fs::write(
+        root.join("home/main.slug"),
+        "println(import(\"app.greeting\").name)\n",
+    )
+    .expect("write program at home");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .arg(root.join("home/main.slug"))
+        .output()
+        .expect("run program at home");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"626173652e636c75746368\"\n");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
 #[test]
 fn describes_a_modules_declarations_and_gates_unexported_ones() {
     let root = std::env::temp_dir().join(format!("slug-cli-describe-{}", std::process::id()));

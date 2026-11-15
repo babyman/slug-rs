@@ -134,7 +134,7 @@ the files a program names are read, so a packaging tool learns which assets a
 program uses by compiling it.
 
 The desktop resolver reads an asset from the `assets` folder of the indexed
-clutch whose directory holds the module's source. Each name segment must match
+clutch, installed or project, whose directory holds the module's source. Each name segment must match
 a directory entry exactly, case included; the file must be a regular file of at
 most 16 MiB that stays inside the folder once links resolve. A static or nil
 host provides no assets. `slug.net.http`'s `mediaType(name)` gives an asset's
@@ -154,7 +154,18 @@ directory:
 Only clutches named by this file are importable. A target must remain inside
 the repository, end in `.clutch`, and declare the same module identity in its
 own `clutch.toml`. Rust hosts and tests may instead configure an explicit
-repository index. This is local selection, not installation or dependency
+repository index.
+
+A project may index its own clutches in `clutch/manifest.toml` at its
+[project root](../language/configuration.md#project-root), in the same
+format. The runner layers that repository over the installed one: a program
+imports from both. A module or clutch test-module name both repositories
+index is a startup error naming each repository manifest and the clutch it
+selects, so a project cannot replace an installed clutch or one of its
+modules. When the project repository is the installed one, as for a program
+in `$SLUG_HOME`, it is read once. Rust hosts combine repositories with
+`ClutchRepository::layer`. Running a program loads the native libraries of
+the clutches its project indexes, as it does those installed. This is local selection, not installation or dependency
 solving. The loader resolves imports in this order:
 
 1. the existing importer-relative, project-root, and library-root source
