@@ -2698,3 +2698,28 @@ is elsewhere: element records every fork reads, and chains such as
 Measuring fork scaling needs PGO builds of both sides, run interleaved on a
 quiet machine: builds without PGO differed by 20-50% between the two sides
 here, which showed Crawl not scaling at all.
+
+## A nursery lets go of settled children (2026-11-14)
+
+A nursery kept every task it started in a list, so that it could report a
+failure nobody awaited and cancel what was still running, and pruned the
+list only when it reached 64 tasks and then twice what remained. Each
+settled task in the list kept its cached result alive. A loop that starts
+forks every tick held up to about 64 tasks' results: for Crawl's server,
+roughly 16 ticks of every player's drawn page. A program that built strings
+in one fork a round and kept only the latest round peaked at 1.5 GB, against
+84 MB without the fork; mimalloc's statistics looked like cross-thread page
+reuse, but its reclaim options changed nothing, and wrapping each round in
+its own `nursery` brought the peak to 95 MB.
+
+The list now lives in the nursery's `NurseryWatch` as slots in start order
+(`value.rs`). A task that settles with a value clears its slot at once; a
+pending task and a failure nobody has awaited stay listed, so error
+reporting and cancellation order are unchanged. The list is compacted when
+half of it is empty, so a start costs a constant on average.
+
+Results: the string program peaks at 91 MB, from 1,520; Crawl's crowd (12
+ticks, 4 forks) at 251 MB, from 535, with no forks unchanged at 220; the
+server under 1000 players on 4 forks at 602-605 MB, from 823-846, with
+latency the same or slightly better. PGO, interleaved: tuned 1.01x, hold-out
+1.00x.

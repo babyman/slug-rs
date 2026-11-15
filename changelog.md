@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A nursery lets go of a task that settles with a value. It kept every
+  task it started until it had 64 and then twice what remained, and with
+  each task its result, so a loop that starts forks every tick held dozens
+  of ticks' results. Crawl's crowd on four forks peaks at 251 MB, from
+  535, and its server under 1000 players at 600 MB, from 840.
+
 - Slug indexes a variable's collection where it is. `players[id]`,
   `record.field`, and `xs[i]`, where the collection is a name, used to take
   a reference to the whole collection first and drop it after; forks

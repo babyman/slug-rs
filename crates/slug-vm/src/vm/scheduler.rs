@@ -1,5 +1,7 @@
 use crate::sync::Rc;
-use alloc::{collections::VecDeque, vec::Vec};
+use alloc::collections::VecDeque;
+#[cfg(not(all(feature = "threads", not(target_os = "none"))))]
+use alloc::vec::Vec;
 use core::cell::RefCell;
 
 #[cfg(feature = "metrics")]
@@ -11,9 +13,6 @@ use crate::{
 
 use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 
-/// The fewest tasks a nursery keeps before it drops settled ones.
-const PRUNE_FLOOR: usize = 64;
-
 /// The tasks a root, or an explicit `nursery`, started, and how it settles
 /// them. Either kind cancels pending children when the owner's body fails.
 ///
@@ -21,16 +20,11 @@ const PRUNE_FLOOR: usize = 64;
 /// parent's ready queue and timers, so a host's `poll` makes progress on
 /// all of them, and none ever waits for another to finish.
 pub(super) struct Nursery {
-    /// The tasks it started that are pending, or settled with a failure
-    /// nothing has awaited, in start order; others are dropped from time to
-    /// time, so a server starting a task per connection does not keep them
-    /// all.
-    tasks: RefCell<Vec<Rc<Task>>>,
-    /// The length at which `tasks` is next pruned.
-    prune_at: core::cell::Cell<usize>,
-    /// An explicit nursery's: the first unobserved child failure cancels the
-    /// remaining children. The root, without one, reports an unobserved
-    /// child failure once every task has settled.
+    /// Its children, which it keeps while it may still need them (see
+    /// `NurseryWatch`): pending, or settled with a failure nothing has
+    /// awaited. An explicit nursery's first unobserved child failure cancels
+    /// the remaining children; the root reports one once every task has
+    /// settled.
     watch: Rc<NurseryWatch>,
     /// Whether this is an explicit nursery, which fails fast.
     fail_fast: bool,
@@ -56,8 +50,6 @@ impl Nursery {
         #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
     ) -> Self {
         Self {
-            tasks: RefCell::new(Vec::new()),
-            prune_at: core::cell::Cell::new(PRUNE_FLOOR),
             watch: Rc::new(NurseryWatch::default()),
             fail_fast: false,
             #[cfg(all(
@@ -80,8 +72,6 @@ impl Nursery {
     /// same scheduler.
     pub(super) fn explicit(parent: &Self) -> Self {
         Self {
-            tasks: RefCell::new(Vec::new()),
-            prune_at: core::cell::Cell::new(PRUNE_FLOOR),
             watch: Rc::new(NurseryWatch::default()),
             fail_fast: true,
             #[cfg(all(
@@ -106,7 +96,7 @@ impl Nursery {
     }
 
     pub(super) fn clear(&self) {
-        self.tasks.borrow_mut().clear();
+        self.watch.clear();
         self.ready.borrow_mut().clear();
     }
 
@@ -115,17 +105,10 @@ impl Nursery {
     /// and a fork waiting for a permit, waits in the ready queue in start
     /// order, and is dispatched from there when the scheduler admits it.
     pub(super) fn start(&self, task: Rc<Task>) {
-        task.join(self.watch.clone());
-        {
-            let mut tasks = self.tasks.borrow_mut();
-            // Pruned when it has doubled since, so each start costs a
-            // constant on average.
-            if tasks.len() >= self.prune_at.get() {
-                tasks.retain(|task| !task.is_done_with());
-                self.prune_at.set((tasks.len() * 2).max(PRUNE_FLOOR));
-            }
-            tasks.push(task.clone());
-        }
+        // Closed up once half the list has left, so each start costs a
+        // constant on average.
+        self.watch.compact();
+        self.watch.adopt(&task);
         if !Self::dispatch_remote(&task) {
             self.enqueue(task);
         }
@@ -155,8 +138,8 @@ impl Nursery {
     }
 
     fn first_unobserved_error(&self) -> Option<RuntimeError> {
-        self.tasks
-            .borrow()
+        self.watch
+            .children()
             .iter()
             .find_map(|task| task.unobserved_error())
     }
@@ -164,14 +147,14 @@ impl Nursery {
     /// The error of the first task that is still waiting, located where it
     /// waits.
     pub(super) fn first_blocked_error(&self) -> Option<RuntimeError> {
-        self.tasks
-            .borrow()
+        self.watch
+            .children()
             .iter()
             .find_map(|task| task.blocked_error())
     }
 
     pub(super) fn cancel_all(&self, error: &RuntimeError) {
-        for task in self.tasks.borrow().iter() {
+        for task in self.watch.children() {
             task.cancel(error);
         }
     }

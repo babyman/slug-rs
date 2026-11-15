@@ -941,7 +941,13 @@ struct TaskState {
     wait_registration: Option<WaitSet>,
     /// The explicit nursery this task is a child of, told when it settles.
     watch: Option<Rc<NurseryWatch>>,
+    /// Where it is in that nursery's list of children.
+    slot: usize,
 }
+
+/// Below this many children a nursery's list is not worth closing up.
+#[cfg(feature = "concurrency")]
+const COMPACT_FLOOR: usize = 64;
 
 /// What the body of an explicit nursery, once it has returned, waits on:
 /// its children all settling, or one failing, which may fail it fast.
@@ -951,6 +957,14 @@ pub(crate) struct NurseryWatch {
     pending: Cell<usize>,
     failed: Cell<bool>,
     settling: RefCell<Option<Rc<Task>>>,
+    /// The children, in start order, while the nursery may still need
+    /// them: pending, or settled with a failure nothing has awaited. A
+    /// child that settles with a value leaves at once, so that the nursery
+    /// does not keep its result alive: a server's loop that starts forks
+    /// each tick would otherwise hold the results of many ticks.
+    children: RefCell<Vec<Option<Rc<Task>>>>,
+    /// How many of `children` have left.
+    vacant: Cell<usize>,
 }
 
 #[cfg(feature = "concurrency")]
@@ -971,7 +985,55 @@ impl NurseryWatch {
         *self.settling.borrow_mut() = Some(body);
     }
 
-    fn settled(&self, failed: bool) {
+    /// Adds `task` to the children this nursery waits on.
+    pub(crate) fn adopt(self: &Rc<Self>, task: &Rc<Task>) {
+        self.pending.set(self.pending.get() + 1);
+        let mut children = self.children.borrow_mut();
+        let mut state = task.state.borrow_mut();
+        state.slot = children.len();
+        state.watch = Some(self.clone());
+        children.push(Some(task.clone()));
+    }
+
+    /// The children the nursery may still need, in start order.
+    pub(crate) fn children(&self) -> Vec<Rc<Task>> {
+        self.children.borrow().iter().flatten().cloned().collect()
+    }
+
+    /// Forgets every child.
+    pub(crate) fn clear(&self) {
+        self.children.borrow_mut().clear();
+        self.vacant.set(0);
+    }
+
+    /// Closes up the list of children once half of it has left, keeping
+    /// start order; a failure something has since awaited leaves too. Run
+    /// between tasks, as it looks at each child's state.
+    pub(crate) fn compact(&self) {
+        let mut children = self.children.borrow_mut();
+        if children.len() < COMPACT_FLOOR || self.vacant.get() * 2 < children.len() {
+            return;
+        }
+        children.retain(|child| child.as_ref().is_some_and(|task| !task.is_done_with()));
+        for (slot, child) in children.iter().enumerate() {
+            if let Some(task) = child {
+                task.state.borrow_mut().slot = slot;
+            }
+        }
+        self.vacant.set(0);
+    }
+
+    fn settled(&self, slot: usize, failed: bool) {
+        if !failed {
+            let left = self
+                .children
+                .borrow_mut()
+                .get_mut(slot)
+                .and_then(Option::take);
+            if left.is_some() {
+                self.vacant.set(self.vacant.get() + 1);
+            }
+        }
         self.pending.set(self.pending.get().saturating_sub(1));
         if failed {
             self.failed.set(true);
@@ -1055,6 +1117,7 @@ impl Task {
                 waiters: Vec::new(),
                 wait_registration: None,
                 watch: None,
+                slot: 0,
             })),
             domain: 0,
         }
@@ -1068,12 +1131,6 @@ impl Task {
 
     pub(crate) fn domain(&self) -> u32 {
         self.domain
-    }
-
-    /// Makes this task a child its explicit nursery waits on.
-    pub(crate) fn join(&self, watch: Rc<NurseryWatch>) {
-        watch.pending.set(watch.pending.get() + 1);
-        self.state.borrow_mut().watch = Some(watch);
     }
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
@@ -1132,12 +1189,13 @@ impl Task {
         release_admission(&mut state);
         let waiters = mem::take(&mut state.waiters);
         let watch = state.watch.take();
+        let slot = state.slot;
         drop(state);
         for waiter in waiters {
             waiter.resume(outcome.clone());
         }
         if let Some(watch) = watch {
-            watch.settled(outcome.is_err());
+            watch.settled(slot, outcome.is_err());
         }
     }
 
@@ -1166,6 +1224,7 @@ impl Task {
         release_admission(&mut state);
         let waiters = mem::take(&mut state.waiters);
         let watch = state.watch.take();
+        let slot = state.slot;
         drop(state);
         // Waiters first: one that observes the outcome keeps a failure from
         // failing the nursery fast.
@@ -1173,7 +1232,7 @@ impl Task {
             waiter.resume(outcome.clone());
         }
         if let Some(watch) = watch {
-            watch.settled(outcome.is_err());
+            watch.settled(slot, outcome.is_err());
         }
     }
 
@@ -1307,6 +1366,7 @@ impl Task {
         let waiters = mem::take(&mut state.waiters);
         let ready = state.ready.clone();
         let watch = state.watch.take();
+        let slot = state.slot;
         state.phase = TaskPhase::Settled(Err(error.clone()));
         release_admission(&mut state);
         drop(state);
@@ -1320,7 +1380,7 @@ impl Task {
             waiter.resume(Err(error.clone()));
         }
         if let Some(watch) = watch {
-            watch.settled(true);
+            watch.settled(slot, true);
         }
     }
 
