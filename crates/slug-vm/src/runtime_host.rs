@@ -31,6 +31,8 @@ pub struct MissingModule {
     /// Paths, relative to a searched directory, of a file with the module's
     /// name found outside every searched directory, such as `../jobs.slug`.
     pub elsewhere: Vec<String>,
+    /// What the host knows about why the module was not found.
+    pub hints: Vec<String>,
 }
 
 impl VmHostError {

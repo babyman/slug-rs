@@ -204,6 +204,7 @@ impl ModuleResolver for StaticModuleResolver {
                     self.providers.keys().map(String::as_str),
                 ),
                 elsewhere: Vec::new(),
+                hints: Vec::new(),
             })
     }
 }
@@ -220,6 +221,9 @@ pub enum ModuleLoadError {
         /// Files with the module's name outside the searched directories,
         /// relative to the directory searched, such as `../jobs.slug`.
         elsewhere: Vec<String>,
+        /// What the host knows about why the module was not found, such as a
+        /// project without its source directory.
+        hints: Vec<String>,
     },
     Read {
         location: String,
@@ -276,11 +280,13 @@ impl From<ModuleLoadError> for VmHostError {
                 name,
                 suggestions,
                 elsewhere,
+                hints,
                 ..
             } => Self::not_found(message).with_missing_module(MissingModule {
                 name,
                 suggestions,
                 elsewhere,
+                hints,
             }),
             ModuleLoadError::Compile { error, .. } => Self::compile(message, *error),
             ModuleLoadError::Initialization { failure, .. } => {
@@ -458,6 +464,7 @@ mod tests {
                 searched: vec!["static providers".into()],
                 suggestions: Vec::new(),
                 elsewhere: Vec::new(),
+                hints: Vec::new(),
             }
         );
     }

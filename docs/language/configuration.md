@@ -67,20 +67,36 @@ host parsing failure to the Slug program.
 
 A `slug.toml` file marks a project root, even an empty one. Unless the host selects a module root, the runner looks for
 `slug.toml` in the entry program's directory and then in each directory above it; the first directory that has one is
-the project root. When none does, the program's directory is the project root. A nested `slug.toml` starts a separate
-project. So `slug tests/check.slug` and `slug bin/serve.slug` import the project's top-level modules and read its
-configuration, wherever they run from.
+the project root. A nested `slug.toml` starts a separate project. A project has one layout, with nothing to configure:
 
-An entry program found in the library (`slug hello` reading `$SLUG_HOME/lib/hello.slug`) does not search: its root is
-its own directory. A `slug.toml` in a directory above unrelated programs, such as a home directory, makes them all one
-project.
+```text
+project/
+  slug.toml      the project root marker and its configuration
+  src/           the project's modules: the module root imports search
+  assets/        files `asset("name")` embeds
+  tests/         the project's test programs
+  clutch/        optional project clutches, for native code
+```
+
+In a project, imports search the importing file's directory, then `src/`, then the library root, then clutches. The
+project root itself is not searched: `src/orble/app.slug` is the module `orble.app`, and a `.slug` file beside
+`slug.toml` is not a module. Any program in the project, such as `slug src/main.slug` or `slug tests/all.slug`, reads
+the project's `slug.toml` and imports from its `src/`, wherever it runs from. Every directory but the root is optional
+to have, and none can be renamed. Native code lives in a project clutch under `clutch/` (see
+[Experimental Clutches](../reference/experimental-clutches.md#repository-index-and-resolution)).
+
+With no `slug.toml` at or above the entry, the program is in no project: its directory is the module root, holds any
+`slug.toml` and `clutch/` it uses, and it has no assets. An entry program found in the library (`slug hello` reading
+`$SLUG_HOME/lib/hello.slug`) is in no project either. A `slug.toml` in a directory above unrelated programs, such as a
+home directory, makes them all one project.
 
 ## Library source path
 
 When `SLUG_HOME` is set, the runtime uses `$SLUG_HOME/lib` as the library
 module root as well as the location of the optional library TOML. Imports first
-search relative to their importer, then the [project root](#project-root), and
-finally this library root. This allows a runtime installation and its Slug library
+search relative to their importer, then the module root (a
+[project's](#project-root) `src/`, or the program's directory), and finally
+this library root. This allows a runtime installation and its Slug library
 sources to move together:
 
 ```text

@@ -150,6 +150,25 @@ slug: runtime error: list index is out of bounds
 Fix them and run `slug tests.slug` again; add a test for each rule as you
 write it.
 
+## Tests in a project
+
+In a [project](configuration.md#project-root), the logic lives in `src/` and
+the test programs in `tests/`. A test program imports the modules it tests
+from `src/` by name, and helpers beside it in `tests/` by the usual
+importer-relative rule:
+
+```text
+robot/
+  slug.toml
+  src/robot.slug        the logic: `import("robot")`
+  src/main.slug         the entry program
+  tests/all.slug        `slug tests/all.slug` imports robot and moves
+  tests/moves.slug
+```
+
+Modules in `src/` cannot import tests, since `tests/` is outside the module
+root. Run `slug tests/all.slug` from anywhere in the project.
+
 ## Checking the whole program
 
 Test the entry program itself with a few end-to-end runs: run it as the

@@ -74,7 +74,24 @@ changes root (none has a `slug.toml` above it).
   `native/stage-prerequisites.sh`.
 - [x] `make stage-native-clutches` keeps staging this checkout.
 
-## 5. First user (separate change)
+## 5. Project layout
+
+Implements [project layout](../decisions/2026-11-15-project-layout.md).
+
+- [x] `ProgramLayout` in `crates/slug/src/host.rs`: a project's module root is
+  its `src/`; configuration and `clutch/` come from the project root.
+  `build_default_host_vm` takes the layout.
+- [x] `DesktopResolver::with_project_root`: project assets from `assets/`,
+  after the containing clutch's; the not-found error's new `hints` name a
+  missing `src/`.
+- [x] CLI tests: `src/` and `tests/` programs, a `tests/` helper, a root
+  module not importable, a missing `src/` and `assets/`, project and clutch
+  assets, a `.cslug` carrying a project asset.
+- [x] Update `language/configuration.md`, `language/testing.md`, the
+  specification's assets section, and `reference/experimental-clutches.md`.
+- [x] Move Orble to the layout (in ../orble, uncommitted there).
+
+## 6. First user (separate change)
 
 - [ ] Optional: move `slug.games.crawl` into its own project with a
   `slug.toml` and `clutch/manifest.toml`, and drop its entries from the

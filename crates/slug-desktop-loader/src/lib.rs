@@ -37,6 +37,9 @@ use slug_native_adapter::TextResults;
 pub struct DesktopResolver {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
+    /// The project root, whose `assets/` the project's modules embed from;
+    /// `None` outside a project.
+    project_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
     activation_state: Rc<RefCell<DesktopActivationState>>,
@@ -162,12 +165,22 @@ impl DesktopResolver {
         Self {
             source_root: source_root.into(),
             library_root,
+            project_root: None,
             clutch_repository,
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
             typed_text_results: Rc::new(RefCell::new(HashMap::new())),
             test_modules: Cell::new(false),
         }
+    }
+
+    /// Places this resolver in the project at `root`: its modules outside
+    /// any clutch embed assets from `root/assets`, and a missing source root
+    /// is reported as the project's missing `src/`.
+    #[must_use]
+    pub fn with_project_root(mut self, root: PathBuf) -> Self {
+        self.project_root = Some(root);
+        self
     }
 
     /// Lets indexed clutches' test modules resolve. They see their clutch's
@@ -516,18 +529,30 @@ impl ModuleResolver for DesktopResolver {
     }
 
     /// A module's assets are the files in the `assets` folder of the indexed
-    /// clutch its source file is in.
+    /// clutch its source file is in, or else of the project it is in.
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
-        let root = self
-            .clutch_repository
-            .clutch_containing(Path::new(module.as_str()))
-            .ok_or_else(|| {
-                format!(
-                    "no asset `{name}`: {} is not in a clutch, and only a clutch has assets",
-                    module.as_str()
-                )
-            })?;
-        clutch::read_asset(&root, name)
+        let path = Path::new(module.as_str());
+        if let Some(root) = self.clutch_repository.clutch_containing(path) {
+            return clutch::read_asset(&root, name);
+        }
+        let project = self.project_root.as_ref().filter(|root| {
+            let canonical = fs::canonicalize(path).ok();
+            canonical.is_some_and(|path| path.starts_with(root))
+        });
+        let Some(project) = project else {
+            return Err(format!(
+                "no asset `{name}`: {} is not in a clutch or a project, and only those have assets",
+                module.as_str()
+            ));
+        };
+        if !project.join("assets").is_dir() {
+            return Err(format!(
+                "no asset `{name}`: the project at {} has no assets folder; create {}",
+                project.display(),
+                project.join("assets").display()
+            ));
+        }
+        clutch::read_asset(project, name)
     }
 }
 
@@ -591,7 +616,20 @@ impl DesktopResolver {
                     .chain(self.clutch_repository.module_names()),
             ),
             elsewhere,
+            hints: self.missing_source_root().into_iter().collect(),
         }
+    }
+
+    /// Why a project's own modules cannot be found: it has no `src/`.
+    fn missing_source_root(&self) -> Option<String> {
+        let project = self.project_root.as_ref()?;
+        (!self.source_root.is_dir()).then(|| {
+            format!(
+                "the project at {} has no `src` directory: its modules go in {}",
+                project.display(),
+                self.source_root.display()
+            )
+        })
     }
 }
 

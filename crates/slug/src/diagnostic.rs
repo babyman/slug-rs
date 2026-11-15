@@ -309,8 +309,13 @@ impl Diagnostic {
         self.suggestions
             .extend(missing.elsewhere.iter().map(|path| DiagnosticFix {
                 message: format!(
-                    "`{path}` exists outside the directories searched: imports look only in the importing file's directory, the project root, and installed modules, so put a `slug.toml` in the directory that holds it to make that the project root, or move the importing file beside it"
+                    "`{path}` exists outside the directories searched: imports look only in the importing file's directory, the project's `src/` (or the program's directory outside a project), and installed modules, so move it into the `src/` of a project, beside a `slug.toml` that marks the project root, or move the importing file beside it"
                 ),
+                edits: Vec::new(),
+            }));
+        self.suggestions
+            .extend(missing.hints.iter().map(|hint| DiagnosticFix {
+                message: hint.clone(),
                 edits: Vec::new(),
             }));
     }

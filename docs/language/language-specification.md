@@ -775,10 +775,12 @@ val logo = asset("images/logo.png")    // assets/images/logo.png
 
 `name` is a path in the `assets` folder written with `/`: non-empty segments,
 none `.` or `..`, without `\` or NUL. Each segment must match the file's
-name exactly, case included, even where the file system ignores case. Only a
+name exactly, case included, even where the file system ignores case. A
 module whose source file is inside an indexed clutch, including that clutch's
-test files and programs, has assets, and only its own clutch's; a host that
-provides no assets has none. A call that is not one string literal, is
+test files and programs, has its own clutch's assets. Otherwise, a module whose
+source file is inside a [project](configuration.md#project-root) has the
+assets in the project's `assets` folder. Other modules have none, and a host
+that provides no assets has none. A call that is not one string literal, is
 piped, or names no such file is a compile error with the code
 `invalid_asset`. See [Experimental Clutches](../reference/experimental-clutches.md#assets).
 

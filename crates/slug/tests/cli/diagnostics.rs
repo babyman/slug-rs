@@ -1165,7 +1165,7 @@ fn a_module_above_the_search_is_named_without_an_edit() {
     assert!(
         suggestion["message"].as_str().is_some_and(|message| message
             .starts_with("`../jobs.slug` exists outside the directories searched")
-            && message.contains("put a `slug.toml` in the directory that holds it")),
+            && message.contains("move it into the `src/` of a project")),
         "{suggestion}"
     );
     assert_eq!(suggestion["edits"], serde_json::json!([]));

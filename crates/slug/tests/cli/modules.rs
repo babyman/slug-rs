@@ -521,15 +521,22 @@ fn output_text(output: &std::process::Output) -> (Option<i32>, String, String) {
 }
 
 #[test]
-fn a_program_below_slug_toml_uses_that_directory_as_its_project_root() {
+fn a_program_in_a_project_imports_from_its_src_and_reads_its_slug_toml() {
     let root = project_fixture("marker");
     fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::create_dir_all(root.join("src/app")).expect("create source directory");
     fs::write(root.join("slug.toml"), "[app]\nname = \"root\"\n").expect("write marker");
-    fs::write(root.join("jobs.slug"), "export val one = 1\n").expect("write root module");
+    fs::write(root.join("src/app/jobs.slug"), "export val one = 1\n").expect("write module");
+    // A test program's helper beside it resolves relative to it.
+    fs::write(
+        root.join("tests/helper.slug"),
+        "export val name = cfg(\"app.name\", \"none\")\n",
+    )
+    .expect("write test helper");
     let program = root.join("tests/basic.slug");
     fs::write(
         &program,
-        "val jobs = import(\"jobs\")\nprintln(jobs.one, cfg(\"app.name\", \"none\"))\n",
+        "val jobs = import(\"app.jobs\")\nval helper = import(\"helper\")\nprintln(jobs.one, helper.name)\n",
     )
     .expect("write program in a subdirectory");
 
@@ -539,13 +546,16 @@ fn a_program_below_slug_toml_uses_that_directory_as_its_project_root() {
         assert_eq!(stdout, "1 root\n");
     }
 
-    // Named relative to the working directory, the program finds the same root.
-    for directory in [root.clone(), root.join("tests")] {
-        let relative = if directory == root {
-            "tests/basic.slug"
-        } else {
-            "basic.slug"
-        };
+    // Named relative to the working directory, the program finds the same
+    // project, and so does one in `src/`.
+    fs::copy(&program, root.join("src/main.slug")).expect("copy program into src");
+    fs::copy(root.join("tests/helper.slug"), root.join("src/helper.slug"))
+        .expect("copy helper into src");
+    for (directory, relative) in [
+        (root.clone(), "tests/basic.slug"),
+        (root.join("tests"), "basic.slug"),
+        (root.clone(), "src/main.slug"),
+    ] {
         let output = slug()
             .current_dir(&directory)
             .arg(relative)
@@ -563,11 +573,13 @@ fn the_nearest_slug_toml_marks_the_project_root() {
     let root = project_fixture("nested");
     fs::create_dir_all(root.join("inner/tests")).expect("create nested project");
     fs::write(root.join("slug.toml"), "").expect("write outer marker");
-    fs::write(root.join("outer.slug"), "export val name = \"outer\"\n")
+    fs::create_dir_all(root.join("src")).expect("create outer sources");
+    fs::create_dir_all(root.join("inner/src")).expect("create inner sources");
+    fs::write(root.join("src/outer.slug"), "export val name = \"outer\"\n")
         .expect("write outer module");
     fs::write(root.join("inner/slug.toml"), "").expect("write inner marker");
     fs::write(
-        root.join("inner/inner.slug"),
+        root.join("inner/src/inner.slug"),
         "export val name = \"inner\"\n",
     )
     .expect("write inner module");
@@ -581,6 +593,108 @@ fn the_nearest_slug_toml_marks_the_project_root() {
     let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run outer"));
     assert_eq!(code, Some(1));
     assert!(stderr.contains("module `outer` was not found"), "{stderr}");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_project_searches_only_its_src_for_modules() {
+    let root = project_fixture("src-only");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    fs::write(root.join("jobs.slug"), "export val one = 1\n").expect("write root module");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    let program = root.join("tests/basic.slug");
+    fs::write(&program, "println(import(\"jobs\").one)\n").expect("write program");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&program)
+        .output()
+        .expect("run without src");
+    let (code, _, stderr) = output_text(&output);
+    assert_eq!(code, Some(1));
+    let diagnostic: serde_json::Value = serde_json::from_str(stderr.trim()).expect("JSON");
+    assert_eq!(diagnostic["code"], "module_not_found");
+    let canonical = fs::canonicalize(&root).unwrap();
+    let messages = diagnostic["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|suggestion| suggestion["message"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        messages.contains(&format!(
+            "the project at {} has no `src` directory: its modules go in {}",
+            canonical.display(),
+            canonical.join("src").display()
+        )),
+        "{messages:?}"
+    );
+
+    // With `src/`, the module at the project root is still not found.
+    fs::create_dir_all(root.join("src")).expect("create source directory");
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run with src"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("module `jobs` was not found"), "{stderr}");
+    assert!(!stderr.contains("has no `src` directory"), "{stderr}");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_project_embeds_assets_from_its_assets_folder() {
+    let root = project_fixture("assets");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    fs::create_dir_all(root.join("src")).expect("create source directory");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(
+        root.join("src/page.slug"),
+        "export val page = asset(\"page.html\")\n",
+    )
+    .expect("write module embedding an asset");
+    let program = root.join("tests/check.slug");
+    fs::write(
+        &program,
+        "println(import(\"page\").page, asset(\"page.html\"))\n",
+    )
+    .expect("write test embedding an asset");
+    let canonical = fs::canonicalize(&root).unwrap();
+
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run"));
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains(&format!(
+            "no asset `page.html`: the project at {} has no assets folder; create {}",
+            canonical.display(),
+            canonical.join("assets").display()
+        )),
+        "{stderr}"
+    );
+
+    fs::create_dir_all(root.join("assets")).expect("create assets folder");
+    fs::write(root.join("assets/page.html"), "hi").expect("write asset");
+    // The artifact carries the asset, so it runs after the file is gone.
+    let [source, _] = run_as_source_and_artifact(&program);
+    let (code, stdout, stderr) = output_text(&source);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6869\" 0x\"6869\"\n");
+    fs::remove_file(root.join("assets/page.html")).expect("remove asset");
+    let compiled = slug()
+        .args(["run", program.with_extension("cslug").to_str().unwrap()])
+        .output()
+        .expect("run artifact");
+    let (code, stdout, stderr) = output_text(&compiled);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6869\" 0x\"6869\"\n");
+
+    // A project clutch's module uses its clutch's assets, not the project's.
+    fs::write(root.join("assets/name.txt"), "project").expect("write project asset");
+    write_clutch_repository(&root.join("clutch"), "app.clutch", "app.greeting");
+    fs::write(
+        &program,
+        "println(import(\"app.greeting\").name, asset(\"name.txt\"))\n",
+    )
+    .expect("write clutch asset program");
+    let (code, stdout, stderr) = output_text(&slug().arg(&program).output().expect("run"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6170702e636c75746368\" 0x\"70726f6a656374\"\n");
     fs::remove_dir_all(root).expect("remove project fixture");
 }
 

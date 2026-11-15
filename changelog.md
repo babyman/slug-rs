@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A Slug project has one layout: `slug.toml` at the root, modules in
+  `src/`, embedded files in `assets/`, test programs in `tests/`, and native
+  code in a project clutch under `clutch/`. Imports search `src/`, not the
+  project root, so `src/orble/app.slug` is `orble.app`. Any module in the
+  project, outside a clutch, embeds files from `assets/` with `asset`. A
+  project without `src/` reports it when an import is not found. Programs
+  with no `slug.toml` above them are unchanged.
+
 - `scripts/stage-native-clutches.sh --repository DIR` stages the native
   clutches of any clutch repository, such as a project's: every clutch with
   a `[native]` table, rather than a fixed list of this checkout's.

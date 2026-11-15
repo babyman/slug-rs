@@ -16,6 +16,7 @@ impl ModuleResolver for NilLoader {
             searched: Vec::new(),
             suggestions: Vec::new(),
             elsewhere: Vec::new(),
+            hints: Vec::new(),
         })
     }
 }
@@ -42,6 +43,7 @@ mod tests {
                 searched: Vec::new(),
                 suggestions: Vec::new(),
                 elsewhere: Vec::new(),
+                hints: Vec::new(),
             }
         );
     }

@@ -45,6 +45,7 @@ impl ModuleResolver for NoModuleResolver {
             searched: Vec::new(),
             suggestions: Vec::new(),
             elsewhere: Vec::new(),
+            hints: Vec::new(),
         })
     }
 }

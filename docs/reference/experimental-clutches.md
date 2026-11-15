@@ -134,7 +134,12 @@ the files a program names are read, so a packaging tool learns which assets a
 program uses by compiling it.
 
 The desktop resolver reads an asset from the `assets` folder of the indexed
-clutch, installed or project, whose directory holds the module's source. Each name segment must match
+clutch, installed or project, whose directory holds the module's source.
+Otherwise it reads from the `assets` folder of the
+[project](../language/configuration.md#project-root) whose root holds the
+module's source, under the same rules. A project laid out this way becomes a
+clutch by copying: `src/`, `assets/`, and `tests/` keep their paths, and
+`clutch.toml` lists each module and test file. Each name segment must match
 a directory entry exactly, case included; the file must be a regular file of at
 most 16 MiB that stays inside the folder once links resolve. A static or nil
 host provides no assets. `slug.net.http`'s `mediaType(name)` gives an asset's
