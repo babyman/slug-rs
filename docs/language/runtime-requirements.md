@@ -205,7 +205,10 @@ The reference configuration sources, from lowest to highest precedence, are:
 
 1. `$SLUG_HOME/lib/slug.toml`, when `SLUG_HOME` is set;
 2. `slug.toml` in the selected module root, which replaces colliding library
-   keys;
+   keys. Unless the host selects one, the command-line runner's module root is
+   the nearest directory, from the entry program's own upward, that holds
+   `slug.toml`, or the program's directory when none does
+   ([project root](configuration.md#project-root));
 3. environment variables beginning with `SLUG__`;
 4. command-line options after the entry program name.
 

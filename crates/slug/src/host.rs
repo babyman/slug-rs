@@ -492,6 +492,34 @@ pub fn default_library_root(slug_home: Option<&Path>) -> Option<PathBuf> {
         .or_else(|| slug_home.map(|home| home.join("lib")))
 }
 
+/// The file whose presence marks a project root.
+pub const PROJECT_MARKER: &str = "slug.toml";
+
+/// The project module root for a program in `directory`: the nearest of
+/// `directory` and its ancestors that holds `slug.toml`, or `directory`
+/// itself when none does. The search runs over the canonical path, and a root
+/// above `directory` is returned canonical.
+#[must_use]
+pub fn project_root(directory: &Path) -> PathBuf {
+    // A bare file name's parent is the empty path: the current directory.
+    let directory = if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    };
+    let Ok(canonical) = fs::canonicalize(directory) else {
+        return directory.to_path_buf();
+    };
+    // A marker beside the program leaves its directory as given.
+    match canonical
+        .ancestors()
+        .find(|ancestor| ancestor.join(PROJECT_MARKER).is_file())
+    {
+        Some(root) if root != canonical => root.to_path_buf(),
+        _ => directory.to_path_buf(),
+    }
+}
+
 /// Builds the default Slug host VM, including module resolution and configuration.
 ///
 /// The caller supplies its source root and entry-module identity; library and

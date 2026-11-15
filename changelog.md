@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A `slug.toml` marks a project root. Slug looks for one in the entry
+  program's directory and the directories above it, so `slug tests/check.slug`
+  imports the project's top-level modules and reads its configuration. With
+  none, the program's directory is the root, as before.
+
 - Crawl's server finds what each player sees in forks, as it draws the
   pages, and keeps it on the world's task: `game.sightsOf` finds it and
   changes nothing, `game.applySights` keeps it, and `game.tick` takes

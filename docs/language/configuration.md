@@ -55,7 +55,7 @@ fully-qualified key.
 | Precedence | Source            | Location or form                        |
 |-----------:|-------------------|-----------------------------------------|
 |     Lowest | Library TOML      | `$SLUG_HOME/lib/slug.toml`              |
-|            | Project TOML      | `slug.toml` in the selected module root |
+|            | Project TOML      | `slug.toml` at the project root         |
 |            | Environment       | `SLUG__...` variables                   |
 |    Highest | Program arguments | options after the entry program         |
 |   Fallback | Source code       | second argument to `cfg`                |
@@ -63,12 +63,24 @@ fully-qualified key.
 Both TOML files are optional. An unavailable or malformed optional TOML file contributes no values and does not expose a
 host parsing failure to the Slug program.
 
+## Project root
+
+A `slug.toml` file marks a project root, even an empty one. Unless the host selects a module root, the runner looks for
+`slug.toml` in the entry program's directory and then in each directory above it; the first directory that has one is
+the project root. When none does, the program's directory is the project root. A nested `slug.toml` starts a separate
+project. So `slug tests/check.slug` and `slug bin/serve.slug` import the project's top-level modules and read its
+configuration, wherever they run from.
+
+An entry program found in the library (`slug hello` reading `$SLUG_HOME/lib/hello.slug`) does not search: its root is
+its own directory. A `slug.toml` in a directory above unrelated programs, such as a home directory, makes them all one
+project.
+
 ## Library source path
 
 When `SLUG_HOME` is set, the runtime uses `$SLUG_HOME/lib` as the library
 module root as well as the location of the optional library TOML. Imports first
-search relative to their importer, then the project module root, and finally
-this library root. This allows a runtime installation and its Slug library
+search relative to their importer, then the [project root](#project-root), and
+finally this library root. This allows a runtime installation and its Slug library
 sources to move together:
 
 ```text

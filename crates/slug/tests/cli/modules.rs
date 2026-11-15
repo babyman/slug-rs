@@ -504,6 +504,123 @@ fn a_bare_program_name_imports_sibling_modules() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
 }
 
+/// A fresh directory for a project-root fixture.
+fn project_fixture(kind: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("slug-cli-project-{kind}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create project fixture");
+    root
+}
+
+fn output_text(output: &std::process::Output) -> (Option<i32>, String, String) {
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_program_below_slug_toml_uses_that_directory_as_its_project_root() {
+    let root = project_fixture("marker");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(root.join("slug.toml"), "[app]\nname = \"root\"\n").expect("write marker");
+    fs::write(root.join("jobs.slug"), "export val one = 1\n").expect("write root module");
+    let program = root.join("tests/basic.slug");
+    fs::write(
+        &program,
+        "val jobs = import(\"jobs\")\nprintln(jobs.one, cfg(\"app.name\", \"none\"))\n",
+    )
+    .expect("write program in a subdirectory");
+
+    for output in run_as_source_and_artifact(&program) {
+        let (code, stdout, stderr) = output_text(&output);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "1 root\n");
+    }
+
+    // Named relative to the working directory, the program finds the same root.
+    for directory in [root.clone(), root.join("tests")] {
+        let relative = if directory == root {
+            "tests/basic.slug"
+        } else {
+            "basic.slug"
+        };
+        let output = slug()
+            .current_dir(&directory)
+            .arg(relative)
+            .output()
+            .expect("run relative program");
+        let (code, stdout, stderr) = output_text(&output);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "1 root\n");
+    }
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn the_nearest_slug_toml_marks_the_project_root() {
+    let root = project_fixture("nested");
+    fs::create_dir_all(root.join("inner/tests")).expect("create nested project");
+    fs::write(root.join("slug.toml"), "").expect("write outer marker");
+    fs::write(root.join("outer.slug"), "export val name = \"outer\"\n")
+        .expect("write outer module");
+    fs::write(root.join("inner/slug.toml"), "").expect("write inner marker");
+    fs::write(
+        root.join("inner/inner.slug"),
+        "export val name = \"inner\"\n",
+    )
+    .expect("write inner module");
+    let program = root.join("inner/tests/check.slug");
+    fs::write(&program, "println(import(\"inner\").name)\n").expect("write inner program");
+    let (code, stdout, stderr) = output_text(&slug().arg(&program).output().expect("run inner"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "inner\n");
+
+    fs::write(&program, "println(import(\"outer\").name)\n").expect("write outer import");
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run outer"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("module `outer` was not found"), "{stderr}");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_configured_root_or_a_library_entry_does_not_search_for_slug_toml() {
+    let root = project_fixture("no-search");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(root.join("slug.toml"), "[app]\nname = \"root\"\n").expect("write marker");
+    let program = root.join("tests/basic.slug");
+    fs::write(&program, "println(cfg(\"app.name\", \"none\"))\n").expect("write program");
+    let output = slug()
+        .env("SLUG_FIXTURE_MODULE_ROOT", root.join("tests"))
+        .arg(&program)
+        .output()
+        .expect("run with a configured root");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "none\n");
+
+    // `slug tools/hello` reads `$SLUG_HOME/lib/tools/hello.slug`; the
+    // marker above the library does not make a project of it.
+    fs::create_dir_all(root.join("home/lib/tools")).expect("create library");
+    fs::write(root.join("home/slug.toml"), "[app]\nname = \"home\"\n").expect("write home marker");
+    fs::write(
+        root.join("home/lib/tools/hello.slug"),
+        "println(cfg(\"app.name\", \"none\"))\n",
+    )
+    .expect("write library program");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .current_dir(&root)
+        .arg("tools/hello")
+        .output()
+        .expect("run library program");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "none\n");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
 #[test]
 fn describes_a_modules_declarations_and_gates_unexported_ones() {
     let root = std::env::temp_dir().join(format!("slug-cli-describe-{}", std::process::id()));

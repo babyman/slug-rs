@@ -5,7 +5,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::{build_default_host_vm, interactive::Server};
+use crate::{build_default_host_vm, interactive::Server, project_root};
 use serde::Serialize;
 
 const SERVER_COMMAND: &str = "slug --server";
@@ -31,9 +31,9 @@ pub fn run_server() -> ExitCode {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let source_root = match application.as_deref().and_then(Path::parent) {
-        Some(parent) => parent.to_path_buf(),
+        Some(parent) => project_root(parent),
         None => match env::current_dir() {
-            Ok(path) => path,
+            Ok(path) => project_root(&path),
             Err(error) => {
                 eprintln!("{SERVER_COMMAND}: cannot determine current directory: {error}");
                 return ExitCode::from(1);

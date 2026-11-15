@@ -309,7 +309,7 @@ impl Diagnostic {
         self.suggestions
             .extend(missing.elsewhere.iter().map(|path| DiagnosticFix {
                 message: format!(
-                    "`{path}` exists outside the directories searched: imports look only in the importing file's directory, the program's directory, and installed modules, so move the importing file beside it"
+                    "`{path}` exists outside the directories searched: imports look only in the importing file's directory, the project root, and installed modules, so put a `slug.toml` in the directory that holds it to make that the project root, or move the importing file beside it"
                 ),
                 edits: Vec::new(),
             }));

@@ -8,6 +8,7 @@ use std::{
 use slug::{
     DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
     diagnostic::{Diagnostic, DiagnosticCategory},
+    project_root,
 };
 use slug_frontend::{ArtifactHost, SourceError};
 use slug_vm::{
@@ -335,7 +336,7 @@ fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopL
         }
     };
     let source_root =
-        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
+        configured_source_root.unwrap_or_else(|| entry_project_root(&resolved_path, path));
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -349,6 +350,18 @@ fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopL
             }
         };
     Ok((resolved_path.to_string_lossy().into_owned(), source, loader))
+}
+
+/// The project root for an entry program requested as `requested` and read
+/// from `resolved`. An entry found through the library fallback keeps its own
+/// directory, so the library's `slug.toml` never marks a project.
+fn entry_project_root(resolved: &Path, requested: &str) -> PathBuf {
+    let directory = program_directory(resolved);
+    if resolved == Path::new(requested) {
+        project_root(directory)
+    } else {
+        directory.to_path_buf()
+    }
 }
 
 /// The directory holding a program file. A bare file name's parent is the
@@ -461,7 +474,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     };
     let artifact_path = Path::new(path);
-    let source_root = program_directory(artifact_path);
+    let source_root = &project_root(program_directory(artifact_path));
     let entry_module = artifact_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -543,7 +556,7 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
         }
     };
     let source_root =
-        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
+        configured_source_root.unwrap_or_else(|| entry_project_root(&resolved_path, path));
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
