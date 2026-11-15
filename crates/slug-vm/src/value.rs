@@ -1427,6 +1427,43 @@ pub struct StructField {
 #[derive(Clone, Debug)]
 pub struct StructSchema {
     pub(crate) fields: Vec<StructField>,
+    /// Set on a schema the runtime defines. A program's schemas are the same
+    /// only as the same value; a builtin one is the same wherever it is made,
+    /// so each VM of a program can build its own.
+    pub(crate) builtin: Option<BuiltinSchema>,
+}
+
+/// A struct schema the runtime defines rather than a program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BuiltinSchema {
+    /// `Error`, the standard error struct.
+    Error,
+}
+
+impl StructSchema {
+    /// Whether two schemas are the same type.
+    pub(crate) fn same(a: &Rc<Self>, b: &Rc<Self>) -> bool {
+        Rc::ptr_eq(a, b) || (a.builtin.is_some() && a.builtin == b.builtin)
+    }
+
+    /// `Error`: `type:str = "Error"`, `msg:str`, and `code`, `data`, and
+    /// `cause`, which default to `nil`. `lib/slug/builtin.slug` declares it.
+    pub(crate) fn error() -> Self {
+        let field = |name: &str, default: Option<Value>| StructField {
+            name: name.into(),
+            default,
+        };
+        Self {
+            fields: alloc::vec![
+                field("type", Some(Value::string("Error"))),
+                field("msg", None),
+                field("code", Some(Value::Nil)),
+                field("data", Some(Value::Nil)),
+                field("cause", Some(Value::Nil)),
+            ],
+            builtin: Some(BuiltinSchema::Error),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1949,7 +1986,7 @@ impl Value {
                 true
             }
             (Self::Struct(a), Self::Struct(b)) => {
-                if !Rc::ptr_eq(&a.schema, &b.schema) || a.values.len() != b.values.len() {
+                if !StructSchema::same(&a.schema, &b.schema) || a.values.len() != b.values.len() {
                     return Some(false);
                 }
                 step()?;
@@ -2011,7 +2048,8 @@ impl Value {
                     }
                 }
                 (Self::Struct(a), Self::Struct(b)) => {
-                    if !Rc::ptr_eq(&a.schema, &b.schema) || a.values.len() != b.values.len() {
+                    if !StructSchema::same(&a.schema, &b.schema) || a.values.len() != b.values.len()
+                    {
                         return false;
                     }
                     let pair = (
@@ -2048,7 +2086,7 @@ impl Value {
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
+            (Self::StructSchema(a), Self::StructSchema(b)) => StructSchema::same(a, b),
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
             (Self::Closure(a), Self::Closure(b)) => crate::sync::Code::ptr_eq(a, b),
@@ -2149,4 +2187,28 @@ fn int_equals_float(integer: i64, float: f64) -> bool {
         && float < -(i64::MIN as f64)
         && (float as i64) as f64 == float
         && float as i64 == integer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_schemas_are_the_same_wherever_they_are_made() {
+        let error = Rc::new(StructSchema::error());
+        let other_error = Rc::new(StructSchema::error());
+        let program = |fields: Vec<StructField>| {
+            Rc::new(StructSchema {
+                fields,
+                builtin: None,
+            })
+        };
+        let lookalike = program(StructSchema::error().fields);
+        let other_lookalike = program(StructSchema::error().fields);
+
+        assert!(StructSchema::same(&error, &other_error));
+        assert!(!StructSchema::same(&error, &lookalike));
+        assert!(!StructSchema::same(&lookalike, &other_lookalike));
+        assert!(StructSchema::same(&lookalike, &lookalike));
+    }
 }

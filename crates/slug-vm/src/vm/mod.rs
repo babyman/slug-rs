@@ -1784,6 +1784,10 @@ impl Vm {
         globals.insert("int".into(), Value::Builtin(Builtin::Int));
         globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
         globals.insert("describe".into(), Value::Builtin(Builtin::Describe));
+        globals.insert(
+            "Error".into(),
+            Value::StructSchema(Rc::new(crate::StructSchema::error())),
+        );
     }
 
     #[cfg(not(feature = "concurrency"))]
@@ -3379,6 +3383,7 @@ impl Vm {
         self.stack
             .push(Value::StructSchema(Rc::new(crate::StructSchema {
                 fields: schema_fields,
+                builtin: None,
             })));
         Ok(())
     }

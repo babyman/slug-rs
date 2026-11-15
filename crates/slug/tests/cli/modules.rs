@@ -1039,6 +1039,60 @@ fn an_artifact_carries_the_implicit_builtin_module() {
 }
 
 #[test]
+fn error_is_defined_by_the_runtime_without_a_library() {
+    let root = std::env::temp_dir().join(format!("slug-runtime-error-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("create empty home");
+    fs::write(
+        root.join("maker.slug"),
+        "export val make = fn(m) { Error {msg: m} }\nexport val schema = Error\n",
+    )
+    .expect("write maker");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val maker = import(\"maker\")\n\
+         val recover = fn() {\n    \
+             defer onerror(err) { return err }\n    \
+             throw Error {msg: \"caught\"}\n\
+         }\n\
+         val main = fn() {\n    \
+             val e = recover()\n    \
+             println(e.type, e.msg, e.code, e.data, e.cause)\n    \
+             println(e == maker.make(\"caught\"), maker.schema == Error)\n\
+         }\n",
+    )
+    .expect("write program");
+    let artifact = path.with_extension("cslug");
+    let run = |arguments: &[&std::ffi::OsStr]| {
+        slug()
+            .env("SLUG_HOME", &home)
+            .args(arguments)
+            .output()
+            .expect("run slug")
+    };
+    let source = run(&[path.as_os_str()]);
+    let compile = run(&["compile".as_ref(), path.as_os_str(), artifact.as_os_str()]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = run(&["run".as_ref(), artifact.as_os_str()]);
+    fs::remove_dir_all(&root).expect("remove fixture");
+
+    for output in [source, compiled] {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "Error caught nil nil nil\ntrue true\n",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn bytes_variables_updated_in_place_keep_value_semantics() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-bytes-variable-updates-{}",

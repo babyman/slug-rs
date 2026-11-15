@@ -651,7 +651,7 @@ fn matches_type(
             let Value::Struct(actual) = value else {
                 return Ok(false);
             };
-            Ok(Rc::ptr_eq(&actual.schema, expected))
+            Ok(crate::StructSchema::same(&actual.schema, expected))
         }
         MatchType::Union(members) => members.iter().try_fold(false, |matches, member| {
             Ok(matches || matches_type(member, value, operands)?)
