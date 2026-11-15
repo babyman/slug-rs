@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A runtime built without concurrency reports `spawn`, `nursery`, and timer
+  or task-await `select` cases as `capability_unavailable` errors, where
+  they were `invalid_call`, so a program or test can tell a missing
+  capability from a real fault.
+
 - `slug.time` has clocks, on the desktop as well as boards: `nowMs()` is
   milliseconds since the Unix epoch on the wall clock, and `monotonicMs()`
   is milliseconds on a clock that never goes back, the one `select { after }`

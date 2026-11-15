@@ -550,6 +550,7 @@ pub fn runtime_code(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
         RuntimeErrorKind::OutOfBounds => "out_of_bounds",
         RuntimeErrorKind::InvalidCall => "invalid_call",
+        RuntimeErrorKind::CapabilityUnavailable => "capability_unavailable",
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",
         RuntimeErrorKind::Module => "module",

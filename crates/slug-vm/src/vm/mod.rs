@@ -1769,7 +1769,7 @@ impl Vm {
     #[cfg(not(feature = "concurrency"))]
     fn runtime_capability_error(&self, capability: &str) -> RuntimeError {
         self.error_at(
-            RuntimeErrorKind::InvalidCall,
+            RuntimeErrorKind::CapabilityUnavailable,
             format!("runtime capability `{capability}` is unavailable"),
         )
     }

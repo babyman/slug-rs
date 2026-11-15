@@ -11,7 +11,7 @@ fn slim_runtime_defers_concurrency_capability_errors_until_execution() {
     let error = Vm::new()
         .run_named(&program, "main")
         .expect_err("executed scheduler operation must report its unavailable capability");
-    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.kind, RuntimeErrorKind::CapabilityUnavailable);
     assert_eq!(
         error.message,
         "runtime capability `select timer or task-await` is unavailable"

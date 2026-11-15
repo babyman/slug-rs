@@ -13,5 +13,31 @@ val clocksAreWholeMilliseconds = fn() {
     assertTrue(time.monotonicMs() == int(time.monotonicMs()))
 }
 
-// sleepMs waits on select timers, which a slim runtime leaves out, so its
-// tests are in crates/slug/tests/typed_core.rs, behind `concurrency`.
+// sleepMs waits on select timers, which a slim runtime leaves out. There
+// these tests check that it refuses cleanly; an onerror handler recovers
+// unless it throws, so any other failure is rethrown and still fails.
+val unlessWithoutTimers = fn(err) {
+    if (err.type != "capability_unavailable") { throw err }
+}
+
+@test
+val sleepAdvancesTheMonotonicClock = fn() {
+    defer onerror(err) { unlessWithoutTimers(err) }
+    val start = time.monotonicMs()
+    time.sleepMs(20)
+    assertTrue(time.monotonicMs() - start >= 20)
+}
+
+@test
+val sleepParksOnlyItsTask = fn() {
+    defer onerror(err) { unlessWithoutTimers(err) }
+    val events = chan(2)
+    nursery {
+        spawn { time.sleepMs(100); select { send events, "slept" } }
+        // Lets the sleeper start; a sleep that blocked the scheduler would
+        // hold this task until the sleeper had sent first.
+        select { after 10 }
+        select { send events, "ran" }
+    }
+    assertTrue(select { recv events } == "ran")
+}

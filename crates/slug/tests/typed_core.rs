@@ -72,7 +72,6 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/bytes.slug",
         "modules/toml.slug",
         "modules/test.slug",
-        "modules/time.slug",
         "native/source/core.c",
         "native/source/slug_core.h",
     ] {
@@ -91,8 +90,7 @@ fn slug_home(directory: &TemporaryDirectory) {
          \"slug.string\" = \"slug.core.clutch\"\n\
          \"slug.bytes\" = \"slug.core.clutch\"\n\
          \"slug.fmt.toml\" = \"slug.core.clutch\"\n\
-         \"slug.test\" = \"slug.core.clutch\"\n\
-         \"slug.time\" = \"slug.core.clutch\"\n",
+         \"slug.test\" = \"slug.core.clutch\"\n",
     )
     .expect("write repository manifest");
     let manifest = NativeManifest::from_clutch_source(
@@ -190,38 +188,6 @@ fn adds_and_takes_square_roots() {
         b"",
     );
     assert_eq!(stdout(&output), "42 -3 3 4 0\n");
-}
-
-#[cfg(feature = "concurrency")]
-#[test]
-fn sleep_advances_the_monotonic_clock() {
-    let output = run_cli(
-        "val time = import(\"slug.time\")\n\
-         val start = time.monotonicMs()\n\
-         time.sleepMs(20)\n\
-         println(time.monotonicMs() - start >= 20)\n",
-        b"",
-    );
-    assert_eq!(stdout(&output), "true\n");
-}
-
-#[cfg(feature = "concurrency")]
-#[test]
-fn sleep_parks_only_its_task() {
-    // A sleep that blocked the scheduler would hold the main task, which
-    // waits a little so the sleeper starts first, until the sleeper sent.
-    let output = run_cli(
-        "val time = import(\"slug.time\")\n\
-         val events = chan(2)\n\
-         nursery {\n\
-             spawn { time.sleepMs(100); select { send events, \"slept\" } }\n\
-             select { after 10 }\n\
-             select { send events, \"ran\" }\n\
-         }\n\
-         println(select { recv events })\n",
-        b"",
-    );
-    assert_eq!(stdout(&output), "ran\n");
 }
 
 #[test]
