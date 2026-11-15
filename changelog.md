@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Crawl's server joins a player and draws a whole page in a task of its
+  own. The game's caches are `task var`s, and a request ran in its
+  connection's task, which for an event stream lives as long as the page
+  is open: each page kept its own copy of what joining and drawing had
+  cached, the town's thousand starting squares among them. With 1000
+  players the server peaks at about 540 MB, from 670, and at 440 MB when
+  nobody moves, from 700. Keys still run in the connection's task, since a
+  new task waits its turn behind the tick.
+
 - A nursery lets go of a task that settles with a value. It kept every
   task it started until it had 64 and then twice what remained, and with
   each task its result, so a loop that starts forks every tick held dozens

@@ -740,6 +740,19 @@ val onUse = fn(request:map):map {
     })
 }
 
+// Runs `work` in a task of its own and returns the response it returns. Joining and
+// drawing a whole page fill the game's caches, which are `task var`s, and a
+// request's task is its connection's: for an event stream, it lives as long
+// as the page is open, and with it what the caches held, about a thousand
+// squares for each page in a crowded town. A key needs none of that, and
+// each task started costs a turn in the scheduler's queue behind the tick.
+val apart = fn(work:fn):map {
+    match await(spawn { work() }) {
+        response: map => response
+        _ => {status: 500}
+    }
+}
+
 // A number from the query, held between `low` and `high`, or `fallback`.
 val bounded = fn(text, low:num, high:num, fallback:num):num {
     match toInt(text ?? "") {
@@ -750,7 +763,7 @@ val bounded = fn(text, low:num, high:num, fallback:num):num {
 
 // A stream of the player's game as server-sent events, starting with how it
 // is now, drawn through a window `cols` by `rows` from the query.
-val onEvents = fn(request:map):map {
+val onEvents = fn(request:map):map { apart(fn() {
     asPlayer(request, fn(id) {
         val cols = bounded(request.query.cols, 20, level.WIDTH, level.WIDTH)
         val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
@@ -764,7 +777,7 @@ val onEvents = fn(request:map):map {
         refreshed = refreshed + {[id]: true}
         {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
     })
-}
+}) }
 
 /**
  * The HTTP handler for the game: `GET /` serves the page; `/htmx.js`,
@@ -773,7 +786,7 @@ val onEvents = fn(request:map):map {
  */
 export val handler = fn():fn {
     http.router([
-        ["GET", "/", fn(request) { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }],
+        ["GET", "/", fn(request) { apart(fn() { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }) }],
         ["GET", "/htmx.js", fn(request) { file("htmx.js", asset("htmx.js")) }],
         ["GET", "/crawl.css", fn(request) { file("crawl.css", asset("crawl.css")) }],
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
