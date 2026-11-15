@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A case can match the builtin `Error` with `err: struct<Error>`, in
+  source, artifacts, and interactive sessions; a local or module `Error`
+  schema still takes its place. Writing a schema as a bare type, such as
+  `err: Error`, now says to write `struct<Error>`. The compiler checks
+  `Error {...}` against its contract, which found `slug.channel`'s `recv`
+  and `await` timeouts throwing a missing-field error in place of their
+  `TimeoutError`: they now carry a message.
+
 - The runtime defines every builtin, and `slug.builtin` is only their
   contract: the declarations the compiler reads, built into `slug` and named
   by each embedded target. The VM defines `Error`, so a compiled program that

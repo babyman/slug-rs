@@ -413,11 +413,14 @@ impl Environment {
             .unwrap_or_default()
     }
 
-    pub(super) fn install_implicit_callable_export(&mut self, module: &ModuleSnapshot, name: &str) {
+    /// Installs the contract's export `name`, a function or a schema, as an
+    /// implicit builtin, so calls to it and `struct<name>` constraints check
+    /// against its declaration.
+    pub(super) fn install_implicit_export(&mut self, module: &ModuleSnapshot, name: &str) {
         let Some(binding) = module
             .exports
             .get(name)
-            .filter(|binding| !binding.callables.is_empty())
+            .filter(|binding| !binding.callables.is_empty() || binding.schema_identity.is_some())
         else {
             return;
         };
@@ -704,11 +707,15 @@ impl Environment {
                 });
         }
         self.resource_type(name).ok_or_else(|| {
-            super::SourceError::semantic(
-                super::SourceErrorCode::UnknownType,
-                format!("unknown type `{name}`"),
-                span.clone(),
-            )
+            let message = if self
+                .lookup(name)
+                .is_some_and(|binding| binding.schema_identity.is_some())
+            {
+                format!("`{name}` is a struct schema, not a type; write `struct<{name}>`")
+            } else {
+                format!("unknown type `{name}`")
+            };
+            super::SourceError::semantic(super::SourceErrorCode::UnknownType, message, span.clone())
         })
     }
 

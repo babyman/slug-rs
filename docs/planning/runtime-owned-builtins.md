@@ -23,9 +23,9 @@ Implements [builtins belong to the runtime](../decisions/2026-11-15-builtins-bel
   no contract.
 - [x] Tests: with no library root, a program constructs, throws, and catches
   `Error` from source and as an artifact, with the contract's defaults; an
-  `Error` from another module is equal. (A type pattern `x:Error` is an
-  `unknown type` error with or without the library; that predates this
-  plan.)
+  `Error` from another module is equal. (A case constraint is written
+  `x: struct<Error>`; it resolved no schema for `Error` until the type
+  checker took `Error` from the contract, after this plan.)
 
 ## 2. The contract from the host
 

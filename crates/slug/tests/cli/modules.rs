@@ -1093,6 +1093,76 @@ fn error_is_defined_by_the_runtime_without_a_library() {
 }
 
 #[test]
+fn a_case_constrains_its_subject_to_the_builtin_error() {
+    let root = std::env::temp_dir().join(format!("slug-error-constraint-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create fixture");
+    fs::write(
+        root.join("maker.slug"),
+        "export val make = fn(m) { Error {msg: m} }\n",
+    )
+    .expect("write maker");
+    fs::write(
+        root.join("mine.slug"),
+        "val Error = struct { msg }\nexport val own = fn(m) { Error {msg: m} }\n",
+    )
+    .expect("write mine");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val maker = import(\"maker\")\n\
+         val mine = import(\"mine\")\n\
+         val kind = fn(v) {\n    \
+             match v {\n        \
+                 x: struct<Error> => \"error ${x.msg}\"\n        \
+                 _: struct => \"struct\"\n        \
+                 _ => \"other\"\n    \
+             }\n\
+         }\n\
+         val caught = fn() {\n    \
+             defer onerror(err) { return kind(err) }\n    \
+             throw Error {msg: \"thrown\"}\n\
+         }\n\
+         println(kind(Error {msg: \"here\"}), kind(maker.make(\"there\")), caught())\n\
+         println(kind(mine.own(\"mine\")), kind(1))\n\
+         val Shadow = fn(v) {\n    \
+             val Error = struct { msg }\n    \
+             match v { _: struct<Error> => \"local\"; _ => \"builtin\" }\n\
+         }\n\
+         println(Shadow(Error {msg: \"m\"}))\n",
+    )
+    .expect("write program");
+    let artifact = path.with_extension("cslug");
+    let source = slug().arg(&path).output().expect("run source");
+    let compile = slug()
+        .arg("compile")
+        .arg(&path)
+        .arg(&artifact)
+        .output()
+        .expect("compile");
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = slug()
+        .arg("run")
+        .arg(&artifact)
+        .output()
+        .expect("run artifact");
+    fs::remove_dir_all(&root).expect("remove fixture");
+
+    for output in [source, compiled] {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "error here error there error thrown\nstruct other\nbuiltin\n",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn a_slug_builtin_file_does_not_replace_the_builtins() {
     let replacement = "export val Error = struct { type:str = \"Hijacked\", msg:str }\n\
                        export foreign println = fn(...values):nil\n";

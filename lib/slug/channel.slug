@@ -68,7 +68,7 @@ export val recv = fn<T>(channel:chan<T>, timeout:num = 0):T|nil {
 	if (timeout > 0) {
 		select {
 			recv channel
-			after timeout /> fn(_) { throw Error{ type: "TimeoutError", data: {ms: timeout, channel: channel} } }
+			after timeout /> fn(_) { throw Error{ type: "TimeoutError", msg: "no value arrived within ${timeout}ms", data: {ms: timeout, channel: channel} } }
 		}
 	} else {
 		select { recv channel }
@@ -97,7 +97,7 @@ export val await = fn<T>(handle:task<T>, timeout:num = 0):T {
 	if (timeout > 0) {
 		select {
 			await handle
-			after timeout /> fn(_) { throw Error{ type: "TimeoutError", data: {ms: timeout, handle: handle} } }
+			after timeout /> fn(_) { throw Error{ type: "TimeoutError", msg: "the task did not complete within ${timeout}ms", data: {ms: timeout, handle: handle} } }
 		}
 	} else {
 		select { await handle }

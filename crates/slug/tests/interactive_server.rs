@@ -245,6 +245,15 @@ fn configured_server_provides_builtins_and_rejects_importing_them() {
         "invalid_import"
     );
 
+    let error = submit(
+        &mut server,
+        7,
+        &session,
+        "val kind = fn(v) { match v { x: struct<Error> => x.msg; _ => \"other\" } }\nkind(Error{msg: \"m\"})",
+    );
+    assert!(error.ok, "{error:?}");
+    assert_eq!(error.result, completed(serde_json::json!("m"), "idle"));
+
     let keys = submit(&mut server, 5, &session, "keys({only: 1})");
     assert!(keys.ok, "{keys:?}");
     assert_eq!(keys.result, completed(serde_json::json!(["only"]), "idle"));

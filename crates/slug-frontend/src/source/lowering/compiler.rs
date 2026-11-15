@@ -149,6 +149,16 @@ impl Compiler {
         self
     }
 
+    /// Whether `name` is a builtin every module's globals have: one the VM
+    /// defines, or one the host's contract declares.
+    fn is_builtin(&self, name: &str) -> bool {
+        VM_BUILTINS.contains(&name)
+            || self
+                .implicit_globals
+                .as_ref()
+                .is_some_and(|names| names.contains(name))
+    }
+
     /// Whether `name` is certainly not a global the runtime will have.
     fn is_unknown_global(&self, name: &str) -> bool {
         let (Some(implicit), Some(selected)) = (&self.implicit_globals, &self.selected_globals)
@@ -1741,6 +1751,10 @@ impl Compiler {
                 self.globals
                     .get(name)
                     .map(|mutable| Binding::Global { mutable: *mutable })
+            })
+            .or_else(|| {
+                self.is_builtin(name)
+                    .then_some(Binding::Global { mutable: false })
             })
             .ok_or_else(|| {
                 SourceError::semantic(

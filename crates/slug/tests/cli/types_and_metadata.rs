@@ -2375,6 +2375,41 @@ fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
 }
 
 #[test]
+fn a_slug_channel_receive_times_out_with_a_timeout_error() {
+    let path = fixture_path("slug-channel-timeout");
+    fs::write(
+        &path,
+        "val channel = import(\"slug.channel\")\n\
+         val wait = fn() {\n    \
+             defer onerror(err) { return err }\n    \
+             channel.recv(chan(1), 5)\n\
+         }\n\
+         val slow = fn() {\n    \
+             defer onerror(err) { return err }\n    \
+             channel.await(spawn { channel.recv(chan(1)) }, 5)\n\
+         }\n\
+         val err = wait()\n\
+         println(err.type, err.msg, err.data.ms)\n\
+         println(slow().msg)\n",
+    )
+    .expect("write timeout source");
+    let output = slug()
+        .arg(&path)
+        .env("SLUG_HOME", workspace_root())
+        .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
+        .output()
+        .expect("run timeout source");
+    fs::remove_file(path).expect("remove timeout source");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "TimeoutError no value arrived within 5ms 5\nthe task did not complete within 5ms\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn does_not_export_builtin_channel_lifecycle_functions_from_slug_channel() {
     let path = fixture_path("slug-channel-without-lifecycle-functions");
     for member in ["chan()", "close(chan())"] {
