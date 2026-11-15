@@ -9,7 +9,8 @@ Actions run in last-in, first-out order. Plain actions run for both outcomes.
 When an `onerror` action runs, `name` receives the thrown Slug value, or a
 fault map with string keys `type`, `msg`, and `data` for a checked VM fault.
 
-An `onerror` action that returns normally recovers the active error. Its result
+An `onerror` action that completes without throwing, by `return` or by
+reaching the end of its block, recovers the active error. Its result
 becomes its enclosing function's result and the caller continues; pending
 actions in that function then run as successful cleanup. Throwing from a deferred action
 replaces the active error and records that error as its cause.

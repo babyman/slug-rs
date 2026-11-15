@@ -670,11 +670,13 @@ runs only after successful completion. `defer onerror(name)` runs only during
 error propagation and binds the error to `name`.
 
 A thrown value may be any Slug value. Slug has no `try` or `catch` construct;
-`defer onerror` is the recovery mechanism. If an error handler returns normally,
-it handles the active error: its result becomes its enclosing function's result
-and its caller continues. Re-propagation requires an explicit `throw`. A
-throw from a deferred action replaces the active error and retains it as the
-cause. Runtime faults, including invalid calls and unknown names, use the same
+`defer onerror` is the recovery mechanism. An error handler that completes
+without throwing, whether by `return value` or by reaching the end of its
+block, handles the active error: its value becomes its enclosing function's
+result and its caller continues. A handler that only observes the error, to
+log it or release something, must end with `throw err` to let it continue.
+A throw from a deferred action replaces the active error and retains it as
+the cause. Runtime faults, including invalid calls and unknown names, use the same
 error-unwinding path. Errors include available source location and Slug call
 frames, while deferred helper frames are omitted.
 
@@ -682,7 +684,11 @@ The current core subset implements `defer`, `defer onsuccess`, and `defer
 onerror`: actions run in last-in, first-out order when their scope exits.
 
 `defer onsuccess` runs only on normal scope completion. It is skipped while a
-throw or checked runtime fault is unwinding.
+throw or checked runtime fault is unwinding. Once a handler recovers, the
+scope is completing normally: the actions registered before that handler run
+as on success, so `defer onsuccess` and plain `defer` actions run and earlier
+`defer onerror` handlers do not. A handler that throws passes its error to the
+handlers registered before it.
 
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
@@ -696,11 +702,18 @@ diagnostic message; and `data` is `nil` until a fault defines structured extra
 data.
 
 ```slug
+// Recovers: a zero divisor gives nil, and the caller continues.
 val divide = fn(a, b) {
   defer { println("finished") }
-  defer onerror(err) { println("failed:", err) }
+  defer onerror(err) { println("failed:", err); nil }
   if (b == 0) { throw "division by zero" }
   a / b
+}
+
+// Observes, then lets the error continue to the caller.
+val load = fn(path) {
+  defer onerror(err) { println("cannot load", path); throw err }
+  readConfig(path)
 }
 ```
 
