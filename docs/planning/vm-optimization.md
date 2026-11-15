@@ -2723,3 +2723,94 @@ ticks, 4 forks) at 251 MB, from 535, with no forks unchanged at 220; the
 server under 1000 players on 4 forks at 602-605 MB, from 823-846, with
 latency the same or slightly better. PGO, interleaved: tuned 1.01x, hold-out
 1.00x.
+
+## Where the benchmarks stand (2026-11-14)
+
+Slug `ad2773a` (profile-guided, mimalloc) against python-build-standalone's
+CPython 3.15.1 (`20261021`, PGO, LTO, tail-call interpreter), the build the
+2026-10-25 tables used, on the same Apple M3. Two `make bench-source` runs of
+15 samples each, averaged; they agreed within 2%. "At `f85517a`" is the last
+table's ratio, and "Slug time" is Slug's own median against its median then.
+
+| workload | Slug ms | 3.15 ms | less startup | at `f85517a` | Slug time |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.5 | 10.7 | - | - | 1.09x |
+| function-call | 7.7 | 13.1 | 1.74x | 1.56x | 0.99x |
+| binary-trees | 11.9 | 15.0 | 1.92x | 1.92x | 0.99x |
+| fannkuch-redux | 27.3 | 17.1 | 3.73x | 3.59x | 0.99x |
+| shared-append | 55.2 | 57.3 | 1.11x | 1.15x | 0.96x |
+| higher-order | 17.0 | 15.9 | 2.60x | 4.27x | 0.70x |
+| closure-accumulate | 27.7 | 20.1 | 2.58x | 3.72x | 0.73x |
+| fib | 27.5 | 20.8 | 2.37x | 2.30x | 1.03x |
+| defer-errors | 32.6 | 20.0 | 3.12x | 3.09x | 0.95x |
+| word-frequency | 16.4 | 16.5 | 2.22x | 2.07x | 1.01x |
+| string-building | 7.6 | 13.6 | 1.41x | 1.27x | 1.04x |
+| expression-evaluator (hold-out) | 82.3 | 36.4 | 3.06x | 3.12x | 0.94x |
+| graph-search (hold-out) | 8.8 | 13.2 | 2.10x | 2.01x | 0.99x |
+| text-wrap (hold-out) | 32.0 | 17.7 | 4.06x | 4.33x | 0.90x |
+
+With startup removed, the geometric mean over these 13 workloads is 2.3x
+slower than CPython 3.15, from 2.4x: tuned 2.2x (2.3x), hold-out 3.0x
+(3.0x). Slug's own times are the steadier measure, since CPython ran 5-15%
+faster than on 2026-10-25 (startup 10.7 ms against 11.6) and that alone
+moves short workloads' ratios: across the 13, Slug takes 0.93x as long as at
+`f85517a`. Nearly all of it is `higher-order` (0.70x) and
+`closure-accumulate` (0.73x), the two the parameter-match work of 2026-10-25
+aimed at, and `text-wrap` (0.90x); the rest moved by a few percent at most.
+Startup is 3.5 ms, from 3.2, which has not been looked into. The numeric
+workloads (`n-body`, `spectral-norm` and their typed twins) still do under
+2 ms of work and run in 0.39-0.43x CPython's whole-process time.
+
+The real programs have no CPython twin, and the Crawl ones change with the
+game, so these are a baseline for what follows rather than a comparison:
+
+| workload | Slug ms |
+|---|---:|
+| invaders-game | 307 |
+| crawl-game | 325 |
+| crawl-ticks | 306 |
+| crawl-history | 1,176 |
+| crawl-pages (hold-out) | 439 |
+| crawl-crowd | 811 |
+| http-server | 330 |
+| tiny-interpreter (hold-out) | 186 |
+
+### Crawl at scale
+
+Since the diminishing-returns decision, most of the gains have come from
+forks, memory, the TCP clutch, and Crawl's own code rather than the
+interpreter. Crawl's crowd, 1000 players in one town, PGO, per tick:
+
+| forks | time a tick | speedup | CPU a tick |
+|---|---:|---:|---:|
+| 1 | 1.24-1.26 s | 1.0x | 1.24-1.26 s |
+| 2 | 0.73-0.74 s | 1.7x | 1.31-1.32 s |
+| 4 | 0.36-0.46 s | 2.7-3.5x | 1.30-1.37 s |
+| 8 | 0.39 s | 3.2x | 1.88 s |
+
+The M3 has four performance cores; at 8 forks the efficiency cores join for
+45% more CPU and no gain. At 4 forks the same work costs 3-10% more CPU than
+on one, against 20-25% before indexing reads in place, and four separate
+processes on this machine each lose 14-19%, so what remains between 4 forks
+and 4x is the work still done on the main thread. That has since shrunk:
+the world's step is 31 ms of a 361-378 ms tick, from 90-96 ms of 420-432
+(the tick's sets, then sights found in forks, both in Crawl's code).
+
+The Crawl server under the load test, 1000 players on 4 forks, against the
+same test at the start of the day:
+
+| | start of 2026-11-14 | now |
+|---|---:|---:|
+| key to move, median | about 1.6 s | 0.8-0.9 s |
+| key POST round trip, median | - | 20-40 ms |
+| peak memory | 823-846 MB | 270-375 MB |
+| threads | about 2,000 | 9-13 |
+
+Memory came from three fixes: the nursery's settled children (above), the
+web front end's per-connection `task var` caches, and the TCP clutch, which
+now reads and writes every connection on one I/O thread instead of two
+threads each. The higher end of the memory and threads is the sight forks
+running beside the previous tick's drawing. With every player in one town a
+key still takes about two drawings to show, so 1000 players are served but
+not yet responsive; a tick's drawing is about 1.0 s of CPU and needs to be
+about three times faster, from more cores or less work per page.
