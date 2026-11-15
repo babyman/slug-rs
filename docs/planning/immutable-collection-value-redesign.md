@@ -270,6 +270,12 @@ per-value heap allocation is introduced without a separate measured decision.
 **Gate:** this stage is optional. It is not justified solely by asymptotic
 complexity or by the existence of immutable collections in other runtimes.
 
+Proposed for maps on 2026-11-13 in
+[the persistent maps decision](../decisions/2026-11-13-persistent-maps.md):
+the corpus copies little map data now, so the case is the guarantee that a
+kept version costs O(log n) per update, judged on a corpus that must not
+regress.
+
 ## Delivery rules
 
 Land one stage or one independently measurable slice per commit. Run the
