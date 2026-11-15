@@ -310,25 +310,39 @@ fn does_not_expose_channel_operations_as_globals() {
 }
 
 #[test]
-fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
+fn builtins_are_predeclared_and_not_importable() {
     let path = fixture_path("builtin-module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nval implicit = chan(1)\nbuiltin.close(implicit)\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\nbuiltin.println(implicit == builtin.chan(1))\n",
+        "val implicit = chan(1)\nclose(implicit)\nprint(len([1, 2]))\nprintln(Error { msg: \"ready\" }.type)\nprintln(implicit == chan(1))\n",
+    )
+    .expect("write builtin source");
+    let output = slug().arg(&path).output().expect("run builtin source");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2Error\nfalse\n");
+    assert!(output.stderr.is_empty());
+
+    fs::write(
+        &path,
+        "val builtin = import(\"slug.builtin\")\nbuiltin.println(\"unreachable\")\n",
     )
     .expect("write builtin import source");
     let output = slug()
+        .args(["--diagnostic-format=json"])
         .arg(&path)
         .output()
         .expect("run builtin import source");
     fs::remove_file(path).expect("remove builtin import source");
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let diagnostic: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("diagnostic JSON");
+    assert_eq!(diagnostic["code"], "invalid_import");
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "2Error Error\nfalse\n"
+        diagnostic["message"],
+        "`slug.builtin` is not a module: its names, such as `Error` and `println`, are available in every module without an import"
     );
-    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -343,7 +357,7 @@ fn imports_library_modules_from_slug_home() {
     .expect("write SLUG_HOME library module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nval example = import(\"slug.example\")\nbuiltin.println(example.answer)\n",
+        "val example = import(\"slug.example\")\nprintln(example.answer)\n",
     )
     .expect("write library-importing source");
 

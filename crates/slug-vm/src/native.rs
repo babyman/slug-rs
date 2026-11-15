@@ -1293,7 +1293,10 @@ impl NativeFunction {
         self.0.module.inner.id
     }
 
-    pub(crate) fn matches_declared_arity(&self, minimum: usize, maximum: Option<usize>) -> bool {
+    /// Whether a `foreign` declaration accepting `minimum` to `maximum`
+    /// arguments (`None`: any number) declares this function.
+    #[must_use]
+    pub fn matches_declared_arity(&self, minimum: usize, maximum: Option<usize>) -> bool {
         match (self.0.arity, maximum) {
             (NativeArity::Exact(expected), Some(maximum)) => {
                 expected == minimum && expected == maximum

@@ -76,7 +76,7 @@ Each module has these members:
 | `name` | The logical name used to import it. The entry module is named by `entry`. |
 | `imports` | Module names this module passes as string literals to `import`, sorted and without duplicates. |
 | `dynamic_imports` | The line and column of each `import` call with an argument that is not a string literal, in source order. Present only when `closed` is `false`. |
-| `builtins` | Names this module references that are supplied implicitly by the host or the `slug.builtin` module, such as `println`, `cfg`, or `Error`, sorted. |
+| `builtins` | Names this module references that the runtime predeclares, such as `println`, `cfg`, or `Error`, sorted. |
 | `foreign` | The module's top-level `foreign` declarations, in declaration order. |
 | `resources` | The module's top-level `resource` declarations, in declaration order. |
 

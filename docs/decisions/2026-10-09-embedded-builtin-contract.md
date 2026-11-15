@@ -1,6 +1,15 @@
 # Embedded builtin contract
 
+## Status
+
+Superseded in part by
+[builtins belong to the runtime](2026-11-15-builtins-belong-to-the-runtime.md)
+(2026-11-15): the contract stays, but it is never run or carried in the
+artifact, and programs do not import it; the VM defines `Error`.
+
 ## Context
+
+
 
 The ESP32-S3 host executes a closed artifact without the desktop frontend or
 desktop native host. Its GPIO and time providers were registered, but the

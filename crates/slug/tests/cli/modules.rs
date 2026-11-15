@@ -1007,7 +1007,7 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
 }
 
 #[test]
-fn an_artifact_carries_the_implicit_builtin_module() {
+fn a_compiled_program_throws_and_catches_error() {
     let root = std::env::temp_dir().join(format!("slug-artifact-builtin-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create fixture");
@@ -1090,6 +1090,81 @@ fn error_is_defined_by_the_runtime_without_a_library() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn a_slug_builtin_file_does_not_replace_the_builtins() {
+    let replacement = "export val Error = struct { type:str = \"Hijacked\", msg:str }\n\
+                       export foreign println = fn(...values):nil\n";
+    let program = "print(\"a \")\nprintln(Error {msg: \"x\"}.type)\n";
+    let root = project_fixture("builtin-file");
+    fs::create_dir_all(root.join("loose/slug")).expect("create loose program");
+    fs::write(root.join("loose/slug/builtin.slug"), replacement).expect("write replacement");
+    fs::write(root.join("loose/main.slug"), program).expect("write loose program");
+    fs::create_dir_all(root.join("project/src/slug")).expect("create project");
+    fs::write(root.join("project/slug.toml"), "").expect("write marker");
+    fs::write(root.join("project/src/slug/builtin.slug"), replacement)
+        .expect("write project replacement");
+    fs::write(root.join("project/src/main.slug"), program).expect("write project program");
+
+    for path in ["loose/main.slug", "project/src/main.slug"] {
+        let output = slug().arg(root.join(path)).output().expect("run program");
+        assert_eq!(
+            output_text(&output),
+            (Some(0), "a Error\n".into(), String::new()),
+            "{path}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn the_compiler_knows_the_builtins_without_a_library() {
+    let root = project_fixture("builtin-contract");
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("create empty home");
+    let path = root.join("main.slug");
+    fs::write(&path, "val main = fn() { pirntln(\"x\") }\n").expect("write program");
+    let output = slug()
+        .env("SLUG_HOME", &home)
+        .args(["--diagnostic-format=json"])
+        .arg(&path)
+        .output()
+        .expect("run program");
+    fs::remove_dir_all(root).expect("remove fixture");
+
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostic: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("diagnostic JSON");
+    assert_eq!(diagnostic["code"], "unknown_name");
+    assert_eq!(
+        diagnostic["message"],
+        "unknown name `pirntln`; did you mean `println`?"
+    );
+}
+
+#[test]
+fn a_dynamic_import_of_slug_builtin_explains_the_builtins() {
+    let root = project_fixture("builtin-dynamic");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val name = \"slug.\" + \"builtin\"\nval main = fn() { import(name) }\n",
+    )
+    .expect("write program");
+    let output = slug().arg(&path).output().expect("run program");
+    fs::remove_dir_all(root).expect("remove fixture");
+
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""));
+    assert!(
+        stderr.contains("module `slug.builtin` was not found"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`slug.builtin` is not a module: its names, such as `Error` and `println`, are available in every module without an import"),
+        "{stderr}"
+    );
 }
 
 #[test]

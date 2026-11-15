@@ -215,7 +215,7 @@ fn session_infers_wrappers_from_retained_callable_signatures() {
 }
 
 #[test]
-fn configured_server_resolves_and_typechecks_builtin_imports() {
+fn configured_server_provides_builtins_and_rejects_importing_them() {
     let root = workspace_root();
     let loader = DesktopLoader::new(&root, Some(root.join("lib")));
     let mut server = Server::with_desktop_loader(
@@ -234,14 +234,16 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
     assert!(response.ok);
     let session = open_session(&mut server);
 
-    let imported = submit(
-        &mut server,
-        3,
-        &session,
-        "val builtin = import(\"slug.builtin\")\nbuiltin.len(\"hello\")",
+    let implicit = submit(&mut server, 3, &session, "len(\"hello\")");
+    assert!(implicit.ok, "{implicit:?}");
+    assert_eq!(implicit.result, completed(serde_json::json!(5), "idle"));
+
+    let imported = submit(&mut server, 6, &session, "import(\"slug.builtin\")");
+    assert!(!imported.ok);
+    assert_eq!(
+        imported.error.expect("semantic diagnostic").code,
+        "invalid_import"
     );
-    assert!(imported.ok, "{imported:?}");
-    assert_eq!(imported.result, completed(serde_json::json!(5), "idle"));
 
     let keys = submit(&mut server, 5, &session, "keys({only: 1})");
     assert!(keys.ok, "{keys:?}");

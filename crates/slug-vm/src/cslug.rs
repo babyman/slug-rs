@@ -439,19 +439,7 @@ impl ArtifactHost {
 
     /// The index of the module that `importer` imports as `name`.
     fn import_target(&self, importer: Option<&str>, name: &str) -> Option<usize> {
-        // The VM imports `slug.builtin` with no importer to install its
-        // exports as implicit globals; the compiler carries that module.
-        let Some(importer) = importer else {
-            return (name == "slug.builtin")
-                .then(|| {
-                    self.state
-                        .artifact
-                        .modules
-                        .iter()
-                        .position(|module| module.name == "slug.builtin")
-                })
-                .flatten();
-        };
+        let importer = importer?;
         let importer = self
             .state
             .artifact

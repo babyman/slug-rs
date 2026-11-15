@@ -1446,6 +1446,18 @@ impl StructSchema {
         Rc::ptr_eq(a, b) || (a.builtin.is_some() && a.builtin == b.builtin)
     }
 
+    /// The fields of the VM's `Error` and their defaults, for checking a
+    /// `slug.builtin` contract against the runtime.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn error_fields() -> Vec<(String, Option<Value>)> {
+        Self::error()
+            .fields
+            .into_iter()
+            .map(|field| (String::from(&*field.name), field.default))
+            .collect()
+    }
+
     /// `Error`: `type:str = "Error"`, `msg:str`, and `code`, `data`, and
     /// `cause`, which default to `nil`. `lib/slug/builtin.slug` declares it.
     pub(crate) fn error() -> Self {

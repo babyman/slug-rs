@@ -241,6 +241,10 @@ impl ModuleResolver for StaticHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
+
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.state.resolver.builtin_contract()
+    }
 }
 
 impl ModuleGraphHost for StaticHost {

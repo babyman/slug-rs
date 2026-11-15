@@ -441,7 +441,21 @@ fn remove_foreign_batch(
     }
 }
 
+/// The desktop runtime's `slug.builtin` contract, built into the binary so
+/// programs are checked against the runtime that runs them, whatever library
+/// is installed.
+pub const BUILTIN_CONTRACT_SOURCE: &str = include_str!("../../../lib/slug/builtin.slug");
+
 impl ModuleResolver for DesktopResolver {
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        Some(ModuleSource {
+            key: ModuleKey::new("<slug.builtin>"),
+            diagnostic_name: "<slug.builtin>".into(),
+            text: BUILTIN_CONTRACT_SOURCE.into(),
+            activation: None,
+        })
+    }
+
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         let relative = module_path(request.name)?;
         let mut candidates = Vec::new();

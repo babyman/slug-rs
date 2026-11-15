@@ -128,6 +128,44 @@ type SharedOutput = std::sync::Arc<std::sync::Mutex<OutputSink>>;
 
 /// The sink, locked; a builtin that panicked while holding it left it whole,
 /// since every write is one push.
+/// The builtins an interactive session registers, writing to `output`.
+/// `lib/slug/builtin.slug` declares them.
+fn session_builtin_functions(output: SharedOutput) -> Vec<NativeFunction> {
+    let module = NativeModule::new_thread_safe("slug.builtin", output)
+        .expect("static interactive output module is valid");
+    let functions: [(&str, NativeArity, NativeCallback); 6] = [
+        ("print", NativeArity::Variadic { minimum: 0 }, native_print),
+        (
+            "println",
+            NativeArity::Variadic { minimum: 0 },
+            native_println,
+        ),
+        ("len", NativeArity::Exact(1), native_len),
+        ("keys", NativeArity::Exact(1), native_keys),
+        (
+            "chan",
+            NativeArity::Range {
+                minimum: 0,
+                maximum: 1,
+            },
+            native_channel,
+        ),
+        ("close", NativeArity::Exact(1), native_close),
+    ];
+    functions
+        .into_iter()
+        .map(|(name, arity, callback)| {
+            let function = module
+                .function(name, arity, callback)
+                .expect("static interactive builtin is valid");
+            function
+                .declare_thread_safe()
+                .expect("interactive builtins have thread-safe state");
+            function
+        })
+        .collect()
+}
+
 fn locked(output: &SharedOutput) -> std::sync::MutexGuard<'_, OutputSink> {
     output
         .lock()
@@ -894,59 +932,10 @@ impl Server {
     }
 
     fn install_session_builtins(&mut self) {
-        let module = NativeModule::new_thread_safe("slug.builtin", self.output.clone())
-            .expect("static interactive output module is valid");
-        for (name, callback) in [
-            ("print", native_print as NativeCallback),
-            ("println", native_println as NativeCallback),
-        ] {
-            let function = module
-                .function(name, NativeArity::Variadic { minimum: 0 }, callback)
-                .expect("static interactive output function is valid");
-            function
-                .declare_thread_safe()
-                .expect("interactive builtins have thread-safe state");
+        for function in session_builtin_functions(self.output.clone()) {
             self.define_session_builtin(function)
-                .expect("interactive output binding is unique");
+                .expect("interactive builtin binding is unique");
         }
-        let length = module
-            .function("len", NativeArity::Exact(1), native_len)
-            .expect("static interactive length function is valid");
-        length
-            .declare_thread_safe()
-            .expect("interactive builtins have thread-safe state");
-        self.define_session_builtin(length)
-            .expect("interactive length binding is unique");
-        let keys = module
-            .function("keys", NativeArity::Exact(1), native_keys)
-            .expect("static interactive keys function is valid");
-        keys.declare_thread_safe()
-            .expect("interactive builtins have thread-safe state");
-        self.define_session_builtin(keys)
-            .expect("interactive keys binding is unique");
-        let channel = module
-            .function(
-                "chan",
-                NativeArity::Range {
-                    minimum: 0,
-                    maximum: 1,
-                },
-                native_channel,
-            )
-            .expect("static interactive channel function is valid");
-        channel
-            .declare_thread_safe()
-            .expect("interactive builtins have thread-safe state");
-        self.define_session_builtin(channel)
-            .expect("interactive channel binding is unique");
-        let close = module
-            .function("close", NativeArity::Exact(1), native_close)
-            .expect("static interactive close function is valid");
-        close
-            .declare_thread_safe()
-            .expect("interactive builtins have thread-safe state");
-        self.define_session_builtin(close)
-            .expect("interactive close binding is unique");
     }
 
     fn define_session_builtin(
@@ -976,5 +965,19 @@ impl Server {
 impl Default for Server {
     fn default() -> Self {
         Self::new(Vm::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_session_builtins_are_the_ones_the_contract_declares() {
+        let mismatches = slug_frontend::builtin_contract_mismatches(
+            "lib/slug/builtin.slug",
+            slug_desktop_loader::BUILTIN_CONTRACT_SOURCE,
+            &super::session_builtin_functions(super::SharedOutput::default()),
+        )
+        .expect("the contract parses");
+        assert!(mismatches.is_empty(), "{mismatches:?}");
     }
 }

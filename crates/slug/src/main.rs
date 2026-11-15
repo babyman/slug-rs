@@ -728,6 +728,17 @@ mod tests {
     use super::source_reader;
 
     #[test]
+    fn the_cli_builtins_are_the_ones_its_contract_declares() {
+        let mismatches = slug_frontend::builtin_contract_mismatches(
+            "lib/slug/builtin.slug",
+            slug_desktop_loader::BUILTIN_CONTRACT_SOURCE,
+            &super::builtin_functions(),
+        )
+        .expect("the contract parses");
+        assert!(mismatches.is_empty(), "{mismatches:?}");
+    }
+
+    #[test]
     fn falls_back_when_diagnostic_source_is_unavailable() {
         let error = SourceError {
             kind: SourceErrorKind::Parse,

@@ -29,49 +29,49 @@ Implements [builtins belong to the runtime](../decisions/2026-11-15-builtins-bel
 
 ## 2. The contract from the host
 
-- [ ] Give the compiler the `slug.builtin` contract from its host, not from
+- [x] Give the compiler the `slug.builtin` contract from its host, not from
   the resolver: `compile_with_resolver` and the interactive compiler stop
   resolving `slug.builtin`.
-- [ ] The CLI, its server, and the REPL use `lib/slug/builtin.slug` built
+- [x] The CLI, its server, and the REPL use `lib/slug/builtin.slug` built
   into the binary. The embedded build uses its descriptor's contract.
-- [ ] `import("slug.builtin")` is a compile error naming the builtins as
+- [x] `import("slug.builtin")` is a compile error naming the builtins as
   always available, and a runtime error for a dynamic import.
-- [ ] Remove the runtime's `slug.builtin` imports: the VM installs host
+- [x] Remove the runtime's `slug.builtin` imports: the VM installs host
   builtins from registrations only, and the virtual module goes.
-- [ ] Rewrite the tests that import `slug.builtin`.
-- [ ] Tests: a `slug/builtin.slug` beside a program, and in a project's
+- [x] Rewrite the tests that import `slug.builtin`.
+- [x] Tests: a `slug/builtin.slug` beside a program, and in a project's
   `src/`, changes neither `Error` nor the accepted names; the compiler reports
   unknown names with no library root; the import error and its hint.
 
 ## 3. Artifacts
 
-- [ ] Stop bundling `slug.builtin` in `compile_artifact`, and drop the
+- [x] Stop bundling `slug.builtin` in `compile_artifact`, and drop the
   artifact host's lookup for it. This replaces the bundling `f16bd1a` added.
-- [ ] Remove the report's filter for the carried module.
-- [ ] The firmware blink graph test expects three modules again.
-- [ ] Keep `an_artifact_carries_the_implicit_builtin_module`, renamed: a
+- [x] Remove the report's filter for the carried module.
+- [x] The firmware blink graph test expects three modules again.
+- [x] Keep `an_artifact_carries_the_implicit_builtin_module`, renamed: a
   compiled program still throws and catches `Error`.
 
 ## 4. Parity tests
 
-- [ ] The CLI host: each `foreign` declaration in the built-in contract has a
+- [x] The CLI host: each `foreign` declaration in the built-in contract has a
   registered function with a matching arity, and each registered builtin is
-  declared. Decide here how the slim build, without `chan` and `close`,
-  relates to a contract that declares them.
-- [ ] Each embedded target, over its contract and statically linked providers.
-  The embedded build already fails on an undeclared or unimplemented foreign
-  function; add `Error`.
-- [ ] The contract's `Error` fields and defaults equal the VM's schema.
+  declared. The interactive server's session builtins too. The slim build
+  registers `chan` and `close` as the full one does, so one contract serves
+  both.
+- [x] Each embedded target: `TargetDescriptor::check_builtin_contract`,
+  which the firmware build runs over the builtins its board registers.
+- [x] The contract's `Error` fields and defaults equal the VM's schema.
 
 ## 5. Documentation
 
-- [ ] Specification: the "Implicit builtin module" section and the note on
+- [x] Specification: the "Implicit builtin module" section and the note on
   unknown names.
-- [ ] `language/runtime-requirements.md` and
+- [x] `language/runtime-requirements.md` and
   `language/embedded-host-modules.md`.
-- [ ] The header comments of `lib/slug/builtin.slug` and the embedded
+- [x] The header comments of `lib/slug/builtin.slug` and the embedded
   contract: they declare, the runtime defines, nothing imports them.
-- [ ] Mark the [implicit builtin module](../decisions/2026-08-26-implicit-builtin-module.md)
+- [x] Mark the [implicit builtin module](../decisions/2026-08-26-implicit-builtin-module.md)
   and [embedded builtin contract](../decisions/2026-10-09-embedded-builtin-contract.md)
   decisions superseded in part, and add a changelog entry.
 

@@ -48,6 +48,29 @@ pub(super) struct Compiler {
     assets: super::assets::Assets,
 }
 
+/// Rejects `import("slug.builtin")`: the builtins' contract is not a module,
+/// and its names are already in every module.
+fn reject_builtin_import(arguments: &[CallArgument]) -> Result<(), SourceError> {
+    for argument in arguments {
+        if let CallArgument::Positional(
+            argument @ Expr {
+                kind: ExprKind::Value(Value::Str(name)),
+                ..
+            },
+        ) = argument
+            && name.as_ref() == slug_loader::BUILTIN_CONTRACT
+        {
+            return Err(SourceError::semantic(
+                SourceErrorCode::InvalidImport,
+                slug_loader::BUILTIN_IMPORT_HINT,
+                argument.span.clone(),
+            )
+            .with_extent(argument));
+        }
+    }
+    Ok(())
+}
+
 /// The VM's own builtins, which it installs in every module's globals.
 const VM_BUILTINS: [&str; 5] = ["cfg", "int", "stacktrace", "describe", "Error"];
 
@@ -1155,6 +1178,9 @@ impl Compiler {
                 }
                 ExprKind::Call { callee, arguments } => {
                     let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
+                    if import {
+                        reject_builtin_import(arguments)?;
+                    }
                     let positional = arguments
                         .iter()
                         .all(|argument| matches!(argument, CallArgument::Positional(_)));

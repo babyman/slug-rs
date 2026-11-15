@@ -182,9 +182,9 @@ before its declaration has run, or using another binding before the block
 declares it, is a static error at the use. A name that is not declared, and
 is not one the runtime provides to every module, is a static error that
 suggests the names in scope it most likely misspells. The runtime provides
-the exports of `slug.builtin` and the VM functions `cfg`, `int`, and
-`stacktrace`. When the compiler cannot know every name the runtime will
-provide, because `slug.builtin` is not available to it, a `{*}` declaration
+the names its `slug.builtin` contract declares, and the VM's `cfg`, `int`,
+`stacktrace`, `describe`, and `Error`. When the compiler cannot know every
+name the runtime will provide, because its host gives it no contract, a `{*}` declaration
 selects from a map whose entries are known only when it runs, or the source is
 an interactive session's, whose host may add names, an undeclared name is
 instead looked up when it runs and is an error then. An
@@ -786,24 +786,24 @@ piped, or names no such file is a compile error with the code
 
 ## Implicit builtin module
 
-`slug.builtin` is the small, host-provided foundation module. When the host
-registers matching bindings, its exports are implicitly available in every
-module and may also be imported explicitly with `import("slug.builtin")`.
-Local declarations take precedence over implicit builtin bindings: a module
+The builtins are predeclared in every module. The runtime defines all of
+them: the VM defines `Error`, `cfg`, `int`, `stacktrace`, and `describe`, and
+the host registers the functions it provides, such as `print`. `slug.builtin`
+names their contract, the declarations the compiler reads for their names
+and types, which the host supplies. It is not a module: no file found on the
+module path is read as `slug.builtin`, and `import("slug.builtin")` is an
+`invalid_import` error. Local declarations take precedence over builtins: a module
 that declares a function named like a builtin, such as `close`, replaces the
 builtin there rather than adding an overload to it, so `slug.io.fs`'s `close`
 accepts only files. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
-The bundled declaration module documents `cfg(key, default)`, `int(value)`,
-`print(...values)`, `println(...values)`, `len(value)`, and `keys(map)`. The
-host registers
-its functions
-independently of the file. When present,
-`lib/slug/builtin.slug` documents those functions and may export foundational
-Slug values such as `Error`. The module is intentionally limited to primitives
-and universally shared values. General utilities and channel operations belong
+The desktop contract, `lib/slug/builtin.slug`, is built into the `slug`
+executable. It declares `Error`, `print(...values)`, `println(...values)`,
+`len(value)`, `keys(map)`, `chan(capacity)`, and `close(channel)`, and
+documents `cfg(key, default)` and `int(value)`. It is never run. The builtins
+are intentionally limited to primitives and universally shared values. General utilities and channel operations belong
 to ordinary explicit modules such as `slug.channel` and `slug.std`.
 
 The standard library consists of modules loaded through this same mechanism.

@@ -107,8 +107,8 @@ modules and builtins available with the behavior exercised by their source:
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
   program imports it and the host installs the experimental filesystem clutch;
-- `slug.builtin` for host-provided foundational bindings when the fixture or
-  host environment registers them;
+- the builtins, which the runtime defines and the host's `slug.builtin`
+  contract declares;
 - `slug.time` for timer-oriented fixtures;
 - `slug.io.stderr` for standard-error output.
 
@@ -169,8 +169,9 @@ boundary. A conforming host MUST provide:
 - a registry for declared foreign functions, when a program declares them.
 
 The evaluator MUST keep these host capabilities separate from Slug bindings.
-Host services cannot become names visible to a Slug program except through a
-`slug.builtin` export, imported library module, or declared foreign function.
+Host services cannot become names visible to a Slug program except as a
+builtin its `slug.builtin` contract declares, an imported library module, or
+a declared foreign function.
 
 The host MAY obtain an entry program from source, a whole-program compiled
 artifact, statically embedded data, or an in-memory embedding API. Imported

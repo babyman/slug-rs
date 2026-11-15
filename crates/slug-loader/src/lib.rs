@@ -106,6 +106,25 @@ pub struct ForeignParameter {
     pub has_default: bool,
 }
 
+/// The name of the builtins' contract. Its names are predeclared in every
+/// module; it is not a module, so no program imports it.
+pub const BUILTIN_CONTRACT: &str = "slug.builtin";
+
+/// Why `import("slug.builtin")` fails, for the error that reports it.
+pub const BUILTIN_IMPORT_HINT: &str = "`slug.builtin` is not a module: its names, such as `Error` and `println`, are available in every module without an import";
+
+/// The error for a module request naming [`BUILTIN_CONTRACT`].
+#[must_use]
+pub fn builtin_import_error() -> ModuleLoadError {
+    ModuleLoadError::NotFound {
+        name: BUILTIN_CONTRACT.into(),
+        searched: Vec::new(),
+        suggestions: Vec::new(),
+        elsewhere: Vec::new(),
+        hints: vec![BUILTIN_IMPORT_HINT.into()],
+    }
+}
+
 /// Resolves logical module identities into host-provided source.
 pub trait ModuleResolver {
     /// Resolves one requested module without exposing host storage to the
@@ -129,6 +148,14 @@ pub trait ModuleResolver {
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
         let _ = module;
         Err(format!("no asset `{name}`: this host provides no assets"))
+    }
+
+    /// The `slug.builtin` contract: the declarations of the builtins this
+    /// host's runtime defines, which the compiler reads for their names and
+    /// types. It is never run. A host without one compiles programs that look
+    /// their builtins up when they run.
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        None
     }
 }
 
@@ -192,6 +219,13 @@ impl StaticModuleResolver {
 }
 
 impl ModuleResolver for StaticModuleResolver {
+    /// A provider named `slug.builtin` is the contract, not a module.
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.providers
+            .get(BUILTIN_CONTRACT)
+            .map(|provider| provider.source.clone())
+    }
+
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.providers
             .get(request.name)

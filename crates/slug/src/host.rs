@@ -321,6 +321,10 @@ impl ModuleResolver for DesktopLoader {
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
         self.state.resolver.asset(module, name)
     }
+
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.state.resolver.builtin_contract()
+    }
 }
 
 impl ModuleGraphHost for DesktopLoader {

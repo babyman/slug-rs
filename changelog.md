@@ -2,11 +2,15 @@
 
 ## Unreleased
 
-- A compiled `.cslug` carries `slug.builtin`, so `Error` and the module's
-  other exports exist when it runs. A compiled program that threw
-  `Error {...}` used to fail with ``unknown name `Error` `` instead, on the
-  desktop and on the ESP32-S3. `slug report` still lists it only when a
-  module imports it.
+- The runtime defines every builtin, and `slug.builtin` is only their
+  contract: the declarations the compiler reads, built into `slug` and named
+  by each embedded target. The VM defines `Error`, so a compiled program that
+  throws `Error {...}` no longer fails with ``unknown name `Error` ``, on the
+  desktop or the ESP32-S3, and programs have it without a library. A
+  `slug/builtin.slug` beside a program no longer replaces the builtins, and
+  `import("slug.builtin")` is an `invalid_import` error: use the names
+  directly. Tests and the firmware build fail when a host's builtins differ
+  from its contract.
 
 - A Slug project has one layout: `slug.toml` at the root, modules in
   `src/`, embedded files in `assets/`, test programs in `tests/`, and native

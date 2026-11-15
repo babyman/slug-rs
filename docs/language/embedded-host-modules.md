@@ -35,14 +35,17 @@ descriptor.
 
 ## `slug.builtin`
 
-The initial embedded profile provides the ordinary implicit and explicitly
-importable `slug.builtin` module with `Error`, `print`, `println`, `len`, and
-`keys`. `print` and `println` write to the host diagnostic stream. `len` and
-`keys` have the same behavior as on the desktop host.
+The embedded profile provides the ordinary builtins: `Error`, `print`,
+`println`, `len`, `keys`, `chan`, and `close`, declared by the target's
+contract, `clutch/slug.embedded.clutch/modules/builtin.slug`. The VM defines
+`Error`; the board package registers the functions, and the firmware build
+fails when they differ from the contract. As on the desktop, the contract is
+never run or carried in the artifact, and programs do not import it.
 
-The profile deliberately omits `chan` and `close` while embedded concurrency is
-unavailable. VM-provided `cfg`, `int`, and `stacktrace` remain available; the
-current firmware supplies an empty configuration and empty entry arguments.
+`print` and `println` write to the host diagnostic stream. `len`, `keys`,
+`chan`, and `close` have the same behavior as on the desktop host. VM-provided
+`cfg`, `int`, and `stacktrace` remain available; the current firmware
+supplies an empty configuration and empty entry arguments.
 
 ## `slug.gpio`
 

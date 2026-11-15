@@ -1016,7 +1016,7 @@ impl Vm {
     #[doc(hidden)]
     pub fn run_module(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.module_program = Some(program.program.clone());
-        self.install_implicit_builtins(&program.program)?;
+        self.install_implicit_builtins();
         self.bind_foreign_declarations(&program.program)?;
         #[cfg(feature = "concurrency")]
         let _initializing = self.variables.initializing();
@@ -1043,7 +1043,7 @@ impl Vm {
     fn run_program_settled(&mut self, program: &Program) -> VmResult<Value> {
         self.reset_metrics();
         let program = self.install_compat_named(program, "main")?;
-        self.install_implicit_builtins(&program.program)?;
+        self.install_implicit_builtins();
         self.bind_foreign_declarations(&program.program)?;
         #[cfg(feature = "concurrency")]
         let initializing = self.variables.initializing();
@@ -1740,42 +1740,18 @@ impl Vm {
         Ok(())
     }
 
-    fn install_implicit_builtins(&mut self, program: &Program) -> VmResult<()> {
-        if program.module_name() == "slug.builtin" {
-            return Ok(());
-        }
+    /// Installs the host's builtins, which it registers under `slug.builtin`.
+    /// The VM's own, such as `Error`, are installed when it is made. Neither
+    /// comes from a module: `slug.builtin` is their contract, which only the
+    /// compiler reads.
+    fn install_implicit_builtins(&mut self) {
         let Some(host) = &self.host else {
-            return Ok(());
+            return;
         };
         let mut globals = self.globals.borrow_mut();
         for (name, value) in host.builtin_globals() {
             globals.insert_if_absent(name, || value);
         }
-        drop(globals);
-        let instance = match host.import_module(None, "slug.builtin") {
-            Ok(instance) => instance,
-            Err(error) if error.is_not_found() => return Ok(()),
-            Err(error) => return Err(self.import_error(&error, None)),
-        };
-        let Value::Map(exports) = instance.exports else {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "slug.builtin exports are not a map".into(),
-                None,
-            ));
-        };
-        let mut globals = self.globals.borrow_mut();
-        for (name, value) in exports.iter() {
-            let Value::Str(name) = name else {
-                return Err(self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    "slug.builtin export name is not a string".into(),
-                    None,
-                ));
-            };
-            globals.insert_if_absent(name.to_string(), || value.clone());
-        }
-        Ok(())
     }
 
     fn install_configuration_builtins(&mut self) {
