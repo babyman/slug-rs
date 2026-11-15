@@ -13,22 +13,5 @@ val clocksAreWholeMilliseconds = fn() {
     assertTrue(time.monotonicMs() == int(time.monotonicMs()))
 }
 
-@test
-val sleepAdvancesTheMonotonicClock = fn() {
-    val start = time.monotonicMs()
-    time.sleepMs(20)
-    assertTrue(time.monotonicMs() - start >= 20)
-}
-
-@test
-val sleepParksOnlyItsTask = fn() {
-    val events = chan(2)
-    nursery {
-        spawn { time.sleepMs(100); select { send events, "slept" } }
-        // Lets the sleeper start; a sleep that blocked the scheduler would
-        // hold this task until the sleeper had sent first.
-        select { after 10 }
-        select { send events, "ran" }
-    }
-    assertTrue(select { recv events } == "ran")
-}
+// sleepMs waits on select timers, which a slim runtime leaves out, so its
+// tests are in crates/slug/tests/typed_core.rs, behind `concurrency`.

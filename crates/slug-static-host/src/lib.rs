@@ -489,7 +489,9 @@ mod tests {
     use slug_loader::StaticModuleResolver;
     use slug_vm::{EmptyVmConfiguration, Vm};
 
-    use super::{GpioWrite, StaticHost, gpio_provider, time_provider};
+    #[cfg(feature = "concurrency")]
+    use super::time_provider;
+    use super::{GpioWrite, StaticHost, gpio_provider};
 
     fn host_with(providers: Vec<slug_loader::StaticModuleProvider>) -> ModuleHost {
         ModuleHost::with_resolver(

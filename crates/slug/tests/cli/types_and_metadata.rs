@@ -2375,6 +2375,7 @@ fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
 }
 
 #[test]
+#[cfg(feature = "concurrency")]
 fn a_slug_channel_receive_times_out_with_a_timeout_error() {
     let path = fixture_path("slug-channel-timeout");
     fs::write(
