@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `slug.net.http` reads request bodies only when the handler asks, with a
+  limit each route chooses: `http.body(request)` gives the whole body,
+  `http.read(request, maxBytes)` gives it a piece at a time as it arrives,
+  and `http.multipart(request, maxBytes)` reads a `multipart/form-data`
+  upload part by part, a file's data streamed as it comes. `form` reads
+  through `body`. `Expect: 100-continue` is answered at the first read, so
+  a handler that refuses a request saves the client from sending its body;
+  an unread body closes the connection after the response. Requests no
+  longer have a `body` field: use `http.body(request)`. A request built by
+  hand for a test may still give one.
+
 - `slug.io.fs` reads and writes bytes (`read`, and `write` of bytes),
   flushes to disk with `sync`, and works with paths: `stat`, `list`,
   `makeDirectory`, `rename`, `remove`, `removeAll`, and

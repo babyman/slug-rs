@@ -18,9 +18,16 @@
  *
  * A request is a map of `method`, `path` (percent-decoded), `query` (a map
  * of decoded parameters), `headers` (a map from lowercased name to value,
- * repeated headers joined with ", "), `body` (bytes), and `params` (what
- * `router` matched); `form(request)` decodes a form body's fields, and
- * `mediaType(name)` gives a file name's media type from its extension. A
+ * repeated headers joined with ", "), and `params` (what `router` matched).
+ * Its body is read only when the handler asks, each read with a limit that
+ * suits the route: `body(request)` gives all of it, `read(request,
+ * maxBytes)` gives it a piece at a time as it arrives, `form(request)`
+ * decodes a form's fields, and `multipart(request, maxBytes)` reads a
+ * `multipart/form-data` upload part by part. A handler that refuses a
+ * request without reading its body saves the client from sending it. A
+ * request built by hand, as a test builds one, can give its body as a
+ * `body` field of bytes. `mediaType(name)` gives a file name's media type
+ * from its extension. A
  * response is a string, sent as a `200` text body, or a map of `status`, and
  * optionally `headers` and `body` (a string or bytes). The server adds
  * `Content-Length`, a default `Content-Type`, and `Connection: close` when it
@@ -37,15 +44,18 @@
  * status.
  *
  * The server reads requests as RFC 9112 describes: it decodes chunked
- * bodies, answers `Expect: 100-continue`, keeps HTTP/1.1 connections open
- * and answers pipelined requests in order, and rejects malformed requests
- * with `400`, `408`, `413`, `414`, `431`, `501`, or `505`, then closes the
- * connection.
+ * bodies, answers `Expect: 100-continue` when the handler first reads the
+ * body, keeps HTTP/1.1 connections open and answers pipelined requests in
+ * order, and rejects malformed requests with `400`, `408`, `413`, `414`,
+ * `431`, `501`, or `505`, then closes the connection. A connection also
+ * closes after a response whose request body the handler did not read to
+ * its end.
  */
 
 val tcp = import("slug.net.tcp")
 val {split, trim, lower, join, chars, ord, toInt, toBytes, fromBytes} = import("slug.string")
 val {send, recv} = import("slug.channel")
+val {find} = import("slug.bytes")
 
 // --- Protocol errors ---------------------------------------------------------
 
@@ -211,6 +221,16 @@ val reader = fn(connection:tcp.Connection, options:map):map {
         data
     }
 
+    // Takes what has arrived, at most `limit` bytes, waiting for more only
+    // when nothing has.
+    val piece = fn(limit:num):bytes {
+        if (len(buffer) == 0) { fill() }
+        val count = if (len(buffer) < limit) { len(buffer) } else { limit }
+        val data = buffer[0:count]
+        buffer = buffer[count:]
+        data
+    }
+
     // Waits for the first bytes of the next request, which a pipelining
     // client may already have sent.
     val awaitRequest = fn() {
@@ -241,6 +261,7 @@ val reader = fn(connection:tcp.Connection, options:map):map {
     {
         line: line,
         take: take,
+        piece: piece,
         taken: taken,
         restart: restart,
         awaitRequest: awaitRequest,
@@ -301,7 +322,7 @@ val readHead = fn(input:map, maxHeaderBytes:num):map {
 
 // The body's length from `Content-Length`, which may repeat when every
 // value is equal; 0 without one.
-val contentLength = fn(value:str|nil, maxBodyBytes:num):num {
+val contentLength = fn(value:str|nil):num {
     if (value == nil) { return 0 }
     val lengths = split(value ?? "", ",")
     val first = trim(lengths[0])
@@ -313,40 +334,121 @@ val contentLength = fn(value:str|nil, maxBodyBytes:num):num {
     }
     check(1)
     if (!isDigits(first)) { reject(400) }
-    // Too many digits for an integer is too large a body.
-    toInt(first) ?? (maxBodyBytes + 1)
+    // Too many digits for an integer is larger than any limit.
+    toInt(first) ?? 9007199254740991
 }
 
-// Reads a chunked body, discarding any trailer fields.
-val readChunked = fn(input:map, maxHeaderBytes:num, maxBodyBytes:num):bytes {
-    val readChunks = fn(body:bytes):bytes {
-        val sizeText = trim(split(input.line(maxHeaderBytes, 400), ";")[0])
-        if (sizeText == "" || len(sizeText) > 15) { reject(400) }
-        val parse = fn(i:num, size:num):num {
-            if (i == len(sizeText)) { return size }
-            val digit = hexDigit(sizeText[i])
-            if (digit < 0) { reject(400) }
-            recur(i + 1, size * 16 + digit)
-        }
-        val size = parse(0, 0)
-        if (size == 0) {
-            val trailers = fn() {
-                val text = input.line(maxHeaderBytes, 400)
-                if (text != "") {
-                    headerField(text)
-                    recur()
-                }
-            }
-            trailers()
-            return body
-        }
-        if (len(body) + size > maxBodyBytes) { reject(413) }
-        val data = input.take(size)
-        // The chunk's data ends with its own line ending.
-        if (input.line(2, 400) != "") { reject(400) }
-        recur(body + data)
+// Joins `pieces` into one, halving and joining each half, so each byte is
+// copied about log2(n) times for n pieces rather than n times.
+val joinBytes = fn(pieces:list):bytes {
+    val count = len(pieces)
+    if (count == 0) { return 0x"" }
+    if (count == 1) { return pieces[0] }
+    val half = int(count / 2)
+    joinBytes(pieces[0:half]) + joinBytes(pieces[half:])
+}
+
+// A request body, read only when the handler asks: `next(maxBytes)` gives
+// its next piece, or nil at its end, and rejects the request with `413`
+// once more than `maxBytes` has arrived; `all(maxBytes)` gives the whole
+// body, the same bytes each time; `ended()` says whether it was read to its
+// end. `100 Continue` goes to a client that expects it on the first read.
+val bodySource = fn(connection:tcp.Connection, input:map, headers:map, length:num, maxHeaderBytes:num):map {
+    val chunked = headers["transfer-encoding"] != nil
+    val continues = lower(headers.expect ?? "") == "100-continue"
+    var remaining = length
+    var chunkLeft = 0
+    var ended = !chunked && length == 0
+    var started = false
+    var received = 0
+    var whole:bytes|nil = nil
+
+    val start = fn(maxBytes:num) {
+        if (started) { return nil }
+        started = true
+        // A declared length past the limit is refused before the client
+        // sends any of it.
+        if (!chunked && length > maxBytes) { reject(413) }
+        if (continues && !ended) { tcp.write(connection, "HTTP/1.1 100 Continue\r\n\r\n") }
     }
-    readChunks(0x"")
+
+    // The next piece of a chunked body, reading each chunk's size line and,
+    // after the last, its trailer fields, which are discarded.
+    val nextChunked = fn():bytes|nil {
+        if (chunkLeft == 0) {
+            val sizeText = trim(split(input.line(maxHeaderBytes, 400), ";")[0])
+            if (sizeText == "" || len(sizeText) > 15) { reject(400) }
+            val parse = fn(i:num, size:num):num {
+                if (i == len(sizeText)) { return size }
+                val digit = hexDigit(sizeText[i])
+                if (digit < 0) { reject(400) }
+                recur(i + 1, size * 16 + digit)
+            }
+            val size = parse(0, 0)
+            if (size == 0) {
+                val trailers = fn() {
+                    val text = input.line(maxHeaderBytes, 400)
+                    if (text != "") {
+                        headerField(text)
+                        recur()
+                    }
+                }
+                trailers()
+                return nil
+            }
+            chunkLeft = size
+        }
+        val data = input.piece(chunkLeft)
+        chunkLeft = chunkLeft - len(data)
+        // The chunk's data ends with its own line ending.
+        if (chunkLeft == 0 && input.line(2, 400) != "") { reject(400) }
+        data
+    }
+
+    val next = fn(maxBytes:num):bytes|nil {
+        start(maxBytes)
+        if (ended) { return nil }
+        val data = if (chunked) {
+            nextChunked()
+        } else {
+            val taken = input.piece(remaining)
+            remaining = remaining - len(taken)
+            taken
+        }
+        match data {
+            piece:bytes => {
+                received = received + len(piece)
+                if (received > maxBytes) { reject(413) }
+                if (!chunked && remaining == 0) { ended = true }
+                piece
+            }
+            _ => {
+                ended = true
+                nil
+            }
+        }
+    }
+
+    val all = fn(maxBytes:num):bytes {
+        match whole {
+            done:bytes => return done
+            _ => nil
+        }
+        if (started) {
+            throw Error {type: "http.body", msg: "the body is already being read in pieces"}
+        }
+        val collect = fn(pieces:list):list {
+            match next(maxBytes) {
+                nil => pieces
+                piece => recur(pieces :+ piece)
+            }
+        }
+        val data = joinBytes(collect([]))
+        whole = data
+        data
+    }
+
+    {next: next, all: all, ended: fn():bool { ended }}
 }
 
 // The decoded parameters of `text`, a query string or form body: `+` is a
@@ -371,32 +473,28 @@ val parseTarget = fn(target:str):[str, map] {
     [decode(parts[0]), parseParameters(query)]
 }
 
-// Reads one request: the request map and whether the connection closes after
-// its response.
+// Reads one request's head: the request map, with its body left to read
+// through `body`, `read`, or `multipart`, and whether the connection closes
+// after its response.
 val readRequest = fn(connection:tcp.Connection, input:map, options:map):[map, bool] {
     val maxHeaderBytes = options.maxHeaderBytes ?? 8192
-    val maxBodyBytes = options.maxBodyBytes ?? 1048576
     input.startHead()
     val head = readHead(input, maxHeaderBytes)
     input.endHead()
     val headers = head.headers
     val coding = headers["transfer-encoding"]
     if (coding != nil && headers["content-length"] != nil) { reject(400) }
-    val length = contentLength(headers["content-length"], maxBodyBytes)
-    if (length > maxBodyBytes) { reject(413) }
     if (coding != nil && lower(trim(coding ?? "")) != "chunked") { reject(501) }
-    if (lower(headers.expect ?? "") == "100-continue" && (length > 0 || coding != nil)) {
-        tcp.write(connection, "HTTP/1.1 100 Continue\r\n\r\n")
-    }
-    val body = if (coding != nil) {
-        readChunked(input, maxHeaderBytes, maxBodyBytes)
-    } else {
-        input.take(length)
-    }
+    val length = contentLength(headers["content-length"])
     val [path, query] = parseTarget(head.target)
     val tokens = split(lower(headers.connection ?? ""), ",")
     val closing = head.version == "HTTP/1.0" || contains(mapList(tokens, trim), "close")
-    val request = {method: head.method, path: path, query: query, headers: headers, body: body, params: {}}
+    val source = bodySource(connection, input, headers, length, maxHeaderBytes)
+    val limits = {maxBodyBytes: options.maxBodyBytes ?? 1048576}
+    val request = {
+        method: head.method, path: path, query: query, headers: headers, params: {},
+        bodySource: source + limits,
+    }
     [request, closing]
 }
 
@@ -417,9 +515,12 @@ val reason = fn(status:num):str {
         304 => "Not Modified"
         400 => "Bad Request"
         404 => "Not Found"
+        401 => "Unauthorized"
+        403 => "Forbidden"
         405 => "Method Not Allowed"
         408 => "Request Timeout"
         413 => "Content Too Large"
+        415 => "Unsupported Media Type"
         414 => "URI Too Long"
         431 => "Request Header Fields Too Large"
         500 => "Internal Server Error"
@@ -561,6 +662,9 @@ val invoke = fn(handler:fn, request:map) {
     defer onerror(error) {
         return match error {
             {type: "http.reject", data: data} => {status: data.status}
+            // The client went away while the handler read its body: there
+            // is no one to answer.
+            {type: "http.closed"} => throw error
             _ => {status: 500}
         }
     }
@@ -592,7 +696,11 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
     }
     input.awaitRequest()
     val [request, closing] = readRequest(connection, input, options)
-    val closed = respond(connection, invoke(handler, request), request.method == "HEAD", closing)
+    val response = invoke(handler, request)
+    // A body the handler did not read to its end is still arriving, or was
+    // never sent: the connection cannot carry another request.
+    val unread = !request.bodySource.ended()
+    val closed = respond(connection, response, request.method == "HEAD", closing || unread)
     if (closed) { "closed" } else { "open" }
 }
 
@@ -606,7 +714,8 @@ val handleNext = fn(connection:tcp.Connection, input:map, handler:fn, options:ma
  * - `headerTimeout`, 5000: milliseconds from a request's first byte until its
  *   header section is complete, before the server answers `408`;
  * - `maxHeaderBytes`, 8192: the largest request line and header section;
- * - `maxBodyBytes`, 1048576: the largest body, after chunked decoding;
+ * - `maxBodyBytes`, 1048576: the largest body `body` and `form` read,
+ *   after chunked decoding; `read` and `multipart` take their own limit;
  * - `maxConnections`, unlimited: the most connections served at once; at
  *   the limit the server accepts no more until one closes, and those that
  *   arrive meanwhile wait in the listener's queue.
@@ -649,17 +758,314 @@ export val serve = fn(listener:tcp.Listener, handler:fn, options:map = {}) {
     accept()
 }
 
+// --- Bodies ------------------------------------------------------------------
+
+// The body source of a request the server read, or nil for one made by hand,
+// as a test makes them, whose body is its `body` field.
+val sourceOf = fn(request:map):map|nil {
+    match request.bodySource {
+        source:map => source
+        _ => nil
+    }
+}
+
+/**
+ * The whole body of `request`, refusing one longer than `maxBytes`, by
+ * default the server's `maxBodyBytes`, with `413`. It returns the same bytes
+ * each time it is called, but not after `read` or `multipart` has begun on
+ * the body. A request made by hand, as a test makes one, gives its `body`
+ * field.
+ */
+export val body = fn(request:map, maxBytes:num|nil = nil):bytes {
+    match sourceOf(request) {
+        nil => request.body ?? 0x""
+        source => source.all(maxBytes ?? source.maxBodyBytes)
+    }
+}
+
+/**
+ * The next piece of `request`'s body as it arrives, or nil at its end, for
+ * a body too large to hold at once, such as an upload written to a file as
+ * it comes. Once more than `maxBytes` has arrived it refuses the request
+ * with `413`, and a declared length over it is refused at the first call,
+ * before the client sends any of the body. A piece is whatever has arrived,
+ * at most 16 KiB.
+ *
+ * ```slug
+ * val save = fn(request, file) {
+ *     match http.read(request, 50000000) {
+ *         nil => nil
+ *         piece => { fs.write(file, piece); recur(request, file) }
+ *     }
+ * }
+ * ```
+ */
+export val read = fn(request:map, maxBytes:num):bytes|nil {
+    match sourceOf(request) {
+        nil => throw Error {type: "http.body", msg: "a request made by hand has no body to read in pieces; use body"}
+        source => source.next(maxBytes)
+    }
+}
+
+// --- Multipart forms ---------------------------------------------------------
+
+// The value of the parameter `name` in a header value such as
+// `multipart/form-data; boundary=x` or `form-data; name="a"; filename="b"`,
+// unquoted, with backslash escapes undone; nil when it is not there.
+val parameter = fn(value:str, name:str):str|nil {
+    val n = len(value)
+    // The first index from `i` holding one of `stops`, or `n`.
+    val upTo = fn(i:num, stops:list):num {
+        if (i >= n || contains(stops, value[i])) { i } else { recur(i + 1, stops) }
+    }
+    val spaces = fn(i:num):num {
+        if (i < n && (value[i] == " " || value[i] == "\t")) { recur(i + 1) } else { i }
+    }
+    // A quoted string's text from `i`, just after its opening quote, and the
+    // index after its closing quote.
+    val quoted = fn(i:num, out:str):[str, num] {
+        if (i >= n) { return [out, n] }
+        val c = value[i]
+        if (c == "\"") { return [out, i + 1] }
+        if (c == "\\" && i + 1 < n) { return recur(i + 2, out + value[i + 1]) }
+        recur(i + 1, out + c)
+    }
+    val walk = fn(i:num):str|nil {
+        if (i >= n) { return nil }
+        val keyEnd = upTo(i, ["=", ";"])
+        if (keyEnd >= n || value[keyEnd] == ";") { return recur(keyEnd + 1) }
+        val key = lower(trim(value[i:keyEnd]))
+        val start = spaces(keyEnd + 1)
+        val [text, after] = if (start < n && value[start] == "\"") {
+            quoted(start + 1, "")
+        } else {
+            val end = upTo(start, [";"])
+            [trim(value[start:end]), end]
+        }
+        if (key == name) { return text }
+        recur(upTo(after, [";"]) + 1)
+    }
+    walk(upTo(0, [";"]) + 1)
+}
+
+val CRLF = 0x"0d0a"
+val BLANK_LINE = 0x"0d0a0d0a"
+val CLOSING = 0x"2d2d"
+
+/**
+ * A reader of `request`'s `multipart/form-data` body, as a browser sends a
+ * form with a file input, read as it arrives: its `next()` gives the next
+ * part, or nil after the last. A part is a map of `name`, `filename` (nil
+ * for an ordinary field), `contentType` (`text/plain` when the part names
+ * none), `headers`, and two functions: `read()` gives the next piece of the
+ * part's data, or nil at its end, and `text(maxBytes)` gives all of it as
+ * text, for a field. Calling `next()` skips what is left of the part before.
+ *
+ * The whole body may be at most `maxBytes`, or the request is refused with
+ * `413`. A body that is not `multipart/form-data` is refused with `415`, and
+ * a malformed one with `400`.
+ *
+ * ```slug
+ * val upload = http.multipart(request, 50000000)
+ * val each = fn(fields:map):map {
+ *     match upload.next() {
+ *         nil => fields
+ *         part => if (part.filename == nil) {
+ *             recur(fields + {[part.name]: part.text(65536)})
+ *         } else {
+ *             save(part.filename, part.read)
+ *             recur(fields)
+ *         }
+ *     }
+ * }
+ * each({})
+ * ```
+ */
+export val multipart = fn(request:map, maxBytes:num):map {
+    val type = request.headers["content-type"] ?? ""
+    if (trim(lower(split(type, ";")[0])) != "multipart/form-data") { reject(415) }
+    val boundary = match parameter(type, "boundary") {
+        text:str => text
+        _ => reject(400)
+    }
+    if (len(boundary) == 0 || len(boundary) > 70) { reject(400) }
+    val delimiter = toBytes("\r\n--" + boundary)
+    // A request made by hand gives its `body` field once.
+    var given:bytes|nil = match sourceOf(request) {
+        nil => request.body ?? 0x""
+        _ => nil
+    }
+    val pull = fn():bytes|nil {
+        match sourceOf(request) {
+            nil => {
+                val data = given
+                given = nil
+                data
+            }
+            source => source.next(maxBytes)
+        }
+    }
+    // Bytes read but not yet handed out. The body is read as if it began
+    // with a line ending, so its first delimiter looks like the others.
+    var pending = CRLF
+    var started = false
+    var finished = false
+    var inPart = false
+    // Which part is current, so an earlier part's `read` gives nil.
+    var current = 0
+
+    val more = fn() {
+        match pull() {
+            nil => reject(400)
+            data => { pending = pending + data }
+        }
+    }
+    // The index of `needle` in what is pending, reading more as needed,
+    // refusing the body once `limit` bytes pass without it.
+    val waitFor = fn(needle:bytes, limit:num):num {
+        match find(pending, needle) {
+            at:num => at
+            _ => {
+                if (len(pending) > limit) { reject(400) }
+                more()
+                recur(needle, limit)
+            }
+        }
+    }
+    // Discards bytes up to the end of the next delimiter.
+    val skipToDelimiter = fn() {
+        match find(pending, delimiter) {
+            at:num => { pending = pending[at + len(delimiter):] }
+            _ => {
+                val keep = len(delimiter) - 1
+                if (len(pending) > keep) { pending = pending[len(pending) - keep:] }
+                more()
+                recur()
+            }
+        }
+    }
+    val atLeast = fn(count:num) {
+        if (len(pending) < count) {
+            more()
+            recur(count)
+        }
+    }
+    // The current part's next piece, up to its delimiter. Bytes that could
+    // begin a delimiter split across pieces wait for the next read.
+    val readPart = fn():bytes|nil {
+        if (!inPart) { return nil }
+        match find(pending, delimiter) {
+            at:num => {
+                val data = pending[0:at]
+                pending = pending[at + len(delimiter):]
+                inPart = false
+                if (len(data) > 0) { data } else { nil }
+            }
+            _ => {
+                val safe = len(pending) - (len(delimiter) - 1)
+                if (safe > 0) {
+                    val data = pending[0:safe]
+                    pending = pending[safe:]
+                    data
+                } else {
+                    more()
+                    recur()
+                }
+            }
+        }
+    }
+    val parseHeaders = fn(text:str):map {
+        val lines = split(text, "\r\n")
+        val each = fn(i:num, headers:map):map {
+            if (i == len(lines)) { return headers }
+            val [name, value] = headerField(lines[i])
+            recur(i + 1, headers + {[name]: value})
+        }
+        each(0, {})
+    }
+
+    val next = fn():map|nil {
+        if (finished) { return nil }
+        if (inPart) {
+            val drain = fn() { if (readPart() != nil) { recur() } }
+            drain()
+        } else if (!started) {
+            skipToDelimiter()
+        }
+        started = true
+        // After a delimiter: `--` ends the form; otherwise optional padding
+        // and a line ending begin a part's header section.
+        atLeast(2)
+        if (pending[0:2] == CLOSING) {
+            finished = true
+            return nil
+        }
+        val lineEnd = waitFor(CRLF, 256)
+        if (trim(utf8(pending[0:lineEnd])) != "") { reject(400) }
+        pending = pending[lineEnd + 2:]
+        atLeast(2)
+        val headerText = if (pending[0:2] == CRLF) {
+            pending = pending[2:]
+            ""
+        } else {
+            val end = waitFor(BLANK_LINE, 8192)
+            val text = utf8(pending[0:end])
+            pending = pending[end + 4:]
+            text
+        }
+        val headers = parseHeaders(headerText)
+        val disposition = match headers["content-disposition"] {
+            text:str => text
+            _ => reject(400)
+        }
+        if (trim(lower(split(disposition, ";")[0])) != "form-data") { reject(400) }
+        val name = match parameter(disposition, "name") {
+            text:str => text
+            _ => reject(400)
+        }
+        current = current + 1
+        val mine = current
+        inPart = true
+        val read = fn():bytes|nil {
+            if (current != mine) { nil } else { readPart() }
+        }
+        val text = fn(limit:num):str {
+            val collect = fn(pieces:list, size:num):list {
+                match read() {
+                    nil => pieces
+                    piece => {
+                        if (size + len(piece) > limit) { reject(413) }
+                        recur(pieces :+ piece, size + len(piece))
+                    }
+                }
+            }
+            utf8(joinBytes(collect([], 0)))
+        }
+        {
+            name: name,
+            filename: parameter(disposition, "filename"),
+            contentType: headers["content-type"] ?? "text/plain",
+            headers: headers,
+            read: read,
+            text: text,
+        }
+    }
+
+    {next: next}
+}
+
 // --- Forms -------------------------------------------------------------------
 
 /**
  * The fields of `request`'s form body, decoded as its `query` is, when its
- * `Content-Type` is `application/x-www-form-urlencoded`; `{}` otherwise. A
- * body that does not decode is answered with `400`.
+ * `Content-Type` is `application/x-www-form-urlencoded`; `{}` otherwise. It
+ * reads the body through `body`, so the same limit applies. A body that does
+ * not decode is answered with `400`.
  */
 export val form = fn(request:map):map {
     val type = lower(request.headers["content-type"] ?? "")
     if (trim(split(type, ";")[0]) != "application/x-www-form-urlencoded") { return {} }
-    parseParameters(utf8(request.body))
+    parseParameters(utf8(body(request)))
 }
 
 // --- Media types -------------------------------------------------------------

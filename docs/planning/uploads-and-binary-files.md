@@ -102,31 +102,36 @@ disk. `readLine`, `openRead`, and the other existing calls move there too.
 
 ### 2. Streamed request bodies in `slug.net.http`
 
-The server stops reading the body before calling the handler. The handler
-asks for it, with a limit that suits the route:
+Done 2026-11-15, with part 4. The server stops reading the body before
+calling the handler. The handler asks for it, with a limit that suits the
+route:
 
 - `http.body(request, maxBytes = options.maxBodyBytes):bytes`: the whole
   body, as `request.body` was. A second call returns the same bytes.
-- `http.chunks(request, maxBytes):chan<bytes>`: the body as it arrives, as
-  `tcp.chunks` gives a connection's bytes. The channel closes at the end of
-  the body. Passing `maxBytes` is required, so each streaming route states
-  how large an upload it accepts. Past it, the server answers `413`.
+- `http.read(request, maxBytes):bytes|nil`: the next piece of the body as it
+  arrives, or nil at its end, as `tcp.read` and `fs.read` give theirs. Past
+  `maxBytes`, or at the first call for a declared length over it, the
+  server answers `413`.
 - `form(request)` reads the body through `body`, so callers of `form` are
   unchanged.
 
+Reading is pulled rather than pushed through a channel, as first planned. A
+channel needs a task to fill it, which is left blocked, or failing into the
+connection's task, when a handler returns without draining it; a pull has no
+such task, and matches the other readers.
+
 Consequences:
 
-- `request.body` goes away. Crawl's web module and Orble's auth handlers move
-  to `http.body(request)` or `form`. This is a breaking change.
+- `request.body` goes away. Crawl only uses `form`; Orble's auth handlers move
+  to `http.body(request)`. A request built by hand, as handler tests build
+  them, may still give a `body` field.
 - `100 Continue` is sent when the handler first reads the body. A handler that
-  refuses a request without reading it (`401`, `403`, `413` by
-  `Content-Length`) saves the client from uploading the body.
+  refuses a request without reading it saves the client from uploading it.
 - A body the handler did not finish reading closes the connection after the
-  response, rather than reading and discarding an upload the handler
-  refused.
-- The idle timeout applies to each piece of a streamed body, as it does now.
-- The reader collects pieces in a list and joins them once, so `body` no
-  longer copies a large body repeatedly.
+  response.
+- The idle timeout applies to each piece of a body, as it did.
+- `body` collects the pieces and joins them by halves, so a large body is
+  copied about log2(n) times rather than once per piece.
 
 ### 3. Content hashes: `slug.crypto.hash`
 
@@ -147,19 +152,13 @@ hash costs no second pass over the file.
 
 ### 4. Multipart forms
 
-Browsers send file inputs as `multipart/form-data`, HTMX included. A
-streaming parser in `slug.net.http`, written in Slug over `http.chunks`:
-
-- `http.parts(request, maxBytes):chan<map>` yields each part as `{name,
-  filename, contentType, chunks}`, where `chunks` is that part's own channel
-  of bytes. The next part arrives once the previous part's channel is
-  drained.
-- Ordinary fields come as parts with no `filename`. A caller that wants them
-  as a map reads those parts' bytes.
-
-This is the largest piece, and it lands with part 2. A client that sends a
-file as the raw request body (`fetch(url, {method: "PUT", body: file})`)
-needs only part 2.
+Done 2026-11-15. Browsers send file inputs as `multipart/form-data`, HTMX
+included. `http.multipart(request, maxBytes)` reads one as it arrives, in
+Slug over the body's pieces: its `next()` gives each part as `{name,
+filename, contentType, headers, read, text}`, where `read()` gives the part's
+data a piece at a time and `text(maxBytes)` gives a field's value. `next()`
+skips what is left of the previous part. A body that is not a multipart form
+is refused with `415`, a malformed one with `400`.
 
 ## Decisions
 
