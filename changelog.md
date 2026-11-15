@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `slug.net.tcp` reads and writes every connection on one thread, which
+  waits on all their sockets at once (kqueue on macOS, epoll on Linux),
+  where each connection had a reader thread and a writer thread of its own.
+  A thread held a stack, and memory the allocator keeps for each thread,
+  for as long as its connection was open: Crawl's server with 1000 players
+  ran about 2000 threads. It now runs 9, and peaks at about 270 MB, from
+  500, answering keys as fast. Reading, writing, backpressure, timeouts and
+  closing behave as before.
+
 - Crawl's server joins a player and draws a whole page in a task of its
   own. The game's caches are `task var`s, and a request ran in its
   connection's task, which for an event stream lives as long as the page

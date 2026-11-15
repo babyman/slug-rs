@@ -55,23 +55,25 @@ int32_t slug_tcp_finish_connect(slug_tcp_connecting *connecting,
  * connect thread has finished. */
 void slug_tcp_connecting_release(slug_tcp_connecting *connecting);
 
-/* Closes the connection: the writer sends what is queued, waiting at most
- * the write timeout for the peer to take each part, then shuts down the
- * socket, which wakes the reader. Releases the resource's reference; the
- * socket closes with the last reference. */
+/* Closes the connection: the I/O thread sends what is queued, waiting at
+ * most the write timeout for the peer to take more, then shuts down the
+ * socket, which ends reading. Releases the resource's reference; the socket
+ * closes with the last reference. */
 void slug_tcp_connection_release(slug_tcp_connection *connection);
 
-/* Starts the connection's reader and writer threads. The reader sends what
- * the connection receives through `chunks` as bytes, at most 16 KiB at a
- * time, and closes `chunks` at end of stream; a failed receive first sends
- * its errno as a number. The writer sends what writes queue; when a write is
- * waiting it sends a tick through `writable` as the queue shrinks, and it
- * closes `writable` when it stops. Takes ownership of both producers whatever
- * the result. A second call does nothing. */
+/* Starts reading and writing the connection, on the I/O thread every
+ * connection shares, which starts with the first. It sends what the
+ * connection receives through `chunks` as bytes, at most 16 KiB at a time,
+ * and closes `chunks` at end of stream; a failed receive first sends its
+ * errno as a number. While `chunks` is full it reads no more. It sends what
+ * writes queue; when a write is waiting it sends a tick through `writable` as
+ * the queue shrinks, and it closes `writable` when writing stops. Takes
+ * ownership of both producers whatever the result. A second call does
+ * nothing. */
 int32_t slug_tcp_start(slug_tcp_connection *connection, slug_producer *chunks,
                        slug_producer *writable, int64_t *detail);
 
-/* Queues a copy of `data` for the writer, never blocking, and writes the bytes
+/* Queues a copy of `data` for the I/O thread, never blocking, and writes the bytes
  * now queued. After a failed send, returns its status and errno: a send that
  * timed out once the connection was closing is SLUG_TCP_TIMEOUT. */
 int32_t slug_tcp_write(slug_tcp_connection *connection, const uint8_t *data, size_t length,
@@ -81,7 +83,7 @@ int32_t slug_tcp_write(slug_tcp_connection *connection, const uint8_t *data, siz
 int32_t slug_tcp_write_text(slug_tcp_connection *connection, const char *text, size_t length,
                             int64_t *queued, int64_t *detail);
 
-/* Writes the bytes queued and asks the writer for a tick through `writable`:
+/* Writes the bytes queued and asks the I/O thread for a tick through `writable`:
  * 0 when the queue next shrinks or writing fails, or 1 when the peer takes
  * nothing for the write timeout. Returns the status writing failed with, if
  * it has. */
