@@ -300,7 +300,8 @@ fn firmware_blink_graph_encodes_within_device_limits() {
         .expect("firmware limits accept blink graph")
         .modules
         .len(),
-        3
+        // The entry, slug.gpio, slug.time, and the implicit slug.builtin.
+        4
     );
 }
 

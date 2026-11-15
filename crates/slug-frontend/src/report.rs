@@ -137,8 +137,16 @@ impl SourceFacts {
 }
 
 fn build(artifact: &Artifact, facts: Option<&[SourceFacts]>, closed: bool) -> CapabilityReport {
-    let order = std::iter::once(artifact.root)
-        .chain((0..artifact.modules.len()).filter(|index| *index != artifact.root));
+    // An artifact carries `slug.builtin` for the runtime's implicit globals.
+    // It is the runtime's module, not the program's, so it is reported only
+    // when a module imports it.
+    let implicit = |index: usize| {
+        artifact.modules[index].name == "slug.builtin"
+            && !artifact.imports.iter().any(|edge| edge.target == index)
+    };
+    let order = std::iter::once(artifact.root).chain(
+        (0..artifact.modules.len()).filter(|index| *index != artifact.root && !implicit(*index)),
+    );
     let modules = order
         .map(|index| module_capabilities(artifact, index, facts.map(|facts| &facts[index])))
         .collect();

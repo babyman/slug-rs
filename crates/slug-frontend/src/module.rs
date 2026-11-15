@@ -263,6 +263,27 @@ impl ModuleGraph {
             &mut imports,
             &mut sources,
         )?;
+        // Every module sees `slug.builtin`'s exports without importing it,
+        // and the VM installs them by importing it with no importer. Carry
+        // the module the runtime would find, so `Error` and the other
+        // Slug-defined exports exist when the artifact runs.
+        match resolver.resolve(ModuleRequest::new(None, "slug.builtin")) {
+            Ok(builtin) => {
+                self.collect_artifact_module(
+                    resolver,
+                    &builtin.key,
+                    "slug.builtin",
+                    &builtin.diagnostic_name,
+                    &builtin.text,
+                    &mut modules,
+                    &mut indexes,
+                    &mut imports,
+                    &mut sources,
+                )?;
+            }
+            Err(ModuleLoadError::NotFound { .. }) => {}
+            Err(error) => return Err(error),
+        }
         let artifact = Artifact {
             root,
             modules,

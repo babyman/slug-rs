@@ -1007,6 +1007,38 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
 }
 
 #[test]
+fn an_artifact_carries_the_implicit_builtin_module() {
+    let root = std::env::temp_dir().join(format!("slug-artifact-builtin-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create fixture");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val recover = fn() {\n    \
+             defer onerror(err) { return err.msg }\n    \
+             throw Error {type: \"probe\", msg: \"caught\"}\n\
+         }\n\
+         val main = fn() {\n    \
+             println(recover())\n    \
+             throw Error {type: \"probe\", msg: \"uncaught\"}\n\
+         }\n",
+    )
+    .expect("write program");
+
+    for output in run_as_source_and_artifact(&path) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "caught\n",
+            "{stderr}"
+        );
+        assert!(stderr.contains("\"msg\": \"uncaught\""), "{stderr}");
+        assert!(!stderr.contains("unknown name"), "{stderr}");
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn bytes_variables_updated_in_place_keep_value_semantics() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-bytes-variable-updates-{}",

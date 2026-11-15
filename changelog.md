@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A compiled `.cslug` carries `slug.builtin`, so `Error` and the module's
+  other exports exist when it runs. A compiled program that threw
+  `Error {...}` used to fail with ``unknown name `Error` `` instead, on the
+  desktop and on the ESP32-S3. `slug report` still lists it only when a
+  module imports it.
+
 - A Slug project has one layout: `slug.toml` at the root, modules in
   `src/`, embedded files in `assets/`, test programs in `tests/`, and native
   code in a project clutch under `clutch/`. Imports search `src/`, not the
