@@ -202,29 +202,33 @@ export val tickOnce = fn() { push(simulate()) }
 // logs what each player was told; returns the ids of the players with a page
 // open, for `push`.
 val simulate = fn():list {
-    // The first queued key of each player; the rest wait.
-    val firsts = fn(i:num, now:list, later:list, seen:list):list {
+    // The first queued key of each player; the rest wait. The players seen,
+    // who acted, and who were dead are sets, as maps from id to true: with
+    // a thousand players, finding each in a list was most of a tick's work
+    // outside the world's.
+    val firsts = fn(i:num, now:list, later:list, seen:map):list {
         if (i == len(queue)) { return [now, later] }
         val a = queue[i]
-        if (contains(seen, a.id)) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen :+ a.id) }
+        if (seen[a.id] != nil) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen + {[a.id]: true}) }
     }
-    val [actions, rest] = firsts(0, [], [], [])
+    val [actions, rest] = firsts(0, [], [], {})
     queue = rest
     val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
-    val wasDead = filter(map(actions, fn(a) { a.id }), fn(id) { game.playerOf(id).dead })
+    val wasDead = reduce(actions, {}, fn(acc, a) { if (game.playerOf(a.id).dead) { acc + {[a.id]: true} } else { acc } })
     game.tick(actions, present, monsterEvery)
     ticks = ticks + 1
     // Log what each present player, or each who acted, was told.
     val actors = map(actions, fn(a) { a.id })
-    val told = actors + filter(present, fn(id) { !contains(actors, id) })
+    val acted = reduce(actors, {}, fn(acc, id) { acc + {[id]: true} })
+    val told = actors + filter(present, fn(id) { acted[id] == nil })
     val log = fn(i:num) {
         if (i < len(told)) {
             val id = told[i]
             val p = game.playerOf(id)
-            if (contains(wasDead, id) && !p.dead) { logs = logs - id }
+            if (wasDead[id] != nil && !p.dead) { logs = logs - id }
             // A prompt's question is shown above the map, not logged.
             val said = filter(p.messages, fn(m) { p.prompt == nil || m != p.question })
-            if (contains(actors, id) || len(said) > 0) { record(id, said) }
+            if (acted[id] != nil || len(said) > 0) { record(id, said) }
             recur(i + 1)
         }
     }

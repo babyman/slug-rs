@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Crawl's server keeps the players who acted in a tick, and who were dead,
+  as sets rather than lists. Each present player was looked for in the list
+  of those who acted, about a million comparisons a tick with 1000 players
+  in town, most of the tick's work outside the world's own. The world's
+  step on the main thread takes 50 ms, from 90-96, and a tick on four
+  forks 373-382 ms, from 420-432.
+
 - `slug.net.tcp` reads and writes every connection on one thread, which
   waits on all their sockets at once (kqueue on macOS, epoll on Linux),
   where each connection had a reader thread and a writer thread of its own.
