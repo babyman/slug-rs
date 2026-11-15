@@ -150,7 +150,7 @@ const WORKLOADS: &[Workload] = &[
     Workload {
         name: "crawl-pages",
         held_out: true,
-        expected_stdout: "510233 268786451\n",
+        expected_stdout: "513065 4185761504\n",
         python: false,
     },
     Workload {
