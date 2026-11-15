@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Crawl's server finds what each player sees in forks, as it draws the
+  pages, and keeps it on the world's task: `game.sightsOf` finds it and
+  changes nothing, `game.applySights` keeps it, and `game.tick` takes
+  `look: false` to leave it to them. Looking around was most of the
+  world's step for a crowd. A player whose sight reaches a chunk not made
+  yet is looked as on the world's task, which can make it. With 1000
+  players on four forks, the step takes 31 ms on the main thread, from 60,
+  and a tick 361-378 ms, from 390-409. The server answers key presses in
+  half the time and finishes more ticks a second, using more cores: its
+  looking runs beside the last tick's drawing.
+
 - Crawl's server keeps the players who acted in a tick, and who were dead,
   as sets rather than lists. Each present player was looked for in the list
   of those who acted, about a million comparisons a tick with 1000 players

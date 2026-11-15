@@ -270,12 +270,23 @@ val BLANK_ROWS = (fn(i:num, rows:list):list {
 // Sets what the acting player remembers of the chunk with `key`.
 val remember = fn(key:str, rows:list) {
     if (player.memory[key] != rows) {
-        // Remembering anything else means looking again next time.
-        seenAt = seenAt - (acting ?? "")
         player = player copy {memory: player.memory + {[key]: rows}}
-        dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
+        match noted {
+            // Finding sights for `applySights`, perhaps in a fork.
+            keys: map => { noted = keys + {[key]: true} }
+            _ => {
+                // Remembering anything else means looking again next time.
+                seenAt = seenAt - (acting ?? "")
+                dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
+            }
+        }
     }
 }
+
+// While `sightsOf` looks as a player, the keys of the chunks whose memory
+// `remember` changed, as a set; nil otherwise. Each task has its own, so a
+// fork can look.
+task var noted:map|nil = nil
 
 // What the player remembers of the chunk they are in, as its rows.
 val memory = fn():list { player.memory[playerKey()] ?? BLANK_ROWS }
@@ -898,6 +909,67 @@ val see = fn() {
     seenAt = seenAt + {[id]: stamp}
 }
 
+/**
+ * What looking around now finds for each living player in `ids`, for
+ * `applySights` to keep: each one's sight stamp, what they now remember of
+ * each chunk it changed, and what they see outdoors, and last, what it found
+ * of each chunk's things, for drawing to start from. It changes nothing, so
+ * forks can each find it for a share of the players, which is most of a
+ * tick's work for a crowd. A player whose sight reaches a chunk not made yet
+ * is left for `applySights` to look as, for a fork cannot make it.
+ */
+export val sightsOf = fn(ids:list):list {
+    defer { noted = nil }
+    val before = things
+    val one = fn(id:str) {
+        defer onerror(error) {
+            return match error {
+                {type: "crawl.unmade"} => {id: id, unmade: true}
+                _ => throw error
+            }
+        }
+        lookAs(id, fn() {
+            val stamp = sightStamp()
+            if (seenAt[id] == stamp) { return nil }
+            noted = {}
+            lookAround()
+            {id: id, stamp: stamp, memory: map(keys(noted ?? {}), fn(k) { [k, player.memory[k]] }), sight: sights[id]}
+        })
+    }
+    val found = reduce(ids, [], fn(acc, id) {
+        val p = players[id]
+        if (p == nil || p.dead) { return acc }
+        match one(id) {
+            seen: map => acc :+ seen
+            _ => acc
+        }
+    })
+    val made = reduce(keys(things), {}, fn(acc, k) { if (things[k] != before[k]) { acc + {[k]: things[k]} } else { acc } })
+    if (len(made) == 0) { found } else { found :+ {things: made} }
+}
+
+/**
+ * Keeps what `sightsOf` found, in the order found: what each player now
+ * remembers, and that they need not look again until something changes.
+ * Those it left looks as now. Call it before anything else changes the game.
+ */
+export val applySights = fn(found:list) {
+    map(found, fn(f) {
+        if (f.things != nil) {
+            things = things + f.things
+        } else if (f.unmade == true) {
+            if (players[f.id] != nil) { actAs(f.id, fn() { if (!player.dead) { see() } }) }
+        } else {
+            val p = players[f.id]
+            players = players + {[f.id]: p copy {memory: reduce(f.memory, p.memory, fn(acc, kr) { acc + {[kr[0]]: kr[1]} })}}
+            dirty = dirty copy {memories: reduce(f.memory, dirty.memories, fn(acc, kr) { acc + {[f.id + " " + kr[0]]: [f.id, kr[0]]} })}
+            seenAt = seenAt + {[f.id]: f.stamp}
+            if (f.sight != nil) { sights = sights + {[f.id]: f.sight} }
+        }
+    })
+    nil
+}
+
 val lookAround = fn() {
     if (site().outdoor == true) { return seeOutdoors() }
     var seen = memory()
@@ -1235,6 +1307,9 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
     match levels[key] {
         lv: map => lv
         _ => {
+            // A fork cannot add to the world: `sightsOf` leaves the looking
+            // to the world's task, which can.
+            if (noted != nil) { throw Error {type: "crawl.unmade", msg: "chunk " + key + " is not made yet"} }
             val plain = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
             val built = match settlementAt(cx, cy, depth) {
                 s: map => town.build(world.seed, plain, s)
@@ -2977,10 +3052,11 @@ export val menu = fn(id:str):map|nil {
  * action carry on running, or lose a turn while frozen. Then, on every
  * `monsterEvery`-th tick, the monsters act once in each chunk with a living
  * present player; everyone who spent a turn has their upkeep, the turn is
- * counted, and everyone present looks around. Each present player's
- * messages are this tick's; none are paged.
+ * counted, and everyone present looks around, unless `look` is false, when
+ * `sightsOf` and `applySights` are left to do it, as forks can. Each present
+ * player's messages are this tick's; none are paged.
  */
-export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
+export val tick = fn(actions:list, present:list, monsterEvery:num = 4, look:bool = true) {
     ticking = true
     val each = fn(ids:list, body:fn) {
         val go = fn(i:num) {
@@ -3042,7 +3118,7 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
         each(present, fn() { say(comes) })
     }
     world = world copy {turn: world.turn + 1}
-    each(present, fn() { if (!player.dead) { see() } })
+    if (look) { each(present, fn() { if (!player.dead) { see() } }) }
     ticking = false
 }
 

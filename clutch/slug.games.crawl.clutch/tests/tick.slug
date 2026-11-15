@@ -3,6 +3,7 @@ val data = import("slug.games.crawl.data")
 val level = import("slug.games.crawl.level")
 val {assertEqual, assertTrue} = import("slug.test")
 val {filter} = import("slug.std")
+val {await} = import("slug.channel")
 val math = import("slug.math")
 
 val kindNamed = fn(name:str):num {
@@ -151,4 +152,29 @@ val monstersActEveryFewTicks = fn() {
     // Two of the eight ticks are the monsters'.
     assertEqual(game.here("a").monsters[0].x, spot.x + 2)
     assertEqual(game.current().world.turn, turn + 8)
+}
+
+// What "a", in town, and "b", down the stairs, remember after three steps
+// each: looked at as a tick does, or with `apart`, found in a fork and kept
+// by `applySights`.
+val rememberedAfterSteps = fn(seed:num, apart:bool):list {
+    setUp(seed)
+    val steps = fn(n:num) {
+        if (n > 0) {
+            game.tick([key("a", "l"), key("b", "j")], ["a", "b"], 1, !apart)
+            if (apart) { game.applySights(await(fork { game.sightsOf(["a", "b"]) })) }
+            recur(n - 1)
+        }
+    }
+    steps(3)
+    [game.playerOf("a").memory, game.playerOf("b").memory]
+}
+
+@test
+val lookingInAForkRemembersWhatATickWould = fn() {
+    val looked = rememberedAfterSteps(10, false)
+    assertEqual(rememberedAfterSteps(10, true), looked)
+    assertTrue(len(keys(looked[0])) > 0 && len(keys(looked[1])) > 0)
+    // Kept, the sights need no looking again until something changes.
+    assertEqual(game.sightsOf(["a", "b"]), [])
 }

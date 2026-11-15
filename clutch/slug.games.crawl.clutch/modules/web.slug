@@ -215,7 +215,10 @@ val simulate = fn():list {
     queue = rest
     val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
     val wasDead = reduce(actions, {}, fn(acc, a) { if (game.playerOf(a.id).dead) { acc + {[a.id]: true} } else { acc } })
-    game.tick(actions, present, monsterEvery)
+    game.tick(actions, present, monsterEvery, false)
+    // Looking around is most of the tick's work for a crowd, and each
+    // player's is their own, so the forks find it and this task keeps it.
+    game.applySights(inForks(present, game.sightsOf))
     ticks = ticks + 1
     // Log what each present player, or each who acted, was told.
     val actors = map(actions, fn(a) { a.id })
@@ -245,22 +248,25 @@ val simulate = fn():list {
 // for it is stale and not sent.
 val push = fn(present:list) {
     refreshed = {}
-    val n = math.min(forks, len(present))
     // Drawing changes nothing, so each chunk's company is found once.
-    val find = fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) }
-    val found = if (n > 1) {
-        // Every nth player each, as players near each other cost alike.
-        val tasks = map(range(n), fn(w) {
-            val mine = map(range(math.div(len(present) - w + n - 1, n)), fn(i) { present[w + i * n] })
-            fork { find(mine) }
-        })
-        reduce(tasks, [], fn(acc, task) { acc + await(task) })
-    } else {
-        find(present)
-    }
+    val found = inForks(present, fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) })
     map(filter(found, fn(c) { refreshed[c.id] == nil }), fn(c) {
         if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") }
     })
+}
+
+// What `find` returns for the players `ids`, a list for each share of them,
+// joined: with `forks` above one, that many forks each find it for a share,
+// every nth player, as players near each other cost alike. `find` must
+// change nothing.
+val inForks = fn(ids:list, find:fn):list {
+    val n = math.min(forks, len(ids))
+    if (n <= 1) { return find(ids) }
+    val tasks = map(range(n), fn(w) {
+        val mine = map(range(math.div(len(ids) - w + n - 1, n)), fn(i) { ids[w + i * n] })
+        fork { find(mine) }
+    })
+    reduce(tasks, [], fn(acc, task) { acc + await(task) })
 }
 
 // Sends the player's page what changed since it was last sent anything, or
