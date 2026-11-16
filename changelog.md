@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A top-level `main` that cannot be an entrypoint, such as `fn(args)`
+  without a `list` or `map` annotation, is an `invalid_entrypoint` error
+  saying what to change. It used to be an ordinary function, so the program
+  ran its top level and silently skipped `main`.
+
 - `slug.crypto.hash` gives SHA-256 digests: `sha256Of(data)` at once, or
   `sha256()`, `update`, and `finish` for data fed in pieces, such as an
   upload hashed as it is written; `hex` writes a digest as hexadecimal. A

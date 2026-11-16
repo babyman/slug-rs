@@ -675,6 +675,76 @@ fn same_fields(a: &[(String, FieldDefault)], b: &[(String, FieldDefault)]) -> bo
             })
 }
 
+/// Fails an entry program that has no entrypoint but declares a top-level
+/// function named `main`, which would silently not run: almost always a
+/// missing or mistaken parameter annotation. Hosts call it for the program
+/// they run, not for imported modules or interactive cells.
+///
+/// # Errors
+///
+/// Returns an `invalid_entrypoint` error naming what keeps `main` from being
+/// an entrypoint, or the source's parse error.
+pub(crate) fn check_entrypoint(path: &str, source: &str) -> Result<(), SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    match expressions.iter().find_map(ineligible_main) {
+        Some((reason, span)) => Err(SourceError::semantic(
+            SourceErrorCode::InvalidEntrypoint,
+            reason,
+            span.clone(),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Why a top-level `val main = fn ...` is not an entrypoint, and where. Asked
+/// only of a program that has no entrypoint, so every such `main` is one.
+fn ineligible_main(expression: &ast::Expr) -> Option<(String, &SourceSpan)> {
+    let ast::ExprKind::Declare { pattern, value, .. } = &expression.kind else {
+        return None;
+    };
+    let ast::Pattern::Binding(name) = pattern else {
+        return None;
+    };
+    let ast::ExprKind::Function {
+        type_parameters,
+        parameters,
+        ..
+    } = &value.kind
+    else {
+        return None;
+    };
+    if name != "main" {
+        return None;
+    }
+    let reason = if type_parameters.is_empty() {
+        match parameters.as_slice() {
+            [parameter] if parameter.variadic || parameter.default.is_some() => format!(
+                "`main`'s parameter `{}` must be required and not variadic to make it an entrypoint",
+                parameter.name
+            ),
+            [parameter] => match &parameter.annotation {
+                None => format!(
+                    "`main` is not an entrypoint until its parameter is annotated: write `{0}:list` for the raw arguments or `{0}:map` for parsed options",
+                    parameter.name
+                ),
+                Some(annotation) => format!(
+                    "`main`'s parameter `{}` is annotated `{}`; an entrypoint's parameter is annotated exactly `list` or `map`",
+                    parameter.name,
+                    annotation_text(annotation)
+                ),
+            },
+            parameters => format!(
+                "`main` takes {} parameters; an entrypoint takes none, or one annotated `list` or `map`",
+                parameters.len()
+            ),
+        }
+    } else {
+        "`main` cannot take type parameters: an entrypoint is `fn()`, `fn(args:list)`, or `fn(args:map)`".to_string()
+    };
+    Some((reason, &value.span))
+}
+
 fn annotation_text(annotation: &ast::TypeAnnotation) -> String {
     let join = |elements: &[ast::TypeAnnotation]| {
         elements

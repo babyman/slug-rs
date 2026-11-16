@@ -231,8 +231,13 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Program, SourceError> {
-        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)
-            .map(|compilation| compilation.program)
+        let program = self
+            .compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)?
+            .program;
+        if !program.has_entrypoint() {
+            crate::source::check_entrypoint(path, source)?;
+        }
+        Ok(program)
     }
 
     /// Compiles an entry source and every literal import into a closed artifact.
@@ -275,6 +280,14 @@ impl ModuleGraph {
             &mut imports,
             &mut sources,
         )?;
+        if !modules[root].program.has_entrypoint() {
+            crate::source::check_entrypoint(path, source).map_err(|error| {
+                ModuleLoadError::Compile {
+                    location: path.into(),
+                    error: Box::new((&error).into()),
+                }
+            })?;
+        }
         let artifact = Artifact {
             root,
             modules,

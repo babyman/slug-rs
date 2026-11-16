@@ -205,7 +205,7 @@ fn does_not_expose_retired_argument_builtins() {
 }
 
 #[test]
-fn skips_defaulted_and_imported_main_functions() {
+fn skips_imported_main_functions() {
     let root = std::env::temp_dir().join(format!("slug-cli-main-selection-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create entrypoint fixture directory");
     fs::write(
@@ -217,7 +217,6 @@ fn skips_defaulted_and_imported_main_functions() {
     fs::write(
         &path,
         "val library = import(\"library\")\n\
-         val main = fn(value = \"defaulted\") { println(value) }\n\
          println(\"top level\")\n",
     )
     .expect("write non-entrypoint source");
@@ -231,6 +230,50 @@ fn skips_defaulted_and_imported_main_functions() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "top level\n");
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn a_top_level_main_that_cannot_be_an_entrypoint_is_an_error() {
+    // Each would otherwise be skipped, so the program would silently not
+    // run its `main`.
+    let cases = [
+        (
+            "unannotated",
+            "val main = fn(args) { 1 }\n",
+            "write `args:list`",
+        ),
+        (
+            "annotated",
+            "val main = fn(args:str) { 1 }\n",
+            "annotated `str`",
+        ),
+        (
+            "defaulted",
+            "val main = fn(value = \"x\") { 1 }\n",
+            "must be required",
+        ),
+        (
+            "two",
+            "val main = fn(a:list, b:list) { 1 }\n",
+            "takes 2 parameters",
+        ),
+    ];
+    for (name, source, reason) in cases {
+        let path = fixture_path(&format!("ineligible-main-{name}"));
+        fs::write(&path, source).expect("write ineligible main source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run ineligible main source");
+        fs::remove_file(&path).expect("remove ineligible main source");
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr.contains("code: invalid_entrypoint"),
+            "{name}: {stderr}"
+        );
+        assert!(stderr.contains(reason), "{name}: {stderr}");
+    }
 }
 
 #[test]

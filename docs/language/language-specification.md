@@ -893,9 +893,13 @@ a parameter with another annotation, or a defaulted or variadic parameter does
 not define an entrypoint. Imported `main` bindings do not participate.
 
 A program may define at most one eligible local `main`; multiple eligible
-declarations are a semantic error. Other local functions named `main` remain
-ordinary callable declarations. If no eligible local `main` exists, evaluation
-ends after the top-level statements. A top-level failure prevents entrypoint
+declarations are a semantic error. A program with no eligible `main` whose top
+level declares a function named `main` is also a semantic error, since that
+`main` would silently not run: the error says what keeps it from being an
+entrypoint, such as an unannotated parameter. Beside an eligible `main`, other
+local functions named `main` remain ordinary callable declarations, as do
+functions named `main` nested in other functions. If no local `main` exists,
+evaluation ends after the top-level statements. A top-level failure prevents entrypoint
 invocation.
 
 When `main` returns a number, the runtime exits with it as the process's
