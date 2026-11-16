@@ -167,8 +167,7 @@ val waitingOnTheDiskLetsOtherTasksRun = fn() {
                     _ /> fn(_) { false }
                 }
                 if (finished) { return n }
-                // `after 0` is ready at once and would not yield.
-                select { after 1 }
+                select { after 0 }
                 recur(n + 1)
             }
             tick(0)

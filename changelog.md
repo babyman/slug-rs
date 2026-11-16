@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `select { after 0 }` yields: a timer case is never ready at once, so the
+  task parks and resumes after the other ready tasks, and the values native
+  threads have sent, have had their turn. A loop around it used to keep the
+  scheduler to itself and hold back replies from native I/O. A `_` default
+  case is still the poll that never yields, and wins over `after 0`.
+
 - `slug.net.http` reads request bodies only when the handler asks, with a
   limit each route chooses: `http.body(request)` gives the whole body,
   `http.read(request, maxBytes)` gives it a piece at a time as it arrives,

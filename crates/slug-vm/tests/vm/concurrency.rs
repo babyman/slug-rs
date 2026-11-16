@@ -199,6 +199,48 @@ fn private_select_await_resumes_a_suspended_task_frame_after_a_timer() {
 }
 
 #[test]
+fn after_zero_yields_to_the_tasks_already_ready() {
+    // The spawned task is queued but has not run. Were `after 0` ready at
+    // once, the main task would send 2 first.
+    let program = compile(
+        "after-zero-yields.slug",
+        "val log = make_channel(4)\n\
+         spawn { select { send log, 1 } }\n\
+         select { after 0 }\n\
+         select { send log, 2 }\n\
+         [select { recv log }, select { recv log }]\n",
+    )
+    .expect("compile after-zero source");
+    assert_eq!(
+        vm_with_channel_constructor()
+            .run_named(&program, "main")
+            .unwrap()
+            .to_string(),
+        "[1, 2]"
+    );
+}
+
+#[test]
+fn a_ready_case_or_default_wins_over_after_zero() {
+    let program = compile(
+        "after-zero-loses.slug",
+        "val inbox = make_channel(1)\n\
+         select { send inbox, 7 }\n\
+         val received = select { after 0 /> fn(_) { 0 }; recv inbox /> fn(value) { value } }\n\
+         val defaulted = select { after 0 /> fn(_) { 0 }; _ /> fn(_) { 1 } }\n\
+         [received, defaulted]\n",
+    )
+    .expect("compile after-zero readiness source");
+    assert_eq!(
+        vm_with_channel_constructor()
+            .run_named(&program, "main")
+            .unwrap()
+            .to_string(),
+        "[7, 1]"
+    );
+}
+
+#[test]
 fn select_checks_ready_cases_before_driving_an_awaited_task() {
     let program = compile(
         "select-ready-snapshot.slug",

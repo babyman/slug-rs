@@ -5504,13 +5504,11 @@ impl Vm {
                         return Ok(());
                     }
                 }
+                // A timer is never ready at once: even `after 0` parks, and
+                // the scheduler wakes it on its next round, once the other
+                // ready tasks and native channels have had their turn.
                 #[cfg(feature = "concurrency")]
-                RuntimeSelectCase::After { deadline, handler } => {
-                    if *deadline <= self.progress.now() {
-                        self.push_select_result(Value::Nil, handler.clone());
-                        return Ok(());
-                    }
-                }
+                RuntimeSelectCase::After { .. } => {}
                 RuntimeSelectCase::Default { handler } => default = Some(handler.clone()),
             }
         }

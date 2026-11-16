@@ -1543,8 +1543,14 @@ select {
 ```
 
 `after` takes a non-negative integer delay in milliseconds and selects with
-`nil` when that delay has elapsed. A select with no immediately ready
-non-default case parks until one registered case becomes ready. The first case
+`nil` when that delay has elapsed. A timer case is never immediately ready:
+even `after 0` parks, and resumes on the scheduler's next round, after the
+tasks already ready and the values native producers have sent. So
+`select { after 0 }` yields to the rest of the program, and
+`select { recv channel; after 0 }` takes a value that is ready and otherwise
+yields once. A `_` default case is the poll that never yields. A select with
+no immediately ready non-default case parks until one registered case becomes
+ready. The first case
 made ready resumes the evaluation and removes every other case's waiter; those
 losing cases must not consume a later channel value or task completion.
 Checking immediate readiness does not run or wait for an unsettled task. A
