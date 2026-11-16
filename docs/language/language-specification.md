@@ -1470,13 +1470,14 @@ it waits for a nursery's body cancels that nursery, its body and children
 with it. While a nursery waits, tasks outside it continue to run. After a successful
 body, the root nursery joins its descendants before program completion.
 
-A spawned task snapshots its immediate lexical bindings. Subsequent parent
-assignment is not visible through those captured local bindings. Captured
-values are shallow-shared, so channels and mutable objects retain identity.
-Outer lexical bindings and module globals remain live, and ordinary closures
-continue to share their captured mutable bindings. A `task var` is the
-exception: each task has its own (see Bindings). A fork, below, sees a
-snapshot of everything instead.
+A spawned task shares every binding it captures, as any closure does: a
+`var` that the spawner or the task assigns is seen by the other, wherever the
+`spawn` is nested, and module variables are shared too. Tasks take turns, so
+another task's assignment can only appear while this one waits, in a `select`
+or a blocking channel or task operation. To give a task the value a `var` has
+when it starts, bind it to a `val` first: `val at = count; spawn { use(at) }`.
+A `task var` is the exception: each task has its own (see Bindings). A fork,
+below, sees a snapshot of everything instead.
 
 ### Forks
 

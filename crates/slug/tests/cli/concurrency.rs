@@ -364,24 +364,34 @@ fn spawned_tasks_retain_immutable_collection_snapshots() {
 }
 
 #[test]
-fn spawned_tasks_snapshot_immediate_captures_but_keep_outer_captures_live() {
-    let path = fixture_path("spawn-capture-boundary");
+fn spawned_tasks_share_the_variables_they_capture() {
+    // As any closure does: the task sees the spawner's later writes, the
+    // spawner sees the task's, wherever the spawn is nested.
+    let path = fixture_path("spawn-capture-sharing");
     fs::write(
         &path,
         "val { await } = import(\"slug.channel\")\n\
          val direct = fn() { var value = 1; val task = spawn { value }; value = 2; await(task) }\n\
          val outer = fn() { var value = 1; val middle = fn() { val task = spawn { value }; value = 2; await(task) }; middle() }\n\
-         println(direct())\nprintln(outer())\n",
+         val written = fn() { var value = 1; await(spawn { value = 3 }); value }\n\
+         val inIf = fn() { var value = 1; if (true) { await(spawn { value = 4 }) }; value }\n\
+         val inNursery = fn() { var value = 1; nursery { spawn { value = 5 } }; value }\n\
+         val pinned = fn() { var value = 1; val at = value; val task = spawn { at }; value = 2; await(task) }\n\
+         println(direct(), outer(), written(), inIf(), inNursery(), pinned())\n",
     )
-    .expect("write capture-boundary task source");
+    .expect("write capture-sharing task source");
     let output = slug()
         .arg(&path)
         .output()
-        .expect("run capture-boundary task source");
-    fs::remove_file(path).expect("remove capture-boundary task source");
+        .expect("run capture-sharing task source");
+    fs::remove_file(path).expect("remove capture-sharing task source");
 
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n2\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 2 3 4 5 1\n");
     assert!(output.stderr.is_empty());
 }
 

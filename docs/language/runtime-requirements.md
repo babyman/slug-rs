@@ -484,15 +484,16 @@ instead of interpreting `limit N` as a promise of `N` operating-system threads.
 
 ### Spawn capture
 
-When `spawn` executes, it snapshots only the immediate lexical binding cells:
+A spawned task shares the binding cells it captures, as an ordinary closure
+does:
 
-- a parent reassignment after `spawn` is not visible through the captured local
-  binding;
-- captured values are shallow-shared, so channels and mutable objects retain
-  their identity;
-- outer lexical bindings remain live;
+- an assignment by the spawner after `spawn` is visible to the task, and an
+  assignment by the task is visible to the spawner, at the other's next turn;
+- this holds whether the `spawn` is in the function that declares the binding,
+  in a nested block such as an `if` or a `nursery` body, or in a nested
+  function;
 - root and loaded-module globals remain live and shared;
-- ordinary, non-spawn closures continue to share captured mutable cells.
+- a `task var` is per task, and a `fork` snapshots everything it captures.
 
 A dedicated fixture in `../../tests/conformance` must cover this contract;
 until it does, focused VM and CLI tests remain the implementation evidence.

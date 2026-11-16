@@ -4198,8 +4198,8 @@ impl Vm {
     }
 
     /// Starts a task from the closure on the stack: a spawned task shares
-    /// its outer captures, and a fork (`forked`) sees a snapshot of all of
-    /// them, which it cannot assign.
+    /// every variable it captures, as any closure does, and a fork
+    /// (`forked`) sees a snapshot of all of them, which it cannot assign.
     #[cfg(feature = "concurrency")]
     fn start_task(&mut self, _program: &Program, forked: bool) -> VmResult<()> {
         let closure = self.pop()?;
@@ -4230,10 +4230,12 @@ impl Vm {
         let captures: Vec<_> = closure
             .captures
             .iter()
-            .zip(&closure.capture_sources)
-            .map(|(cell, source)| match source {
-                Capture::Capture(_) if !forked => cell.clone(),
-                Capture::Local(_) | Capture::Capture(_) => binding_cell(cell.borrow().clone()),
+            .map(|cell| {
+                if forked {
+                    binding_cell(cell.borrow().clone())
+                } else {
+                    cell.clone()
+                }
             })
             .collect();
         if forked && self.variables.any_initializing() {

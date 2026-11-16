@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A spawned task shares every variable it captures, as any closure does: a
+  `var` the spawner or the task assigns is seen by the other, however the
+  `spawn` is nested. It used to snapshot the variables of the function holding
+  the `spawn`, so a task's writes there were silently lost unless the `spawn`
+  happened to sit in a `nursery` body or a nested function. To give a task a
+  fixed value, bind it to a `val` before spawning. `fork` keeps its snapshot.
+
 - A top-level `main` that cannot be an entrypoint, such as `fn(args)`
   without a `list` or `map` annotation, is an `invalid_entrypoint` error
   saying what to change. It used to be an ordinary function, so the program
