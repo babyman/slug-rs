@@ -75,9 +75,10 @@ bench-native-scalar:
 stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
 
-# Stages only the typed filesystem clutch and runs its CLI tests.
+# Stages the typed filesystem clutch and runs its CLI tests, then its own
+# tests; `slug test` imports slug.core's native modules, so it stages that too.
 test-filesystem-clutch:
-	sh scripts/stage-native-clutches.sh slug.io.fs.clutch
+	sh scripts/stage-native-clutches.sh slug.core.clutch slug.io.fs.clutch
 	cargo test -p slug --features metrics --test cli filesystem
 	cargo build -p slug
 	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.io.fs.clutch
