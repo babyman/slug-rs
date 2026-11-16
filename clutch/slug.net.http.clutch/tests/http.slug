@@ -176,3 +176,137 @@ val framesABufferedResponseItself = fn() {
     val answer = exchange(handler, "GET / HTTP/1.0\r\n\r\n")
     assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nx")
 }
+
+// --- Request bodies ------------------------------------------------------------
+
+@test
+val readsABodyOnlyWhenTheHandlerAsks = fn() {
+    val echo = fn(request) { "got " + fromBytes(http.body(request)) }
+    val sized = exchange(echo, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+    assertEqual(sized, "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\ngot hello")
+    val chunked = exchange(echo, "POST / HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nhel\r\n2;x=y\r\nlo\r\n0\r\nTrailer: z\r\n\r\n")
+    assertEqual(chunked, "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\ngot hello")
+}
+
+@test
+val refusesADeclaredLengthOverTheLimitBeforeItIsSent = fn() {
+    val echo = fn(request) { fromBytes(http.body(request, 4)) }
+    // No `100 Continue`: the client never has to send the body.
+    val answer = exchange(echo, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    val streamed = fn(request) {
+        val drain = fn(total:num):num {
+            match http.read(request, 4) {
+                nil => total
+                piece => recur(total + len(piece))
+            }
+        }
+        "read ${drain(0)}"
+    }
+    val chunked = exchange(streamed, "POST / HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+    assertEqual(chunked, "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+@test
+val continuesOnlyWhenTheHandlerReads = fn() {
+    val echo = fn(request) { fromBytes(http.body(request)) }
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, echo, {idleTimeout: 1000}) }
+    val client = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(client, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 2\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")
+    assertEqual(fromBytes(tcp.read(client, timeout = 5000) ?? 0x""), "HTTP/1.1 100 Continue\r\n\r\n")
+    tcp.write(client, "ok")
+    val collect = fn(received:bytes):bytes {
+        match tcp.read(client, timeout = 5000) {
+            nil => received
+            data => recur(received + data)
+        }
+    }
+    assertEqual(fromBytes(collect(0x"")), "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nok")
+    tcp.close(client)
+    tcp.close(listener)
+    await(server)
+}
+
+@test
+val anUnreadBodyClosesTheConnection = fn() {
+    // Two pipelined requests: the first handler ignores its body, so the
+    // second is never read and the connection closes after the first.
+    val ignore = fn(request) { "ignored" }
+    val answer = exchange(ignore, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 3\r\n\r\nabcGET / HTTP/1.1\r\nHost: t\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nignored")
+    // Read to its end, it leaves the connection open for the next request.
+    val read = fn(request) { "read " + fromBytes(http.body(request)) }
+    val both = exchange(read, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 3\r\n\r\nabcGET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    assertEqual(both, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nread abcHTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nread ")
+}
+
+@test
+val aHandMadeRequestGivesItsBodyField = fn() {
+    assertEqual(http.body(request("POST", "/") + {body: toBytes("x=1")}), toBytes("x=1"))
+    assertEqual(http.body(request("GET", "/")), 0x"")
+}
+
+// --- Multipart forms -------------------------------------------------------------
+
+// A request whose body arrives one byte at a time, so every delimiter is
+// split across pieces.
+val trickled = fn(type:str, text:str):map {
+    val data = toBytes(text)
+    var at = 0
+    val source = {
+        next: fn(maxBytes:num):bytes|nil {
+            if (at >= len(data)) { return nil }
+            at = at + 1
+            data[at - 1:at]
+        },
+        ended: fn():bool { at >= len(data) },
+        maxBodyBytes: 1048576,
+    }
+    request("POST", "/") + {headers: {"content-type": type}, bodySource: source}
+}
+
+val FORM = "preamble\r\n--XyZ\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nMy \"notes\"\r\n--XyZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a;b.txt\"\r\nContent-Type: text/plain\r\n\r\nline one\r\n--Xy not yet\r\n--XyZ--\r\nepilogue"
+
+@test
+val readsMultipartFieldsAndFiles = fn() {
+    val upload = http.multipart(trickled("multipart/form-data; boundary=XyZ", FORM), 10000)
+    val title = upload.next() ?? {}
+    assertEqual([title.name, title.filename, title.contentType], ["title", nil, "text/plain"])
+    assertEqual(title.text(100), "My \"notes\"")
+    val file = upload.next() ?? {}
+    assertEqual([file.name, file.filename], ["file", "a;b.txt"])
+    val collect = fn(out:bytes):bytes {
+        match file.read() {
+            nil => out
+            piece => recur(out + piece)
+        }
+    }
+    assertEqual(fromBytes(collect(0x"")), "line one\r\n--Xy not yet")
+    assertEqual(upload.next(), nil)
+    assertEqual(upload.next(), nil)
+}
+
+@test
+val skipsWhatIsLeftOfAPart = fn() {
+    val upload = http.multipart(request("POST", "/") + {headers: {"content-type": "multipart/form-data; boundary=\"XyZ\""}, body: toBytes(FORM)}, 10000)
+    val title = upload.next() ?? {}
+    val file = upload.next() ?? {}
+    assertEqual(file.filename, "a;b.txt")
+    // The first part's reader ends once the next part has begun.
+    assertEqual(title.read(), nil)
+    assertEqual(upload.next(), nil)
+}
+
+@test
+val refusesWhatIsNotAMultipartForm = fn() {
+    val status = fn(work:fn) {
+        defer onerror(err) { return err.data.status }
+        work()
+        nil
+    }
+    assertEqual(status(fn() { http.multipart(request("POST", "/") + {headers: {"content-type": "text/plain"}}, 100) }), 415)
+    assertEqual(status(fn() { http.multipart(request("POST", "/") + {headers: {"content-type": "multipart/form-data"}}, 100) }), 400)
+    val truncated = http.multipart(trickled("multipart/form-data; boundary=XyZ", "--XyZ\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nno end"), 1000)
+    assertEqual(status(fn() { (truncated.next() ?? {}).text(100) }), 400)
+}

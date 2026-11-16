@@ -116,6 +116,7 @@ pub enum SourceErrorCode {
     UnsendableValue,
     InvalidEntrypoint,
     InvalidAsset,
+    InvalidImport,
     Internal,
 }
 
@@ -157,6 +158,7 @@ impl SourceErrorCode {
         Self::UnsendableValue,
         Self::InvalidEntrypoint,
         Self::InvalidAsset,
+        Self::InvalidImport,
         Self::Internal,
     ];
 
@@ -199,6 +201,7 @@ impl SourceErrorCode {
             Self::UnsendableValue => "unsendable_value",
             Self::InvalidEntrypoint => "invalid_entrypoint",
             Self::InvalidAsset => "invalid_asset",
+            Self::InvalidImport => "invalid_import",
             Self::Internal => "internal",
         }
     }
@@ -552,6 +555,194 @@ pub fn foreign_declarations(
             _ => None,
         })
         .collect())
+}
+
+/// How a host's runtime differs from its `slug.builtin` contract: each
+/// `foreign` declaration with no registered builtin of its arity, each
+/// registered builtin it does not declare, and an `Error` whose fields or
+/// literal defaults are not the VM's. Empty when they agree.
+///
+/// # Errors
+///
+/// Returns a source error when the contract does not parse.
+#[doc(hidden)]
+pub fn builtin_contract_mismatches(
+    path: &str,
+    contract: &str,
+    builtins: &[slug_vm::NativeFunction],
+) -> Result<Vec<String>, SourceError> {
+    let tokens = Lexer::new(path, contract).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    let mut mismatches = Vec::new();
+    let mut declared = Vec::new();
+    let mut error_fields = None;
+    for expression in &expressions {
+        match &expression.kind {
+            ast::ExprKind::Foreign {
+                name, signature, ..
+            } => {
+                let parameters = &signature.parameters;
+                let minimum = parameters
+                    .iter()
+                    .filter(|parameter| !parameter.variadic && parameter.default.is_none())
+                    .count();
+                let maximum = (!parameters.iter().any(|parameter| parameter.variadic))
+                    .then_some(parameters.len());
+                match builtins.iter().find(|builtin| builtin.name() == name) {
+                    None => mismatches.push(format!("`{name}` is declared but not registered")),
+                    Some(builtin) if !builtin.matches_declared_arity(minimum, maximum) => {
+                        mismatches.push(format!(
+                            "`{name}` is registered with an arity its declaration does not have"
+                        ));
+                    }
+                    Some(_) => {}
+                }
+                declared.push(name.clone());
+            }
+            ast::ExprKind::Declare {
+                pattern: ast::Pattern::Binding(name),
+                value,
+                ..
+            } if name == "Error" => {
+                if let ast::ExprKind::StructSchema(fields) = &value.kind {
+                    error_fields = Some(
+                        fields
+                            .iter()
+                            .map(|field| {
+                                let default = match field.default.as_ref().map(|d| &d.kind) {
+                                    None => FieldDefault::Required,
+                                    Some(ast::ExprKind::Value(value)) => {
+                                        FieldDefault::Literal(value.clone())
+                                    }
+                                    Some(_) => FieldDefault::Computed,
+                                };
+                                (field.name.clone(), default)
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    for builtin in builtins {
+        if !declared.iter().any(|name| name == builtin.name()) {
+            mismatches.push(format!(
+                "`{}` is registered but not declared",
+                builtin.name()
+            ));
+        }
+    }
+    let runtime = slug_vm::StructSchema::error_fields()
+        .into_iter()
+        .map(|(name, default)| {
+            let default = default.map_or(FieldDefault::Required, FieldDefault::Literal);
+            (name, default)
+        })
+        .collect::<Vec<_>>();
+    match error_fields {
+        None => mismatches.push("`Error` is not declared as a struct".into()),
+        Some(fields) if !same_fields(&fields, &runtime) => {
+            mismatches.push("`Error`'s fields or defaults are not the VM's".into());
+        }
+        Some(_) => {}
+    }
+    Ok(mismatches)
+}
+
+/// A struct field's default, as the contract check compares it.
+enum FieldDefault {
+    /// The field has no default.
+    Required,
+    Literal(slug_vm::Value),
+    /// A default that is not a literal, which matches nothing.
+    Computed,
+}
+
+/// Whether two field lists have the same names and literal defaults, in
+/// order.
+fn same_fields(a: &[(String, FieldDefault)], b: &[(String, FieldDefault)]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((a_name, a_default), (b_name, b_default))| {
+                a_name == b_name
+                    && match (a_default, b_default) {
+                        (FieldDefault::Required, FieldDefault::Required) => true,
+                        (FieldDefault::Literal(a), FieldDefault::Literal(b)) => a == b,
+                        _ => false,
+                    }
+            })
+}
+
+/// Fails an entry program that has no entrypoint but declares a top-level
+/// function named `main`, which would silently not run: almost always a
+/// missing or mistaken parameter annotation. Hosts call it for the program
+/// they run, not for imported modules or interactive cells.
+///
+/// # Errors
+///
+/// Returns an `invalid_entrypoint` error naming what keeps `main` from being
+/// an entrypoint, or the source's parse error.
+pub(crate) fn check_entrypoint(path: &str, source: &str) -> Result<(), SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    match expressions.iter().find_map(ineligible_main) {
+        Some((reason, span)) => Err(SourceError::semantic(
+            SourceErrorCode::InvalidEntrypoint,
+            reason,
+            span.clone(),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Why a top-level `val main = fn ...` is not an entrypoint, and where. Asked
+/// only of a program that has no entrypoint, so every such `main` is one.
+fn ineligible_main(expression: &ast::Expr) -> Option<(String, &SourceSpan)> {
+    let ast::ExprKind::Declare { pattern, value, .. } = &expression.kind else {
+        return None;
+    };
+    let ast::Pattern::Binding(name) = pattern else {
+        return None;
+    };
+    let ast::ExprKind::Function {
+        type_parameters,
+        parameters,
+        ..
+    } = &value.kind
+    else {
+        return None;
+    };
+    if name != "main" {
+        return None;
+    }
+    let reason = if type_parameters.is_empty() {
+        match parameters.as_slice() {
+            [parameter] if parameter.variadic || parameter.default.is_some() => format!(
+                "`main`'s parameter `{}` must be required and not variadic to make it an entrypoint",
+                parameter.name
+            ),
+            [parameter] => match &parameter.annotation {
+                None => format!(
+                    "`main` is not an entrypoint until its parameter is annotated: write `{0}:list` for the raw arguments or `{0}:map` for parsed options",
+                    parameter.name
+                ),
+                Some(annotation) => format!(
+                    "`main`'s parameter `{}` is annotated `{}`; an entrypoint's parameter is annotated exactly `list` or `map`",
+                    parameter.name,
+                    annotation_text(annotation)
+                ),
+            },
+            parameters => format!(
+                "`main` takes {} parameters; an entrypoint takes none, or one annotated `list` or `map`",
+                parameters.len()
+            ),
+        }
+    } else {
+        "`main` cannot take type parameters: an entrypoint is `fn()`, `fn(args:list)`, or `fn(args:map)`".to_string()
+    };
+    Some((reason, &value.span))
 }
 
 fn annotation_text(annotation: &ast::TypeAnnotation) -> String {

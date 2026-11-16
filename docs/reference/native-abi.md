@@ -177,16 +177,26 @@ borrowed Slug values. A future root design requires its own use case and
 lifetime decision.
 
 Cross-thread producers construct an **owned send value** using the thread-safe
-producer API. The version 1 transferable set is deliberately limited to `nil`,
-boolean, integer, float, UTF-8 string, and bytes. String and byte construction
-copies or takes explicit ownership of all memory. Functions, closures, lists,
-maps, structs, task handles, channel receivers, and native resources are not
-transferable.
+producer API. The transferable set is deliberately limited to `nil`, boolean,
+integer, float, UTF-8 string, bytes, and, from producer API version 2, a flat
+list of those scalars. String and byte construction copies or takes explicit
+ownership of all memory. Functions, closures, nested lists, maps, structs, task
+handles, channel receivers, and native resources are not transferable.
 
-Native integrations can encode a compound event as bytes or return a typed
-resource with synchronous accessor functions. A later ABI version may add
-compound values or an explicitly shareable resource capability after concrete
-consumers establish construction, failure-cleanup, and backpressure needs.
+A list is one message: it takes one slot of the channel's capacity, arrives
+whole or not at all, and wakes its receiver once. It exists for replies of
+several values, such as a status and its result, which would otherwise be
+sent one at a time and could be cut off when the channel closes between them.
+The C header declares it as `slug_producer_send_list(producer, items, count)`
+over `slug_producer_item` values built by `slug_producer_item_i64` and its
+siblings. Every item is validated before anything is sent: a non-finite float,
+text that is not UTF-8, or an unknown kind makes the whole list `invalid`. A
+host older than version 2 answers `invalid` too. A map is built on the Slug
+side from a list.
+
+A later version may add an explicitly shareable resource capability after
+concrete consumers establish construction, failure-cleanup, and backpressure
+needs.
 
 This separation permits the current Rust VM to replace its `Rc`-based value
 representation before concurrency without making that representation an ABI

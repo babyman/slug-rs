@@ -67,7 +67,7 @@ test-native:
 # repository as SLUG_HOME.
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.random.secure.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.games.crawl.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.games.crawl.clutch
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh
@@ -75,10 +75,13 @@ bench-native-scalar:
 stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
 
-# Stages only the typed filesystem clutch and runs its CLI tests.
+# Stages the typed filesystem clutch and runs its CLI tests, then its own
+# tests; `slug test` imports slug.core's native modules, so it stages that too.
 test-filesystem-clutch:
-	sh scripts/stage-native-clutches.sh slug.io.fs.clutch
+	sh scripts/stage-native-clutches.sh slug.core.clutch slug.io.fs.clutch
 	cargo test -p slug --features metrics --test cli filesystem
+	cargo build -p slug
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.io.fs.clutch
 
 bench-vm:
 	cargo bench -p slug-frontend --bench vm --features metrics

@@ -4,7 +4,7 @@ val level = import("slug.games.crawl.level")
 val {toBytes, fromBytes, split, join} = import("slug.string")
 val {recv} = import("slug.channel")
 val json = import("slug.fmt.json")
-val {map, filter} = import("slug.std")
+val {map, filter, reduce, range} = import("slug.std")
 val {assertEqual, assertTrue} = import("slug.test")
 
 // Whether `text` contains `part`.
@@ -253,6 +253,29 @@ val playersSeeEachOther = fn() {
     assertTrue(includes(html, "class=\"ally\" title=\"Player 2\""))
     assertTrue(includes(html, "<i class=\"ally\">@</i>"))
     assertTrue(includes(web.gameHtml(b), "title=\"Player 1\""))
+}
+
+@test
+val aCrowdInViewNamesTheNearestAndCountsTheRest = fn() {
+    web.start(1)
+    val me = web.newPlayer()
+    // Players 2-10 stand next to player 1, and players 11-13, joining
+    // last, on their square.
+    val crowd = map(range(12), fn(i) { web.newPlayer() })
+    val s = game.snapshot()
+    val p = s.players[me]
+    val spot = if (game.here(me).map[p.y][p.x + 1] == ".") { p.x + 1 } else { p.x - 1 }
+    val placed = reduce(range(12), s.players, fn(acc, i) {
+        val x = if (i < 9) { spot } else { p.x }
+        acc + {[crowd[i]]: acc[crowd[i]] copy {cx: p.cx, cy: p.cy, depth: p.depth, x: x, y: p.y}}
+    })
+    game.load(s copy {players: placed})
+    val html = web.gameHtml(me)
+    val named = filter(range(2, 14), fn(n) { includes(html, "<span>Player " + n + "</span>") })
+    // The three on their square, and five of the nine next to it.
+    assertEqual(len(named), 8)
+    assertEqual(filter(named, fn(n) { n > 10 }), [11, 12, 13])
+    assertTrue(includes(html, "<li class=\"more\">and 4 others</li>"))
 }
 
 // Plays many seeded games with pseudo-random keys for two players: every

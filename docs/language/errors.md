@@ -11,7 +11,7 @@ throw value
 
 defer { cleanup() }
 defer onsuccess { commit() }
-defer onerror(err) { report(err) }
+defer onerror(err) { report(err); throw err }
 ```
 
 `throw` accepts any Slug value. It starts language-level error propagation.
@@ -21,8 +21,10 @@ use the same propagation path.
 A `defer` is registered in its enclosing scope. An unqualified `defer` runs
 when that scope exits. `defer onsuccess` runs only after ordinary completion.
 `defer onerror(name)` runs only while an error is propagating and binds its
-thrown payload to `name`. If an `onerror` action returns normally, it handles
-the active error. To propagate an error again, its action must execute `throw`.
+thrown payload to `name`. If an `onerror` action completes without throwing,
+by `return` or by reaching the end of its block, it handles the active error
+and its value becomes the function's result. To propagate an error again, its
+action must execute `throw`, as the `report` handler above does.
 An error raised by deferred work replaces the active error and retains it as a
 cause.
 

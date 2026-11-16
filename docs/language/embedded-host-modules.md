@@ -35,14 +35,17 @@ descriptor.
 
 ## `slug.builtin`
 
-The initial embedded profile provides the ordinary implicit and explicitly
-importable `slug.builtin` module with `Error`, `print`, `println`, `len`, and
-`keys`. `print` and `println` write to the host diagnostic stream. `len` and
-`keys` have the same behavior as on the desktop host.
+The embedded profile provides the ordinary builtins: `Error`, `print`,
+`println`, `len`, `keys`, `chan`, and `close`, declared by the target's
+contract, `clutch/slug.embedded.clutch/modules/builtin.slug`. The VM defines
+`Error`; the board package registers the functions, and the firmware build
+fails when they differ from the contract. As on the desktop, the contract is
+never run or carried in the artifact, and programs do not import it.
 
-The profile deliberately omits `chan` and `close` while embedded concurrency is
-unavailable. VM-provided `cfg`, `int`, and `stacktrace` remain available; the
-current firmware supplies an empty configuration and empty entry arguments.
+`print` and `println` write to the host diagnostic stream. `len`, `keys`,
+`chan`, and `close` have the same behavior as on the desktop host. VM-provided
+`cfg`, `int`, and `stacktrace` remain available; the current firmware
+supplies an empty configuration and empty entry arguments.
 
 ## `slug.gpio`
 
@@ -66,11 +69,16 @@ registration, PWM, ADC, or arbitrary electrical configuration.
 When selected for the initial embedded profile, `slug.time` exports:
 
 ```slug
-foreign sleepMs = fn(milliseconds:num):nil
+foreign monotonicMs = fn():num
+val sleepMs = fn(milliseconds:num):nil
 ```
 
-`sleepMs` blocks the current host execution for a finite, non-negative integral
-number of milliseconds within the host's documented bound. Negative,
-fractional, non-finite, or out-of-range values are checked host failures.
-`sleepMs` does not create a timer, task, or background host producer; it is not
-an alternative spelling of `after`.
+`monotonicMs` returns whole milliseconds on the clock the host gives the VM
+for timers (`ArtifactHost::set_clock`), from an arbitrary origin such as the
+board's start. It MUST NOT go backwards. The embedded profile has no wall
+clock, so unlike the desktop module it does not export `nowMs`.
+
+`sleepMs` is Slug code, not a host function: it waits as
+`select { after milliseconds }` does, so only the calling task parks and the
+board's other tasks run. Its argument is checked as `after`'s is. No host
+function in this module blocks the VM.

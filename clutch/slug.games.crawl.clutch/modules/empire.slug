@@ -52,7 +52,7 @@
 val rng = import("slug.games.crawl.rng")
 val math = import("slug.math")
 val string = import("slug.string")
-val {map, filter, reduce, range, any, remove} = import("slug.std")
+val {map, each, filter, reduce, range, any, remove} = import("slug.std")
 
 /**
  * How many chunks across and down a region is.
@@ -264,7 +264,7 @@ export val create = fn(seed:num, size:num, settlements:list):map {
         val d = fn(t:map):num { math.abs(t.cx - s.cx) + math.abs(t.cy - s.cy) }
         if (d(seats[0]) <= d(seats[1])) { 0 } else { 1 }
     }
-    map(settlements, fn(s) { holds = holds + {[territoryOf(s.cx, s.cy, 0)]: nearer(s)} })
+    each(settlements, fn(s) { holds = holds + {[territoryOf(s.cx, s.cy, 0)]: nearer(s)} })
     // Settlements' territories, with their names; the first is the start town.
     val fixed = reduce(settlements, {}, fn(acc, s) { acc + {[territoryOf(s.cx, s.cy, 0)]: s.name} })
     // Each other faction starts from a free territory at its home band and

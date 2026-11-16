@@ -1,0 +1,47 @@
+/**
+ * slug.time — clocks and waiting
+ *
+ * `nowMs()` reads the wall clock, for timestamps a person or another system
+ * will read: when a session started, when a row was written. `monotonicMs()`
+ * reads a clock that never goes back, for measuring how long something took
+ * or whether a deadline has passed; the wall clock can jump when it is set,
+ * so a duration measured on it can come out wrong, even negative.
+ *
+ * ```slug
+ * val time = import("slug.time")
+ *
+ * val start = time.monotonicMs()
+ * work()
+ * println("took ", time.monotonicMs() - start, " ms")
+ * ```
+ *
+ * Both are whole milliseconds. Waiting goes through the scheduler: `sleepMs`
+ * parks only the task that calls it, while the program's other tasks run.
+ */
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign nowMsRaw = fn():num
+foreign monotonicMsRaw = fn():num
+
+/**
+ * Whole milliseconds since the Unix epoch, 1970-01-01T00:00:00Z, on the
+ * system's wall clock. It can jump forwards or backwards when the clock is
+ * set, so measure durations with `monotonicMs`.
+ */
+export val nowMs = fn():num { nowMsRaw() }
+
+/**
+ * Whole milliseconds since an arbitrary origin, on a clock that never goes
+ * back: only the difference between two readings in one run means anything.
+ * It is the clock `select { after }` timers wait on.
+ */
+export val monotonicMs = fn():num { monotonicMsRaw() }
+
+/**
+ * Waits `milliseconds`, a non-negative whole number, as `select { after }`
+ * does: only the calling task waits, and the rest of the program runs.
+ */
+export val sleepMs = fn(milliseconds:num):nil {
+    select { after milliseconds }
+    nil
+}

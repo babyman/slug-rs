@@ -64,6 +64,7 @@ button.primary { background: var(--accent); color: #111; font-weight: 600; paddi
 .foes .bar { margin: 0; }
 .stats .name { margin-bottom: 6px; color: var(--accent); font-weight: 600; }
 .foes .none { margin: 0; color: var(--muted); font-size: 12px; }
+.foes li.more { display: block; color: var(--muted); font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .actions button { border-color: var(--line); }
 .log .scroll { height: 150px; overflow-y: auto; display: flex; flex-direction: column-reverse; }

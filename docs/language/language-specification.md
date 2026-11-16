@@ -182,9 +182,9 @@ before its declaration has run, or using another binding before the block
 declares it, is a static error at the use. A name that is not declared, and
 is not one the runtime provides to every module, is a static error that
 suggests the names in scope it most likely misspells. The runtime provides
-the exports of `slug.builtin` and the VM functions `cfg`, `int`, and
-`stacktrace`. When the compiler cannot know every name the runtime will
-provide, because `slug.builtin` is not available to it, a `{*}` declaration
+the names its `slug.builtin` contract declares, and the VM's `cfg`, `int`,
+`stacktrace`, `describe`, and `Error`. When the compiler cannot know every
+name the runtime will provide, because its host gives it no contract, a `{*}` declaration
 selects from a map whose entries are known only when it runs, or the source is
 an interactive session's, whose host may add names, an undeclared name is
 instead looked up when it runs and is an error then. An
@@ -670,11 +670,13 @@ runs only after successful completion. `defer onerror(name)` runs only during
 error propagation and binds the error to `name`.
 
 A thrown value may be any Slug value. Slug has no `try` or `catch` construct;
-`defer onerror` is the recovery mechanism. If an error handler returns normally,
-it handles the active error: its result becomes its enclosing function's result
-and its caller continues. Re-propagation requires an explicit `throw`. A
-throw from a deferred action replaces the active error and retains it as the
-cause. Runtime faults, including invalid calls and unknown names, use the same
+`defer onerror` is the recovery mechanism. An error handler that completes
+without throwing, whether by `return value` or by reaching the end of its
+block, handles the active error: its value becomes its enclosing function's
+result and its caller continues. A handler that only observes the error, to
+log it or release something, must end with `throw err` to let it continue.
+A throw from a deferred action replaces the active error and retains it as
+the cause. Runtime faults, including invalid calls and unknown names, use the same
 error-unwinding path. Errors include available source location and Slug call
 frames, while deferred helper frames are omitted.
 
@@ -682,23 +684,36 @@ The current core subset implements `defer`, `defer onsuccess`, and `defer
 onerror`: actions run in last-in, first-out order when their scope exits.
 
 `defer onsuccess` runs only on normal scope completion. It is skipped while a
-throw or checked runtime fault is unwinding.
+throw or checked runtime fault is unwinding. Once a handler recovers, the
+scope is completing normally: the actions registered before that handler run
+as on success, so `defer onsuccess` and plain `defer` actions run and earlier
+`defer onerror` handlers do not. A handler that throws passes its error to the
+handlers registered before it.
 
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
 `data` fields. `type` is one of `invalid_bytecode`, `type`, `name`, `arity`,
 `divide_by_zero`, `out_of_bounds` (an index past either end of a list, bytes,
-or string), `invalid_call`, `native`, `native_contract`, `module`,
-`module_not_found`, `not_implemented`, `match`, or `permission`; `msg` is its
+or string), `invalid_call`, `capability_unavailable` (an operation this
+runtime build leaves out, such as `spawn` without Slug-managed concurrency),
+`native`, `native_contract`, `module`, `module_not_found`, `not_implemented`,
+`match`, or `permission`; `msg` is its
 diagnostic message; and `data` is `nil` until a fault defines structured extra
 data.
 
 ```slug
+// Recovers: a zero divisor gives nil, and the caller continues.
 val divide = fn(a, b) {
   defer { println("finished") }
-  defer onerror(err) { println("failed:", err) }
+  defer onerror(err) { println("failed:", err); nil }
   if (b == 0) { throw "division by zero" }
   a / b
+}
+
+// Observes, then lets the error continue to the caller.
+val load = fn(path) {
+  defer onerror(err) { println("cannot load", path); throw err }
+  readConfig(path)
 }
 ```
 
@@ -775,33 +790,35 @@ val logo = asset("images/logo.png")    // assets/images/logo.png
 
 `name` is a path in the `assets` folder written with `/`: non-empty segments,
 none `.` or `..`, without `\` or NUL. Each segment must match the file's
-name exactly, case included, even where the file system ignores case. Only a
+name exactly, case included, even where the file system ignores case. A
 module whose source file is inside an indexed clutch, including that clutch's
-test files and programs, has assets, and only its own clutch's; a host that
-provides no assets has none. A call that is not one string literal, is
+test files and programs, has its own clutch's assets. Otherwise, a module whose
+source file is inside a [project](configuration.md#project-root) has the
+assets in the project's `assets` folder. Other modules have none, and a host
+that provides no assets has none. A call that is not one string literal, is
 piped, or names no such file is a compile error with the code
 `invalid_asset`. See [Experimental Clutches](../reference/experimental-clutches.md#assets).
 
 ## Implicit builtin module
 
-`slug.builtin` is the small, host-provided foundation module. When the host
-registers matching bindings, its exports are implicitly available in every
-module and may also be imported explicitly with `import("slug.builtin")`.
-Local declarations take precedence over implicit builtin bindings: a module
+The builtins are predeclared in every module. The runtime defines all of
+them: the VM defines `Error`, `cfg`, `int`, `stacktrace`, and `describe`, and
+the host registers the functions it provides, such as `print`. `slug.builtin`
+names their contract, the declarations the compiler reads for their names
+and types, which the host supplies. It is not a module: no file found on the
+module path is read as `slug.builtin`, and `import("slug.builtin")` is an
+`invalid_import` error. Local declarations take precedence over builtins: a module
 that declares a function named like a builtin, such as `close`, replaces the
 builtin there rather than adding an overload to it, so `slug.io.fs`'s `close`
 accepts only files. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
-The bundled declaration module documents `cfg(key, default)`, `int(value)`,
-`print(...values)`, `println(...values)`, `len(value)`, and `keys(map)`. The
-host registers
-its functions
-independently of the file. When present,
-`lib/slug/builtin.slug` documents those functions and may export foundational
-Slug values such as `Error`. The module is intentionally limited to primitives
-and universally shared values. General utilities and channel operations belong
+The desktop contract, `lib/slug/builtin.slug`, is built into the `slug`
+executable. It declares `Error`, `print(...values)`, `println(...values)`,
+`len(value)`, `keys(map)`, `chan(capacity)`, and `close(channel)`, and
+documents `cfg(key, default)` and `int(value)`. It is never run. The builtins
+are intentionally limited to primitives and universally shared values. General utilities and channel operations belong
 to ordinary explicit modules such as `slug.channel` and `slug.std`.
 
 The standard library consists of modules loaded through this same mechanism.
@@ -876,9 +893,13 @@ a parameter with another annotation, or a defaulted or variadic parameter does
 not define an entrypoint. Imported `main` bindings do not participate.
 
 A program may define at most one eligible local `main`; multiple eligible
-declarations are a semantic error. Other local functions named `main` remain
-ordinary callable declarations. If no eligible local `main` exists, evaluation
-ends after the top-level statements. A top-level failure prevents entrypoint
+declarations are a semantic error. A program with no eligible `main` whose top
+level declares a function named `main` is also a semantic error, since that
+`main` would silently not run: the error says what keeps it from being an
+entrypoint, such as an unannotated parameter. Beside an eligible `main`, other
+local functions named `main` remain ordinary callable declarations, as do
+functions named `main` nested in other functions. If no local `main` exists,
+evaluation ends after the top-level statements. A top-level failure prevents entrypoint
 invocation.
 
 When `main` returns a number, the runtime exits with it as the process's
@@ -1449,13 +1470,14 @@ it waits for a nursery's body cancels that nursery, its body and children
 with it. While a nursery waits, tasks outside it continue to run. After a successful
 body, the root nursery joins its descendants before program completion.
 
-A spawned task snapshots its immediate lexical bindings. Subsequent parent
-assignment is not visible through those captured local bindings. Captured
-values are shallow-shared, so channels and mutable objects retain identity.
-Outer lexical bindings and module globals remain live, and ordinary closures
-continue to share their captured mutable bindings. A `task var` is the
-exception: each task has its own (see Bindings). A fork, below, sees a
-snapshot of everything instead.
+A spawned task shares every binding it captures, as any closure does: a
+`var` that the spawner or the task assigns is seen by the other, wherever the
+`spawn` is nested, and module variables are shared too. Tasks take turns, so
+another task's assignment can only appear while this one waits, in a `select`
+or a blocking channel or task operation. To give a task the value a `var` has
+when it starts, bind it to a `val` first: `val at = count; spawn { use(at) }`.
+A `task var` is the exception: each task has its own (see Bindings). A fork,
+below, sees a snapshot of everything instead.
 
 ### Forks
 
@@ -1526,8 +1548,14 @@ select {
 ```
 
 `after` takes a non-negative integer delay in milliseconds and selects with
-`nil` when that delay has elapsed. A select with no immediately ready
-non-default case parks until one registered case becomes ready. The first case
+`nil` when that delay has elapsed. A timer case is never immediately ready:
+even `after 0` parks, and resumes on the scheduler's next round, after the
+tasks already ready and the values native producers have sent. So
+`select { after 0 }` yields to the rest of the program, and
+`select { recv channel; after 0 }` takes a value that is ready and otherwise
+yields once. A `_` default case is the poll that never yields. A select with
+no immediately ready non-default case parks until one registered case becomes
+ready. The first case
 made ready resumes the evaluation and removes every other case's waiter; those
 losing cases must not consume a later channel value or task completion.
 Checking immediate readiness does not run or wait for an unsettled task. A

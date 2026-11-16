@@ -321,6 +321,10 @@ impl ModuleResolver for DesktopLoader {
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
         self.state.resolver.asset(module, name)
     }
+
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.state.resolver.builtin_contract()
+    }
 }
 
 impl ModuleGraphHost for DesktopLoader {
@@ -492,40 +496,123 @@ pub fn default_library_root(slug_home: Option<&Path>) -> Option<PathBuf> {
         .or_else(|| slug_home.map(|home| home.join("lib")))
 }
 
+/// The file whose presence marks a project root.
+pub const PROJECT_MARKER: &str = "slug.toml";
+
+/// Where a program's modules, configuration, assets, and project clutches
+/// are.
+///
+/// In a project, the directory holding `slug.toml` is the project root: its
+/// `src/` is the module root, and it holds `assets/` and `clutch/`. Outside
+/// one, the program's directory is the module root and holds the rest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramLayout {
+    module_root: PathBuf,
+    project_root: Option<PathBuf>,
+}
+
+impl ProgramLayout {
+    /// The layout of a program in `directory`: the project of the nearest of
+    /// `directory` and its ancestors that holds `slug.toml`, or no project,
+    /// with `directory` as the module root, when none does. A project root
+    /// is canonical.
+    #[must_use]
+    pub fn discover(directory: &Path) -> Self {
+        // A bare file name's parent is the empty path: the current directory.
+        let directory = if directory.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            directory
+        };
+        let project_root = fs::canonicalize(directory).ok().and_then(|canonical| {
+            canonical
+                .ancestors()
+                .find(|ancestor| ancestor.join(PROJECT_MARKER).is_file())
+                .map(Path::to_path_buf)
+        });
+        match project_root {
+            Some(root) => Self {
+                module_root: root.join("src"),
+                project_root: Some(root),
+            },
+            None => Self::module_root(directory),
+        }
+    }
+
+    /// A host-selected module root, outside any project.
+    #[must_use]
+    pub fn module_root(root: impl Into<PathBuf>) -> Self {
+        Self {
+            module_root: root.into(),
+            project_root: None,
+        }
+    }
+
+    /// The directory imports search after the importer's own.
+    #[must_use]
+    pub fn modules(&self) -> &Path {
+        &self.module_root
+    }
+
+    /// The project root, or `None` outside a project.
+    #[must_use]
+    pub fn project(&self) -> Option<&Path> {
+        self.project_root.as_deref()
+    }
+
+    /// The directory whose `slug.toml` and `clutch/` apply: the project root,
+    /// or outside a project the module root.
+    #[must_use]
+    pub fn configuration_root(&self) -> &Path {
+        self.project_root.as_deref().unwrap_or(&self.module_root)
+    }
+}
+
 /// Builds the default Slug host VM, including module resolution and configuration.
 ///
-/// The caller supplies its source root and entry-module identity; library and
-/// clutch discovery deliberately follow the same environment contract as `slug`.
+/// The caller supplies its program layout and entry-module identity; library
+/// and clutch discovery deliberately follow the same environment contract as
+/// `slug`.
 ///
 /// # Errors
 ///
-/// Returns an error when an installed clutch manifest cannot be loaded.
+/// Returns an error when the installed or project clutch manifest cannot be
+/// loaded, or when both index the same module.
 pub fn build_default_host_vm(
-    source_root: &Path,
+    layout: &ProgramLayout,
     slug_home: Option<&Path>,
     program_arguments: &[String],
     entry_module: &str,
 ) -> Result<(Vm, DesktopLoader), ClutchRepositoryError> {
     let configuration = Configuration::load(
-        source_root,
+        layout.configuration_root(),
         slug_home,
         env::vars(),
         program_arguments,
         entry_module,
     );
-    let clutches = match slug_home {
-        Some(home) if home.join("clutch/manifest.toml").exists() => {
-            ClutchRepository::from_manifest(home.join("clutch"))?
-        }
+    let home = slug_home.map(|home| home.join("clutch"));
+    let mut clutches = match &home {
+        Some(home) if home.join("manifest.toml").exists() => ClutchRepository::from_manifest(home)?,
         _ => ClutchRepository::default(),
     };
-    let loader = DesktopLoader::with_resolver(
-        DesktopResolver::with_clutch_repository(
-            source_root.to_path_buf(),
-            default_library_root(slug_home),
-            clutches,
-        ),
-        configuration,
+    // A project's clutches layer over the installed ones, unless the project
+    // repository is the installed one, as for a program at `$SLUG_HOME`.
+    let project = layout.configuration_root().join("clutch");
+    if project.join("manifest.toml").exists()
+        && home.as_deref().and_then(|home| fs::canonicalize(home).ok())
+            != fs::canonicalize(&project).ok()
+    {
+        clutches = clutches.layer(ClutchRepository::from_manifest(&project)?)?;
+    }
+    let mut resolver = DesktopResolver::with_clutch_repository(
+        layout.modules().to_path_buf(),
+        default_library_root(slug_home),
+        clutches,
     );
+    if let Some(project) = layout.project() {
+        resolver = resolver.with_project_root(project.to_path_buf());
+    }
+    let loader = DesktopLoader::with_resolver(resolver, configuration);
     Ok((Vm::with_host(slug_vm::Shared::new(loader.clone())), loader))
 }

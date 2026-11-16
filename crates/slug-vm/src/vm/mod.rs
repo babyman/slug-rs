@@ -57,6 +57,7 @@ mod operations;
 #[cfg(feature = "metrics")]
 mod profile;
 mod progress;
+mod reads;
 #[cfg(feature = "concurrency")]
 mod scheduler;
 mod stack;
@@ -1015,7 +1016,7 @@ impl Vm {
     #[doc(hidden)]
     pub fn run_module(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.module_program = Some(program.program.clone());
-        self.install_implicit_builtins(&program.program)?;
+        self.install_implicit_builtins();
         self.bind_foreign_declarations(&program.program)?;
         #[cfg(feature = "concurrency")]
         let _initializing = self.variables.initializing();
@@ -1042,7 +1043,7 @@ impl Vm {
     fn run_program_settled(&mut self, program: &Program) -> VmResult<Value> {
         self.reset_metrics();
         let program = self.install_compat_named(program, "main")?;
-        self.install_implicit_builtins(&program.program)?;
+        self.install_implicit_builtins();
         self.bind_foreign_declarations(&program.program)?;
         #[cfg(feature = "concurrency")]
         let initializing = self.variables.initializing();
@@ -1739,42 +1740,18 @@ impl Vm {
         Ok(())
     }
 
-    fn install_implicit_builtins(&mut self, program: &Program) -> VmResult<()> {
-        if program.module_name() == "slug.builtin" {
-            return Ok(());
-        }
+    /// Installs the host's builtins, which it registers under `slug.builtin`.
+    /// The VM's own, such as `Error`, are installed when it is made. Neither
+    /// comes from a module: `slug.builtin` is their contract, which only the
+    /// compiler reads.
+    fn install_implicit_builtins(&mut self) {
         let Some(host) = &self.host else {
-            return Ok(());
+            return;
         };
         let mut globals = self.globals.borrow_mut();
         for (name, value) in host.builtin_globals() {
             globals.insert_if_absent(name, || value);
         }
-        drop(globals);
-        let instance = match host.import_module(None, "slug.builtin") {
-            Ok(instance) => instance,
-            Err(error) if error.is_not_found() => return Ok(()),
-            Err(error) => return Err(self.import_error(&error, None)),
-        };
-        let Value::Map(exports) = instance.exports else {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "slug.builtin exports are not a map".into(),
-                None,
-            ));
-        };
-        let mut globals = self.globals.borrow_mut();
-        for (name, value) in exports.iter() {
-            let Value::Str(name) = name else {
-                return Err(self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    "slug.builtin export name is not a string".into(),
-                    None,
-                ));
-            };
-            globals.insert_if_absent(name.to_string(), || value.clone());
-        }
-        Ok(())
     }
 
     fn install_configuration_builtins(&mut self) {
@@ -1783,12 +1760,16 @@ impl Vm {
         globals.insert("int".into(), Value::Builtin(Builtin::Int));
         globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
         globals.insert("describe".into(), Value::Builtin(Builtin::Describe));
+        globals.insert(
+            "Error".into(),
+            Value::StructSchema(Rc::new(crate::StructSchema::error())),
+        );
     }
 
     #[cfg(not(feature = "concurrency"))]
     fn runtime_capability_error(&self, capability: &str) -> RuntimeError {
         self.error_at(
-            RuntimeErrorKind::InvalidCall,
+            RuntimeErrorKind::CapabilityUnavailable,
             format!("runtime capability `{capability}` is unavailable"),
         )
     }
@@ -2586,15 +2567,19 @@ impl Vm {
             }
             PackedOpcode::UpdateGlobal
             | PackedOpcode::CopyGlobal
-            | PackedOpcode::CopyGlobalUpdate => self.fused_global_update(program, instruction)?,
+            | PackedOpcode::CopyGlobalUpdate
+            | PackedOpcode::UpdateCapture => self.fused_update(program, instruction)?,
             PackedOpcode::GetIndexConstant => {
                 self.get_index_constant(program, operand)?;
+            }
+            PackedOpcode::ReadIndex | PackedOpcode::ReadIndexConstant => {
+                self.read_index(program, instruction)?;
             }
             PackedOpcode::GetIndex => {
                 let (collection, index) = self.pop_pair()?;
                 self.stack.push(
                     index_value(
-                        collection,
+                        &collection,
                         &index,
                         #[cfg(feature = "metrics")]
                         &self.metrics,
@@ -3374,6 +3359,7 @@ impl Vm {
         self.stack
             .push(Value::StructSchema(Rc::new(crate::StructSchema {
                 fields: schema_fields,
+                builtin: None,
             })));
         Ok(())
     }
@@ -3855,7 +3841,7 @@ impl Vm {
             return Ok(());
         }
         let value = index_value(
-            collection,
+            &collection,
             key,
             #[cfg(feature = "metrics")]
             &self.metrics,
@@ -4212,8 +4198,8 @@ impl Vm {
     }
 
     /// Starts a task from the closure on the stack: a spawned task shares
-    /// its outer captures, and a fork (`forked`) sees a snapshot of all of
-    /// them, which it cannot assign.
+    /// every variable it captures, as any closure does, and a fork
+    /// (`forked`) sees a snapshot of all of them, which it cannot assign.
     #[cfg(feature = "concurrency")]
     fn start_task(&mut self, _program: &Program, forked: bool) -> VmResult<()> {
         let closure = self.pop()?;
@@ -4244,10 +4230,12 @@ impl Vm {
         let captures: Vec<_> = closure
             .captures
             .iter()
-            .zip(&closure.capture_sources)
-            .map(|(cell, source)| match source {
-                Capture::Capture(_) if !forked => cell.clone(),
-                Capture::Local(_) | Capture::Capture(_) => binding_cell(cell.borrow().clone()),
+            .map(|cell| {
+                if forked {
+                    binding_cell(cell.borrow().clone())
+                } else {
+                    cell.clone()
+                }
             })
             .collect();
         if forked && self.variables.any_initializing() {
@@ -5518,13 +5506,11 @@ impl Vm {
                         return Ok(());
                     }
                 }
+                // A timer is never ready at once: even `after 0` parks, and
+                // the scheduler wakes it on its next round, once the other
+                // ready tasks and native channels have had their turn.
                 #[cfg(feature = "concurrency")]
-                RuntimeSelectCase::After { deadline, handler } => {
-                    if *deadline <= self.progress.now() {
-                        self.push_select_result(Value::Nil, handler.clone());
-                        return Ok(());
-                    }
-                }
+                RuntimeSelectCase::After { .. } => {}
                 RuntimeSelectCase::Default { handler } => default = Some(handler.clone()),
             }
         }

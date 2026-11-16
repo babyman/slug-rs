@@ -1,0 +1,86 @@
+val hash = import("slug.crypto.hash")
+val {toBytes} = import("slug.string")
+val {assertEqual, assertThrows} = import("slug.test")
+
+// FIPS 180-4's examples and the usual extras.
+val EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+val ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+val TWO_BLOCKS = "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+val TWO_BLOCK_TEXT = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+
+@test
+val digestsMatchTheStandardsExamples = fn() {
+    assertEqual(hash.hex(hash.sha256Of("")), EMPTY)
+    assertEqual(hash.hex(hash.sha256Of(0x"")), EMPTY)
+    assertEqual(hash.hex(hash.sha256Of("abc")), ABC)
+    assertEqual(hash.hex(hash.sha256Of(toBytes("abc"))), ABC)
+    assertEqual(hash.hex(hash.sha256Of(TWO_BLOCK_TEXT)), TWO_BLOCKS)
+    assertEqual(len(hash.sha256Of("abc")), 32)
+}
+
+@test
+val aMillionAsInPieces = fn() {
+    // 1000 pieces of 1000 bytes, by doubling one byte.
+    val double = fn(data:bytes, n:num):bytes { if (n == 0) { data } else { recur(data + data, n - 1) } }
+    val thousand = double(toBytes("a"), 10)[0:1000]
+    val digest = hash.sha256()
+    val feed = fn(n:num) {
+        if (n > 0) {
+            hash.update(digest, thousand)
+            recur(n - 1)
+        }
+    }
+    feed(1000)
+    assertEqual(hash.hex(hash.finish(digest)), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+}
+
+@test
+val anyWayOfSplittingGivesTheSameDigest = fn() {
+    // Pieces of every size from 1 to 70 across 200 bytes cross every block
+    // boundary in every position.
+    val double = fn(data:bytes, n:num):bytes { if (n == 0) { data } else { recur(data + data, n - 1) } }
+    val data = double(toBytes("slug!"), 6)[0:200]
+    val whole = hash.sha256Of(data)
+    val split = fn(size:num) {
+        val digest = hash.sha256()
+        val feed = fn(at:num) {
+            if (at < len(data)) {
+                val end = if (at + size < len(data)) { at + size } else { len(data) }
+                hash.update(digest, data[at:end])
+                recur(end)
+            }
+        }
+        feed(0)
+        assertEqual(hash.finish(digest), whole, "pieces of $size")
+    }
+    val each = fn(size:num) {
+        if (size <= 70) {
+            split(size)
+            recur(size + 1)
+        }
+    }
+    each(1)
+}
+
+@test
+val textIsHashedAsUtf8 = fn() {
+    val digest = hash.sha256()
+    hash.update(digest, "é")
+    hash.update(digest, 0x"21")
+    assertEqual(hash.finish(digest), hash.sha256Of(0x"c3a921"))
+}
+
+@test
+val aHashFinishesOnce = fn() {
+    val digest = hash.sha256()
+    hash.update(digest, "abc")
+    assertEqual(hash.hex(hash.finish(digest)), ABC)
+    assertThrows(fn() { hash.finish(digest) }, "hash.finished")
+    assertThrows(fn() { hash.update(digest, "more") }, "hash.finished")
+}
+
+@test
+val hexWritesTwoLowercaseDigitsAByte = fn() {
+    assertEqual(hash.hex(0x"00ff10ab"), "00ff10ab")
+    assertEqual(hash.hex(0x""), "")
+}

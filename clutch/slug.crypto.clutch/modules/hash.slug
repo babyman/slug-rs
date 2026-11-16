@@ -1,0 +1,100 @@
+/**
+ * slug.crypto.hash — content hashes
+ *
+ * SHA-256 digests, for naming data by what it holds: two inputs give the
+ * same 32-byte digest only when they are the same bytes. A hash can be fed
+ * in pieces, so a large upload is hashed as it is written, with no second
+ * pass over it.
+ *
+ * ```slug
+ * val hash = import("slug.crypto.hash")
+ *
+ * hash.hex(hash.sha256Of("abc"))   // "ba7816bf…"
+ *
+ * val digest = hash.sha256()
+ * hash.update(digest, firstPiece)
+ * hash.update(digest, secondPiece)
+ * val name = hash.hex(hash.finish(digest))
+ * ```
+ *
+ * Text is hashed as its UTF-8 bytes. A digest names content; it is not a
+ * password hash, and comparing a secret's digest takes time that can depend
+ * on where it differs.
+ */
+
+/**
+ * A SHA-256 hash being fed, from `sha256`.
+ */
+export resource Sha256
+
+val {toHex} = import("slug.bytes")
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign newRaw = fn():Sha256|nil
+foreign updateRaw = fn(hash:Sha256, data:bytes):num
+foreign updateTextRaw = fn(hash:Sha256, text:str):num
+foreign finishRaw = fn(hash:Sha256):list
+foreign ofRaw = fn(data:bytes):list
+
+val finished = fn() {
+    throw Error {type: "hash.finished", msg: "this hash is already finished"}
+}
+
+/**
+ * A new SHA-256 hash of nothing yet, fed with `update` and ended with
+ * `finish`.
+ */
+export val sha256 = fn():Sha256 {
+    match newRaw() {
+        nil => throw Error {type: "native.alloc", msg: "cannot start a hash: out of memory"}
+        hash => hash
+    }
+}
+
+/**
+ * Adds `data`, bytes or text, to `hash`. Throws an `Error` of type
+ * `hash.finished` once the hash is finished.
+ */
+export val update = fn(hash:Sha256, data:bytes|str):nil {
+    val status = match data {
+        text:str => updateTextRaw(hash, text)
+        raw:bytes => updateRaw(hash, raw)
+    }
+    if (status != 0) { finished() }
+    nil
+}
+
+/**
+ * The 32-byte digest of everything added to `hash`. A hash finishes once:
+ * finishing it again, or adding to it, throws an `Error` of type
+ * `hash.finished`.
+ */
+export val finish = fn(hash:Sha256):bytes {
+    match finishRaw(hash) {
+        [0, digest] => digest
+        _ => finished()
+    }
+}
+
+/**
+ * The 32-byte SHA-256 digest of `data`, bytes or text, at once.
+ */
+export val sha256Of = fn(data:bytes|str):bytes {
+    match data {
+        text:str => {
+            val hash = sha256()
+            update(hash, text)
+            finish(hash)
+        }
+        raw:bytes => {
+            val [digest] = ofRaw(raw)
+            digest
+        }
+    }
+}
+
+/**
+ * `data` as lowercase hexadecimal, two digits a byte, as digests are
+ * usually written; the same as `slug.bytes`'s `toHex`.
+ */
+export val hex = fn(data:bytes):str { toHex(data) }

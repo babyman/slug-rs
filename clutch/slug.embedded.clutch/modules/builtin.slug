@@ -1,5 +1,10 @@
 /**
- * slug.builtin — the foundation supplied by embedded hosts.
+ * slug.builtin — the builtin contract of embedded targets.
+ *
+ * Every name declared here is predeclared in every module. The VM defines
+ * `Error` and the board package registers the functions; this file only
+ * declares them, and the firmware build fails when they differ. Nothing runs
+ * it and programs do not import it.
  *
  * cfg, int, and stacktrace are VM builtins. Tasks (`spawn`, `select`, and
  * timers) run on the host's single core, cooperatively, and forks take

@@ -2,6 +2,304 @@
 
 ## Unreleased
 
+- `slug.fmt.json.parseStrict(text)` reads JSON as `parse` does but rejects
+  an object, at any depth, that repeats a key, comparing keys after decoding
+  escapes, so `"body"` and `"\u0062ody"` collide. It throws `json.parse`
+  with `data` `{offset, key}`: the repeated key's opening quote and its
+  decoded text. `parse` keeps last-value-wins and is no slower.
+
+- `slug.bytes` writes and reads hexadecimal: `toHex(data)` gives lowercase
+  digits, two a byte, and `fromHex(text)` reads them back in either case,
+  throwing `bytes.hex` for a character that is not a digit or an odd number
+  of digits. Both are native. `slug.crypto.hash`'s `hex` and
+  `slug.random.secure`'s `token` now use `toHex`.
+
+- `slug.crypto.schnorr` verifies BIP-340 Schnorr signatures over secp256k1:
+  `verify(publicKey, message, signature)` is `true` or `false`, and a key
+  that is not 32 bytes or a signature that is not 64 throws
+  `schnorr.length`. It is bitcoin-core's libsecp256k1 0.8.0, vendored and
+  compiled into the clutch, with no system dependencies; it passes BIP-340's
+  test vectors and verifies signatures from `@noble/curves`. The clutch
+  `slug.crypto.hash.clutch` is now `slug.crypto.clutch`, holding both.
+
+- A spawned task shares every variable it captures, as any closure does: a
+  `var` the spawner or the task assigns is seen by the other, however the
+  `spawn` is nested. It used to snapshot the variables of the function holding
+  the `spawn`, so a task's writes there were silently lost unless the `spawn`
+  happened to sit in a `nursery` body or a nested function. To give a task a
+  fixed value, bind it to a `val` before spawning. `fork` keeps its snapshot.
+
+- A top-level `main` that cannot be an entrypoint, such as `fn(args)`
+  without a `list` or `map` annotation, is an `invalid_entrypoint` error
+  saying what to change. It used to be an ordinary function, so the program
+  ran its top level and silently skipped `main`.
+
+- `slug.crypto.hash` gives SHA-256 digests: `sha256Of(data)` at once, or
+  `sha256()`, `update`, and `finish` for data fed in pieces, such as an
+  upload hashed as it is written; `hex` writes a digest as hexadecimal. A
+  small portable C implementation, with no system dependencies.
+
+- `select { after 0 }` yields: a timer case is never ready at once, so the
+  task parks and resumes after the other ready tasks, and the values native
+  threads have sent, have had their turn. A loop around it used to keep the
+  scheduler to itself and hold back replies from native I/O. A `_` default
+  case is still the poll that never yields, and wins over `after 0`.
+
+- `slug.net.http` reads request bodies only when the handler asks, with a
+  limit each route chooses: `http.body(request)` gives the whole body,
+  `http.read(request, maxBytes)` gives it a piece at a time as it arrives,
+  and `http.multipart(request, maxBytes)` reads a `multipart/form-data`
+  upload part by part, a file's data streamed as it comes. `form` reads
+  through `body`. `Expect: 100-continue` is answered at the first read, so
+  a handler that refuses a request saves the client from sending its body;
+  an unread body closes the connection after the response. Requests no
+  longer have a `body` field: use `http.body(request)`. A request built by
+  hand for a test may still give one.
+
+- `slug.io.fs` reads and writes bytes (`read`, and `write` of bytes),
+  flushes to disk with `sync`, and works with paths: `stat`, `list`,
+  `makeDirectory`, `rename`, `remove`, `removeAll`, and
+  `temporaryDirectory`. Every operation runs on a native I/O thread, so a
+  slow disk parks only the task waiting on it. Errors name the operation,
+  the path, and the reason, with a portable `code` such as `not_found` in
+  their `data`. The clutch supports macOS and Linux; its untested Windows
+  entry is gone.
+
+- Native producers can send a flat list of scalars as one message
+  (producer API version 2, `slug_producer_send_list`), so a reply of
+  several values arrives whole.
+
+- A runtime built without concurrency reports `spawn`, `nursery`, and timer
+  or task-await `select` cases as `capability_unavailable` errors, where
+  they were `invalid_call`, so a program or test can tell a missing
+  capability from a real fault.
+
+- `slug.time` has clocks, on the desktop as well as boards: `nowMs()` is
+  milliseconds since the Unix epoch on the wall clock, and `monotonicMs()`
+  is milliseconds on a clock that never goes back, the one `select { after }`
+  timers use, for durations and deadlines. `sleepMs` now waits as
+  `select { after }` does, parking only the task that calls it, where on a
+  board it used to stall every task. Boards have `monotonicMs` and
+  `sleepMs`, but no `nowMs`.
+
+- A case can match the builtin `Error` with `err: struct<Error>`, in
+  source, artifacts, and interactive sessions; a local or module `Error`
+  schema still takes its place. Writing a schema as a bare type, such as
+  `err: Error`, now says to write `struct<Error>`. The compiler checks
+  `Error {...}` against its contract, which found `slug.channel`'s `recv`
+  and `await` timeouts throwing a missing-field error in place of their
+  `TimeoutError`: they now carry a message.
+
+- The runtime defines every builtin, and `slug.builtin` is only their
+  contract: the declarations the compiler reads, built into `slug` and named
+  by each embedded target. The VM defines `Error`, so a compiled program that
+  throws `Error {...}` no longer fails with ``unknown name `Error` ``, on the
+  desktop or the ESP32-S3, and programs have it without a library. A
+  `slug/builtin.slug` beside a program no longer replaces the builtins, and
+  `import("slug.builtin")` is an `invalid_import` error: use the names
+  directly. Tests and the firmware build fail when a host's builtins differ
+  from its contract.
+
+- A Slug project has one layout: `slug.toml` at the root, modules in
+  `src/`, embedded files in `assets/`, test programs in `tests/`, and native
+  code in a project clutch under `clutch/`. Imports search `src/`, not the
+  project root, so `src/orble/app.slug` is `orble.app`. Any module in the
+  project, outside a clutch, embeds files from `assets/` with `asset`. A
+  project without `src/` reports it when an import is not found. Programs
+  with no `slug.toml` above them are unchanged.
+
+- `scripts/stage-native-clutches.sh --repository DIR` stages the native
+  clutches of any clutch repository, such as a project's: every clutch with
+  a `[native]` table, rather than a fixed list of this checkout's.
+
+- A project indexes its own clutches in `clutch/manifest.toml` at its root,
+  layered over the installed ones, so it can ship modules with assets and
+  native code beside its source. A module both index is a startup error
+  naming each manifest.
+
+- A `slug.toml` marks a project root. Slug looks for one in the entry
+  program's directory and the directories above it, so `slug tests/check.slug`
+  imports the project's top-level modules and reads its configuration. With
+  none, the program's directory is the root, as before.
+
+- Crawl's server finds what each player sees in forks, as it draws the
+  pages, and keeps it on the world's task: `game.sightsOf` finds it and
+  changes nothing, `game.applySights` keeps it, and `game.tick` takes
+  `look: false` to leave it to them. Looking around was most of the
+  world's step for a crowd. A player whose sight reaches a chunk not made
+  yet is looked as on the world's task, which can make it. With 1000
+  players on four forks, the step takes 31 ms on the main thread, from 60,
+  and a tick 361-378 ms, from 390-409. The server answers key presses in
+  half the time and finishes more ticks a second, using more cores: its
+  looking runs beside the last tick's drawing.
+
+- Crawl's server keeps the players who acted in a tick, and who were dead,
+  as sets rather than lists. Each present player was looked for in the list
+  of those who acted, about a million comparisons a tick with 1000 players
+  in town, most of the tick's work outside the world's own. The world's
+  step on the main thread takes 50 ms, from 90-96, and a tick on four
+  forks 373-382 ms, from 420-432.
+
+- `slug.net.tcp` reads and writes every connection on one thread, which
+  waits on all their sockets at once (kqueue on macOS, epoll on Linux),
+  where each connection had a reader thread and a writer thread of its own.
+  A thread held a stack, and memory the allocator keeps for each thread,
+  for as long as its connection was open: Crawl's server with 1000 players
+  ran about 2000 threads. It now runs 9, and peaks at about 270 MB, from
+  500, answering keys as fast. Reading, writing, backpressure, timeouts and
+  closing behave as before.
+
+- Crawl's server joins a player and draws a whole page in a task of its
+  own. The game's caches are `task var`s, and a request ran in its
+  connection's task, which for an event stream lives as long as the page
+  is open: each page kept its own copy of what joining and drawing had
+  cached, the town's thousand starting squares among them. With 1000
+  players the server peaks at about 540 MB, from 670, and at 440 MB when
+  nobody moves, from 700. Keys still run in the connection's task, since a
+  new task waits its turn behind the tick.
+
+- A nursery lets go of a task that settles with a value. It kept every
+  task it started until it had 64 and then twice what remained, and with
+  each task its result, so a loop that starts forks every tick held dozens
+  of ticks' results. Crawl's crowd on four forks peaks at 251 MB, from
+  535, and its server under 1000 players at 600 MB, from 840.
+
+- Slug indexes a variable's collection where it is. `players[id]`,
+  `record.field`, and `xs[i]`, where the collection is a name, used to take
+  a reference to the whole collection first and drop it after; forks
+  reading the same collection on other cores waited on each other for
+  that count. A fork reads its snapshot of a module variable in place too.
+  A key that calls something is still evaluated after the collection is
+  read, as written. Four forks reading one large map now use the CPU of
+  one, where they used twice as much; Crawl's workloads run 2-5% faster on
+  one core.
+
+- Crawl's server draws the pages while the world moves on. A tick used to
+  wait 150 ms, move the world, and then wait for the forks to draw every
+  page before the next could start. Now a tick starts every 150 ms, or as
+  soon as the last ends when it takes longer, and drawing runs alongside
+  it: each drawing starts once the last has been sent, and a tick that ends
+  first leaves it to a later one, which draws the world as it is by then.
+  A page that opens a stream while a drawing is under way was sent
+  everything then, so the drawing's stale result for it is dropped.
+  `tickOnce` still moves the world and draws at once.
+
+- Crawl's outdoor sight finds the chunk a square is in by comparison
+  rather than by dividing: sight reaches at most one chunk past the
+  player's on each axis. Each step of each ray asked twice. With 1000
+  players in one town a tick takes 0.15 s, from 0.20, and 1000 joins 5.2 s,
+  from 6.3.
+
+- Crawl redraws what a player remembers outdoors without asking of each
+  square what is there. For every square they saw, `seeOutdoors` called
+  `glyphAt`, which searched the chunk's items, graves, and remains in turn;
+  now `thingsOf` maps each chunk's squares to the glyph of what lies there
+  once, kept per task while those lists are unchanged, and a row is read
+  from it and the terrain directly. What players remember is unchanged.
+  With 1000 players in one town a tick takes 0.20 s, from 0.36, and 1000
+  joins 6.3 s, from 6.9.
+
+- Crawl finds who stands on a square without looking at every player. A
+  step asked of everyone whether they stood on the square ahead
+  (`playerIn`, then `playerIdIn` for whom), and a tick checked each present
+  player against the list of those who had acted, so a tick in a crowd
+  grew with the square of the players. `standing` now records the ids on
+  each square by the records in `players`, kept by `savePlayer` wherever
+  the engine saves one and rebuilt on load, and those who acted are a set.
+  With 1000 players in one town a tick takes 0.35 s, from 0.51.
+
+- Crawl works out the rays of outdoor sight once. Sight outdoors is the
+  squares on Bresenham lines from the player to the edge of their sight box,
+  each as far as they can see and up to the first tree, rock, or wall; the
+  lines depend only on where they go relative to the player, so
+  `sightRays` holds each ray's steps and `outdoorSight` only walks them,
+  looking up the terrain (opaque terrain is now a set). What a player sees,
+  and in what order, is unchanged. With 1000 players in one town, 1000 joins
+  take 6.3 s, from 7.6, and a tick 0.51 s, from 0.58.
+
+- Map lookups compare integer and string keys inline instead of through the
+  general value comparison, which checks for bindings, containers, and its
+  step budget before reaching the leaf case. A lookup in a 1000-entry map
+  takes about 2 ns less with an integer key and 4 ns less with a string key
+  (of about 50 and 25). PGO A/B: tuned 1.00x, hold-out 0.99x,
+  `crawl-crowd` 0.98x.
+
+- `bytes` held by a module-level or captured `var` update in place too:
+  `buf = buf :+ byte` and `buf = buf + more` let go of the variable's own
+  reference first, as maps, lists, and strings already did, when the update
+  cannot fail (a byte is an integer from 0 through 255, or one byte).
+  `crawl-game`, whose text renderer builds each row with `line = line :+
+  ...` in a nested function, copied 95 million bytes and now copies 74
+  thousand elements in all; it runs 0.94x as long. PGO A/B: tuned 0.99x,
+  hold-out 0.99x.
+
+- `slug.std` exports `each(vs, f)`, which calls `f` with each element in
+  order for what it does and returns `nil`, keeping none of the results.
+  Loops run for their effects used `map`, which keeps every result, and an
+  assignment evaluates to the value assigned, so `map(xs, fn(x) { seen =
+  seen + {[x]: true} })` kept a copy of `seen` for each element: memory and
+  time grew with the square of the length (40,000 keys took 73 s). Crawl's
+  empire layer used `map` so once, for the settlements' holders.
+
+- Crawl places a new character without looking at every player for each
+  square it tries. Once the start town fills, a join tried 50 random squares
+  each asking of every player whether they stood there, then walked the
+  rings around the town's middle square by square, rebuilding the set of
+  taken squares from the chunk's sorted company. Now one look at everyone
+  finds the squares players stand on (`occupied`), and each surface chunk's
+  open ground is listed once, nearest its middle first (`groundOrder`, kept
+  per task while the chunk's map is unchanged), so a join only skips the
+  taken squares in that list. A thousand players join in 4.4 s, from 8.9;
+  each lands where it did before.
+
+- A `var` that a closure captures updates its collection in place. An
+  assignment to a captured `var` whose value is a `+`, `-`, or `:+`
+  compiles to one instruction, `UpdateCapture`, which empties the
+  variable's cell before an operation that cannot fail, as `UpdateGlobal`
+  does for a module-level name. Before, the cell kept its reference while
+  the operator ran, so every update copied the whole collection: a loop
+  adding 20,000 entries to `var found = {}` through a nested function, the
+  usual shape of a Slug loop, copied 200 million elements and took 0.87 s,
+  where a module variable took 0.01 s; 80,000 entries now take 0.03 s.
+  Values read from the variable before keep what they were, a fork still
+  cannot change a `var` it captured, and an update that fails leaves the
+  variable as it was. Crawl's 1000 joins take 0.97x as long; PGO A/B:
+  tuned 1.00x, hold-out 1.00x, `crawl-ticks` 0.96x.
+
+- Crawl finds who a player sees by square in a crowd, and no longer sorts
+  everyone to find one player. `game.peopleSeen(id)` gives the other
+  players in the chunk whom a player sees, looking up who stands on each
+  square in their sight (from a per-chunk index that `steady` keeps, as it
+  keeps each chunk's company) when the chunk holds more people than that,
+  and asking of each otherwise; pages use it for the map's `@`s, its `near`
+  list, and the In view list, where they used to ask of everyone in the
+  chunk. A move's bump into another player and a monster's choice of whom
+  to chase scan the players for the first by id, where each sorted the
+  chunk's whole company with `string.sort`, which is written in Slug. A
+  tick in a crowd of 1000 players in one chunk takes 0.75 s, from 1.15,
+  and of 500, 0.29 s, from 0.47 (four forks, client maps); pages are
+  unchanged byte for byte, and the game plays out the same.
+
+- Crawl's "In view" list names only the eight other players nearest you
+  (in moves; those as near in the order of their ids), then says how many
+  more there are, "and 143 others"; townsfolk and monsters are listed in
+  full. In a crowded town it listed everyone in sight, often over a hundred
+  names and about 13.5 KB per page, drawn again every tick as people moved.
+  A tick in a crowd of 1000 players in one chunk takes 1.15 s, from 1.77,
+  and of 500, 0.47 s, from 0.57 (four forks, client maps).
+
+- Crawl's pages look once at what their player sees, not once for each
+  person or monster they check. `game.seeing(id)` gives a function of
+  (x, y) that says what `visible` would, worked out once from where the
+  player stands (blindness, outdoor sight, the lit room); the engine's own
+  `canSee` and `mapRows` use the same `seer`. Pages filter who is in view
+  with it, and a map's `near` list now holds only the people its player
+  sees, as the map draws an `@` nowhere else, so a page is no longer sent
+  its map again when someone out of sight moves. In a crowd of 500 players
+  in one chunk a tick takes 0.57 s, from 0.81, and of 1000, 1.77 s, from
+  3.25 (four forks, client maps). Pages drawn by the server are unchanged
+  byte for byte, and pages drawn by `crawl-map.js` look the same.
+
 - Strings interpolate `${expression}`, as JavaScript, Kotlin, and Dart do:
   any expression, such as `"${total(values)}"`, `"${m.a}"`,
   `"${m["key"]}"`, or `"${if (ok) { "yes" } else { "no" }}"`, with braces

@@ -5,11 +5,16 @@
  *
  * Positions are byte offsets. A `from` outside the bytes throws an `Error`
  * whose `type` is `bytes.range`.
+ *
+ * `toHex` and `fromHex` write bytes as hexadecimal and read them back, as
+ * digests, keys, and signatures are usually written.
  */
 
 // Typed native bindings, declared in this clutch's manifest.
 foreign findRaw = fn(data:bytes, needle:bytes, from:num):num
 foreign findAnyRaw = fn(data:bytes, set:bytes, from:num):num
+foreign toHexRaw = fn(data:bytes):list
+foreign fromHexRaw = fn(text:str):list
 
 // What a native search's negative result means: -1 is not found, nil, and
 // -2 is a `from` outside the bytes, a range error. Checked only after the
@@ -58,4 +63,50 @@ export val find = fn(data:bytes, needle:bytes, from:num = 0):num|nil {
 export val findAny = fn(data:bytes, set:bytes, from:num = 0):num|nil {
     val at = findAnyRaw(data, set, from)
     if (at >= 0) { at } else { missing(at, "findAny") }
+}
+
+// fromHexRaw's results other than the offset of a character that is not a
+// digit.
+val HEX_OK = -1
+val HEX_NO_MEMORY = -2
+val HEX_ODD = -3
+
+val outOfMemory = fn(work:str) {
+    throw Error {type: "native.alloc", msg: "cannot $work: out of memory"}
+}
+
+/**
+ * `data` as lowercase hexadecimal, two digits a byte:
+ * `toHex(0x"00ff1a")` is `"00ff1a"`.
+ */
+@testWith(
+    [0x"00ff1a"], "00ff1a",
+    [0x"abcdef"], "abcdef",
+    [0x""], ""
+)
+export val toHex = fn(data:bytes):str {
+    match toHexRaw(data) {
+        [true, text] => text
+        _ => outOfMemory("write hexadecimal")
+    }
+}
+
+/**
+ * The bytes `text` writes as hexadecimal, two digits a byte, in either case:
+ * `fromHex("00FF1a")` is `0x"00ff1a"`. Throws an `Error` of type `bytes.hex`
+ * when `text` holds anything but hexadecimal digits, spaces and prefixes
+ * such as `0x` included, or an odd number of them.
+ */
+@testWith(
+    ["00ff1a"], 0x"00ff1a",
+    ["ABCDEF"], 0x"abcdef",
+    [""], 0x""
+)
+export val fromHex = fn(text:str):bytes {
+    match fromHexRaw(text) {
+        [status, data] if status == HEX_OK => data
+        [status, _] if status == HEX_NO_MEMORY => outOfMemory("read hexadecimal")
+        [status, _] if status == HEX_ODD => throw Error {type: "bytes.hex", msg: "fromHex needs two digits a byte, not an odd number"}
+        [at, _] => throw Error {type: "bytes.hex", msg: "fromHex found a character that is not a hexadecimal digit at byte $at"}
+    }
 }

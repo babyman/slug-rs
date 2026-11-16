@@ -300,6 +300,31 @@ struct ProducerApi {
     is_closed: unsafe extern "C" fn(*mut c_void) -> bool,
     close: unsafe extern "C" fn(*mut c_void),
     release: unsafe extern "C" fn(*mut c_void),
+    send_list: unsafe extern "C" fn(*mut c_void, *const ProducerItem, usize) -> i32,
+}
+
+/// A mirror of C's `slug_producer_item`.
+#[repr(C)]
+struct ProducerItem {
+    kind: i32,
+    boolean: bool,
+    integer: i64,
+    number: f64,
+    data: *const u8,
+    length: usize,
+}
+
+impl ProducerItem {
+    fn new(kind: i32) -> Self {
+        Self {
+            kind,
+            boolean: false,
+            integer: 0,
+            number: 0.0,
+            data: std::ptr::null(),
+            length: 0,
+        }
+    }
 }
 
 /// Sends one of each value through the producer, then two invalid values,
@@ -308,7 +333,43 @@ unsafe extern "C" fn feed(arguments: *const Cell, results: *mut Cell, _: *mut Cl
     let arguments = unsafe { cells(arguments, 2) };
     let producer = std::ptr::with_exposed_provenance_mut::<c_void>(arguments[0].address());
     let api = unsafe { &**producer.cast::<*const ProducerApi>() };
-    assert_eq!(api.version, 1);
+    assert_eq!(api.version, 2);
+    let text = b"ok";
+    let list = [
+        ProducerItem {
+            integer: 7,
+            ..ProducerItem::new(2)
+        },
+        ProducerItem {
+            data: text.as_ptr(),
+            length: 2,
+            ..ProducerItem::new(4)
+        },
+        ProducerItem {
+            data: [0xca_u8].as_ptr(),
+            length: 1,
+            ..ProducerItem::new(5)
+        },
+        ProducerItem::new(0),
+        ProducerItem {
+            boolean: true,
+            ..ProducerItem::new(1)
+        },
+        ProducerItem {
+            number: 2.5,
+            ..ProducerItem::new(3)
+        },
+    ];
+    let nan = [ProducerItem {
+        number: f64::NAN,
+        ..ProducerItem::new(3)
+    }];
+    let bad_text = [ProducerItem {
+        data: [0xff_u8].as_ptr(),
+        length: 1,
+        ..ProducerItem::new(4)
+    }];
+    let unknown = [ProducerItem::new(9)];
     let statuses = unsafe {
         [
             (api.send_i64)(producer, arguments[1].as_signed()),
@@ -319,6 +380,11 @@ unsafe extern "C" fn feed(arguments: *const Cell, results: *mut Cell, _: *mut Cl
             (api.send_f64)(producer, 1.5),
             (api.send_f64)(producer, f64::NAN),
             (api.send_text)(producer, c"\xff".as_ptr(), 1),
+            (api.send_list)(producer, list.as_ptr(), list.len()),
+            (api.send_list)(producer, nan.as_ptr(), 1),
+            (api.send_list)(producer, bad_text.as_ptr(), 1),
+            (api.send_list)(producer, unknown.as_ptr(), 1),
+            (api.send_list)(producer, std::ptr::null(), 0),
         ]
     };
     let closed = unsafe { (api.is_closed)(producer) };
@@ -1151,15 +1217,18 @@ fn a_producer_argument_sends_every_value_type_into_a_slug_channel() {
             "val lines = fx.makeChannel(8)\n\
              val statuses = fx.feed(lines, 5)\n\
              val received = [select { recv lines }, select { recv lines }, select { recv lines }, \
-             select { recv lines }, select { recv lines }, select { recv lines }]\n\
+             select { recv lines }, select { recv lines }, select { recv lines }, \
+             select { recv lines }, select { recv lines }]\n\
              [statuses, received]",
         )
         .expect("feed a Slug channel");
-    // Six sends report sent (0), the NaN and invalid UTF-8 report invalid
-    // (3), and the producer was still open, so the digits read 33.
+    // Six scalar sends and two lists report sent (0); the NaN and invalid
+    // UTF-8 scalars and the three lists holding a NaN, invalid UTF-8, or an
+    // unknown kind report invalid (3), sending nothing. The producer was still
+    // open, so the digits read 33 0 3330.
     assert_eq!(
         value.to_string(),
-        "[33, [5, \"line\", 0x\"cafe\", nil, true, 1.5]]"
+        "[3303330, [5, \"line\", 0x\"cafe\", nil, true, 1.5, [7, \"ok\", 0x\"ca\", nil, true, 2.5], []]]"
     );
 
     let error = host

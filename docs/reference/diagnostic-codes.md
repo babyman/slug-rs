@@ -49,16 +49,20 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 | `fork_write` | semantic | An assignment inside a `fork` to a binding declared outside it, other than a `task var`: the fork sees a snapshot, so the write could never reach its spawner. | ``a fork cannot change `total`, a module `var`: ...`` |
 | `fork_during_initialization` | semantic | A `fork` in a module's top-level code, which runs while the module initializes. | `a fork cannot start while a module initializes: ...` |
 | `unsendable_value` | semantic | A `fork` whose result is a task handle or native resource, which cannot leave the task that made it. | `this fork's result is a task<num>, which is not sendable: ...` |
-| `invalid_entrypoint` | semantic | A program whose `main` entrypoint cannot be identified. | ``program has more than one eligible `main` entrypoint`` |
+| `invalid_entrypoint` | semantic | A program whose `main` entrypoint cannot be identified: more than one eligible `main`, or a top-level `main` that cannot be an entrypoint and would silently not run. | ``program has more than one eligible `main` entrypoint``; `` `main` is not an entrypoint until its parameter is annotated: write `args:list` for the raw arguments or `args:map` for parsed options `` |
 | `invalid_asset` | semantic | An `asset` call that does not name a file its clutch ships: not one string literal, an invalid name, or a missing, differently-cased, or escaping file. | ``no asset `htmx.js` in slug.games.crawl.clutch's assets folder`` |
+| `invalid_import` | semantic | An `import` of `slug.builtin`, whose names every module already has. | `` `slug.builtin` is not a module: its names, such as `Error` and `println`, are available in every module without an import `` |
 | `internal` | semantic | An implementation invariant failed. Report it as a bug. | `missing resolved match constraint` |
 
 ## Runtime codes
 
 Runtime and module diagnostics use these codes: `invalid_bytecode`, `type`,
-`name`, `arity`, `divide_by_zero`, `out_of_bounds`, `invalid_call`, `native`,
-`native_contract`, `module`, `module_not_found`, `not_implemented`, `match`,
-`thrown`, `permission`, or `fork`. `out_of_bounds` is an index past either end
+`name`, `arity`, `divide_by_zero`, `out_of_bounds`, `invalid_call`,
+`capability_unavailable`, `native`, `native_contract`, `module`,
+`module_not_found`, `not_implemented`, `match`, `thrown`, `permission`, or
+`fork`. `capability_unavailable` is an operation the runtime build leaves
+out: `spawn`, `nursery`, or a timer or task-await `select` case without
+Slug-managed concurrency. `out_of_bounds` is an index past either end
 of a list, `bytes`, or string. `fork` is something a `fork` cannot do: change
 a variable declared outside it, use or pass on a value that is not sendable,
 call a native function not declared thread-safe, or start or initialize a

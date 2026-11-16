@@ -15,6 +15,6 @@ pub use report::{
 pub use source::{
     InteractiveCompilation, InteractiveCompilerState, SourceCorrections, SourceDiagnostic,
     SourceEdit, SourceError, SourceErrorCode, SourceErrorKind, SourceFix, SourcePosition,
-    SourceRange, SourceReadiness, apply_fix, compile, compile_interactive_forms,
-    foreign_declarations, import_name_range, source_readiness,
+    SourceRange, SourceReadiness, apply_fix, builtin_contract_mismatches, compile,
+    compile_interactive_forms, foreign_declarations, import_name_range, source_readiness,
 };

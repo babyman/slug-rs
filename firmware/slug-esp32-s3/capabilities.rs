@@ -22,8 +22,6 @@ macro_rules! with_safe_output_pins {
 
 pub(crate) use with_safe_output_pins;
 
-/// Largest synchronous delay accepted by the firmware provider.
-pub const MAXIMUM_SLEEP_MS: u32 = 1_000;
 /// PinPulse Shield's verified, broken-out push-pull output pins.
 ///
 /// This excludes only the serial (43, 44), native USB (19, 20), and PSRAM

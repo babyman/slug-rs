@@ -13,9 +13,21 @@ use crate::{
     },
 };
 use slug_loader::{
-    ForeignDeclaration, ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest,
-    ModuleResolver, ModuleSource,
+    BUILTIN_CONTRACT, ForeignDeclaration, ModuleActivationTransaction, ModuleKey, ModuleLoadError,
+    ModuleRequest, ModuleResolver, ModuleSource, builtin_import_error,
 };
+
+/// Resolves the module `request` names. `slug.builtin` is the builtins'
+/// contract, never a module, whatever a resolver would find under its name.
+fn resolve_module(
+    resolver: &dyn ModuleResolver,
+    request: ModuleRequest<'_>,
+) -> Result<ModuleSource, ModuleLoadError> {
+    if request.name == BUILTIN_CONTRACT {
+        return Err(builtin_import_error());
+    }
+    resolver.resolve(request)
+}
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
     Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
@@ -159,7 +171,7 @@ impl ModuleGraph {
         resolver: &dyn ModuleResolver,
         request: ModuleRequest<'_>,
     ) -> Result<Program, ModuleLoadError> {
-        let source = resolver.resolve(request)?;
+        let source = resolve_module(resolver, request)?;
         if let Some(program) = self.state.compiled.borrow().get(&source.key) {
             return Ok(program.clone());
         }
@@ -219,8 +231,13 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Program, SourceError> {
-        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)
-            .map(|compilation| compilation.program)
+        let program = self
+            .compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)?
+            .program;
+        if !program.has_entrypoint() {
+            crate::source::check_entrypoint(path, source)?;
+        }
+        Ok(program)
     }
 
     /// Compiles an entry source and every literal import into a closed artifact.
@@ -263,6 +280,14 @@ impl ModuleGraph {
             &mut imports,
             &mut sources,
         )?;
+        if !modules[root].program.has_entrypoint() {
+            crate::source::check_entrypoint(path, source).map_err(|error| {
+                ModuleLoadError::Compile {
+                    location: path.into(),
+                    error: Box::new((&error).into()),
+                }
+            })?;
+        }
         let artifact = Artifact {
             root,
             modules,
@@ -329,7 +354,8 @@ impl ModuleGraph {
                 }
             })?
         {
-            let module_source = resolver.resolve(ModuleRequest::new(Some(key), &import_name))?;
+            let module_source =
+                resolve_module(resolver, ModuleRequest::new(Some(key), &import_name))?;
             let target = self.collect_artifact_module(
                 resolver,
                 &module_source.key,
@@ -372,7 +398,10 @@ impl ModuleGraph {
         resolver: &dyn ModuleResolver,
         request: ModuleRequest<'_>,
     ) -> Option<ModuleSnapshot> {
-        let source = resolver.resolve(request).ok()?;
+        if request.name == BUILTIN_CONTRACT {
+            return self.builtin_snapshot(resolver);
+        }
+        let source = resolve_module(resolver, request).ok()?;
         if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.key) {
             return Some(snapshot.clone());
         }
@@ -438,7 +467,7 @@ impl ModuleGraph {
         host: &H,
         name: &str,
     ) -> Result<(), ModuleLoadError> {
-        let source = host.resolve(ModuleRequest::new(None, name))?;
+        let source = resolve_module(host, ModuleRequest::new(None, name))?;
         let Some(mut activation) = host.stage_activation(&source)? else {
             return Ok(());
         };
@@ -461,15 +490,7 @@ impl ModuleGraph {
         host: &H,
         request: ModuleRequest<'_>,
     ) -> Option<ModuleInstance> {
-        let source = match host.resolve(request) {
-            Ok(source) => source,
-            Err(ModuleLoadError::NotFound { .. })
-                if request.name == "slug.builtin" && !host.builtin_globals().is_empty() =>
-            {
-                return Some(self.virtual_builtin_module(host));
-            }
-            Err(_) => return None,
-        };
+        let source = resolve_module(host, request).ok()?;
         self.state
             .instances
             .borrow()
@@ -488,15 +509,7 @@ impl ModuleGraph {
         host: &H,
         request: ModuleRequest<'_>,
     ) -> Result<ModuleInstance, ModuleLoadError> {
-        let source = match host.resolve(request) {
-            Ok(source) => source,
-            Err(ModuleLoadError::NotFound { .. })
-                if request.name == "slug.builtin" && !host.builtin_globals().is_empty() =>
-            {
-                return Ok(self.virtual_builtin_module(host));
-            }
-            Err(error) => return Err(error),
-        };
+        let source = resolve_module(host, request)?;
         if let Some(instance) = self.state.instances.borrow().get(&source.key) {
             return Ok(instance.clone());
         }
@@ -652,34 +665,32 @@ impl ModuleGraph {
         Ok(compilation.program)
     }
 
-    fn virtual_builtin_module<H: ModuleGraphHost>(&self, host: &H) -> ModuleInstance {
-        let key = ModuleKey::new("<slug.builtin>");
-        if let Some(instance) = self.state.instances.borrow().get(&key) {
-            return instance.clone();
+    /// The semantic snapshot of the host's `slug.builtin` contract, which
+    /// the compiler reads for the builtins' names and types. The contract
+    /// compiles once, and never runs.
+    fn builtin_snapshot(&self, resolver: &dyn ModuleResolver) -> Option<ModuleSnapshot> {
+        let contract = resolver.builtin_contract()?;
+        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&contract.key) {
+            return Some(snapshot.clone());
         }
-        let exports = Value::map(
-            host.builtin_globals()
-                .into_iter()
-                .map(|(name, value)| (Value::string(name), value))
-                .collect(),
-        );
-        let mut program = Program::new();
-        program.set_module_name("slug.builtin");
-        let instance = ModuleInstance {
-            key: key.clone(),
-            diagnostic_name: "<slug.builtin>".into(),
-            program,
-            exports: exports.clone(),
-            metadata: Vec::new(),
-            values: HashMap::new(),
-            live_exports: exports,
-            initialized: true,
-        };
+        let snapshot = compile_with_resolver(
+            &contract.diagnostic_name,
+            &contract.text,
+            Some(BUILTIN_CONTRACT),
+            |_| None,
+            |name| {
+                Err(format!(
+                    "no asset `{name}`: the builtin contract has no assets"
+                ))
+            },
+        )
+        .ok()?
+        .snapshot;
         self.state
-            .instances
+            .semantic_snapshots
             .borrow_mut()
-            .insert(key, instance.clone());
-        instance
+            .insert(contract.key, snapshot.clone());
+        Some(snapshot)
     }
 
     /// Returns the number of compiled module programs held by this graph.
@@ -784,6 +795,10 @@ impl ModuleHost {
 impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
+    }
+
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.state.resolver.builtin_contract()
     }
 
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {

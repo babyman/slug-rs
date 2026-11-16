@@ -20,7 +20,32 @@ pub struct ClutchRepository {
     /// Each indexed clutch's test files, by import name: the clutch root and
     /// the file's path in it, which is read only when the module resolves.
     tests: HashMap<String, TestFile>,
+    /// The repository manifest that indexed each provider and test module,
+    /// for those loaded from one.
+    manifests: HashMap<String, PathBuf>,
     plugin_initializers: HashMap<String, ClutchPluginInitializer>,
+}
+
+/// Where a repository's provider of one module comes from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderOrigin {
+    /// The repository manifest that indexes it, unless a host built the index.
+    pub manifest: Option<PathBuf>,
+    /// The clutch root.
+    pub clutch: PathBuf,
+}
+
+impl fmt::Display for ProviderOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let directory = self.clutch.file_name().map_or_else(
+            || self.clutch.to_string_lossy(),
+            |name| name.to_string_lossy(),
+        );
+        match &self.manifest {
+            Some(manifest) => write!(f, "`{directory}` in {}", manifest.display()),
+            None => write!(f, "{}", self.clutch.display()),
+        }
+    }
 }
 
 impl fmt::Debug for ClutchRepository {
@@ -29,6 +54,7 @@ impl fmt::Debug for ClutchRepository {
             .debug_struct("ClutchRepository")
             .field("providers", &self.providers)
             .field("tests", &self.tests)
+            .field("manifests", &self.manifests)
             .field("plugin_initializer_count", &self.plugin_initializers.len())
             .finish()
     }
@@ -37,10 +63,26 @@ impl fmt::Debug for ClutchRepository {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClutchRepositoryError {
     InvalidModuleName(String),
-    DuplicateProvider { name: String },
-    DuplicatePlugin { entry: String },
-    Read { path: PathBuf, message: String },
-    Manifest { path: PathBuf, message: String },
+    DuplicateProvider {
+        name: String,
+    },
+    /// Two combined repositories both index `name`.
+    LayerConflict {
+        name: String,
+        first: ProviderOrigin,
+        second: ProviderOrigin,
+    },
+    DuplicatePlugin {
+        entry: String,
+    },
+    Read {
+        path: PathBuf,
+        message: String,
+    },
+    Manifest {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl fmt::Display for ClutchRepositoryError {
@@ -50,6 +92,14 @@ impl fmt::Display for ClutchRepositoryError {
             Self::DuplicateProvider { name } => {
                 write!(f, "module `{name}` has more than one clutch provider")
             }
+            Self::LayerConflict {
+                name,
+                first,
+                second,
+            } => write!(
+                f,
+                "module `{name}` is provided by both {first} and {second}"
+            ),
             Self::DuplicatePlugin { entry } => {
                 write!(f, "clutch plugin entry `{entry}` is already defined")
             }
@@ -89,8 +139,7 @@ impl ClutchRepository {
         }
         Ok(Self {
             providers: indexed,
-            tests: HashMap::new(),
-            plugin_initializers: HashMap::new(),
+            ..Self::default()
         })
     }
 
@@ -125,7 +174,7 @@ impl ClutchRepository {
         })?;
         let indexed = parse_repository_manifest(&repository_source).map_err(|message| {
             ClutchRepositoryError::Manifest {
-                path: repository_manifest_path,
+                path: repository_manifest_path.clone(),
                 message,
             }
         })?;
@@ -176,10 +225,61 @@ impl ClutchRepository {
         if let Some(name) = tests.keys().find(|test| providers.contains_key(*test)) {
             return Err(ClutchRepositoryError::DuplicateProvider { name: name.clone() });
         }
+        let manifests = providers
+            .keys()
+            .chain(tests.keys())
+            .map(|name| (name.clone(), repository_manifest_path.clone()))
+            .collect();
         Ok(Self {
             providers,
             tests,
+            manifests,
             plugin_initializers: HashMap::new(),
+        })
+    }
+
+    /// Combines this repository with `other`, such as a project's over the
+    /// installed one. Each module and test module still has one provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming both providers when the two repositories index
+    /// the same module or test-module name, or define the same plugin entry.
+    pub fn layer(mut self, other: Self) -> Result<Self, ClutchRepositoryError> {
+        for name in other.providers.keys().chain(other.tests.keys()) {
+            if let Some(first) = self.origin(name) {
+                return Err(ClutchRepositoryError::LayerConflict {
+                    name: name.clone(),
+                    first,
+                    second: other.origin(name).expect("an indexed name has an origin"),
+                });
+            }
+        }
+        if let Some(entry) = other
+            .plugin_initializers
+            .keys()
+            .find(|entry| self.plugin_initializers.contains_key(*entry))
+        {
+            return Err(ClutchRepositoryError::DuplicatePlugin {
+                entry: entry.clone(),
+            });
+        }
+        self.providers.extend(other.providers);
+        self.tests.extend(other.tests);
+        self.manifests.extend(other.manifests);
+        self.plugin_initializers.extend(other.plugin_initializers);
+        Ok(self)
+    }
+
+    /// Where the provider or test module indexed under `name` comes from.
+    fn origin(&self, name: &str) -> Option<ProviderOrigin> {
+        let clutch = self
+            .providers
+            .get(name)
+            .or_else(|| self.tests.get(name).map(|(root, _)| root))?;
+        Some(ProviderOrigin {
+            manifest: self.manifests.get(name).cloned(),
+            clutch: clutch.clone(),
         })
     }
 

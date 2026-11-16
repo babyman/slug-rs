@@ -236,3 +236,35 @@ val aFullPackSaysWhatIsLeftBehind = fn() {
     assertTrue(contains(messagesOf("a"), "Your pack is full; you leave a potion of healing."))
     assertEqual(len(game.here("a").items), 1)
 }
+
+// Three open squares in a row in the chunk player "a" is in.
+val openRow = fn():list {
+    val rows = game.here("a").map
+    val go = fn(i:num):list {
+        val x = i % (level.WIDTH - 2)
+        val y = int(i / (level.WIDTH - 2))
+        if (rows[y][x] == "." && rows[y][x + 1] == "." && rows[y][x + 2] == ".") {
+            [{x: x, y: y}, {x: x + 1, y: y}, {x: x + 2, y: y}]
+        } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+@test
+val aPlayerWhoWalkedAwayIsNotMetWhereTheyStood = fn() {
+    game.newGame(1, {size: 8})
+    game.join("a", "Ann")
+    game.join("b", "Bo")
+    val a = game.playerOf("a")
+    val row = openRow()
+    setPlayer("a", {x: row[0].x, y: row[0].y})
+    setPlayer("b", {cx: a.cx, cy: a.cy, depth: a.depth, x: row[1].x, y: row[1].y})
+    game.command("b", "l", false)
+    assertEqual(game.playerOf("b").x, row[2].x)
+    game.command("a", "l", false)
+    assertEqual(game.menu("a"), nil)
+    assertEqual(game.playerOf("a").x, row[1].x)
+    // And Bo, where he stands now, is met.
+    game.command("a", "l", false)
+    assertEqual(openMenu("a").title, "You meet Bo.")
+}

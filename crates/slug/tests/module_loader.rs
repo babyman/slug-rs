@@ -24,6 +24,38 @@ impl VmWithModuleLoader for Vm {
     }
 }
 
+/// `chan(capacity = 0)`, as the CLI defines it, for modules that make
+/// channels.
+fn channel_builtin(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = if call.argument_count() == 0 {
+        0
+    } else {
+        match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => usize::try_from(value).unwrap_or(0),
+            Err(error) => return call.raise(error),
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn define_channel_builtin(vm: &mut Vm) {
+    let builtins = NativeModule::new("slug.builtin", ()).expect("builtin module");
+    vm.define_builtin(
+        builtins
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                channel_builtin,
+            )
+            .expect("chan builtin"),
+    )
+    .expect("define chan");
+}
+
 type MemoryRequests = Rc<RefCell<Vec<(Option<String>, String)>>>;
 
 struct MemoryResolver {
@@ -52,6 +84,7 @@ impl ModuleResolver for OpaqueKeyResolver {
                     searched: Vec::new(),
                     suggestions: Vec::new(),
                     elsewhere: Vec::new(),
+                    hints: Vec::new(),
                 });
             }
         };
@@ -78,6 +111,7 @@ impl ModuleResolver for MemoryResolver {
                 searched: Vec::new(),
                 suggestions: Vec::new(),
                 elsewhere: Vec::new(),
+                hints: Vec::new(),
             })?;
         Ok(ModuleSource {
             key: ModuleKey::new(format!("memory:{}", request.name)),
@@ -880,6 +914,9 @@ fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding(
         )
         .expect("compile filesystem clutch consumer");
     let mut vm = Vm::with_module_loader(loader.clone());
+    // The module waits for its I/O thread on channels. The builtin is the
+    // loader's, so the later VMs here have it too.
+    define_channel_builtin(&mut vm);
 
     vm.run_named(&program, "main")
         .expect("run filesystem clutch consumer");

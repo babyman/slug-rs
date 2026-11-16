@@ -25,7 +25,9 @@ make eager execution or host-thread count a public compatibility promise.
 ## Consequences
 
 The VM must distinguish immediate lexical captures, which `spawn` snapshots,
-from transitive captures, which remain live. Module globals must be represented
+from transitive captures, which remain live. Amended by
+[Spawned tasks share what they capture](2026-11-15-spawn-shares-captures.md):
+`spawn` now shares every capture. Module globals must be represented
 by shared binding cells when tasks receive independent VM state. Future channel
 and timer work extends the cooperative scheduler rather than adding a second
 native worker queue.

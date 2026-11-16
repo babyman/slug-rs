@@ -327,7 +327,7 @@ fn firmware_light_walk_reaches_its_first_gpio_write() {
     artifact
         .register_foreign(
             module
-                .function("sleepMs", NativeArity::Exact(1), returns_nil)
+                .function("monotonicMs", NativeArity::Exact(0), returns_nil)
                 .expect("valid native function"),
         )
         .expect("register time provider");
@@ -344,18 +344,22 @@ fn firmware_light_walk_reaches_its_first_gpio_write() {
 }
 
 #[test]
-fn firmware_artifact_executes_implicit_and_explicit_builtin_calls() {
+fn firmware_artifact_executes_builtins_without_carrying_their_contract() {
     let artifact = firmware_host()
         .compile_artifact(
             "firmware-builtin.slug",
-            "val core = import(\"slug.builtin\")\n\
+            "val recover = fn() {\n\
+                 defer onerror(err) { return len(err.msg) }\n\
+                 throw Error {msg: \"abc\"}\n\
+             }\n\
              val main = fn() {\n\
                  print(\"implicit\")\n\
-                 core.println(\"explicit\")\n\
-                 len([1, 2]) + core.len(\"abc\")\n\
+                 println(\"builtins\")\n\
+                 len([1, 2]) + recover()\n\
              }\n",
         )
         .expect("compile embedded builtin users");
+    assert_eq!(artifact.modules.len(), 1);
     let artifact = cslug::ArtifactHost::new(artifact, slug_vm::Shared::new(EmptyVmConfiguration))
         .expect("valid artifact");
     register_embedded_builtins(&artifact);

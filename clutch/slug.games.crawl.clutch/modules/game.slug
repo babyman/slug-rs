@@ -119,6 +119,13 @@ var world = {}
 var levels = {}
 var players = {}
 
+// Who stands where, by the records in `players`: a map from a square's
+// `squareKey` to the set of ids whose record puts them there, dead or alive.
+// `savePlayer` keeps it as `players` changes; the acting player's record
+// may be behind `player`, so those asking where someone stands look at
+// `player` for them.
+var standing = {}
+
 // The monsters of chunks not made yet, beside those that are, as counts by
 // name (see `slug.games.crawl.region`), by chunk key.
 var populations = {}
@@ -164,17 +171,61 @@ export val current = fn():map {
     {world: world, levels: levels, players: all, populations: populations}
 }
 
+// The key `standing` gives the square (x, y) of the chunk with `key`.
+val squareKey = fn(key:str, x:num, y:num):str { key + ":" + x + "," + y }
+
+// The square player record `p` puts them on, as a `squareKey`, or nil for
+// one not placed yet.
+val squareOf = fn(p:map):str|nil {
+    if (p.x == nil) { nil } else { squareKey(chunkKey(p.cx, p.cy, p.depth), p.x, p.y) }
+}
+
+// `standing` for the records `all`, by id.
+val standingOf = fn(all:map):map {
+    reduce(keys(all), {}, fn(acc, id) {
+        match squareOf(all[id]) {
+            k: str => acc + {[k]: (acc[k] ?? {}) + {[id]: true}}
+            _ => acc
+        }
+    })
+}
+
+// Saves `p` as the record of the player with `id`, keeping `standing`.
+val savePlayer = fn(id:str, p:map) {
+    val old = players[id]
+    val moved = old == nil || old.x != p.x || old.y != p.y || old.cx != p.cx || old.cy != p.cy || old.depth != p.depth
+    if (moved) {
+        val from = if (old == nil) { nil } else { squareOf(old) }
+        match from {
+            k: str => {
+                val left = remove(standing[k] ?? {}, id)
+                standing = if (len(left) == 0) { remove(standing, k) } else { standing + {[k]: left} }
+            }
+            _ => nil
+        }
+        match squareOf(p) {
+            k: str => { standing = standing + {[k]: (standing[k] ?? {}) + {[id]: true}} }
+            _ => nil
+        }
+    }
+    players = players + {[id]: p}
+}
+
+// The ids whose records in `players` put them on square (x, y) of the chunk
+// with `key`, in no particular order.
+val standingIn = fn(key:str, x:num, y:num):list { keys(standing[squareKey(key, x, y)] ?? {}) }
+
 // Runs `body` as the player with `id`: the engine's rules all act on
 // `player`, which holds them meanwhile and is saved back after. Nests, as
 // when a monster attacks another player during someone's turn.
 val actAs = fn(id:str, body:fn) {
     val outer = acting
-    if (outer != nil) { players = players + {[outer]: player} }
+    if (outer != nil) { savePlayer(outer, player) }
     acting = id
     player = players[id]
     dirty = dirty copy {players: dirty.players + {[id]: true}}
     val result = body()
-    players = players + {[id]: player}
+    savePlayer(id, player)
     acting = outer
     if (outer != nil) { player = players[outer] }
     result
@@ -219,12 +270,23 @@ val BLANK_ROWS = (fn(i:num, rows:list):list {
 // Sets what the acting player remembers of the chunk with `key`.
 val remember = fn(key:str, rows:list) {
     if (player.memory[key] != rows) {
-        // Remembering anything else means looking again next time.
-        seenAt = seenAt - (acting ?? "")
         player = player copy {memory: player.memory + {[key]: rows}}
-        dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
+        match noted {
+            // Finding sights for `applySights`, perhaps in a fork.
+            keys: map => { noted = keys + {[key]: true} }
+            _ => {
+                // Remembering anything else means looking again next time.
+                seenAt = seenAt - (acting ?? "")
+                dirty = dirty copy {memories: dirty.memories + {[(acting ?? "") + " " + key]: [acting, key]}}
+            }
+        }
     }
 }
+
+// While `sightsOf` looks as a player, the keys of the chunks whose memory
+// `remember` changed, as a set; nil otherwise. Each task has its own, so a
+// fork can look.
+task var noted:map|nil = nil
 
 // What the player remembers of the chunk they are in, as its rows.
 val memory = fn():list { player.memory[playerKey()] ?? BLANK_ROWS }
@@ -250,6 +312,27 @@ val companyIn = fn(key:str):list {
 // cache, so each task has its own.
 task var companies = nil
 
+// The living players in the chunk with `key` by the square they stand on:
+// a map from `viewKey` to [id, player] pairs in id order.
+val crowdIn = fn(key:str):map {
+    match crowds {
+        found: map => match found[key] {
+            crowd: map => return crowd
+            _ => nil
+        }
+        _ => nil
+    }
+    val crowd = reduce(companyIn(key), {}, fn(acc, o) {
+        val k = viewKey(o[1].x, o[1].y)
+        acc + {[k]: (acc[k] ?? []) :+ o}
+    })
+    if (crowds != nil) { crowds = (crowds ?? {}) + {[key]: crowd} }
+    crowd
+}
+
+// Each chunk's crowd, by key, while `steady` runs, as `companies`.
+task var crowds = nil
+
 /**
  * Runs `body` and returns what it does, finding the players in each chunk
  * only once meanwhile: for drawing what players see, while no one moves.
@@ -257,8 +340,13 @@ task var companies = nil
  */
 export val steady = fn(body:fn) {
     val outer = companies
+    val outerCrowds = crowds
     companies = companies ?? {}
-    defer { companies = outer }
+    crowds = crowds ?? {}
+    defer {
+        companies = outer
+        crowds = outerCrowds
+    }
     body()
 }
 
@@ -276,17 +364,26 @@ val companyOf = fn(key:str):list {
 
 // Whether a living player stands at (x, y) in the chunk with `key`.
 val playerIn = fn(key:str, x:num, y:num):bool {
-    // The square first: the chunk's key is made only for those on it.
-    val all = keys(players)
+    val p = player
+    if (acting != nil && p.x == x && p.y == y && !p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { return true }
+    val there = standingIn(key, x, y)
     val go = fn(i:num):bool {
-        if (i == len(all)) { return false }
-        val p = if (all[i] == acting) { player } else { players[all[i]] }
-        if (p.x == x && p.y == y && !p.dead && chunkKey(p.cx, p.cy, p.depth) == key) { true } else { recur(i + 1) }
+        if (i == len(there)) { return false }
+        if (there[i] != acting && !players[there[i]].dead) { true } else { recur(i + 1) }
     }
     go(0)
 }
 
 val playerAt = fn(x:num, y:num):bool { playerIn(playerKey(), x, y) }
+
+// The squares of chunk (cx, cy) on `depth` where living players stand, as a
+// map from "x,y" to true: one look at everyone, for asking of many squares.
+val occupied = fn(cx:num, cy:num, depth:num):map {
+    reduce(keys(players), {}, fn(acc, id) {
+        val p = if (id == acting) { player } else { players[id] }
+        if (!p.dead && p.cx == cx && p.cy == cy && p.depth == depth) { acc + {["" + p.x + "," + p.y]: true} } else { acc }
+    })
+}
 
 // The index of the character at (x, y) in the acting player's chunk, or -1.
 val characterAt = fn(x:num, y:num):num { indexAt(site().characters ?? [], x, y) }
@@ -569,21 +666,78 @@ val roomAt = fn(x:num, y:num):map|nil {
     go(0)
 }
 
-// Whether the acting player can see (x, y); see `visible`.
-val canSee = fn(x:num, y:num):bool {
+// Whether the acting player can see (x, y), as `seer` works it out; see
+// `visible`.
+val canSee = fn(x:num, y:num):bool { seer()(x, y) }
+
+// Whether the acting player, as they are now, can see (x, y): a function of
+// (x, y) that holds what it needs, so testing many squares looks once at
+// what the player sees from where they stand.
+val seer = fn():fn {
     val p = player
-    val dx = x - p.x
-    val dy = y - p.y
-    if (p.blind > 0) {
-        false
-    } else if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
-        true
-    } else if (site().outdoor == true) {
-        outdoorSight()[viewKey(x, y)] == true
-    } else {
-        val room = roomAt(p.x, p.y)
-        room != nil && !room.dark && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h
+    if (p.blind > 0) { return fn(x:num, y:num):bool { false } }
+    val near = fn(x:num, y:num):bool {
+        val dx = x - p.x
+        val dy = y - p.y
+        dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1
     }
+    if (site().outdoor == true) {
+        val sight = outdoorSight()
+        return fn(x:num, y:num):bool { near(x, y) || sight[viewKey(x, y)] == true }
+    }
+    match roomAt(p.x, p.y) {
+        room: map => if (room.dark) { near } else {
+            fn(x:num, y:num):bool {
+                near(x, y) || (x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h)
+            }
+        }
+        _ => near
+    }
+}
+
+// The `viewKey`s of the squares the acting player may see, some more than
+// once: the eight around them and their own, and outdoors what they see,
+// or in a lit room the room. Blind, none.
+val sightKeys = fn():list {
+    val p = player
+    if (p.blind > 0) { return [] }
+    val near = [
+        viewKey(p.x - 1, p.y - 1), viewKey(p.x, p.y - 1), viewKey(p.x + 1, p.y - 1),
+        viewKey(p.x - 1, p.y), viewKey(p.x, p.y), viewKey(p.x + 1, p.y),
+        viewKey(p.x - 1, p.y + 1), viewKey(p.x, p.y + 1), viewKey(p.x + 1, p.y + 1),
+    ]
+    if (site().outdoor == true) { return keys(outdoorSight()) + near }
+    match roomAt(p.x, p.y) {
+        room: map => if (room.dark) { near } else {
+            val go = fn(i:num, acc:list):list {
+                if (i == room.w * room.h) { return acc }
+                recur(i + 1, acc :+ viewKey(room.x + i % room.w, room.y + math.div(i, room.w)))
+            }
+            go(0, near)
+        }
+        _ => near
+    }
+}
+
+// The other living players in the acting player's chunk whom they see, as
+// [id, player] pairs, those on one square together and in id order. In a
+// crowd it looks up who stands on each square they see; among a few, it
+// asks of each whether they are seen.
+val peopleInSight = fn():list {
+    val me = acting
+    val key = playerKey()
+    val company = companyIn(key)
+    val squares = sightKeys()
+    if (len(company) <= len(squares)) {
+        val sees = seer()
+        return filter(company, fn(o) { o[0] != me && sees(o[1].x, o[1].y) })
+    }
+    val crowd = crowdIn(key)
+    // Each square once, though `sightKeys` may give it twice.
+    val unique = reduce(squares, {}, fn(acc, k) { if (crowd[k] == nil) { acc } else { acc + {[k]: true} } })
+    reduce(keys(unique), [], fn(acc, k) {
+        reduce(crowd[k], acc, fn(found, o) { if (o[0] == me) { found } else { found :+ o } })
+    })
 }
 
 // Whether a square (dx, dy) from the player is near enough to see outdoors.
@@ -605,12 +759,52 @@ val around = fn(p:map):fn {
         recur(i + 1, acc :+ (if (inWorld(cx, cy)) { chunk(cx, cy, p.depth).map } else { BLANK_ROWS }))
     }
     val maps = fetch(0, [])
+    // Sight reaches at most one chunk past the player's on each axis, so a
+    // comparison finds the chunk where `floorDiv` would.
     fn(x:num, y:num):str {
-        val ox = floorDiv(x, level.WIDTH)
-        val oy = floorDiv(y, level.HEIGHT)
+        val ox = if (x < 0) { -1 } else if (x < level.WIDTH) { 0 } else { 1 }
+        val oy = if (y < 0) { -1 } else if (y < level.HEIGHT) { 0 } else { 1 }
         maps[(oy - oy0) * nx + ox - ox0][y - oy * level.HEIGHT][x - ox * level.WIDTH]
     }
 }
+
+// The rays `outdoorSight` casts from a player to each square on the edge of
+// their sight box, in the order it casts them, each as the [dx, dy, key]
+// steps it takes while the square stays in sight: `key` is the step's
+// `viewKey` less the player's own. A ray goes through the squares next to the
+// player and those `inSight`, and its line, Bresenham's, depends only on
+// where it goes relative to the player, so the rays are worked out once.
+val castSightRays = fn():list {
+    val half = math.div(SIGHT, 2)
+    val ray = fn(x1:num, y1:num):list {
+        val dx = math.abs(x1)
+        val dy = -math.abs(y1)
+        val sx = if (0 < x1) { 1 } else { -1 }
+        val sy = if (0 < y1) { 1 } else { -1 }
+        val go = fn(x:num, y:num, err:num, steps:list):list {
+            if (x == x1 && y == y1) { return steps }
+            val e2 = 2 * err
+            val nx = if (e2 >= dy) { x + sx } else { x }
+            val ny = if (e2 <= dx) { y + sy } else { y }
+            val near = nx >= -1 && nx <= 1 && ny >= -1 && ny <= 1
+            if (!near && !inSight(nx, ny)) { return steps }
+            val next = err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 })
+            recur(nx, ny, next, steps :+ [nx, ny, ny * 3 * level.WIDTH + nx])
+        }
+        go(0, 0, dx + dy, [])
+    }
+    val across = fn(x:num, acc:list):list {
+        if (x > SIGHT) { acc } else { recur(x + 1, acc :+ ray(x, -half) :+ ray(x, half)) }
+    }
+    val down = fn(y:num, acc:list):list {
+        if (y > half) { acc } else { recur(y + 1, acc :+ ray(-SIGHT, y) :+ ray(SIGHT, y)) }
+    }
+    down(-half, across(-SIGHT, []))
+}
+val sightRays = castSightRays()
+
+// The terrain that stops sight, as a set.
+val OPAQUE = reduce(level.OPAQUE, {}, fn(acc, c) { acc + {[c]: true} })
 
 // What each player saw outdoors when last asked, by id: `at`, where they
 // stood, and `found`, what they saw from there. Outdoor terrain never
@@ -631,41 +825,51 @@ val outdoorSight = fn():map {
         _ => nil
     }
     val at = around(p)
+    val base = viewKey(p.x, p.y)
     var found = {}
-    val ray = fn(x1:num, y1:num) {
-        val dx = math.abs(x1 - p.x)
-        val dy = -math.abs(y1 - p.y)
-        val sx = if (p.x < x1) { 1 } else { -1 }
-        val sy = if (p.y < y1) { 1 } else { -1 }
-        val go = fn(x:num, y:num, err:num) {
-            if (x == x1 && y == y1) { return nil }
-            val e2 = 2 * err
-            val nx = if (e2 >= dy) { x + sx } else { x }
-            val ny = if (e2 <= dx) { y + sy } else { y }
-            val near = nx - p.x >= -1 && nx - p.x <= 1 && ny - p.y >= -1 && ny - p.y <= 1
-            if (near || inSight(nx - p.x, ny - p.y)) {
-                found = found + {[viewKey(nx, ny)]: true}
-                val c = at(nx, ny)
-                if (!contains(level.OPAQUE, c)) {
-                    recur(nx, ny, err + (if (e2 >= dy) { dy } else { 0 }) + (if (e2 <= dx) { dx } else { 0 }))
-                }
-            }
+    val cast = fn(steps:list, i:num) {
+        if (i < len(steps)) {
+            val step = steps[i]
+            found = found + {[base + step[2]]: true}
+            if (OPAQUE[at(p.x + step[0], p.y + step[1])] == nil) { recur(steps, i + 1) }
         }
-        go(p.x, p.y, dx + dy)
     }
-    val box = sightBox(p)
-    val across = fn(x:num) {
-        if (x <= box.right) { ray(x, box.top); ray(x, box.bottom); recur(x + 1) }
+    val rays = fn(i:num) {
+        if (i < len(sightRays)) {
+            cast(sightRays[i], 0)
+            recur(i + 1)
+        }
     }
-    across(box.left)
-    val down = fn(y:num) {
-        if (y <= box.bottom) { ray(box.left, y); ray(box.right, y); recur(y + 1) }
-    }
-    down(box.top)
+    rays(0)
     found = found + {[viewKey(p.x, p.y)]: true}
     sights = sights + {[id]: {at: stand, found: found}}
     found
 }
+
+// What `glyphAt` shows of the things in chunk `lv`, which has `key`: a map
+// from y * level.WIDTH + x to the glyph of the first item at (x, y), or else
+// a grave, or else remains; squares with none are left out. Kept per task
+// while the chunk's lists of them are unchanged.
+val thingsOf = fn(key:str, lv:map):map {
+    val graves = lv.graves ?? []
+    val remains = lv.remains ?? []
+    match things[key] {
+        kept: map => if (kept.items == lv.items && kept.graves == graves && kept.remains == remains) { return kept.glyphs }
+        _ => nil
+    }
+    val add = fn(glyphs:map, list:list, glyph:fn):map {
+        reduce(list, glyphs, fn(acc, e) {
+            val at = e.y * level.WIDTH + e.x
+            if (acc[at] == nil) { acc + {[at]: glyph(e)} } else { acc }
+        })
+    }
+    val glyphs = add(add(add({}, lv.items, fn(e) { GLYPHS[e.item.kind] }), graves, fn(e) { GRAVE }), remains, fn(e) { REMAINS })
+    things = things + {[key]: {items: lv.items, graves: graves, remains: remains, glyphs: glyphs}}
+    glyphs
+}
+
+// The cache `thingsOf` keeps, by chunk key; each task has its own.
+task var things = {}
 
 // What is seen at (x, y) in chunk `lv`: the item there, or a grave, or the
 // remains of old battles, or the terrain.
@@ -703,6 +907,67 @@ val see = fn() {
     if (seenAt[id] == stamp) { return nil }
     lookAround()
     seenAt = seenAt + {[id]: stamp}
+}
+
+/**
+ * What looking around now finds for each living player in `ids`, for
+ * `applySights` to keep: each one's sight stamp, what they now remember of
+ * each chunk it changed, and what they see outdoors, and last, what it found
+ * of each chunk's things, for drawing to start from. It changes nothing, so
+ * forks can each find it for a share of the players, which is most of a
+ * tick's work for a crowd. A player whose sight reaches a chunk not made yet
+ * is left for `applySights` to look as, for a fork cannot make it.
+ */
+export val sightsOf = fn(ids:list):list {
+    defer { noted = nil }
+    val before = things
+    val one = fn(id:str) {
+        defer onerror(error) {
+            return match error {
+                {type: "crawl.unmade"} => {id: id, unmade: true}
+                _ => throw error
+            }
+        }
+        lookAs(id, fn() {
+            val stamp = sightStamp()
+            if (seenAt[id] == stamp) { return nil }
+            noted = {}
+            lookAround()
+            {id: id, stamp: stamp, memory: map(keys(noted ?? {}), fn(k) { [k, player.memory[k]] }), sight: sights[id]}
+        })
+    }
+    val found = reduce(ids, [], fn(acc, id) {
+        val p = players[id]
+        if (p == nil || p.dead) { return acc }
+        match one(id) {
+            seen: map => acc :+ seen
+            _ => acc
+        }
+    })
+    val made = reduce(keys(things), {}, fn(acc, k) { if (things[k] != before[k]) { acc + {[k]: things[k]} } else { acc } })
+    if (len(made) == 0) { found } else { found :+ {things: made} }
+}
+
+/**
+ * Keeps what `sightsOf` found, in the order found: what each player now
+ * remembers, and that they need not look again until something changes.
+ * Those it left looks as now. Call it before anything else changes the game.
+ */
+export val applySights = fn(found:list) {
+    map(found, fn(f) {
+        if (f.things != nil) {
+            things = things + f.things
+        } else if (f.unmade == true) {
+            if (players[f.id] != nil) { actAs(f.id, fn() { if (!player.dead) { see() } }) }
+        } else {
+            val p = players[f.id]
+            players = players + {[f.id]: p copy {memory: reduce(f.memory, p.memory, fn(acc, kr) { acc + {[kr[0]]: kr[1]} })}}
+            dirty = dirty copy {memories: reduce(f.memory, dirty.memories, fn(acc, kr) { acc + {[f.id + " " + kr[0]]: [f.id, kr[0]]} })}
+            seenAt = seenAt + {[f.id]: f.stamp}
+            if (f.sight != nil) { sights = sights + {[f.id]: f.sight} }
+        }
+    })
+    nil
 }
 
 val lookAround = fn() {
@@ -814,20 +1079,22 @@ val seeOutdoors = fn() {
         val bottom = math.min(box.bottom - y0, level.HEIGHT - 1)
         val left = math.max(box.left - x0, 0)
         val right = math.min(box.right - x0, level.WIDTH - 1)
-        val shown = fn(x:num, y:num):str {
-            if (visible[viewKey(x0 + x, y0 + y)] == true) {
-                glyphAt(lv, x, y)
-            } else {
-                rows[y][x]
-            }
-        }
-        val line = fn(y:num, x:num, out:str):str {
-            if (x > right) { out } else { recur(y, x + 1, out + shown(x, y)) }
-        }
+        // What `glyphAt` says of each square, read from the chunk's
+        // things once and its terrain where it has none.
+        val things = thingsOf(key, lv)
+        val corner = viewKey(x0, y0)
         val go = fn(y:num, acc:list):list {
             if (y > bottom) { return acc }
             val row = rows[y]
-            recur(y + 1, acc :+ (row[:left] + line(y, left, "") + row[right + 1:]))
+            val ground = lv.map[y]
+            val keys0 = corner + y * 3 * level.WIDTH
+            val at0 = y * level.WIDTH
+            val line = fn(x:num, out:str):str {
+                if (x > right) { return out }
+                val c = if (visible[keys0 + x] == true) { things[at0 + x] ?? ground[x] } else { row[x] }
+                recur(x + 1, out + c)
+            }
+            recur(y + 1, acc :+ (row[:left] + line(left, "") + row[right + 1:]))
         }
         remember(key, rows[:top] + go(top, []) + rows[bottom + 1:])
     }
@@ -1040,6 +1307,9 @@ val chunk = fn(cx:num, cy:num, depth:num):map {
     match levels[key] {
         lv: map => lv
         _ => {
+            // A fork cannot add to the world: `sightsOf` leaves the looking
+            // to the world's task, which can.
+            if (noted != nil) { throw Error {type: "crawl.unmade", msg: "chunk " + key + " is not made yet"} }
             val plain = level.generate(world.seed, cx, cy, depth, world.size ?? 0)
             val built = match settlementAt(cx, cy, depth) {
                 s: map => town.build(world.seed, plain, s)
@@ -1135,13 +1405,13 @@ val newCharacter = fn() {
     val middle = math.div(world.size ?? 0, 2)
     val cx = if (home != nil) { home.cx } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
     val cy = if (home != nil) { home.cy } else { middle + rng.below(2 * SPAWN + 1) - SPAWN }
-    val key = chunkKey(cx, cy, 0)
     // A few random squares first; players who leave stay in the world, so
     // the town fills up, and then the nearest open square around it.
+    val taken = occupied(cx, cy, 0)
     val tries = fn(lv:map, n:num):map|nil {
         if (n == SPAWN_TRIES) { return nil }
         val spot = if (lv.walls != nil) { insideSpot(lv) } else { level.freeSpot(lv) }
-        if (playerIn(key, spot.x, spot.y)) { recur(lv, n + 1) } else { spot }
+        if (taken["" + spot.x + "," + spot.y] == true) { recur(lv, n + 1) } else { spot }
     }
     match tries(chunk(cx, cy, 0), 0) {
         spot: map => enter(cx, cy, 0, fn(_) { spot })
@@ -1182,32 +1452,55 @@ val ringLength = fn(r:num):num { if (r == 0) { 1 } else { 8 * r } }
 // outside them.
 val nearestOpen = fn(cx:num, cy:num):map|nil {
     val lv = chunk(cx, cy, 0)
-    val key = chunkKey(cx, cy, 0)
     val spotKey = fn(x:num, y:num):str { "" + x + "," + y }
     val mark = fn(acc:map, t:map):map { acc + {[spotKey(t.x, t.y)]: true} }
     val things = (lv.items ?? []) + (lv.characters ?? []) + (lv.monsters ?? [])
-    val taken = reduce(map(companyIn(key), fn(pair) { pair[1] }), reduce(things, {}, mark), mark)
+    val taken = reduce(things, occupied(cx, cy, 0), mark)
+    val order = groundOrder(chunkKey(cx, cy, 0), lv)
+    val go = fn(i:num):map|nil {
+        if (i == len(order)) { return nil }
+        val [x, y, k] = order[i]
+        if (taken[k] == true) { recur(i + 1) } else { {x: x, y: y} }
+    }
+    go(0)
+}
+
+// The squares of surface chunk `lv` a new character may start on, nearest
+// its middle (its walls' middle in a settlement) first, ring by ring, as
+// [x, y, "x,y"]: streets inside a settlement's walls (any open square in a
+// fort's), or ground outside them. Terrain stays as it is made, so each
+// chunk's list is kept, by `key`, while its map is the same.
+val groundOrder = fn(key:str, lv:map):list {
+    match groundOrders[key] {
+        kept: map => if (kept.map == lv.map) { return kept.order }
+        _ => nil
+    }
     val w = lv.walls
-    val open = fn(x:num, y:num):bool {
+    val ground = fn(x:num, y:num):bool {
         val c = lv.map[y][x]
         val inside = w != nil && x > w.left && x < w.right && y > w.top && y < w.bottom
-        val ground = if (inside) {
+        if (inside) {
             c == level.ROAD || (lv.place.kind == "fort" && c == level.FLOOR)
         } else {
             c == level.FLOOR || c == level.SCRUB || c == level.ROAD
         }
-        ground && taken[spotKey(x, y)] != true
     }
     val ox = if (w != nil) { math.div(w.left + w.right, 2) } else { math.div(level.WIDTH, 2) }
     val oy = if (w != nil) { math.div(w.top + w.bottom, 2) } else { math.div(level.HEIGHT, 2) }
-    val search = fn(r:num, j:num):map|nil {
-        if (r > level.WIDTH) { return nil }
-        if (j == ringLength(r)) { return recur(r + 1, 0) }
+    val walk = fn(r:num, j:num, acc:list):list {
+        if (r > level.WIDTH) { return acc }
+        if (j == ringLength(r)) { return recur(r + 1, 0, acc) }
         val [x, y] = ringPoint(ox, oy, r, j)
-        if (inBounds(x, y) && open(x, y)) { {x: x, y: y} } else { recur(r, j + 1) }
+        recur(r, j + 1, if (inBounds(x, y) && ground(x, y)) { acc :+ [x, y, "" + x + "," + y] } else { acc })
     }
-    search(0, 0)
+    val order = walk(0, 0, [])
+    groundOrders = groundOrders + {[key]: {map: lv.map, order: order}}
+    order
 }
+
+// Each surface chunk's `groundOrder` once found, by key. A cache, so each
+// task has its own.
+task var groundOrders = {}
 
 // Where a new character starts when random tries found the town at (cx, cy)
 // full, as [cx, cy, spot]: the nearest open square in its chunk, inside the
@@ -1266,6 +1559,7 @@ export val load = fn(saved:map) {
     }
     levels = saved.levels
     players = saved.players
+    standing = standingOf(players)
     populations = saved.populations ?? {}
     slots = {}
     sights = {}
@@ -1323,6 +1617,7 @@ export val newGame = fn(seed:num, options:map = {}) {
     }
     levels = {}
     players = {}
+    standing = {}
     populations = {}
     slots = {}
     player = {}
@@ -1367,7 +1662,7 @@ export val changes = fn():map {
  */
 export val join = fn(id:str, name:str) {
     if (players[id] == nil) {
-        players = players + {[id]: {name: name}}
+        savePlayer(id, {name: name})
         actAs(id, newCharacter)
     }
 }
@@ -1679,12 +1974,19 @@ val monsterAct = fn(i:num, dist:map|nil):list {
 // chunk, counting diagonal steps as one, the first by id on a tie; nil when
 // none is left.
 val nearest = fn(m:map):str|nil {
-    val company = companyIn(playerKey())
+    val all = keys(players)
+    val here = player
     val go = fn(i:num, best:str|nil, bestD:num):str|nil {
-        if (i == len(company)) { return best }
-        val p = company[i][1]
+        if (i == len(all)) { return best }
+        val id = all[i]
+        val p = if (id == acting) { here } else { players[id] }
+        if (p.dead || p.cx != here.cx || p.cy != here.cy || p.depth != here.depth) { return recur(i + 1, best, bestD) }
         val d = math.max(math.abs(p.x - m.x), math.abs(p.y - m.y))
-        if (d < bestD) { recur(i + 1, company[i][0], d) } else { recur(i + 1, best, bestD) }
+        val first = match best {
+            b: str => d < bestD || (d == bestD && id < b)
+            _ => true
+        }
+        if (first) { recur(i + 1, id, d) } else { recur(i + 1, best, bestD) }
     }
     go(0, nil, 1000000)
 }
@@ -2148,14 +2450,21 @@ val SAY_LIMIT = 80
 
 // The id of the living player other than the acting one at (x, y) in the
 // chunk with `key`, or nil.
+// The first by id, when more than one stand there.
 val playerIdIn = fn(key:str, x:num, y:num):str|nil {
-    val company = companyIn(key)
-    val go = fn(i:num):str|nil {
-        if (i == len(company)) { return nil }
-        val [id, o] = company[i]
-        if (id != acting && o.x == x && o.y == y) { id } else { recur(i + 1) }
+    val there = standingIn(key, x, y)
+    val go = fn(i:num, best:str|nil):str|nil {
+        if (i == len(there)) { return best }
+        val id = there[i]
+        val here = id != acting && !players[id].dead
+        recur(i + 1, if (!here) { best } else {
+            match best {
+                b: str => if (b < id) { b } else { id }
+                _ => id
+            }
+        })
     }
-    go(0)
+    go(0, nil)
 }
 
 // Where player `o` stands, in the coordinates of the acting player's chunk.
@@ -2651,29 +2960,30 @@ val perform = fn(key:str, shift:bool, text:str = "") {
 // The map of the acting player's chunk as they know it, with the monsters
 // and players they can see on it.
 val mapRows = fn():list {
+    val sees = seer()
     val monsters = fn(i:num, rows:list):list {
         if (i == len(site().monsters)) {
             rows
         } else {
             val m = site().monsters[i]
-            val shown = player.sense || canSee(m.x, m.y)
+            val shown = player.sense || sees(m.x, m.y)
             recur(i + 1, if (shown) { write(rows, m.x, m.y, bestiary.monsters[m.kind].letter) } else { rows })
         }
     }
-    val company = companyIn(playerKey())
+    val company = peopleInSight()
     val others = fn(i:num, rows:list):list {
         if (i == len(company)) {
             rows
         } else {
             val o = company[i][1]
-            recur(i + 1, if (canSee(o.x, o.y)) { write(rows, o.x, o.y, "@") } else { rows })
+            recur(i + 1, write(rows, o.x, o.y, "@"))
         }
     }
     val people = site().characters ?? []
     val characters = fn(i:num, rows:list):list {
         if (i == len(people)) { return rows }
         val c = people[i]
-        recur(i + 1, if (canSee(c.x, c.y)) { write(rows, c.x, c.y, "@") } else { rows })
+        recur(i + 1, if (sees(c.x, c.y)) { write(rows, c.x, c.y, "@") } else { rows })
     }
     write(others(0, characters(0, monsters(0, memory()))), player.x, player.y, "@")
 }
@@ -2742,10 +3052,11 @@ export val menu = fn(id:str):map|nil {
  * action carry on running, or lose a turn while frozen. Then, on every
  * `monsterEvery`-th tick, the monsters act once in each chunk with a living
  * present player; everyone who spent a turn has their upkeep, the turn is
- * counted, and everyone present looks around. Each present player's
- * messages are this tick's; none are paged.
+ * counted, and everyone present looks around, unless `look` is false, when
+ * `sightsOf` and `applySights` are left to do it, as forks can. Each present
+ * player's messages are this tick's; none are paged.
  */
-export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
+export val tick = fn(actions:list, present:list, monsterEvery:num = 4, look:bool = true) {
     ticking = true
     val each = fn(ids:list, body:fn) {
         val go = fn(i:num) {
@@ -2758,14 +3069,14 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     }
     each(present, fn() { player = player copy {messages: [], more: []} })
     var timed = []
-    var acted = []
+    var acted = {}
     val doActions = fn(i:num) {
         if (i < len(actions)) {
             val a = actions[i]
-            val free = players[a.id] != nil && !contains(acted, a.id)
+            val free = players[a.id] != nil && acted[a.id] == nil
                 && (players[a.id].frozen == 0 || players[a.id].dead)
             if (free) {
-                acted = acted :+ a.id
+                acted = acted + {[a.id]: true}
                 actAs(a.id, fn() {
                     spent = false
                     perform(a.key, a.shift ?? false, a.text ?? "")
@@ -2777,7 +3088,7 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
     }
     doActions(0)
     each(present, fn() {
-        if (!contains(acted, acting) && !player.dead) {
+        if (acted[acting] == nil && !player.dead) {
             spent = false
             if (player.frozen > 0) {
                 player = player copy {frozen: player.frozen - 1}
@@ -2807,7 +3118,7 @@ export val tick = fn(actions:list, present:list, monsterEvery:num = 4) {
         each(present, fn() { say(comes) })
     }
     world = world copy {turn: world.turn + 1}
-    each(present, fn() { if (!player.dead) { see() } })
+    if (look) { each(present, fn() { if (!player.dead) { see() } }) }
     ticking = false
 }
 
@@ -2903,6 +3214,21 @@ export val here = fn(id:str):map { lookAs(id, site) }
  * neighbours, or they are in a lit room whose rectangle holds it.
  */
 export val visible = fn(id:str, x:num, y:num):bool { lookAs(id, fn() { canSee(x, y) }) }
+
+/**
+ * What the player with `id` sees from where they stand now, as a function
+ * of (x, y) that says what `visible` would: for testing many squares, it
+ * looks once.
+ */
+export val seeing = fn(id:str):fn { lookAs(id, seer) }
+
+/**
+ * The other living players in the chunk the player with `id` is in whom
+ * they see, as [id, player] pairs: `others` that are `visible`, found
+ * without asking of everyone in a crowd. They come in no set order, but
+ * those on one square come together, in id order.
+ */
+export val peopleSeen = fn(id:str):list { lookAs(id, peopleInSight) }
 
 /**
  * Every square the player with `id` can see, as a map from `viewKey(x, y)`

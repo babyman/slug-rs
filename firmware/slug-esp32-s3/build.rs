@@ -43,15 +43,20 @@ fn compile_target_artifact() {
         .expect("write typed provider registration");
 
     let builtins = NativeModule::new("slug.builtin", ()).expect("valid builtin module");
+    // The builtins src/providers.rs registers, as the build host describes them.
+    let builtins = vec![
+        builtins.function("print", NativeArity::Variadic { minimum: 0 }, build_builtin).expect("print"),
+        builtins.function("println", NativeArity::Variadic { minimum: 0 }, build_builtin).expect("println"),
+        builtins.function("len", NativeArity::Exact(1), build_builtin).expect("len"),
+        builtins.function("keys", NativeArity::Exact(1), build_builtin).expect("keys"),
+        builtins.function("chan", NativeArity::Range { minimum: 0, maximum: 1 }, build_builtin).expect("chan"),
+        builtins.function("close", NativeArity::Exact(1), build_builtin).expect("close"),
+    ];
+    descriptor
+        .check_builtin_contract(&builtins)
+        .unwrap_or_else(|error| panic!("{error}"));
     let artifact = descriptor
-        .compile_artifact_with_foreign([
-            builtins.function("print", NativeArity::Variadic { minimum: 0 }, build_builtin).expect("print"),
-            builtins.function("println", NativeArity::Variadic { minimum: 0 }, build_builtin).expect("println"),
-            builtins.function("len", NativeArity::Exact(1), build_builtin).expect("len"),
-            builtins.function("keys", NativeArity::Exact(1), build_builtin).expect("keys"),
-            builtins.function("chan", NativeArity::Range { minimum: 0, maximum: 1 }, build_builtin).expect("chan"),
-            builtins.function("close", NativeArity::Exact(1), build_builtin).expect("close"),
-        ])
+        .compile_artifact_with_foreign(builtins)
         .expect("compile target artifact");
     for input in artifact.inputs {
         println!("cargo:rerun-if-changed={}", input.display());

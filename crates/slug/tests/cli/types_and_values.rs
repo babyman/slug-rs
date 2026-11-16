@@ -1527,11 +1527,10 @@ fn keys_is_an_implicit_builtin_and_not_a_slug_std_export() {
     fs::write(
         &path,
         "val std = import(\"slug.std\")\n\
-         val builtin = import(\"slug.builtin\")\n\
          val mixed = {name: \"Slug\", [7]: \"seven\", [true]: \"yes\"}\n\
          val pair = fn(values) { match values { [\"a\", \"b\"] => \"a and b\"; [\"b\", \"a\"] => \"a and b\"; _ => \"other\" } }\n\
          println(len(keys(mixed)), keys({}), pair(keys({b: 2, a: 1})))\n\
-         println(builtin.keys({k: 1}), std.keys == nil)\n\
+         println(keys({k: 1}), std.keys == nil)\n\
          val shadow = fn(keys) { keys }\n\
          println(shadow(\"local wins\"))\n",
     )

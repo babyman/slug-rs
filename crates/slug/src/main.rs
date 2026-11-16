@@ -6,7 +6,8 @@ use std::{
 };
 
 use slug::{
-    DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
+    DesktopLoader, ProgramLayout, build_default_host_vm, capability_report_json,
+    default_library_root,
     diagnostic::{Diagnostic, DiagnosticCategory},
 };
 use slug_frontend::{ArtifactHost, SourceError};
@@ -334,21 +335,35 @@ fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopL
             return Err(ExitCode::from(1));
         }
     };
-    let source_root =
-        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
+    let layout = configured_source_root.map_or_else(
+        || entry_layout(&resolved_path, path),
+        ProgramLayout::module_root,
+    );
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let (_, loader) =
-        match build_default_host_vm(&source_root, slug_home.as_deref(), &[], entry_module) {
-            Ok(host) => host,
-            Err(error) => {
-                eprint_startup_error("host", "clutch", error.to_string(), json);
-                return Err(ExitCode::from(1));
-            }
-        };
+    let (_, loader) = match build_default_host_vm(&layout, slug_home.as_deref(), &[], entry_module)
+    {
+        Ok(host) => host,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return Err(ExitCode::from(1));
+        }
+    };
     Ok((resolved_path.to_string_lossy().into_owned(), source, loader))
+}
+
+/// The layout of an entry program requested as `requested` and read from
+/// `resolved`. An entry found through the library fallback is in no project,
+/// so the library's `slug.toml` never marks one.
+fn entry_layout(resolved: &Path, requested: &str) -> ProgramLayout {
+    let directory = program_directory(resolved);
+    if resolved == Path::new(requested) {
+        ProgramLayout::discover(directory)
+    } else {
+        ProgramLayout::module_root(directory)
+    }
 }
 
 /// The directory holding a program file. A bare file name's parent is the
@@ -461,7 +476,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     };
     let artifact_path = Path::new(path);
-    let source_root = program_directory(artifact_path);
+    let layout = ProgramLayout::discover(program_directory(artifact_path));
     let entry_module = artifact_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -471,7 +486,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
     // the installed clutches, which stay active while `loader` lives, so it
     // is declared before the host that calls them.
     let loader = match build_default_host_vm(
-        source_root,
+        &layout,
         slug_home.as_deref(),
         program_arguments,
         entry_module,
@@ -490,7 +505,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     };
     let configuration = slug::Configuration::load(
-        source_root,
+        layout.configuration_root(),
         slug_home.as_deref(),
         env::vars(),
         program_arguments,
@@ -542,14 +557,16 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
             return ExitCode::from(1);
         }
     };
-    let source_root =
-        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
+    let layout = configured_source_root.map_or_else(
+        || entry_layout(&resolved_path, path),
+        ProgramLayout::module_root,
+    );
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     let (mut vm, loader) = match build_default_host_vm(
-        &source_root,
+        &layout,
         slug_home.as_deref(),
         program_arguments,
         entry_module,
@@ -709,6 +726,17 @@ mod tests {
     use slug_vm::SourceSpan;
 
     use super::source_reader;
+
+    #[test]
+    fn the_cli_builtins_are_the_ones_its_contract_declares() {
+        let mismatches = slug_frontend::builtin_contract_mismatches(
+            "lib/slug/builtin.slug",
+            slug_desktop_loader::BUILTIN_CONTRACT_SOURCE,
+            &super::builtin_functions(),
+        )
+        .expect("the contract parses");
+        assert!(mismatches.is_empty(), "{mismatches:?}");
+    }
 
     #[test]
     fn falls_back_when_diagnostic_source_is_unavailable() {

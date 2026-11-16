@@ -1,0 +1,35 @@
+# Cryptographic primitives with no system dependencies: an incremental
+# SHA-256, for naming data by what it holds, and BIP-340 Schnorr signature
+# verification over secp256k1, by bitcoin-core's libsecp256k1, vendored in
+# native/vendor (see VENDOR.md).
+[modules]
+"slug.crypto.hash" = { source = "modules/hash.slug" }
+"slug.crypto.schnorr" = { source = "modules/schnorr.slug" }
+
+[tests]
+files = ["tests/hash.slug", "tests/schnorr.slug"]
+
+[native]
+profile = "core"
+headers = ["native/source/slug_crypto_hash.h", "native/source/slug_crypto_schnorr.h"]
+sources = ["native/source/hash.c", "native/source/schnorr.c"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_crypto.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_crypto.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_crypto.so"
+"windows-x86_64" = "native/windows-x86_64/slug_crypto.dll"
+
+[native.resources."slug.crypto.hash".Sha256]
+type = "slug_hash_sha256"
+release = { symbol = "slug_hash_sha256_release", signature = "(handle<Sha256> hash) -> void" }
+
+[native.functions."slug.crypto.hash"]
+newRaw = { symbol = "slug_hash_sha256_new", signature = "() -> handle<Sha256>" }
+updateRaw = { symbol = "slug_hash_sha256_update", signature = "(handle<Sha256> hash, bytes data) -> i32" }
+updateTextRaw = { symbol = "slug_hash_sha256_update_text", signature = "(handle<Sha256> hash, str text) -> i32" }
+finishRaw = { symbol = "slug_hash_sha256_finish", signature = "(handle<Sha256> hash, out bytes digest) -> i32" }
+ofRaw = { symbol = "slug_hash_sha256_of", signature = "(bytes data, out bytes digest) -> void", thread_safe = true }
+
+[native.functions."slug.crypto.schnorr"]
+verifyRaw = { symbol = "slug_schnorr_verify", signature = "(bytes publicKey, bytes message, bytes signature) -> bool", thread_safe = true }

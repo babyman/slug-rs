@@ -257,6 +257,52 @@ impl TargetDescriptor {
         }
     }
 
+    /// Checks the builtins the board package registers against the target's
+    /// `slug.builtin` contract: each declared function is registered with its
+    /// arity, each registered one is declared, and the contract's `Error` is
+    /// the VM's. A target without a `slug.builtin` provider has nothing to
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error naming each difference, or when the contract
+    /// cannot be read or parsed.
+    pub fn check_builtin_contract(
+        &self,
+        builtins: &[NativeFunction],
+    ) -> Result<(), DescriptorError> {
+        let Some(provider) = self
+            .providers
+            .iter()
+            .find(|provider| provider.module == slug_loader::BUILTIN_CONTRACT)
+        else {
+            return Ok(());
+        };
+        let contract = fs::read_to_string(&provider.contract).map_err(|error| {
+            DescriptorError::new(
+                "read",
+                format!(
+                    "cannot read provider contract {}: {error}",
+                    provider.contract.display()
+                ),
+            )
+        })?;
+        let path = provider.contract.display().to_string();
+        let mismatches = slug_frontend::builtin_contract_mismatches(&path, &contract, builtins)
+            .map_err(|error| DescriptorError::new("builtin-contract", error.to_string()))?;
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(DescriptorError::new(
+                "builtin-contract",
+                format!(
+                    "the registered builtins differ from {path}: {}",
+                    mismatches.join("; ")
+                ),
+            ))
+        }
+    }
+
     /// Compiles the selected entry graph and validates its encoded bytes under
     /// this target's finite decoder limits.
     ///
@@ -685,6 +731,49 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove descriptor fixture");
         }
+    }
+
+    #[test]
+    fn checks_the_board_builtins_against_the_targets_contract() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let descriptor =
+            TargetDescriptor::load(root.join("esp32-s3-hello.toml")).expect("load descriptor");
+        let module = slug_vm::NativeModule::new("slug.builtin", ()).expect("valid module");
+        let nil = |call: &mut slug_vm::NativeCall<'_>| {
+            call.return_value(slug_vm::NativeOwnedValue::nil())
+        };
+        let function =
+            |name: &str, arity| module.function(name, arity, nil).expect("valid function");
+        let variadic = slug_vm::NativeArity::Variadic { minimum: 0 };
+        let one = slug_vm::NativeArity::Exact(1);
+        let mut builtins = vec![
+            function("print", variadic),
+            function("println", variadic),
+            function("len", one),
+            function("keys", one),
+            function(
+                "chan",
+                slug_vm::NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+            ),
+            function("close", one),
+        ];
+        descriptor
+            .check_builtin_contract(&builtins)
+            .expect("the board package's builtins match the contract");
+
+        builtins.pop();
+        let error = descriptor
+            .check_builtin_contract(&builtins)
+            .expect_err("a declared builtin the board lacks");
+        assert!(
+            error
+                .to_string()
+                .contains("`close` is declared but not registered"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -652,6 +652,13 @@ int32_t pr_feed(slug_producer *producer, int64_t value) {
   sent += slug_producer_send_nil(producer) == SLUG_PRODUCER_SENT;
   sent += slug_producer_send_bool(producer, true) == SLUG_PRODUCER_SENT;
   sent += slug_producer_send_f64(producer, 1.5) == SLUG_PRODUCER_SENT;
+  {
+    slug_producer_item items[3];
+    items[0] = slug_producer_item_i64(value);
+    items[1] = slug_producer_item_text("hi", 2);
+    items[2] = slug_producer_item_bytes(bytes, sizeof bytes);
+    sent += slug_producer_send_list(producer, items, 3) == SLUG_PRODUCER_SENT;
+  }
   if (!slug_producer_is_closed(producer)) slug_producer_close(producer);
   slug_producer_release(producer);
   return sent;
@@ -670,13 +677,22 @@ static int32_t fake_i64(slug_producer *p, int64_t v) { (void)p; printf("i64 %" P
 static int32_t fake_f64(slug_producer *p, double v) { (void)p; printf("f64 %.1f\n", v); return SLUG_PRODUCER_SENT; }
 static int32_t fake_text(slug_producer *p, const char *t, size_t n) { (void)p; printf("text %.*s\n", (int)n, t); return SLUG_PRODUCER_SENT; }
 static int32_t fake_bytes(slug_producer *p, const uint8_t *d, size_t n) { (void)p; printf("bytes %02x%02x %u\n", d[0], d[1], (unsigned)n); return SLUG_PRODUCER_SENT; }
+static int32_t fake_list(slug_producer *p, const slug_producer_item *items, size_t n) {
+  (void)p;
+  printf("list %u: %" PRId64 " %.*s %02x%02x\n", (unsigned)n, items[0].integer, (int)items[1].length,
+         (const char *)items[1].data, items[2].data[0], items[2].data[1]);
+  return items[0].kind == SLUG_PRODUCER_ITEM_I64 && items[1].kind == SLUG_PRODUCER_ITEM_TEXT &&
+                 items[2].kind == SLUG_PRODUCER_ITEM_BYTES
+             ? SLUG_PRODUCER_SENT
+             : SLUG_PRODUCER_INVALID;
+}
 static bool fake_is_closed(slug_producer *p) { return ((fake_producer *)p)->closed != 0; }
 static void fake_close(slug_producer *p) { ((fake_producer *)p)->closed = 1; printf("close\n"); }
 static void fake_release(slug_producer *p) { (void)p; printf("release\n"); }
 
 static const slug_producer_api API = {
   SLUG_PRODUCER_API_VERSION, fake_nil, fake_bool, fake_i64, fake_f64, fake_text, fake_bytes,
-  fake_is_closed, fake_close, fake_release,
+  fake_is_closed, fake_close, fake_release, fake_list,
 };
 
 const slug_shim_table *slug_shim_table_pr(void);
@@ -727,6 +743,6 @@ fn a_producer_argument_reaches_the_host_table_through_the_header() {
     assert_eq!(
         driver_stdout(&output),
         "abi 1\npr|feed|slug-shim/1;pr;feed;pr_feed;(producer,i64)->i32|2|1\n\
-         i64 42\ntext hi\nbytes cafe 2\nnil\nbool 1\nf64 1.5\nclose\nrelease\nsent 6\n"
+         i64 42\ntext hi\nbytes cafe 2\nnil\nbool 1\nf64 1.5\nlist 3: 42 hi cafe\nclose\nrelease\nsent 7\n"
     );
 }

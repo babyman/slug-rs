@@ -1,9 +1,11 @@
 /**
- * slug.builtin — the implicit host-provided foundation module.
+ * slug.builtin — the desktop runtime's builtin contract.
  *
- * Registered host bindings are implicit even when this file is absent. When
- * present, this module documents those bindings and exports Slug-defined
- * foundation values. Programs may also import it explicitly.
+ * Every name declared here is predeclared in every module. The runtime
+ * defines them all: the VM defines `Error`, and the host registers the
+ * functions. This file only declares them, for the compiler and for readers:
+ * the `slug` executable is built with it, nothing runs it, and programs do
+ * not import it. Tests fail when it and the runtime differ.
  *
  * The runtime also provides cfg(key, default) to read immutable configuration
  * and int(value) to truncate a finite number toward zero. `cfg`, `int`, and

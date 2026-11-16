@@ -36,3 +36,37 @@ val findAnyFindsEveryByteOfTheSet = fn() {
     assertEqual(bytes.findAny(0x"4142ff", 0x"ff00"), 2)
     assertEqual(bytes.findAny(toBytes("é!"), 0x"21"), 2)
 }
+
+@test
+val hexRoundTripsEveryByte = fn() {
+    val every = bytes.fromHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff")
+    assertEqual(len(every), 256)
+    assertEqual(every[0], 0)
+    assertEqual(every[171], 171)
+    assertEqual(every[255], 255)
+    assertEqual(bytes.fromHex(bytes.toHex(every)), every)
+    assertEqual(bytes.fromHex("DEADbeef"), 0x"deadbeef")
+}
+
+@test
+val hexOfLargeDataGrowsTheBuffer = fn() {
+    val double = fn(data:bytes, n:num):bytes { if (n == 0) { data } else { recur(data + data, n - 1) } }
+    val data = double(0x"0f1e2d3c4b5a6978", 14)
+    val text = bytes.toHex(data)
+    assertEqual(len(text), len(data) * 2)
+    assertEqual(text[0:16], "0f1e2d3c4b5a6978")
+    assertEqual(bytes.fromHex(text), data)
+    // A small call after a large one reuses the buffer.
+    assertEqual(bytes.toHex(0x"ab"), "ab")
+}
+
+@test
+val badHexIsAHexError = fn() {
+    val notDigit = "fromHex found a character that is not a hexadecimal digit at byte "
+    assertEqual(failure(fn() { bytes.fromHex("abc") }), ["bytes.hex", "fromHex needs two digits a byte, not an odd number"])
+    assertEqual(failure(fn() { bytes.fromHex("0x00") }), ["bytes.hex", notDigit + "1"])
+    assertEqual(failure(fn() { bytes.fromHex("00 11") }), ["bytes.hex", notDigit + "2"])
+    assertEqual(failure(fn() { bytes.fromHex("00g") }), ["bytes.hex", notDigit + "2"])
+    // A bad digit is named even when the count is also odd.
+    assertEqual(failure(fn() { bytes.fromHex("abcdefz") }), ["bytes.hex", notDigit + "6"])
+}

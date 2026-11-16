@@ -12,7 +12,7 @@ use super::{
         ModuleDeclaration, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
         SelectCasesId, SelectedCallId, SourceId, SourceSpan, SpanId, StructFieldsId,
     },
-    op::{BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op},
+    op::{BinaryOperator, CallArgumentKind, DeferMode, GlobalUpdate, Instruction, Op, ReadSource},
 };
 
 /// What verification tracks at an instruction: the operand-stack height and
@@ -551,7 +551,14 @@ impl Program {
         self.select_cases.get(id.index()).map(Vec::as_slice)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn pool_instruction_metadata(&mut self, op: &mut Op) {
+        if let Op::ReadIndex { source } | Op::ReadIndexConstant { source, .. } = op
+            && let ReadSource::Global(name) = source
+        {
+            *source = ReadSource::GlobalPooled(self.intern_global_name(mem::take(name)));
+            return;
+        }
         let pooled = match op {
             Op::GetGlobal(name) => Some(Op::GetGlobalPooled(
                 self.intern_global_name(mem::take(name)),
@@ -762,6 +769,12 @@ impl Program {
             Op::SetLocal(v) => (PackedOpcode::SetLocal, operand(*v), 0, 0),
             Op::GetCapture(v) => (PackedOpcode::GetCapture, operand(*v), 0, 0),
             Op::SetCapture(v) => (PackedOpcode::SetCapture, operand(*v), 0, 0),
+            Op::UpdateCapture { slot, operator } => (
+                PackedOpcode::UpdateCapture,
+                operand(*slot),
+                operator.code(),
+                0,
+            ),
             Op::GetGlobalPooled(v) => (PackedOpcode::GetGlobal, v.0, 0, 0),
             Op::NotImplemented => (PackedOpcode::NotImplemented, 0, 0, 0),
             Op::DefineGlobalPooled(v) => (PackedOpcode::DefineGlobal, v.0, 0, 0),
@@ -805,6 +818,14 @@ impl Program {
             ),
             Op::GetIndex => (PackedOpcode::GetIndex, 0, 0, 0),
             Op::GetIndexConstant(v) => (PackedOpcode::GetIndexConstant, operand(*v), 0, 0),
+            Op::ReadIndex { source } => {
+                let (kind, a) = source.packed().expect("installed read sources are pooled");
+                (PackedOpcode::ReadIndex, a, kind, 0)
+            }
+            Op::ReadIndexConstant { source, constant } => {
+                let (kind, a) = source.packed().expect("installed read sources are pooled");
+                (PackedOpcode::ReadIndexConstant, a, kind, operand(*constant))
+            }
             Op::GetSlice {
                 has_start,
                 has_end,
@@ -956,6 +977,12 @@ impl Program {
             PackedOpcode::SetLocal => Op::SetLocal(n(instruction.a)),
             PackedOpcode::GetCapture => Op::GetCapture(n(instruction.a)),
             PackedOpcode::SetCapture => Op::SetCapture(n(instruction.a)),
+            PackedOpcode::UpdateCapture => Op::UpdateCapture {
+                slot: n(instruction.a),
+                operator: GlobalUpdate::from_code(instruction.b).ok_or_else(|| {
+                    String::from("packed instruction references missing update operator")
+                })?,
+            },
             PackedOpcode::GetGlobal => Op::GetGlobalPooled(GlobalNameId(instruction.a)),
             PackedOpcode::NotImplemented => Op::NotImplemented,
             PackedOpcode::DefineGlobal => Op::DefineGlobalPooled(GlobalNameId(instruction.a)),
@@ -996,6 +1023,19 @@ impl Program {
             },
             PackedOpcode::GetIndex => Op::GetIndex,
             PackedOpcode::GetIndexConstant => Op::GetIndexConstant(n(instruction.a)),
+            PackedOpcode::ReadIndex => Op::ReadIndex {
+                source: ReadSource::from_packed(instruction.b & !MOVE_LOCAL_OPERAND, instruction.a)
+                    .ok_or_else(|| {
+                        String::from("packed instruction references missing read source")
+                    })?,
+            },
+            PackedOpcode::ReadIndexConstant => Op::ReadIndexConstant {
+                source: ReadSource::from_packed(instruction.b & !MOVE_LOCAL_OPERAND, instruction.a)
+                    .ok_or_else(|| {
+                        String::from("packed instruction references missing read source")
+                    })?,
+                constant: n(instruction.c),
+            },
             PackedOpcode::GetSlice => Op::GetSlice {
                 has_start: instruction.a != 0,
                 has_end: instruction.b != 0,
@@ -1340,7 +1380,9 @@ impl Program {
                     location()
                 ))
             }
-            Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. }
+            Op::LocalConstantBinary { constant, .. }
+            | Op::ConstantBinary { constant, .. }
+            | Op::ReadIndexConstant { constant, .. }
                 if !matches!(chunk.constants.get(*constant), Some(Constant::Value(_))) =>
             {
                 Err(format!(
@@ -1352,8 +1394,13 @@ impl Program {
             | Op::SetLocal(slot)
             | Op::JumpIfProvided { slot, .. }
             | Op::LocalConstantBinary { slot, .. }
-                if *slot >= chunk.locals =>
-            {
+            | Op::ReadIndex {
+                source: ReadSource::Local(slot),
+            }
+            | Op::ReadIndexConstant {
+                source: ReadSource::Local(slot),
+                ..
+            } if *slot >= chunk.locals => {
                 Err(format!("{} references missing local {slot}", location()))
             }
             Op::Jump(target)
@@ -1410,13 +1457,16 @@ impl Program {
             | Op::UpdateGlobalPooled { name: id, .. }
             | Op::CopyGlobalPooled { name: id, .. }
             | Op::CopyGlobalUpdatePooled { name: id, .. }
-                if self.global_name(*id).is_none() =>
-            {
-                Err(format!(
-                    "{} references missing global name metadata",
-                    location()
-                ))
+            | Op::ReadIndex {
+                source: ReadSource::GlobalPooled(id),
             }
+            | Op::ReadIndexConstant {
+                source: ReadSource::GlobalPooled(id),
+                ..
+            } if self.global_name(*id).is_none() => Err(format!(
+                "{} references missing global name metadata",
+                location()
+            )),
             Op::MakeClosurePooled {
                 chunk: target,
                 captures,
@@ -1594,9 +1644,14 @@ impl Program {
             | Op::StructCopy(_)
             | Op::UpdateGlobal { .. }
             | Op::CopyGlobal { .. }
-            | Op::CopyGlobalUpdate { .. } => {
-                Err(format!("{} retains unpooled opcode metadata", location()))
+            | Op::CopyGlobalUpdate { .. }
+            | Op::ReadIndex {
+                source: ReadSource::Global(_),
             }
+            | Op::ReadIndexConstant {
+                source: ReadSource::Global(_),
+                ..
+            } => Err(format!("{} retains unpooled opcode metadata", location())),
             _ => Ok(()),
         }
     }
@@ -1833,6 +1888,7 @@ impl Program {
             | Op::GetCapture(_)
             | Op::GetGlobal(_)
             | Op::GetGlobalPooled(_)
+            | Op::ReadIndexConstant { .. }
             | Op::MakeClosure { .. }
             | Op::MakeClosurePooled { .. } => (0, 1),
             Op::Interpolate(parts) => (parts.len().saturating_sub(1), 1),
@@ -1905,6 +1961,7 @@ impl Program {
             | Op::GetIndex
             | Op::UpdateGlobal { .. }
             | Op::UpdateGlobalPooled { .. }
+            | Op::UpdateCapture { .. }
             | Op::Add
             | Op::AddNum
             | Op::Subtract
@@ -1944,6 +2001,7 @@ impl Program {
             | Op::Fork
             | Op::SelectApply
             | Op::GetIndexConstant(_)
+            | Op::ReadIndex { .. }
             | Op::ConstantBinary { .. } => (1, 1),
             Op::Jump(_)
             | Op::JumpIfFalse(_)

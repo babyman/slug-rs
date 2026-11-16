@@ -364,24 +364,34 @@ fn spawned_tasks_retain_immutable_collection_snapshots() {
 }
 
 #[test]
-fn spawned_tasks_snapshot_immediate_captures_but_keep_outer_captures_live() {
-    let path = fixture_path("spawn-capture-boundary");
+fn spawned_tasks_share_the_variables_they_capture() {
+    // As any closure does: the task sees the spawner's later writes, the
+    // spawner sees the task's, wherever the spawn is nested.
+    let path = fixture_path("spawn-capture-sharing");
     fs::write(
         &path,
         "val { await } = import(\"slug.channel\")\n\
          val direct = fn() { var value = 1; val task = spawn { value }; value = 2; await(task) }\n\
          val outer = fn() { var value = 1; val middle = fn() { val task = spawn { value }; value = 2; await(task) }; middle() }\n\
-         println(direct())\nprintln(outer())\n",
+         val written = fn() { var value = 1; await(spawn { value = 3 }); value }\n\
+         val inIf = fn() { var value = 1; if (true) { await(spawn { value = 4 }) }; value }\n\
+         val inNursery = fn() { var value = 1; nursery { spawn { value = 5 } }; value }\n\
+         val pinned = fn() { var value = 1; val at = value; val task = spawn { at }; value = 2; await(task) }\n\
+         println(direct(), outer(), written(), inIf(), inNursery(), pinned())\n",
     )
-    .expect("write capture-boundary task source");
+    .expect("write capture-sharing task source");
     let output = slug()
         .arg(&path)
         .output()
-        .expect("run capture-boundary task source");
-    fs::remove_file(path).expect("remove capture-boundary task source");
+        .expect("run capture-sharing task source");
+    fs::remove_file(path).expect("remove capture-sharing task source");
 
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n2\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 2 3 4 5 1\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -604,6 +614,44 @@ fn a_blocked_task_is_reported_where_it_waits() {
         );
         assert_eq!(diagnostic["location"]["line"], line, "{name}: {diagnostic}");
     }
+}
+
+#[test]
+fn a_fork_cannot_update_a_variable_it_captured() {
+    // `found = found + ...` compiles to one instruction that updates in
+    // place. A fork that reaches it through a function made outside it
+    // fails as before, and the variable keeps its value.
+    let path = fixture_path("fork-captured-update");
+    fs::write(
+        &path,
+        "val main = fn() {\n    var found = {a: 1}\n    val add = fn() { found = found + {b: 2} }\n    val t = fork { add(); 1 }\n    val result = fn() {\n        defer onerror(e) { println(e.msg) }\n        select { await t }\n    }\n    result()\n    println(found)\n}\n",
+    )
+    .expect("write fork update source");
+    let output = slug().arg(&path).output().expect("run fork update source");
+    fs::remove_file(path).expect("remove fork update source");
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("a fork cannot "), "{stdout}");
+    assert!(stdout.ends_with("{\"a\": 1}\n"), "{stdout}");
+}
+
+#[test]
+fn a_fork_indexes_its_snapshot_of_a_module_variable() {
+    // `table[k]` and `table.b` read the variable in place. A fork reads its
+    // snapshot, though the variable changed after it started; a task var's
+    // own copy, a local, and a capture read as before.
+    let path = fixture_path("fork-indexed-read");
+    fs::write(
+        &path,
+        "var table = {a: 1, b: 2}\ntask var mine = {c: 3}\nval main = fn() {\n    val k = \"a\"\n    val local = {d: 4}\n    val t = fork {\n        val get = fn() { local.d }\n        [table[k], table.b, mine.c, local[\"d\"], get()]\n    }\n    table = {a: 10, b: 20}\n    println(select { await t })\n    println([table[k], table.b])\n}\n",
+    )
+    .expect("write fork read source");
+    let output = slug().arg(&path).output().expect("run fork read source");
+    fs::remove_file(path).expect("remove fork read source");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout, "[1, 2, 3, 4, 4]\n[10, 20]\n", "{stderr}");
 }
 
 #[test]

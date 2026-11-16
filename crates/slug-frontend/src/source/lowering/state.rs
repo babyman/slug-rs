@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use slug_vm::{
     BinaryOperator, Capture, Chunk, Constant, GlobalUpdate, Instruction, MatchPattern, Op,
-    SourceSpan, Value,
+    ReadSource, SourceSpan, Value,
 };
 
 /// Where a name lives, as seen by one function. In `State::outer`, a
@@ -211,6 +211,26 @@ impl State {
         *op = fused;
         true
     }
+    /// Makes the `+`, `-`, or `:+` just emitted for the value of an
+    /// assignment to the captured `var` in `slot` assign it as well, as
+    /// `fuse_global_update` does for a module-level name. No jump may land
+    /// after the operator.
+    pub(super) fn fuse_capture_update(&mut self, slot: usize) -> bool {
+        let Some(index) = self.chunk.code.len().checked_sub(1) else {
+            return false;
+        };
+        if self.last_jump_target > index {
+            return false;
+        }
+        let op = &mut self.chunk.code[index].op;
+        match GlobalUpdate::of(op) {
+            Some(operator) => {
+                *op = Op::UpdateCapture { slot, operator };
+                true
+            }
+            None => false,
+        }
+    }
     /// Removes the `GetGlobal` just emitted for a call's callee and returns
     /// its name, so that `CallGlobal` reads the name after the arguments.
     /// A jump to the `GetGlobal` lands on the arguments instead.
@@ -222,6 +242,25 @@ impl State {
         let name = name.clone();
         self.chunk.code.pop();
         Some(name)
+    }
+    /// Removes the `GetLocal`, `GetCapture`, or `GetGlobal` just emitted for
+    /// an indexed collection and returns where it reads from, so that a
+    /// `ReadIndex` or `ReadIndexConstant` indexes the value in place. A jump
+    /// may land on the read, which the fused instruction or the key then
+    /// takes over, but not after it.
+    pub(super) fn take_trailing_read(&mut self) -> Option<ReadSource> {
+        let index = self.chunk.code.len().checked_sub(1)?;
+        if self.last_jump_target > index {
+            return None;
+        }
+        let source = match &self.chunk.code[index].op {
+            Op::GetLocal(slot) => ReadSource::Local(*slot),
+            Op::GetCapture(slot) => ReadSource::Capture(*slot),
+            Op::GetGlobal(name) => ReadSource::Global(name.clone()),
+            _ => return None,
+        };
+        self.chunk.code.pop();
+        Some(source)
     }
     /// Replaces a trailing `GetLocal`, `Constant` pair with one
     /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or

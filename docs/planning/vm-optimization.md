@@ -2558,3 +2558,259 @@ the training profile shifts, and the PGO build calls `numeric_binary` (from
 `#[inline(always)]` on `numeric_binary` alone did not recover history
 (1.06x) and was reverted. Accepted by the user; making the PGO build's
 inlining of hot helpers deliberate is separate work.
+
+## Captured variables updated in place (2026-11-13)
+
+Found while profiling Crawl's joins: `var found = {}` updated by a nested
+function, `found = found + {[k]: true}`, copied the whole map on every
+update. `GetCapture` clones the value out of the variable's shared cell, so
+the cell still holds it while the operator runs; module variables had the
+same problem until `UpdateGlobal`, and locals move on their last read, but
+captures had neither. Every update was a shared-owner update: 20,000 of them
+copied 200,030,000 elements in 0.87 s, against 0.01 s for the same loop on a
+module or `task var`, or threading the map through `recur`. Since Slug loops
+are `recur` in nested functions, a local `var` accumulated in a loop is
+almost always captured.
+
+`UpdateCapture { slot, operator }` fuses `+`, `-`, or `:+` with the
+assignment to a captured `var`, as `UpdateGlobal` does (same peephole, no
+jump may land after the operator). It checks, as `SetCapture` does, that a
+fork is not changing a captured variable before it touches the cell, then
+empties the cell when the operation cannot fail. It shares the fused
+updates' one out-of-line dispatch call (a first version with its own arm in
+the loop measured `fib` 1.02x, just outside its spread). A captured local's own frame still
+clones (`LocalSlot::Captured`); updates there rarely run in a loop, since
+`recur` restarts the frame.
+
+Not fixed, and not a bug: an assignment evaluates to the value assigned, so
+`map(xs, fn(i) { g = g + {...} })` keeps every version of `g` in its result
+and each update must copy (40,000 keys took 73 s). Persistent maps (the
+collection redesign's stage 7) would make that cheap.
+
+PGO, interleaved, seven rounds against `673666c`: tuned 1.00x, hold-out
+1.00x; `crawl-ticks` 0.96x, `crawl-crowd` and `crawl-game` 0.98x, all others
+within their spread. Crawl's 1000 joins: 9.17 s to 8.93 s; its captured
+maps hold a few hundred entries, so the copies were a small share there.
+
+### Bytes in fused updates (2026-11-13)
+
+Splitting the copy counters by kind showed that the corpus's large shared
+copies were bytes, not maps: `crawl-game` 95.2M of 95.3M elements,
+`invaders-game` 76.2M of 76.3M; maps peaked at 2.7M (1000 Crawl joins).
+`update_cannot_fail` listed no bytes case, so `UpdateGlobal` and
+`UpdateCapture` kept the binding's reference for `bytes :+ byte` and
+`bytes + bytes`. With both listed (an appended value must be an integer
+0-255 or one byte, as `list_append` requires), `crawl-game` copies 74k
+elements and runs 0.94x; tuned 0.99x, hold-out 0.99x. Invaders is
+unchanged: its `write` rebuilds the 7168-byte video RAM from slices on every
+call, starting from the shared constant `0x""`, so the copying is the
+program's algorithm, not a missed release.
+
+### Map key compare (2026-11-13)
+
+A loop of `s + m[i % 1000]` (1000 integer keys) costs about 53 ns per lookup
+over the same loop without it; indexing a list there instead costs about
+26 ns, so half a lookup is the module-variable read and `Index`, half the
+map. In the map, the profile showed the randomly keyed SipHash
+(`MapIndex::home`, about 13 ns), the probe and key compare (about 11 ns,
+through `Value::eq`, i.e. `equals_with`, `equals_shallow`, `equals_leaf`),
+and `MapKey::from_value`. `same_key` now compares integer and string keys
+inline in the scan, the index probe, and the hinted lookup, and leaves
+other keys to the general comparison: integer lookups about 2 ns faster,
+string lookups about 4 ns. PGO, interleaved, seven rounds against
+`58166c9`: tuned 1.00x, hold-out 0.99x, `crawl-crowd` 0.98x, nothing outside
+its spread. The hash is the next map cost; changing it trades away some of
+SipHash's resistance to hash flooding.
+
+
+## Diminishing returns: where VM tuning stands (2026-11-14)
+
+The changes since the Crawl load work have each moved the corpus by about a
+percent: `UpdateCapture` 1.00x (`crawl-ticks` 0.96x), bytes in fused updates
+0.99x (`crawl-game` 0.94x), the map key compare 1.00x / 0.99x (`crawl-crowd`
+0.98x). In the same weeks, changes to Crawl's own algorithms took a
+1000-player tick from 3.25 s to 0.75 s and 1000 joins from 9.2 s to 4.4 s.
+
+Profiles no longer show a dominant cost. Dispatch is about 2 ns an
+instruction; what remains is the ordinary work of each instruction (stack
+traffic, value copies with their reference counts, generic checks) spread
+evenly. Measured on a loop of `s + m[i % 1000]`:
+
+- reading a module-level `val`, a `var`, or a parameter costs about the same
+  (a `var`'s binding cell adds about 4 ns); read plus index of a list is
+  about 25 ns over two instructions, a 1000-entry map lookup about 53 ns, of
+  which the map is about half (SipHash about 8-10 ns, probe and compare,
+  `MapKey::from_value`);
+- a temporary opcode-pair survey (reverted) found a field read
+  (`GetIndexConstant`) at 4-9% of Crawl's instructions, 82-97% of them right
+  after a variable read; elsewhere `fannkuch-redux` 3.5%, `invaders-game`
+  and `http-server` about 1-2%, the rest near zero.
+
+Decision: incremental tuning stops here. Peepholes now buy a few percent
+each, and the corpus is better served by program-level work. Kept for later,
+in order of expected value:
+
+1. A fused variable-read-and-field instruction (local, global, and capture
+   forms): one dispatch and one container copy and drop fewer for 4-9% of
+   Crawl's instructions; estimated 3-6% there, little elsewhere.
+2. A cheaper keyed map hash than SipHash-1-3, about 8-10 ns a lookup; it
+   trades away some resistance to hash flooding, which the Crawl server's
+   JSON input needs, so it waits for a decision on that.
+
+Larger gains need structural work, each weeks for perhaps 10-30%: fewer
+instructions per operation (register operands, or type-specialized
+instructions where the compiler knows the types), compile-time struct field
+positions (runtime hints measured 0.96x and were dropped), and cheaper
+reference counting in `threads` builds (atomic counts cost 2-3%, 4-10% on
+data-heavy programs). Take one up only when VM speed limits a real program.
+
+## Index reads in place, for forks (2026-11-14)
+
+Reading `players[id]` pushed a reference to the whole map, indexed it, and
+dropped the reference. Each is an atomic count on the map, and forks on
+other cores reading the same map take turns at the cache line that holds
+that count: in a loop of `big["k" + (i % 20000)].y[1]` over a 20,000-entry
+module map, 4 forks used twice the CPU of one, and `clone`/`drop` of the
+map's storage were 18.5% of fork time.
+
+`ReadIndex` and `ReadIndexConstant` index a local, a capture, or a module
+binding where it is (`vm/reads.rs`): a `val`, a variable's own cell, or a
+fork's snapshot of a variable, with anything else read as `GetGlobal` reads
+it. The compiler fuses an index whose collection is a name; with a computed
+key the name is read after the key, so it fuses only a key that cannot
+assign anything (names, literals, indexes, and operators but `/>`). At a
+local's last read the fused instruction moves it out of its slot as
+`GetLocal` does (bit 31 of operand `b`, set by `bytecode::liveness`). A
+first version that never moved made Crawl's page drawing 15-20% slower: the
+record stayed alive in its slot, so what it held was shared, and later
+in-place updates of it copied.
+
+Results: in the loop above, 4 forks now use the CPU of one. PGO,
+interleaved, seven rounds against `febd812`: tuned 0.99x, hold-out 0.99x;
+`crawl-game` and `crawl-ticks` 0.95x, `crawl-crowd` 0.96x, `crawl-pages`
+0.98x, and the two crowded workloads' peak memory about 5 MB lower. Crawl's
+crowd drawing (1000 players in one town, PGO, interleaved) scales the same
+as before within noise: about 1.3 s a tick on one fork, 0.8 s on two, 0.5-0.6
+s on four, with CPU per tick up 20-25% at four. The cost that remains there
+is elsewhere: element records every fork reads, and chains such as
+`levels[key].items`, whose first step still clones the element.
+
+Measuring fork scaling needs PGO builds of both sides, run interleaved on a
+quiet machine: builds without PGO differed by 20-50% between the two sides
+here, which showed Crawl not scaling at all.
+
+## A nursery lets go of settled children (2026-11-14)
+
+A nursery kept every task it started in a list, so that it could report a
+failure nobody awaited and cancel what was still running, and pruned the
+list only when it reached 64 tasks and then twice what remained. Each
+settled task in the list kept its cached result alive. A loop that starts
+forks every tick held up to about 64 tasks' results: for Crawl's server,
+roughly 16 ticks of every player's drawn page. A program that built strings
+in one fork a round and kept only the latest round peaked at 1.5 GB, against
+84 MB without the fork; mimalloc's statistics looked like cross-thread page
+reuse, but its reclaim options changed nothing, and wrapping each round in
+its own `nursery` brought the peak to 95 MB.
+
+The list now lives in the nursery's `NurseryWatch` as slots in start order
+(`value.rs`). A task that settles with a value clears its slot at once; a
+pending task and a failure nobody has awaited stay listed, so error
+reporting and cancellation order are unchanged. The list is compacted when
+half of it is empty, so a start costs a constant on average.
+
+Results: the string program peaks at 91 MB, from 1,520; Crawl's crowd (12
+ticks, 4 forks) at 251 MB, from 535, with no forks unchanged at 220; the
+server under 1000 players on 4 forks at 602-605 MB, from 823-846, with
+latency the same or slightly better. PGO, interleaved: tuned 1.01x, hold-out
+1.00x.
+
+## Where the benchmarks stand (2026-11-14)
+
+Slug `ad2773a` (profile-guided, mimalloc) against python-build-standalone's
+CPython 3.15.1 (`20261021`, PGO, LTO, tail-call interpreter), the build the
+2026-10-25 tables used, on the same Apple M3. Two `make bench-source` runs of
+15 samples each, averaged; they agreed within 2%. "At `f85517a`" is the last
+table's ratio, and "Slug time" is Slug's own median against its median then.
+
+| workload | Slug ms | 3.15 ms | less startup | at `f85517a` | Slug time |
+|---|---:|---:|---:|---:|---:|
+| startup | 3.5 | 10.7 | - | - | 1.09x |
+| function-call | 7.7 | 13.1 | 1.74x | 1.56x | 0.99x |
+| binary-trees | 11.9 | 15.0 | 1.92x | 1.92x | 0.99x |
+| fannkuch-redux | 27.3 | 17.1 | 3.73x | 3.59x | 0.99x |
+| shared-append | 55.2 | 57.3 | 1.11x | 1.15x | 0.96x |
+| higher-order | 17.0 | 15.9 | 2.60x | 4.27x | 0.70x |
+| closure-accumulate | 27.7 | 20.1 | 2.58x | 3.72x | 0.73x |
+| fib | 27.5 | 20.8 | 2.37x | 2.30x | 1.03x |
+| defer-errors | 32.6 | 20.0 | 3.12x | 3.09x | 0.95x |
+| word-frequency | 16.4 | 16.5 | 2.22x | 2.07x | 1.01x |
+| string-building | 7.6 | 13.6 | 1.41x | 1.27x | 1.04x |
+| expression-evaluator (hold-out) | 82.3 | 36.4 | 3.06x | 3.12x | 0.94x |
+| graph-search (hold-out) | 8.8 | 13.2 | 2.10x | 2.01x | 0.99x |
+| text-wrap (hold-out) | 32.0 | 17.7 | 4.06x | 4.33x | 0.90x |
+
+With startup removed, the geometric mean over these 13 workloads is 2.3x
+slower than CPython 3.15, from 2.4x: tuned 2.2x (2.3x), hold-out 3.0x
+(3.0x). Slug's own times are the steadier measure, since CPython ran 5-15%
+faster than on 2026-10-25 (startup 10.7 ms against 11.6) and that alone
+moves short workloads' ratios: across the 13, Slug takes 0.93x as long as at
+`f85517a`. Nearly all of it is `higher-order` (0.70x) and
+`closure-accumulate` (0.73x), the two the parameter-match work of 2026-10-25
+aimed at, and `text-wrap` (0.90x); the rest moved by a few percent at most.
+Startup is 3.5 ms, from 3.2, which has not been looked into. The numeric
+workloads (`n-body`, `spectral-norm` and their typed twins) still do under
+2 ms of work and run in 0.39-0.43x CPython's whole-process time.
+
+The real programs have no CPython twin, and the Crawl ones change with the
+game, so these are a baseline for what follows rather than a comparison:
+
+| workload | Slug ms |
+|---|---:|
+| invaders-game | 307 |
+| crawl-game | 325 |
+| crawl-ticks | 306 |
+| crawl-history | 1,176 |
+| crawl-pages (hold-out) | 439 |
+| crawl-crowd | 811 |
+| http-server | 330 |
+| tiny-interpreter (hold-out) | 186 |
+
+### Crawl at scale
+
+Since the diminishing-returns decision, most of the gains have come from
+forks, memory, the TCP clutch, and Crawl's own code rather than the
+interpreter. Crawl's crowd, 1000 players in one town, PGO, per tick:
+
+| forks | time a tick | speedup | CPU a tick |
+|---|---:|---:|---:|
+| 1 | 1.24-1.26 s | 1.0x | 1.24-1.26 s |
+| 2 | 0.73-0.74 s | 1.7x | 1.31-1.32 s |
+| 4 | 0.36-0.46 s | 2.7-3.5x | 1.30-1.37 s |
+| 8 | 0.39 s | 3.2x | 1.88 s |
+
+The M3 has four performance cores; at 8 forks the efficiency cores join for
+45% more CPU and no gain. At 4 forks the same work costs 3-10% more CPU than
+on one, against 20-25% before indexing reads in place, and four separate
+processes on this machine each lose 14-19%, so what remains between 4 forks
+and 4x is the work still done on the main thread. That has since shrunk:
+the world's step is 31 ms of a 361-378 ms tick, from 90-96 ms of 420-432
+(the tick's sets, then sights found in forks, both in Crawl's code).
+
+The Crawl server under the load test, 1000 players on 4 forks, against the
+same test at the start of the day:
+
+| | start of 2026-11-14 | now |
+|---|---:|---:|
+| key to move, median | about 1.6 s | 0.8-0.9 s |
+| key POST round trip, median | - | 20-40 ms |
+| peak memory | 823-846 MB | 270-375 MB |
+| threads | about 2,000 | 9-13 |
+
+Memory came from three fixes: the nursery's settled children (above), the
+web front end's per-connection `task var` caches, and the TCP clutch, which
+now reads and writes every connection on one I/O thread instead of two
+threads each. The higher end of the memory and threads is the sight forks
+running beside the previous tick's drawing. With every player in one town a
+key still takes about two drawings to show, so 1000 players are served but
+not yet responsive; a tick's drawing is about 1.0 s of CPU and needs to be
+about three times faster, from more cores or less work per page.

@@ -27,6 +27,7 @@ mod typed_native;
 use clutch::StagedClutchPlugin;
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
+    ProviderOrigin,
 };
 pub use dynamic_library::NativeLibraryError;
 use slug_native_adapter::TextResults;
@@ -36,6 +37,9 @@ use slug_native_adapter::TextResults;
 pub struct DesktopResolver {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
+    /// The project root, whose `assets/` the project's modules embed from;
+    /// `None` outside a project.
+    project_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
     activation_state: Rc<RefCell<DesktopActivationState>>,
@@ -161,12 +165,22 @@ impl DesktopResolver {
         Self {
             source_root: source_root.into(),
             library_root,
+            project_root: None,
             clutch_repository,
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
             typed_text_results: Rc::new(RefCell::new(HashMap::new())),
             test_modules: Cell::new(false),
         }
+    }
+
+    /// Places this resolver in the project at `root`: its modules outside
+    /// any clutch embed assets from `root/assets`, and a missing source root
+    /// is reported as the project's missing `src/`.
+    #[must_use]
+    pub fn with_project_root(mut self, root: PathBuf) -> Self {
+        self.project_root = Some(root);
+        self
     }
 
     /// Lets indexed clutches' test modules resolve. They see their clutch's
@@ -427,7 +441,21 @@ fn remove_foreign_batch(
     }
 }
 
+/// The desktop runtime's `slug.builtin` contract, built into the binary so
+/// programs are checked against the runtime that runs them, whatever library
+/// is installed.
+pub const BUILTIN_CONTRACT_SOURCE: &str = include_str!("../../../lib/slug/builtin.slug");
+
 impl ModuleResolver for DesktopResolver {
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        Some(ModuleSource {
+            key: ModuleKey::new("<slug.builtin>"),
+            diagnostic_name: "<slug.builtin>".into(),
+            text: BUILTIN_CONTRACT_SOURCE.into(),
+            activation: None,
+        })
+    }
+
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         let relative = module_path(request.name)?;
         let mut candidates = Vec::new();
@@ -515,18 +543,30 @@ impl ModuleResolver for DesktopResolver {
     }
 
     /// A module's assets are the files in the `assets` folder of the indexed
-    /// clutch its source file is in.
+    /// clutch its source file is in, or else of the project it is in.
     fn asset(&self, module: &ModuleKey, name: &str) -> Result<Vec<u8>, String> {
-        let root = self
-            .clutch_repository
-            .clutch_containing(Path::new(module.as_str()))
-            .ok_or_else(|| {
-                format!(
-                    "no asset `{name}`: {} is not in a clutch, and only a clutch has assets",
-                    module.as_str()
-                )
-            })?;
-        clutch::read_asset(&root, name)
+        let path = Path::new(module.as_str());
+        if let Some(root) = self.clutch_repository.clutch_containing(path) {
+            return clutch::read_asset(&root, name);
+        }
+        let project = self.project_root.as_ref().filter(|root| {
+            let canonical = fs::canonicalize(path).ok();
+            canonical.is_some_and(|path| path.starts_with(root))
+        });
+        let Some(project) = project else {
+            return Err(format!(
+                "no asset `{name}`: {} is not in a clutch or a project, and only those have assets",
+                module.as_str()
+            ));
+        };
+        if !project.join("assets").is_dir() {
+            return Err(format!(
+                "no asset `{name}`: the project at {} has no assets folder; create {}",
+                project.display(),
+                project.join("assets").display()
+            ));
+        }
+        clutch::read_asset(project, name)
     }
 }
 
@@ -590,7 +630,20 @@ impl DesktopResolver {
                     .chain(self.clutch_repository.module_names()),
             ),
             elsewhere,
+            hints: self.missing_source_root().into_iter().collect(),
         }
+    }
+
+    /// Why a project's own modules cannot be found: it has no `src/`.
+    fn missing_source_root(&self) -> Option<String> {
+        let project = self.project_root.as_ref()?;
+        (!self.source_root.is_dir()).then(|| {
+            format!(
+                "the project at {} has no `src` directory: its modules go in {}",
+                project.display(),
+                self.source_root.display()
+            )
+        })
     }
 }
 
@@ -816,6 +869,131 @@ mod tests {
 
         assert_eq!(source.text, "export val answer = 42\n");
         assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    /// Writes a repository at `repository` whose one clutch, `directory`,
+    /// provides `modules` from sources that export their own name, declares
+    /// `tests`, and holds an asset `name.txt`.
+    fn write_repository(
+        repository: &std::path::Path,
+        directory: &str,
+        modules: &[&str],
+        tests: &[&str],
+    ) {
+        use std::fmt::Write as _;
+        let clutch = repository.join(directory);
+        fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+        fs::create_dir_all(clutch.join("tests")).expect("create clutch tests");
+        fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+        fs::write(clutch.join("assets/name.txt"), directory).expect("write asset");
+        let mut index = String::from("[modules]\n");
+        let mut manifest = String::from("[modules]\n");
+        for module in modules {
+            let file = module.replace('.', "_");
+            fs::write(
+                clutch.join(format!("modules/{file}.slug")),
+                format!("export val name = \"{module}\"\n"),
+            )
+            .expect("write clutch module");
+            writeln!(index, "\"{module}\" = \"{directory}\"").unwrap();
+            writeln!(
+                manifest,
+                "\"{module}\" = {{ source = \"modules/{file}.slug\" }}"
+            )
+            .unwrap();
+        }
+        if !tests.is_empty() {
+            let files = tests
+                .iter()
+                .map(|test| {
+                    fs::write(
+                        clutch.join(format!("tests/{test}.slug")),
+                        "export val ok = true\n",
+                    )
+                    .expect("write clutch test");
+                    format!("\"tests/{test}.slug\"")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(manifest, "\n[tests]\nfiles = [{files}]\n").unwrap();
+        }
+        fs::write(repository.join("manifest.toml"), index).expect("write repository manifest");
+        fs::write(clutch.join("clutch.toml"), manifest).expect("write clutch manifest");
+    }
+
+    #[test]
+    fn layered_repositories_resolve_modules_and_assets_from_both() {
+        let root = root();
+        write_repository(&root.join("home"), "base.clutch", &["base.lib"], &[]);
+        write_repository(&root.join("project"), "app.clutch", &["app.lib"], &[]);
+        let home = ClutchRepository::from_manifest(root.join("home")).expect("load home");
+        let project = ClutchRepository::from_manifest(root.join("project")).expect("load project");
+        let resolver = DesktopResolver::with_clutch_repository(
+            &root,
+            None,
+            home.layer(project).expect("layer repositories"),
+        );
+
+        for (module, clutch) in [("base.lib", "base.clutch"), ("app.lib", "app.clutch")] {
+            let source = resolver
+                .resolve(ModuleRequest::new(None, module))
+                .expect("resolve layered module");
+            assert_eq!(source.text, format!("export val name = \"{module}\"\n"));
+            assert_eq!(
+                resolver.asset(&source.key, "name.txt").expect("read asset"),
+                clutch.as_bytes()
+            );
+        }
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[test]
+    fn layered_repositories_reject_a_name_both_index() {
+        type Layer<'a> = (&'a str, &'a [&'a str], &'a [&'a str]);
+        let root = root();
+        let cases: [(Layer, Layer, &str); 3] = [
+            // A module both layers index.
+            (
+                ("base.clutch", &["app.lib"], &[]),
+                ("app.clutch", &["app.lib"], &[]),
+                "app.lib",
+            ),
+            // A test module of same-named clutches in both layers.
+            (
+                ("shared.clutch", &["shared.a"], &["unit"]),
+                ("shared.clutch", &["shared.b"], &["unit"]),
+                "shared.tests.unit",
+            ),
+            // One layer's module named like the other's test module.
+            (
+                ("base.clutch", &["app.tests.unit"], &[]),
+                ("app.clutch", &["app.lib"], &["unit"]),
+                "app.tests.unit",
+            ),
+        ];
+        for ((home_clutch, home_modules, home_tests), (clutch, modules, tests), name) in cases {
+            let _ = fs::remove_dir_all(&root);
+            write_repository(&root.join("home"), home_clutch, home_modules, home_tests);
+            write_repository(&root.join("project"), clutch, modules, tests);
+            let home = ClutchRepository::from_manifest(root.join("home")).expect("load home");
+            let project =
+                ClutchRepository::from_manifest(root.join("project")).expect("load project");
+            let message = home
+                .layer(project)
+                .expect_err("conflicting layers")
+                .to_string();
+            let home_manifest = fs::canonicalize(root.join("home/manifest.toml")).unwrap();
+            let project_manifest = fs::canonicalize(root.join("project/manifest.toml")).unwrap();
+            assert_eq!(
+                message,
+                format!(
+                    "module `{name}` is provided by both `{home_clutch}` in {} and `{clutch}` in {}",
+                    home_manifest.display(),
+                    project_manifest.display()
+                )
+            );
+        }
         fs::remove_dir_all(root).expect("remove temporary resolver directory");
     }
 

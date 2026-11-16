@@ -1,0 +1,179 @@
+val fs = import("slug.io.fs")
+val time = import("slug.time")
+val {assertEqual, assertTrue, assertThrows, attempt} = import("slug.test")
+
+// Runs `work` with a fresh temporary directory, removed afterwards.
+val inDirectory = fn(work:fn) {
+    val root = fs.temporaryDirectory("slug-fs-test-")
+    defer fs.removeAll(root)
+    work(root)
+}
+
+@test
+val bytesRoundTripInPieces = fn() {
+    inDirectory(fn(root) {
+        val path = root + "/data.bin"
+        val out = fs.openWrite(path)
+        assertEqual(fs.write(out, 0x"00ff10"), 3)
+        assertEqual(fs.write(out, "ab"), 2)
+        fs.sync(out)
+        fs.close(out)
+        val input = fs.openRead(path)
+        defer fs.close(input)
+        assertEqual(fs.read(input, 2), 0x"00ff")
+        assertEqual(fs.read(input), 0x"106162")
+        assertEqual(fs.read(input), nil)
+    })
+}
+
+@test
+val linesAndBytesShareThePosition = fn() {
+    inDirectory(fn(root) {
+        val path = root + "/mixed.txt"
+        val out = fs.openWrite(path)
+        fs.write(out, "first\r\nsecond\nrest")
+        fs.close(out)
+        val input = fs.openRead(path)
+        defer fs.close(input)
+        assertEqual(fs.readLine(input), "first")
+        assertEqual(fs.read(input, 3), 0x"736563")
+        assertEqual(fs.readLine(input), "ond")
+        assertEqual(fs.readLine(input), "rest")
+        assertEqual(fs.readLine(input), nil)
+    })
+}
+
+@test
+val appendWritesAtTheEnd = fn() {
+    inDirectory(fn(root) {
+        val path = root + "/log.txt"
+        val first = fs.openAppend(path)
+        fs.write(first, "one")
+        fs.close(first)
+        val second = fs.openAppend(path)
+        fs.write(second, " two")
+        fs.close(second)
+        val input = fs.openRead(path)
+        defer fs.close(input)
+        assertEqual(fs.readLine(input), "one two")
+    })
+}
+
+@test
+val statDescribesWhatIsThere = fn() {
+    inDirectory(fn(root) {
+        val path = root + "/sized.txt"
+        val before = time.nowMs()
+        val out = fs.openWrite(path)
+        fs.write(out, "12345")
+        fs.close(out)
+        val info = fs.stat(path) ?? {}
+        assertEqual([info.kind, info.size], ["file", 5])
+        // Filesystems keep coarser times than the clock reads.
+        assertTrue(info.modifiedMs >= before - 2000 && info.modifiedMs <= time.nowMs() + 2000)
+        assertEqual((fs.stat(root) ?? {}).kind, "directory")
+        assertEqual(fs.stat(root + "/missing"), nil)
+        assertEqual(fs.stat(path + "/under-a-file"), nil)
+    })
+}
+
+@test
+val directoriesListMakeAndRemove = fn() {
+    inDirectory(fn(root) {
+        fs.makeDirectory(root + "/b")
+        fs.makeDirectory(root + "/a/deep/er", true)
+        fs.makeDirectory(root + "/a/deep", true)
+        val out = fs.openWrite(root + "/a/deep/file.txt")
+        fs.close(out)
+        assertEqual(fs.list(root), ["a", "b"])
+        assertEqual(fs.list(root + "/a/deep"), ["er", "file.txt"])
+        fs.remove(root + "/b")
+        fs.removeAll(root + "/a")
+        fs.removeAll(root + "/a")
+        assertEqual(fs.list(root), [])
+    })
+}
+
+@test
+val renameReplacesAtomically = fn() {
+    inDirectory(fn(root) {
+        val write = fn(path:str, text:str) {
+            val out = fs.openWrite(path)
+            defer fs.close(out)
+            fs.write(out, text)
+        }
+        write(root + "/final.txt", "old")
+        write(root + "/final.txt.partial", "new")
+        fs.rename(root + "/final.txt.partial", root + "/final.txt")
+        assertEqual(fs.list(root), ["final.txt"])
+        val input = fs.openRead(root + "/final.txt")
+        defer fs.close(input)
+        assertEqual(fs.readLine(input), "new")
+    })
+}
+
+@test
+val failuresNameTheOperationAndCode = fn() {
+    inDirectory(fn(root) {
+        val missing = attempt(fn() { fs.openRead(root + "/missing.txt") })
+        assertEqual(missing.value.type, "native.io")
+        assertEqual(missing.value.data.code, "not_found")
+        assertEqual(missing.value.msg, "cannot open " + root + "/missing.txt: no such file or directory")
+        fs.makeDirectory(root + "/full")
+        fs.close(fs.openWrite(root + "/full/file"))
+        assertEqual(attempt(fn() { fs.remove(root + "/full") }).value.data.code, "not_empty")
+        assertEqual(attempt(fn() { fs.makeDirectory(root + "/full") }).value.data.code, "exists")
+        assertEqual(attempt(fn() { fs.list(root + "/full/file") }).value.data.code, "not_directory")
+        val input = fs.openRead(root + "/full/file")
+        defer fs.close(input)
+        assertEqual(attempt(fn() { fs.write(input, "x") }).value.data.code, "wrong_mode")
+        assertThrows(fn() { fs.temporaryDirectory("no/slashes") }, "native.io")
+    })
+}
+
+@test
+val waitingOnTheDiskLetsOtherTasksRun = fn() {
+    // Without Slug-managed concurrency there are no tasks to let run.
+    defer onerror(err) {
+        if (err.type != "capability_unavailable") { throw err }
+    }
+    inDirectory(fn(root) {
+        val path = root + "/big.bin"
+        val out = fs.openWrite(path)
+        defer fs.close(out)
+        // 64 KiB, by doubling one byte 16 times.
+        val double = fn(data:bytes, n:num):bytes { if (n == 0) { data } else { recur(data + data, n - 1) } }
+        val chunk = double(0x"00", 16)
+        // Closed when the writer finishes. A spawned task snapshots its
+        // local bindings, so a `var` could not carry this.
+        val done = chan(1)
+        val writer = spawn {
+            val write = fn(n:num) {
+                if (n > 0) {
+                    fs.write(out, chunk)
+                    recur(n - 1)
+                }
+            }
+            write(64)
+            close(done)
+        }
+        // Counts its turns while the writer is still writing. Were a write
+        // to block the VM, the writer would finish first and this would
+        // count none.
+        val counter = spawn {
+            val tick = fn(n:num):num {
+                val finished = select {
+                    recv done /> fn(_) { true }
+                    _ /> fn(_) { false }
+                }
+                if (finished) { return n }
+                select { after 0 }
+                recur(n + 1)
+            }
+            tick(0)
+        }
+        select { await writer }
+        assertTrue(select { await counter } > 0, "no task ran while the writer waited")
+        assertEqual((fs.stat(path) ?? {}).size, 64 * 65536)
+    })
+}

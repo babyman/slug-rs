@@ -205,7 +205,7 @@ fn does_not_expose_retired_argument_builtins() {
 }
 
 #[test]
-fn skips_defaulted_and_imported_main_functions() {
+fn skips_imported_main_functions() {
     let root = std::env::temp_dir().join(format!("slug-cli-main-selection-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create entrypoint fixture directory");
     fs::write(
@@ -217,7 +217,6 @@ fn skips_defaulted_and_imported_main_functions() {
     fs::write(
         &path,
         "val library = import(\"library\")\n\
-         val main = fn(value = \"defaulted\") { println(value) }\n\
          println(\"top level\")\n",
     )
     .expect("write non-entrypoint source");
@@ -231,6 +230,50 @@ fn skips_defaulted_and_imported_main_functions() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "top level\n");
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn a_top_level_main_that_cannot_be_an_entrypoint_is_an_error() {
+    // Each would otherwise be skipped, so the program would silently not
+    // run its `main`.
+    let cases = [
+        (
+            "unannotated",
+            "val main = fn(args) { 1 }\n",
+            "write `args:list`",
+        ),
+        (
+            "annotated",
+            "val main = fn(args:str) { 1 }\n",
+            "annotated `str`",
+        ),
+        (
+            "defaulted",
+            "val main = fn(value = \"x\") { 1 }\n",
+            "must be required",
+        ),
+        (
+            "two",
+            "val main = fn(a:list, b:list) { 1 }\n",
+            "takes 2 parameters",
+        ),
+    ];
+    for (name, source, reason) in cases {
+        let path = fixture_path(&format!("ineligible-main-{name}"));
+        fs::write(&path, source).expect("write ineligible main source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run ineligible main source");
+        fs::remove_file(&path).expect("remove ineligible main source");
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr.contains("code: invalid_entrypoint"),
+            "{name}: {stderr}"
+        );
+        assert!(stderr.contains(reason), "{name}: {stderr}");
+    }
 }
 
 #[test]
@@ -504,6 +547,326 @@ fn a_bare_program_name_imports_sibling_modules() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
 }
 
+/// A fresh directory for a project-root fixture.
+fn project_fixture(kind: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("slug-cli-project-{kind}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create project fixture");
+    root
+}
+
+fn output_text(output: &std::process::Output) -> (Option<i32>, String, String) {
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_program_in_a_project_imports_from_its_src_and_reads_its_slug_toml() {
+    let root = project_fixture("marker");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::create_dir_all(root.join("src/app")).expect("create source directory");
+    fs::write(root.join("slug.toml"), "[app]\nname = \"root\"\n").expect("write marker");
+    fs::write(root.join("src/app/jobs.slug"), "export val one = 1\n").expect("write module");
+    // A test program's helper beside it resolves relative to it.
+    fs::write(
+        root.join("tests/helper.slug"),
+        "export val name = cfg(\"app.name\", \"none\")\n",
+    )
+    .expect("write test helper");
+    let program = root.join("tests/basic.slug");
+    fs::write(
+        &program,
+        "val jobs = import(\"app.jobs\")\nval helper = import(\"helper\")\nprintln(jobs.one, helper.name)\n",
+    )
+    .expect("write program in a subdirectory");
+
+    for output in run_as_source_and_artifact(&program) {
+        let (code, stdout, stderr) = output_text(&output);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "1 root\n");
+    }
+
+    // Named relative to the working directory, the program finds the same
+    // project, and so does one in `src/`.
+    fs::copy(&program, root.join("src/main.slug")).expect("copy program into src");
+    fs::copy(root.join("tests/helper.slug"), root.join("src/helper.slug"))
+        .expect("copy helper into src");
+    for (directory, relative) in [
+        (root.clone(), "tests/basic.slug"),
+        (root.join("tests"), "basic.slug"),
+        (root.clone(), "src/main.slug"),
+    ] {
+        let output = slug()
+            .current_dir(&directory)
+            .arg(relative)
+            .output()
+            .expect("run relative program");
+        let (code, stdout, stderr) = output_text(&output);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "1 root\n");
+    }
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn the_nearest_slug_toml_marks_the_project_root() {
+    let root = project_fixture("nested");
+    fs::create_dir_all(root.join("inner/tests")).expect("create nested project");
+    fs::write(root.join("slug.toml"), "").expect("write outer marker");
+    fs::create_dir_all(root.join("src")).expect("create outer sources");
+    fs::create_dir_all(root.join("inner/src")).expect("create inner sources");
+    fs::write(root.join("src/outer.slug"), "export val name = \"outer\"\n")
+        .expect("write outer module");
+    fs::write(root.join("inner/slug.toml"), "").expect("write inner marker");
+    fs::write(
+        root.join("inner/src/inner.slug"),
+        "export val name = \"inner\"\n",
+    )
+    .expect("write inner module");
+    let program = root.join("inner/tests/check.slug");
+    fs::write(&program, "println(import(\"inner\").name)\n").expect("write inner program");
+    let (code, stdout, stderr) = output_text(&slug().arg(&program).output().expect("run inner"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "inner\n");
+
+    fs::write(&program, "println(import(\"outer\").name)\n").expect("write outer import");
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run outer"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("module `outer` was not found"), "{stderr}");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_project_searches_only_its_src_for_modules() {
+    let root = project_fixture("src-only");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    fs::write(root.join("jobs.slug"), "export val one = 1\n").expect("write root module");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    let program = root.join("tests/basic.slug");
+    fs::write(&program, "println(import(\"jobs\").one)\n").expect("write program");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&program)
+        .output()
+        .expect("run without src");
+    let (code, _, stderr) = output_text(&output);
+    assert_eq!(code, Some(1));
+    let diagnostic: serde_json::Value = serde_json::from_str(stderr.trim()).expect("JSON");
+    assert_eq!(diagnostic["code"], "module_not_found");
+    let canonical = fs::canonicalize(&root).unwrap();
+    let messages = diagnostic["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|suggestion| suggestion["message"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        messages.contains(&format!(
+            "the project at {} has no `src` directory: its modules go in {}",
+            canonical.display(),
+            canonical.join("src").display()
+        )),
+        "{messages:?}"
+    );
+
+    // With `src/`, the module at the project root is still not found.
+    fs::create_dir_all(root.join("src")).expect("create source directory");
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run with src"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("module `jobs` was not found"), "{stderr}");
+    assert!(!stderr.contains("has no `src` directory"), "{stderr}");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_project_embeds_assets_from_its_assets_folder() {
+    let root = project_fixture("assets");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    fs::create_dir_all(root.join("src")).expect("create source directory");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(
+        root.join("src/page.slug"),
+        "export val page = asset(\"page.html\")\n",
+    )
+    .expect("write module embedding an asset");
+    let program = root.join("tests/check.slug");
+    fs::write(
+        &program,
+        "println(import(\"page\").page, asset(\"page.html\"))\n",
+    )
+    .expect("write test embedding an asset");
+    let canonical = fs::canonicalize(&root).unwrap();
+
+    let (code, _, stderr) = output_text(&slug().arg(&program).output().expect("run"));
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains(&format!(
+            "no asset `page.html`: the project at {} has no assets folder; create {}",
+            canonical.display(),
+            canonical.join("assets").display()
+        )),
+        "{stderr}"
+    );
+
+    fs::create_dir_all(root.join("assets")).expect("create assets folder");
+    fs::write(root.join("assets/page.html"), "hi").expect("write asset");
+    // The artifact carries the asset, so it runs after the file is gone.
+    let [source, _] = run_as_source_and_artifact(&program);
+    let (code, stdout, stderr) = output_text(&source);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6869\" 0x\"6869\"\n");
+    fs::remove_file(root.join("assets/page.html")).expect("remove asset");
+    let compiled = slug()
+        .args(["run", program.with_extension("cslug").to_str().unwrap()])
+        .output()
+        .expect("run artifact");
+    let (code, stdout, stderr) = output_text(&compiled);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6869\" 0x\"6869\"\n");
+
+    // A project clutch's module uses its clutch's assets, not the project's.
+    fs::write(root.join("assets/name.txt"), "project").expect("write project asset");
+    write_clutch_repository(&root.join("clutch"), "app.clutch", "app.greeting");
+    fs::write(
+        &program,
+        "println(import(\"app.greeting\").name, asset(\"name.txt\"))\n",
+    )
+    .expect("write clutch asset program");
+    let (code, stdout, stderr) = output_text(&slug().arg(&program).output().expect("run"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"6170702e636c75746368\" 0x\"70726f6a656374\"\n");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_configured_root_or_a_library_entry_does_not_search_for_slug_toml() {
+    let root = project_fixture("no-search");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(root.join("slug.toml"), "[app]\nname = \"root\"\n").expect("write marker");
+    let program = root.join("tests/basic.slug");
+    fs::write(&program, "println(cfg(\"app.name\", \"none\"))\n").expect("write program");
+    let output = slug()
+        .env("SLUG_FIXTURE_MODULE_ROOT", root.join("tests"))
+        .arg(&program)
+        .output()
+        .expect("run with a configured root");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "none\n");
+
+    // `slug tools/hello` reads `$SLUG_HOME/lib/tools/hello.slug`; the
+    // marker above the library does not make a project of it.
+    fs::create_dir_all(root.join("home/lib/tools")).expect("create library");
+    fs::write(root.join("home/slug.toml"), "[app]\nname = \"home\"\n").expect("write home marker");
+    fs::write(
+        root.join("home/lib/tools/hello.slug"),
+        "println(cfg(\"app.name\", \"none\"))\n",
+    )
+    .expect("write library program");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .current_dir(&root)
+        .arg("tools/hello")
+        .output()
+        .expect("run library program");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "none\n");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+/// Writes a clutch repository at `repository` with one clutch, `directory`,
+/// providing `module` from a source that exports its asset `name.txt`.
+fn write_clutch_repository(repository: &std::path::Path, directory: &str, module: &str) {
+    let clutch = repository.join(directory);
+    fs::create_dir_all(clutch.join("modules")).expect("create clutch modules");
+    fs::create_dir_all(clutch.join("assets")).expect("create clutch assets");
+    fs::write(clutch.join("assets/name.txt"), directory).expect("write asset");
+    fs::write(
+        clutch.join("modules/main.slug"),
+        "export val name = asset(\"name.txt\")\n",
+    )
+    .expect("write clutch module");
+    fs::write(
+        clutch.join("clutch.toml"),
+        format!("[modules]\n\"{module}\" = {{ source = \"modules/main.slug\" }}\n"),
+    )
+    .expect("write clutch manifest");
+    fs::write(
+        repository.join("manifest.toml"),
+        format!("[modules]\n\"{module}\" = \"{directory}\"\n"),
+    )
+    .expect("write repository manifest");
+}
+
+#[test]
+fn a_project_clutch_layers_over_the_installed_clutches() {
+    let root = project_fixture("clutch");
+    fs::create_dir_all(root.join("tests")).expect("create tests directory");
+    fs::write(root.join("slug.toml"), "").expect("write marker");
+    write_clutch_repository(&root.join("clutch"), "app.clutch", "app.greeting");
+    // `slug.string` comes from the installed clutches, `app.greeting` from
+    // the project's.
+    let source = "val {name} = import(\"app.greeting\")\nval {fromBytes, upper} = import(\"slug.string\")\nprintln(upper(fromBytes(name)))\n";
+    fs::write(root.join("main.slug"), source).expect("write program");
+    fs::write(root.join("tests/check.slug"), source).expect("write test program");
+    for program in [root.join("main.slug"), root.join("tests/check.slug")] {
+        let (code, stdout, stderr) = output_text(
+            &slug()
+                .arg(&program)
+                .output()
+                .expect("run project clutch program"),
+        );
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(stdout, "APP.CLUTCH\n");
+    }
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
+#[test]
+fn a_module_both_clutch_layers_index_is_a_startup_error() {
+    let root = project_fixture("clutch-conflict");
+    write_clutch_repository(&root.join("home/clutch"), "base.clutch", "app.greeting");
+    write_clutch_repository(&root.join("project/clutch"), "app.clutch", "app.greeting");
+    fs::write(root.join("project/main.slug"), "println(1)\n").expect("write program");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .arg(root.join("project/main.slug"))
+        .output()
+        .expect("run conflicting program");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(1));
+    assert!(stdout.is_empty(), "{stdout}");
+    let canonical = fs::canonicalize(&root).unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "module `app.greeting` is provided by both `base.clutch` in {} and `app.clutch` in {}",
+            canonical.join("home/clutch/manifest.toml").display(),
+            canonical.join("project/clutch/manifest.toml").display()
+        )),
+        "{stderr}"
+    );
+
+    // A program at `$SLUG_HOME` sees one repository, not two copies of it.
+    fs::write(
+        root.join("home/main.slug"),
+        "println(import(\"app.greeting\").name)\n",
+    )
+    .expect("write program at home");
+    let output = slug()
+        .env("SLUG_HOME", root.join("home"))
+        .arg(root.join("home/main.slug"))
+        .output()
+        .expect("run program at home");
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "0x\"626173652e636c75746368\"\n");
+    fs::remove_dir_all(root).expect("remove project fixture");
+}
+
 #[test]
 fn describes_a_modules_declarations_and_gates_unexported_ones() {
     let root = std::env::temp_dir().join(format!("slug-cli-describe-{}", std::process::id()));
@@ -684,6 +1047,355 @@ fn run_as_source_and_artifact(path: &std::path::Path) -> [std::process::Output; 
         .output()
         .expect("run artifact");
     [source, compiled]
+}
+
+#[test]
+fn a_compiled_program_throws_and_catches_error() {
+    let root = std::env::temp_dir().join(format!("slug-artifact-builtin-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create fixture");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val recover = fn() {\n    \
+             defer onerror(err) { return err.msg }\n    \
+             throw Error {type: \"probe\", msg: \"caught\"}\n\
+         }\n\
+         val main = fn() {\n    \
+             println(recover())\n    \
+             throw Error {type: \"probe\", msg: \"uncaught\"}\n\
+         }\n",
+    )
+    .expect("write program");
+
+    for output in run_as_source_and_artifact(&path) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "caught\n",
+            "{stderr}"
+        );
+        assert!(stderr.contains("\"msg\": \"uncaught\""), "{stderr}");
+        assert!(!stderr.contains("unknown name"), "{stderr}");
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn error_is_defined_by_the_runtime_without_a_library() {
+    let root = std::env::temp_dir().join(format!("slug-runtime-error-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("create empty home");
+    fs::write(
+        root.join("maker.slug"),
+        "export val make = fn(m) { Error {msg: m} }\nexport val schema = Error\n",
+    )
+    .expect("write maker");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val maker = import(\"maker\")\n\
+         val recover = fn() {\n    \
+             defer onerror(err) { return err }\n    \
+             throw Error {msg: \"caught\"}\n\
+         }\n\
+         val main = fn() {\n    \
+             val e = recover()\n    \
+             println(e.type, e.msg, e.code, e.data, e.cause)\n    \
+             println(e == maker.make(\"caught\"), maker.schema == Error)\n\
+         }\n",
+    )
+    .expect("write program");
+    let artifact = path.with_extension("cslug");
+    let run = |arguments: &[&std::ffi::OsStr]| {
+        slug()
+            .env("SLUG_HOME", &home)
+            .args(arguments)
+            .output()
+            .expect("run slug")
+    };
+    let source = run(&[path.as_os_str()]);
+    let compile = run(&["compile".as_ref(), path.as_os_str(), artifact.as_os_str()]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = run(&["run".as_ref(), artifact.as_os_str()]);
+    fs::remove_dir_all(&root).expect("remove fixture");
+
+    for output in [source, compiled] {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "Error caught nil nil nil\ntrue true\n",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_case_constrains_its_subject_to_the_builtin_error() {
+    let root = std::env::temp_dir().join(format!("slug-error-constraint-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create fixture");
+    fs::write(
+        root.join("maker.slug"),
+        "export val make = fn(m) { Error {msg: m} }\n",
+    )
+    .expect("write maker");
+    fs::write(
+        root.join("mine.slug"),
+        "val Error = struct { msg }\nexport val own = fn(m) { Error {msg: m} }\n",
+    )
+    .expect("write mine");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val maker = import(\"maker\")\n\
+         val mine = import(\"mine\")\n\
+         val kind = fn(v) {\n    \
+             match v {\n        \
+                 x: struct<Error> => \"error ${x.msg}\"\n        \
+                 _: struct => \"struct\"\n        \
+                 _ => \"other\"\n    \
+             }\n\
+         }\n\
+         val caught = fn() {\n    \
+             defer onerror(err) { return kind(err) }\n    \
+             throw Error {msg: \"thrown\"}\n\
+         }\n\
+         println(kind(Error {msg: \"here\"}), kind(maker.make(\"there\")), caught())\n\
+         println(kind(mine.own(\"mine\")), kind(1))\n\
+         val Shadow = fn(v) {\n    \
+             val Error = struct { msg }\n    \
+             match v { _: struct<Error> => \"local\"; _ => \"builtin\" }\n\
+         }\n\
+         println(Shadow(Error {msg: \"m\"}))\n",
+    )
+    .expect("write program");
+    let artifact = path.with_extension("cslug");
+    let source = slug().arg(&path).output().expect("run source");
+    let compile = slug()
+        .arg("compile")
+        .arg(&path)
+        .arg(&artifact)
+        .output()
+        .expect("compile");
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let compiled = slug()
+        .arg("run")
+        .arg(&artifact)
+        .output()
+        .expect("run artifact");
+    fs::remove_dir_all(&root).expect("remove fixture");
+
+    for output in [source, compiled] {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "error here error there error thrown\nstruct other\nbuiltin\n",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_slug_builtin_file_does_not_replace_the_builtins() {
+    let replacement = "export val Error = struct { type:str = \"Hijacked\", msg:str }\n\
+                       export foreign println = fn(...values):nil\n";
+    let program = "print(\"a \")\nprintln(Error {msg: \"x\"}.type)\n";
+    let root = project_fixture("builtin-file");
+    fs::create_dir_all(root.join("loose/slug")).expect("create loose program");
+    fs::write(root.join("loose/slug/builtin.slug"), replacement).expect("write replacement");
+    fs::write(root.join("loose/main.slug"), program).expect("write loose program");
+    fs::create_dir_all(root.join("project/src/slug")).expect("create project");
+    fs::write(root.join("project/slug.toml"), "").expect("write marker");
+    fs::write(root.join("project/src/slug/builtin.slug"), replacement)
+        .expect("write project replacement");
+    fs::write(root.join("project/src/main.slug"), program).expect("write project program");
+
+    for path in ["loose/main.slug", "project/src/main.slug"] {
+        let output = slug().arg(root.join(path)).output().expect("run program");
+        assert_eq!(
+            output_text(&output),
+            (Some(0), "a Error\n".into(), String::new()),
+            "{path}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn the_compiler_knows_the_builtins_without_a_library() {
+    let root = project_fixture("builtin-contract");
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("create empty home");
+    let path = root.join("main.slug");
+    fs::write(&path, "val main = fn() { pirntln(\"x\") }\n").expect("write program");
+    let output = slug()
+        .env("SLUG_HOME", &home)
+        .args(["--diagnostic-format=json"])
+        .arg(&path)
+        .output()
+        .expect("run program");
+    fs::remove_dir_all(root).expect("remove fixture");
+
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostic: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("diagnostic JSON");
+    assert_eq!(diagnostic["code"], "unknown_name");
+    assert_eq!(
+        diagnostic["message"],
+        "unknown name `pirntln`; did you mean `println`?"
+    );
+}
+
+#[test]
+fn a_dynamic_import_of_slug_builtin_explains_the_builtins() {
+    let root = project_fixture("builtin-dynamic");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val name = \"slug.\" + \"builtin\"\nval main = fn() { import(name) }\n",
+    )
+    .expect("write program");
+    let output = slug().arg(&path).output().expect("run program");
+    fs::remove_dir_all(root).expect("remove fixture");
+
+    let (code, stdout, stderr) = output_text(&output);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""));
+    assert!(
+        stderr.contains("module `slug.builtin` was not found"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`slug.builtin` is not a module: its names, such as `Error` and `println`, are available in every module without an import"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn bytes_variables_updated_in_place_keep_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-bytes-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // A module-level and a captured bytes variable, appended to and
+    // concatenated in place: values read before keep what they were, and
+    // an append that fails (not a byte) leaves the variable as it was.
+    fs::write(
+        &program,
+        "var g = 0x\"01\"\n\
+         val id = fn(v) { v }\n\
+         val main = fn() {\n\
+             var c = 0x\"0a\"\n\
+             val before = [g, c]\n\
+             val grow = fn(i:num) { if (i < 3) { g = g :+ i; c = c :+ (i + 16); recur(i + 1) } }\n\
+             grow(0)\n\
+             val join = fn() { g = g + 0x\"ff\"; c = c + 0x\"ee\" }\n\
+             join()\n\
+             println(before)\n\
+             println([g, c])\n\
+             val fail = fn(change) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 change()\n\
+             }\n\
+             fail(fn() { g = g :+ id(300) })\n\
+             fail(fn() { c = c :+ id(\"no\") })\n\
+             println([g, c])\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            [
+                "[0x\"01\", 0x\"0a\"]",
+                "[0x\"01000102ff\", 0x\"0a101112ee\"]",
+                "value for :+ on bytes must be an integer from 0 through 255",
+                "value for :+ on bytes must be an integer from 0 through 255 or one byte",
+                "[0x\"01000102ff\", 0x\"0a101112ee\"]",
+            ],
+            "{stdout}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
+}
+
+#[test]
+fn a_captured_variable_updated_in_place_keeps_value_semantics() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-captured-variable-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create update fixture directory");
+    let program = root.join("main.slug");
+    // Closures update `var`s they capture from `main`. A value read before
+    // keeps what it was, another closure sharing the variable sees each
+    // update, a call in the right operand that assigns the variable is
+    // overwritten as before, and an update that fails leaves it as it was.
+    fs::write(
+        &program,
+        "val id = fn(v) { v }\n\
+         val main = fn() {\n\
+             var m:map = {a: 1}\n\
+             var l:list = [1]\n\
+             var s = \"x\"\n\
+             val before = [m, l]\n\
+             val bump = fn() { m = m + {bumped: true}; {c: 3} }\n\
+             val read = fn() { [m, l, s] }\n\
+             val update = fn() {\n\
+                 val go = fn(i:num) { if (i < 3) { m = m + {[\"k\" + i]: i}; l = l :+ i; recur(i + 1) } }\n\
+                 go(0)\n\
+                 val calls = [bump]\n\
+                 m = m + calls[0]()\n\
+                 m = m - \"a\"\n\
+                 l = l + [9]\n\
+                 s = s + \"y\" + 5\n\
+             }\n\
+             update()\n\
+             println(before)\n\
+             println(read())\n\
+             val fail = fn(change) {\n\
+                 defer onerror(e) { println(e.msg) }\n\
+                 change()\n\
+             }\n\
+             fail(fn() { l = l + id(5) })\n\
+             fail(fn() { m = m - id(fn() { 1 }) })\n\
+             println(read())\n\
+         }\n",
+    )
+    .expect("write update program");
+    for output in run_as_source_and_artifact(&program) {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        let after = "[{\"c\": 3, \"k0\": 0, \"k1\": 1, \"k2\": 2}, [1, 0, 1, 2, 9], \"xy5\"]";
+        assert_eq!(lines[0], "[{\"a\": 1}, [1]]", "{stdout}");
+        assert_eq!(lines[1], after, "{stdout}");
+        assert_eq!(lines[4], after, "{stdout}");
+        assert_eq!(lines.len(), 5, "{stdout}");
+    }
+    fs::remove_dir_all(root).expect("remove update fixture");
 }
 
 #[test]

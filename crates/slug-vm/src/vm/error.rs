@@ -20,6 +20,9 @@ pub enum RuntimeErrorKind {
     /// An index past either end of a list, bytes, or string.
     OutOfBounds,
     InvalidCall,
+    /// An operation this build of the runtime leaves out, such as `spawn`
+    /// or a timer `select` case without Slug-managed concurrency.
+    CapabilityUnavailable,
     Native,
     NativeContract,
     Module,
@@ -323,6 +326,7 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
         RuntimeErrorKind::OutOfBounds => "out_of_bounds",
         RuntimeErrorKind::InvalidCall => "invalid_call",
+        RuntimeErrorKind::CapabilityUnavailable => "capability_unavailable",
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",
         RuntimeErrorKind::Module => "module",

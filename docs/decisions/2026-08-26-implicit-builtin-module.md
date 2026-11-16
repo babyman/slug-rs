@@ -1,6 +1,16 @@
 # Implicit builtin module
 
+## Status
+
+Superseded in part by
+[builtins belong to the runtime](2026-11-15-builtins-belong-to-the-runtime.md)
+(2026-11-15): the runtime defines every builtin, including `Error`;
+`slug.builtin` is their contract, which the host supplies to the compiler,
+never a module that is found, run, or imported.
+
 ## Context
+
+
 
 The CLI exposed `println` as an ambient native global, while public library
 services now live in named `slug.*` modules. Ambient globals make provenance,

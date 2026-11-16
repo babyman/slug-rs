@@ -661,7 +661,7 @@ impl MapStorage {
             None => self
                 .entries
                 .iter()
-                .position(|(candidate, _)| candidate == key),
+                .position(|(candidate, _)| same_key(candidate, key)),
         }
     }
 
@@ -694,6 +694,18 @@ impl MapStorage {
             index.remove(&self.entries, position);
         }
         self.entries.swap_remove(position);
+    }
+}
+
+/// Whether a map's key `candidate` is `key`, as Slug equality says. Integer
+/// and string keys, the common ones, are compared here inline; anything else
+/// goes through the general comparison, which agrees with this for them.
+#[inline]
+fn same_key(candidate: &Value, key: &Value) -> bool {
+    match (candidate, key) {
+        (Value::Int(a), Value::Int(b)) => a == b,
+        (Value::Str(a), Value::Str(b)) => a == b,
+        _ => candidate == key,
     }
 }
 
@@ -768,7 +780,7 @@ impl MapIndex {
             if position == Self::EMPTY {
                 return None;
             }
-            if entries[position as usize].0 == *key {
+            if same_key(&entries[position as usize].0, key) {
                 return Some(position as usize);
             }
             slot = (slot + 1) & self.mask();
@@ -958,7 +970,7 @@ impl Map {
     pub(crate) fn get_hinted(&self, key: &Value, hint: &crate::sync::Hint) -> Option<&Value> {
         let entries = &self.0.entries;
         if let Some((candidate, value)) = entries.get(hint.get() as usize)
-            && candidate == key
+            && same_key(candidate, key)
         {
             return Some(value);
         }

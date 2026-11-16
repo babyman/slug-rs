@@ -166,7 +166,7 @@ pub(crate) fn copy_bytes(cell: Cell) -> Option<Vec<u8>> {
 }
 
 /// The host function table a `slug_producer *` carries: C's
-/// `slug_producer_api`, version 1.
+/// `slug_producer_api`, version 2. Version 2 appended `send_list`.
 #[repr(C)]
 struct ProducerApi {
     version: u32,
@@ -179,6 +179,19 @@ struct ProducerApi {
     is_closed: unsafe extern "C" fn(*mut ProducerHandle) -> bool,
     close: unsafe extern "C" fn(*mut ProducerHandle),
     release: unsafe extern "C" fn(*mut ProducerHandle),
+    send_list: unsafe extern "C" fn(*mut ProducerHandle, *const ProducerItem, usize) -> i32,
+}
+
+/// C's `slug_producer_item`: one scalar of a list, its `kind` saying which
+/// field holds it.
+#[repr(C)]
+struct ProducerItem {
+    kind: i32,
+    boolean: bool,
+    integer: i64,
+    number: f64,
+    data: *const u8,
+    length: usize,
 }
 
 /// C's `slug_producer`, extended with the VM producer it wraps. The table
@@ -190,7 +203,7 @@ struct ProducerHandle {
 }
 
 static PRODUCER_API: ProducerApi = ProducerApi {
-    version: 1,
+    version: 2,
     send_nil: producer_send_nil,
     send_bool: producer_send_bool,
     send_i64: producer_send_i64,
@@ -200,6 +213,7 @@ static PRODUCER_API: ProducerApi = ProducerApi {
     is_closed: producer_is_closed,
     close: producer_close,
     release: producer_release,
+    send_list: producer_send_list,
 };
 
 const SENT: i32 = 0;
@@ -303,6 +317,59 @@ unsafe extern "C" fn producer_send_bytes(
     };
     // SAFETY: C passes the handle it was given.
     unsafe { send(handle, NativeSendValue::bytes(bytes)) }
+}
+
+const ITEM_NIL: i32 = 0;
+const ITEM_BOOL: i32 = 1;
+const ITEM_I64: i32 = 2;
+const ITEM_F64: i32 = 3;
+const ITEM_TEXT: i32 = 4;
+const ITEM_BYTES: i32 = 5;
+
+/// # Safety
+///
+/// A text or bytes `item` must point at `length` readable bytes, or be NULL
+/// with `length` 0.
+unsafe fn item_value(item: &ProducerItem) -> Option<NativeSendValue> {
+    Some(match item.kind {
+        ITEM_NIL => NativeSendValue::nil(),
+        ITEM_BOOL => NativeSendValue::boolean(item.boolean),
+        ITEM_I64 => NativeSendValue::integer(item.integer),
+        ITEM_F64 if item.number.is_finite() => NativeSendValue::float(item.number),
+        ITEM_TEXT => {
+            // SAFETY: forwarded from this function's contract.
+            let bytes = unsafe { copy_buffer(item.data, item.length) }?;
+            NativeSendValue::string(String::from_utf8(bytes).ok()?)
+        }
+        // SAFETY: forwarded from this function's contract.
+        ITEM_BYTES => NativeSendValue::bytes(unsafe { copy_buffer(item.data, item.length) }?),
+        _ => return None,
+    })
+}
+
+unsafe extern "C" fn producer_send_list(
+    handle: *mut ProducerHandle,
+    items: *const ProducerItem,
+    count: usize,
+) -> i32 {
+    let items = if count == 0 {
+        &[][..]
+    } else if items.is_null() {
+        return INVALID;
+    } else {
+        // SAFETY: C passes `count` readable items, per the producer contract.
+        unsafe { core::slice::from_raw_parts(items, count) }
+    };
+    let mut values = Vec::with_capacity(count);
+    for item in items {
+        // SAFETY: each item's buffer is readable, per the producer contract.
+        let Some(value) = (unsafe { item_value(item) }) else {
+            return INVALID;
+        };
+        values.push(value);
+    }
+    // SAFETY: C passes the handle it was given.
+    unsafe { send(handle, NativeSendValue::list(values)) }
 }
 
 unsafe extern "C" fn producer_is_closed(handle: *mut ProducerHandle) -> bool {

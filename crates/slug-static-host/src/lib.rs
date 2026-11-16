@@ -98,13 +98,12 @@ struct StaticHostState {
 #[derive(Clone)]
 struct SimulationState {
     output_pins: Rc<HashSet<u8>>,
-    maximum_sleep_ms: u32,
     writes: Rc<RefCell<Vec<GpioWrite>>>,
-    sleeps: Rc<RefCell<Vec<u32>>>,
+    started: std::time::Instant,
 }
 
 impl StaticHost {
-    /// Creates a host with the selected physical GPIO outputs and maximum delay.
+    /// Creates a host with the selected physical GPIO outputs.
     ///
     /// # Errors
     ///
@@ -112,20 +111,18 @@ impl StaticHost {
     /// cannot be constructed.
     pub fn with_gpio_and_time(
         output_pins: impl IntoIterator<Item = u8>,
-        maximum_sleep_ms: u32,
     ) -> Result<Self, StaticHostBuildError> {
         let simulation = SimulationState {
             output_pins: Rc::new(output_pins.into_iter().collect()),
-            maximum_sleep_ms,
             writes: Rc::new(RefCell::new(Vec::new())),
-            sleeps: Rc::new(RefCell::new(Vec::new())),
+            started: std::time::Instant::now(),
         };
         let gpio_module = NativeModule::new("slug.gpio", simulation.clone())?;
         let time_module = NativeModule::new("slug.time", simulation.clone())?;
         let gpio_functions =
             vec![gpio_module.function("write", NativeArity::Exact(2), gpio_write)?];
         let time_functions =
-            vec![time_module.function("sleepMs", NativeArity::Exact(1), sleep_ms)?];
+            vec![time_module.function("monotonicMs", NativeArity::Exact(0), monotonic_ms)?];
         let resolver = StaticModuleResolver::new([gpio_provider()?, time_provider()?])?;
 
         Ok(Self {
@@ -170,12 +167,6 @@ impl StaticHost {
     #[must_use]
     pub fn take_gpio_writes(&self) -> Vec<GpioWrite> {
         std::mem::take(&mut *self.state.simulation.writes.borrow_mut())
-    }
-
-    /// Returns delay requests observed since the last [`Self::take_sleep_requests`].
-    #[must_use]
-    pub fn take_sleep_requests(&self) -> Vec<u32> {
-        std::mem::take(&mut *self.state.simulation.sleeps.borrow_mut())
     }
 }
 
@@ -240,6 +231,10 @@ impl std::error::Error for StaticHostError {}
 impl ModuleResolver for StaticHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
+    }
+
+    fn builtin_contract(&self) -> Option<ModuleSource> {
+        self.state.resolver.builtin_contract()
     }
 }
 
@@ -472,57 +467,18 @@ fn invalid_gpio_pin() -> NativeError {
     NativeError::new("gpio.pin", "GPIO pin must be a whole number from 0 to 255")
 }
 
-fn sleep_ms(call: &mut NativeCall<'_>) -> NativeStatus {
-    let milliseconds = match call.argument(0).and_then(milliseconds_from_value) {
-        Ok(milliseconds) => milliseconds,
-        Err(error) => return call.raise(error),
-    };
+fn monotonic_ms(call: &mut NativeCall<'_>) -> NativeStatus {
     let Some(state) = call.state::<SimulationState>() else {
         return call
             .report_contract_violation("static time callback has incompatible module state");
     };
-    if milliseconds > state.maximum_sleep_ms {
+    let Ok(milliseconds) = i64::try_from(state.started.elapsed().as_millis()) else {
         return call.raise(NativeError::new(
-            "time.range",
-            format!(
-                "sleep duration {milliseconds}ms exceeds host maximum {}ms",
-                state.maximum_sleep_ms
-            ),
+            "native.range",
+            "the monotonic clock exceeds the supported integer range",
         ));
-    }
-    state.sleeps.borrow_mut().push(milliseconds);
-    call.return_value(NativeOwnedValue::nil())
-}
-
-fn milliseconds_from_value(value: slug_vm::NativeValueRef<'_>) -> Result<u32, NativeError> {
-    match value.kind() {
-        NativeValueKind::Int => u32::try_from(value.as_i64()?).map_err(|_| {
-            NativeError::new(
-                "time.milliseconds",
-                "sleep duration must be a whole number of milliseconds",
-            )
-        }),
-        NativeValueKind::Float => milliseconds_from_float(value.as_f64()?),
-        _ => Err(NativeError::new(
-            "time.milliseconds",
-            "sleep duration must be a whole number of milliseconds",
-        )),
-    }
-}
-
-fn milliseconds_from_float(milliseconds: f64) -> Result<u32, NativeError> {
-    if !milliseconds.is_finite()
-        || milliseconds < 0.0
-        || milliseconds.fract() != 0.0
-        || milliseconds > f64::from(u32::MAX)
-    {
-        return Err(NativeError::new(
-            "time.milliseconds",
-            "sleep duration must be a whole number of milliseconds",
-        ));
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Ok(milliseconds as u32)
+    };
+    call.return_value(NativeOwnedValue::integer(milliseconds))
 }
 
 #[cfg(test)]
@@ -533,7 +489,9 @@ mod tests {
     use slug_loader::StaticModuleResolver;
     use slug_vm::{EmptyVmConfiguration, Vm};
 
-    use super::{GpioWrite, StaticHost, gpio_provider, time_provider};
+    #[cfg(feature = "concurrency")]
+    use super::time_provider;
+    use super::{GpioWrite, StaticHost, gpio_provider};
 
     fn host_with(providers: Vec<slug_loader::StaticModuleProvider>) -> ModuleHost {
         ModuleHost::with_resolver(
@@ -543,6 +501,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "concurrency")]
     fn imported_gpio_and_time_contracts_type_check() {
         let host = host_with(vec![
             gpio_provider().expect("gpio provider"),
@@ -603,20 +562,28 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "concurrency")]
     fn simulator_records_one_gpio_blink_cycle() {
-        let host = StaticHost::with_gpio_and_time([2], 1_000)
-            .expect("fixed simulator host setup succeeds");
+        let host =
+            StaticHost::with_gpio_and_time([2]).expect("fixed simulator host setup succeeds");
 
-        host.run_source(
-            "memory:blink",
-            "val gpio = import(\"slug.gpio\")\n\
+        let elapsed = host
+            .run_source(
+                "memory:blink",
+                "val gpio = import(\"slug.gpio\")\n\
              val time = import(\"slug.time\")\n\
+             val start = time.monotonicMs()\n\
              gpio.write(2, true)\n\
-             time.sleepMs(250)\n\
+             time.sleepMs(5)\n\
              gpio.write(2, false)\n\
-             time.sleepMs(250)\n",
-        )
-        .expect("one blink cycle executes through static module contracts");
+             time.sleepMs(5)\n\
+             time.monotonicMs() - start\n",
+            )
+            .expect("one blink cycle executes through static module contracts");
+        assert!(
+            matches!(elapsed, slug_vm::Value::Int(ms) if ms >= 10),
+            "{elapsed:?}"
+        );
 
         assert_eq!(
             host.take_gpio_writes(),
@@ -631,13 +598,12 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(host.take_sleep_requests(), vec![250, 250]);
     }
 
     #[test]
     fn simulator_records_two_selected_output_pins() {
-        let host = StaticHost::with_gpio_and_time([2, 4], 1_000)
-            .expect("fixed simulator host setup succeeds");
+        let host =
+            StaticHost::with_gpio_and_time([2, 4]).expect("fixed simulator host setup succeeds");
 
         host.run_source(
             "memory:two-outputs",
@@ -676,8 +642,8 @@ mod tests {
 
     #[test]
     fn simulator_rejects_an_unselected_output_pin() {
-        let host = StaticHost::with_gpio_and_time([2], 1_000)
-            .expect("fixed simulator host setup succeeds");
+        let host =
+            StaticHost::with_gpio_and_time([2]).expect("fixed simulator host setup succeeds");
 
         let error = host
             .run_source(
@@ -695,8 +661,8 @@ mod tests {
 
     #[test]
     fn simulator_rejects_a_fractional_output_pin() {
-        let host = StaticHost::with_gpio_and_time([2], 1_000)
-            .expect("fixed simulator host setup succeeds");
+        let host =
+            StaticHost::with_gpio_and_time([2]).expect("fixed simulator host setup succeeds");
 
         let error = host
             .run_source(

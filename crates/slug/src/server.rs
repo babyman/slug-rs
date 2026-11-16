@@ -5,7 +5,7 @@ use std::{
     process::ExitCode,
 };
 
-use crate::{build_default_host_vm, interactive::Server};
+use crate::{ProgramLayout, build_default_host_vm, interactive::Server};
 use serde::Serialize;
 
 const SERVER_COMMAND: &str = "slug --server";
@@ -30,10 +30,10 @@ pub fn run_server() -> ExitCode {
     }
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let source_root = match application.as_deref().and_then(Path::parent) {
-        Some(parent) => parent.to_path_buf(),
+    let layout = match application.as_deref().and_then(Path::parent) {
+        Some(parent) => ProgramLayout::discover(parent),
         None => match env::current_dir() {
-            Ok(path) => path,
+            Ok(path) => ProgramLayout::discover(&path),
             Err(error) => {
                 eprintln!("{SERVER_COMMAND}: cannot determine current directory: {error}");
                 return ExitCode::from(1);
@@ -42,7 +42,7 @@ pub fn run_server() -> ExitCode {
     };
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let (vm, loader) =
-        match build_default_host_vm(&source_root, slug_home.as_deref(), &[], "interactive") {
+        match build_default_host_vm(&layout, slug_home.as_deref(), &[], "interactive") {
             Ok(host) => host,
             Err(error) => {
                 eprintln!("{SERVER_COMMAND}: cannot configure default host: {error}");

@@ -9,9 +9,10 @@
 "slug.fmt.json" = { source = "modules/json.slug" }
 "slug.test" = { source = "modules/test.slug" }
 "slug.random" = { source = "modules/random.slug" }
+"slug.time" = { source = "modules/time.slug" }
 
 [tests]
-files = ["tests/std.slug", "tests/math.slug", "tests/string.slug", "tests/bytes.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
+files = ["tests/std.slug", "tests/math.slug", "tests/string.slug", "tests/bytes.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug", "tests/time.slug"]
 
 [native]
 profile = "events"
@@ -37,6 +38,8 @@ sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64", thread_
 [native.functions."slug.bytes"]
 findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64", thread_safe = true }
 findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }
+toHexRaw = { symbol = "slug_core_to_hex", signature = "(bytes data, out str text) -> bool", thread_safe = true }
+fromHexRaw = { symbol = "slug_core_from_hex", signature = "(str text, out bytes data) -> i64", thread_safe = true }
 
 [native.functions."slug.fmt.json"]
 findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }
@@ -47,3 +50,7 @@ chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) 
 fromBytesRaw = { symbol = "slug_core_from_bytes", signature = "(bytes data, out str text) -> bool", thread_safe = true }
 toBytesRaw = { symbol = "slug_core_to_bytes", signature = "(str text, out bytes data) -> void", thread_safe = true }
 findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64", thread_safe = true }
+
+[native.functions."slug.time"]
+nowMsRaw = { symbol = "slug_core_now_ms", signature = "() -> i64", thread_safe = true }
+monotonicMsRaw = { symbol = "slug_core_monotonic_ms", signature = "() -> i64", thread_safe = true }

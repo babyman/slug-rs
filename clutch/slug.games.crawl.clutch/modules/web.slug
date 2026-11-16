@@ -66,7 +66,7 @@ val {chars, fromBytes} = import("slug.string")
 val math = import("slug.math")
 val mustache = import("slug.text.mustache")
 val secure = import("slug.random.secure")
-val {split, trim, join, toInt} = import("slug.string")
+val {split, trim, join, toInt, sort} = import("slug.string")
 val {trySend, await} = import("slug.channel")
 val json = import("slug.fmt.json")
 
@@ -196,57 +196,77 @@ export val press = fn(id:str, key:str, shift:bool, text:str = ""):bool {
  * world on, logs what each player was told, and pushes each open page its
  * game's HTML when it changed.
  */
-export val tickOnce = fn() {
-    // The first queued key of each player; the rest wait.
-    val firsts = fn(i:num, now:list, later:list, seen:list):list {
+export val tickOnce = fn() { push(simulate()) }
+
+// Carries out the first queued key of each player, moves the world on, and
+// logs what each player was told; returns the ids of the players with a page
+// open, for `push`.
+val simulate = fn():list {
+    // The first queued key of each player; the rest wait. The players seen,
+    // who acted, and who were dead are sets, as maps from id to true: with
+    // a thousand players, finding each in a list was most of a tick's work
+    // outside the world's.
+    val firsts = fn(i:num, now:list, later:list, seen:map):list {
         if (i == len(queue)) { return [now, later] }
         val a = queue[i]
-        if (contains(seen, a.id)) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen :+ a.id) }
+        if (seen[a.id] != nil) { recur(i + 1, now, later :+ a, seen) } else { recur(i + 1, now :+ a, later, seen + {[a.id]: true}) }
     }
-    val [actions, rest] = firsts(0, [], [], [])
+    val [actions, rest] = firsts(0, [], [], {})
     queue = rest
     val present = filter(keys(streams), fn(id) { len(streams[id]) > 0 })
-    val wasDead = filter(map(actions, fn(a) { a.id }), fn(id) { game.playerOf(id).dead })
-    game.tick(actions, present, monsterEvery)
+    val wasDead = reduce(actions, {}, fn(acc, a) { if (game.playerOf(a.id).dead) { acc + {[a.id]: true} } else { acc } })
+    game.tick(actions, present, monsterEvery, false)
+    // Looking around is most of the tick's work for a crowd, and each
+    // player's is their own, so the forks find it and this task keeps it.
+    game.applySights(inForks(present, game.sightsOf))
     ticks = ticks + 1
     // Log what each present player, or each who acted, was told.
     val actors = map(actions, fn(a) { a.id })
-    val told = actors + filter(present, fn(id) { !contains(actors, id) })
+    val acted = reduce(actors, {}, fn(acc, id) { acc + {[id]: true} })
+    val told = actors + filter(present, fn(id) { acted[id] == nil })
     val log = fn(i:num) {
         if (i < len(told)) {
             val id = told[i]
             val p = game.playerOf(id)
-            if (contains(wasDead, id) && !p.dead) { logs = logs - id }
+            if (wasDead[id] != nil && !p.dead) { logs = logs - id }
             // A prompt's question is shown above the map, not logged.
             val said = filter(p.messages, fn(m) { p.prompt == nil || m != p.question })
-            if (contains(actors, id) || len(said) > 0) { record(id, said) }
+            if (acted[id] != nil || len(said) > 0) { record(id, said) }
             recur(i + 1)
         }
     }
     log(0)
-    push(present)
+    present
 }
 
 // Sends each present player's page the parts of their game that changed:
 // the map, as data or as HTML, and each other part whose data changed, drawn
 // only then; a keep-alive comment every HEARTBEAT ticks when nothing did.
 // Drops streams that are closed. With `forks` above one, that many forks
-// each find what a share of the pages need, and this task sends it.
+// each find what a share of the pages need, and this task sends it. A page
+// that opened a stream meanwhile was sent everything then, so what was found
+// for it is stale and not sent.
 val push = fn(present:list) {
-    val n = math.min(forks, len(present))
+    refreshed = {}
     // Drawing changes nothing, so each chunk's company is found once.
-    val find = fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) }
-    val found = if (n > 1) {
-        // Every nth player each, as players near each other cost alike.
-        val tasks = map(range(n), fn(w) {
-            val mine = map(range(math.div(len(present) - w + n - 1, n)), fn(i) { present[w + i * n] })
-            fork { find(mine) }
-        })
-        reduce(tasks, [], fn(acc, task) { acc + await(task) })
-    } else {
-        find(present)
-    }
-    map(found, fn(c) { if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") } })
+    val found = inForks(present, fn(ids:list):list { game.steady(fn() { map(ids, fn(id) { changesFor(id, false) }) }) })
+    map(filter(found, fn(c) { refreshed[c.id] == nil }), fn(c) {
+        if (!send(c) && ticks % HEARTBEAT == 0) { broadcast(c.id, ": alive\n\n") }
+    })
+}
+
+// What `find` returns for the players `ids`, a list for each share of them,
+// joined: with `forks` above one, that many forks each find it for a share,
+// every nth player, as players near each other cost alike. `find` must
+// change nothing.
+val inForks = fn(ids:list, find:fn):list {
+    val n = math.min(forks, len(ids))
+    if (n <= 1) { return find(ids) }
+    val tasks = map(range(n), fn(w) {
+        val mine = map(range(math.div(len(ids) - w + n - 1, n)), fn(i) { ids[w + i * n] })
+        fork { find(mine) }
+    })
+    reduce(tasks, [], fn(acc, task) { acc + await(task) })
 }
 
 // Sends the player's page what changed since it was last sent anything, or
@@ -261,16 +281,16 @@ val sendChanges = fn(id:str, everything:bool = false):bool { send(changesFor(id,
 val changesFor = fn(id:str, everything:bool):map {
     val p = game.playerOf(id)
     // The map's data is what it shows, so it tells whether it changed.
-    // The other players here, which the map and the list of what is in
-    // view both need: finding them sorts everyone.
-    val others = game.others(id)
-    val data = mapData(id, p, others)
+    // The other players here whom they see, which the map and the list of
+    // what is in view both need.
+    val seen = game.peopleSeen(id)
+    val data = mapData(id, p, seen)
     val moved = everything || data != shownMaps[id]
-    val now = partsData(id, p, others)
+    val now = partsData(id, p, seen)
     val last = if (everything) { {} } else { shownParts[id] ?? {} }
     val changed = filter(keys(now), fn(name) { now[name] != last[name] })
     val drawn = map(changed, fn(name) { partHtml(name, now[name]) })
-    val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, others)) } else { drawn }
+    val html = if ((moved && !clientMaps) || everything) { drawn :+ partHtml("map", mapPart(id, p, seen)) } else { drawn }
     val events = (if (moved && clientMaps) { [dataEvent("map", data)] } else { [] })
         + (if (len(html) > 0) { [htmlEvent("parts", join(html, ""))] } else { [] })
     {id: id, camera: camera(id, p), map: data, parts: now, events: events, sent: moved || len(html) > 0}
@@ -382,18 +402,21 @@ val cell = fn(p:map, sight:map, near:map, c:str, wx:num, wy:num):map {
     }
 }
 
-// Who stands on each square of the chunk the player with `id` is in, by
-// `game.viewKey`, as the look of its `@`: other players first, in id order,
-// then townsfolk.
-val nearby = fn(id:str, others:list):map {
+// Who stands on each square of the chunk the player with `id` is in and
+// sees, by `game.viewKey`, as the look of its `@`: other players first, in
+// id order, from `seen` (`game.peopleSeen`), then townsfolk. The map draws
+// an `@` only where they see one, so the people out of sight would never
+// be looked up.
+val nearby = fn(id:str, seen:list):map {
     val stand = fn(acc:map, x:num, y:num, look:map):map {
         val k = game.viewKey(x, y)
         if (acc[k] == nil) { acc + {[k]: look} } else { acc }
     }
-    val folk = reduce(game.here(id).characters ?? [], {}, fn(acc, c) {
+    val sees = game.seeing(id)
+    val folk = reduce(filter(game.here(id).characters ?? [], fn(c) { sees(c.x, c.y) }), {}, fn(acc, c) {
         stand(acc, c.x, c.y, {cls: "character", title: town.title(c)})
     })
-    val near = reduce(others, {}, fn(acc, o) {
+    val near = reduce(seen, {}, fn(acc, o) {
         stand(acc, o[1].x, o[1].y, {cls: "ally", title: o[1].name})
     })
     reduce(keys(folk), near, fn(acc, k) { if (acc[k] == nil) { acc + {[k]: folk[k]} } else { acc } })
@@ -411,11 +434,11 @@ val mapRow = fn(p:map, sight:map, near:map, cam:map, row:str, y:num, end:str):ma
 }
 
 // The player's window onto the map, row by row.
-val mapRows = fn(id:str, p:map, others:list):list {
+val mapRows = fn(id:str, p:map, seen:list):list {
     val cam = camera(id, p)
     val rows = game.view(id, cam.left, cam.top, cam.cols, cam.rows)
     val sight = game.inView(id)
-    val everyone = nearby(id, others)
+    val everyone = nearby(id, seen)
     val go = fn(y:num, out:list):list {
         if (y == cam.rows) { return out }
         recur(y + 1, out :+ mapRow(p, sight, everyone, cam, rows[y], y, if (y < cam.rows - 1) { "\n" } else { "" }))
@@ -469,12 +492,54 @@ val packView = fn(id:str, p:map):map {
     {asking: asking, count: len(p.pack), size: 22, items: map(p.pack, item)}
 }
 
-// Who is in view: other players the player sees, then monsters.
-val foesView = fn(id:str, p:map, others:list):list {
-    val people = filter(others, fn(o) { game.visible(id, o[1].x, o[1].y) })
-    val seen = filter(game.here(id).monsters, fn(m) { p.sense || game.visible(id, m.x, m.y) })
-    val folk = filter(game.here(id).characters ?? [], fn(c) { game.visible(id, c.x, c.y) })
-    map(people, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+// How many of the other players in view the list names, the nearest; the
+// rest are counted.
+val NEAREST = 8
+
+// The `NEAREST` of `people` ([id, player] pairs) nearest `p` in moves,
+// nearest first, those as near in id order.
+val nearest = fn(p:map, people:list):list {
+    val away = fn(o:list):num { math.max(math.abs(o[1].x - p.x), math.abs(o[1].y - p.y)) }
+    // Whether `a`, `da` away, comes before `b`.
+    val before = fn(a:list, da:num, b:list):bool {
+        val db = away(b)
+        da < db || (da == db && a[0] < b[0])
+    }
+    // Puts `o` into `kept`, which is in that order, keeping no more than
+    // NEAREST.
+    val insert = fn(kept:list, o:list):list {
+        val d = away(o)
+        val go = fn(i:num):list {
+            if (i == len(kept) || before(o, d, kept[i])) {
+                val placed = kept[:i] + [o] + kept[i:]
+                if (len(placed) > NEAREST) { placed[:NEAREST] } else { placed }
+            } else {
+                recur(i + 1)
+            }
+        }
+        if (len(kept) == NEAREST && !before(o, d, kept[NEAREST - 1])) { kept } else { go(0) }
+    }
+    reduce(people, [], insert)
+}
+
+// `people` ([id, player] pairs) in id order.
+val byId = fn(people:list):list {
+    val found = reduce(people, {}, fn(acc, o) { acc + {[o[0]]: o} })
+    map(sort(keys(found)), fn(id) { found[id] })
+}
+
+// Who is in view: the nearest of the other players the player sees,
+// `people` (`game.peopleSeen`), and how many more there are, then
+// townsfolk, then monsters.
+val foesView = fn(id:str, p:map, people:list):list {
+    val sees = game.seeing(id)
+    val named = if (len(people) > NEAREST) { nearest(p, people) } else { byId(people) }
+    val rest = len(people) - len(named)
+    val more = if (rest == 0) { [] } else if (rest == 1) { [{more: "and 1 other"}] } else { [{more: "and " + rest + " others"}] }
+    val seen = filter(game.here(id).monsters, fn(m) { p.sense || sees(m.x, m.y) })
+    val folk = filter(game.here(id).characters ?? [], fn(c) { sees(c.x, c.y) })
+    map(named, fn(o) { {cls: "ally", bar: band(o[1].hp, o[1].maxHp), letter: "@", name: o[1].name, asleep: false, health: percent(o[1].hp, o[1].maxHp)} })
+        + more
         + map(folk, fn(c) { {cls: "character", person: true, letter: "@", name: town.title(c), asleep: false} })
         + map(seen, fn(m) {
             val kind = bestiary.monsters[m.kind]
@@ -494,9 +559,9 @@ val overView = fn(p:map) {
 // the prompt's question or what the latest move said; over it, an open menu
 // or the end of a game; below it, the older messages; and beside it, what
 // is in view, the stats, and the pack.
-val partsData = fn(id:str, p:map, others:list):map {
+val partsData = fn(id:str, p:map, seen:list):map {
     val prompt = p.prompt != nil
-    val foes = foesView(id, p, others)
+    val foes = foesView(id, p, seen)
     val l = logOf(id)
     {
         top: {
@@ -513,16 +578,16 @@ val partsData = fn(id:str, p:map, others:list):map {
 }
 
 // What the map part draws: the map, or the element that draws it on the page.
-val mapPart = fn(id:str, p:map, others:list):map {
-    if (clientMaps) { {island: true, rows: []} } else { {island: false, rows: mapRows(id, p, others)} }
+val mapPart = fn(id:str, p:map, seen:list):map {
+    if (clientMaps) { {island: true, rows: []} } else { {island: false, rows: mapRows(id, p, seen)} }
 }
 
 // The data the whole game template draws: every part's.
 val view = fn(id:str):map {
     val p = game.playerOf(id)
-    val others = game.others(id)
-    val parts = partsData(id, p, others)
-    reduce(keys(parts), mapPart(id, p, others) + {name: p.name}, fn(acc, part) { acc + parts[part] })
+    val seen = game.peopleSeen(id)
+    val parts = partsData(id, p, seen)
+    reduce(keys(parts), mapPart(id, p, seen) + {name: p.name}, fn(acc, part) { acc + parts[part] })
 }
 
 // The menu the player has open, drawn over the map: its entries as
@@ -557,6 +622,10 @@ var shownMaps = {}
 // The data of each part last sent to each player, by id.
 var shownParts = {}
 
+// The players whose page opened a stream since `push` began finding what
+// the pages need, as a set of ids.
+var refreshed = {}
+
 /**
  * Where maps are drawn: "client" sends each page its map as data, for
  * `crawl-map.js` to draw; "server", the default, draws it in the game's HTML.
@@ -582,9 +651,9 @@ val LEGEND = json.stringify({width: level.WIDTH, height: level.HEIGHT, classes: 
 // coordinates; their chunk, depth, and square in it; the window's rows, as
 // `game.view` gives them; the `game.viewKey`s of the squares in their sight;
 // and `near`, the look of each `@` that is not them, as [key, class, title].
-val mapData = fn(id:str, p:map, others:list):str {
+val mapData = fn(id:str, p:map, seen:list):str {
     val cam = camera(id, p)
-    val near = nearby(id, others)
+    val near = nearby(id, seen)
     json.stringify({
         left: cam.left, top: cam.top, cx: p.cx, cy: p.cy, depth: p.depth, you: [p.x, p.y],
         rows: game.view(id, cam.left, cam.top, cam.cols, cam.rows),
@@ -681,6 +750,19 @@ val onUse = fn(request:map):map {
     })
 }
 
+// Runs `work` in a task of its own and returns the response it returns. Joining and
+// drawing a whole page fill the game's caches, which are `task var`s, and a
+// request's task is its connection's: for an event stream, it lives as long
+// as the page is open, and with it what the caches held, about a thousand
+// squares for each page in a crowded town. A key needs none of that, and
+// each task started costs a turn in the scheduler's queue behind the tick.
+val apart = fn(work:fn):map {
+    match await(spawn { work() }) {
+        response: map => response
+        _ => {status: 500}
+    }
+}
+
 // A number from the query, held between `low` and `high`, or `fallback`.
 val bounded = fn(text, low:num, high:num, fallback:num):num {
     match toInt(text ?? "") {
@@ -691,7 +773,7 @@ val bounded = fn(text, low:num, high:num, fallback:num):num {
 
 // A stream of the player's game as server-sent events, starting with how it
 // is now, drawn through a window `cols` by `rows` from the query.
-val onEvents = fn(request:map):map {
+val onEvents = fn(request:map):map { apart(fn() {
     asPlayer(request, fn(id) {
         val cols = bounded(request.query.cols, 20, level.WIDTH, level.WIDTH)
         val rows = bounded(request.query.rows, 8, level.HEIGHT, level.HEIGHT)
@@ -702,9 +784,10 @@ val onEvents = fn(request:map):map {
         // to every stream the player has open.
         streams = streams + {[id]: (streams[id] ?? []) :+ channel}
         sendChanges(id, true)
+        refreshed = refreshed + {[id]: true}
         {status: 200, headers: {"Content-Type": "text/event-stream", "Cache-Control": "no-store"}, body: channel}
     })
-}
+}) }
 
 /**
  * The HTTP handler for the game: `GET /` serves the page; `/htmx.js`,
@@ -713,7 +796,7 @@ val onEvents = fn(request:map):map {
  */
 export val handler = fn():fn {
     http.router([
-        ["GET", "/", fn(request) { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }],
+        ["GET", "/", fn(request) { apart(fn() { asPlayer(request, fn(id) { html(mustache.render(PAGE, view(id), PARTIALS)) }) }) }],
         ["GET", "/htmx.js", fn(request) { file("htmx.js", asset("htmx.js")) }],
         ["GET", "/crawl.css", fn(request) { file("crawl.css", asset("crawl.css")) }],
         ["GET", "/crawl.js", fn(request) { file("crawl.js", asset("crawl.js")) }],
@@ -737,6 +820,7 @@ val reset = fn(players:num) {
     shownParts = {}
     sizes = {}
     cameras = {}
+    refreshed = {}
     ticks = 0
 }
 
@@ -804,19 +888,30 @@ export val serve = fn(listener:tcp.Listener, options:map = {}) {
     drawInForks(options.forks ?? 1)
     serving = true
     val every = options.tick ?? 150
+    // A tick starts every `every` milliseconds, or as soon as the last one
+    // ends when it takes longer. The pages are drawn while the world moves
+    // on: each tick's drawing starts once the last one has been sent, and a
+    // tick that ends before then leaves the drawing to a later one, which
+    // draws the world as it is by then.
     spawn {
-        val loop = fn() {
+        val loop = fn(drawing) {
             if (serving) {
-                select { after every /> fn(_) { nil } }
-                tickOnce()
+                val pace = spawn { select { after every /> fn(_) { nil } } }
+                val present = simulate()
+                val idle = drawing == nil || select {
+                    await drawing /> fn(_) { true }
+                    _ /> fn(_) { false }
+                }
+                val next = if (idle) { spawn { push(present) } } else { drawing }
                 match db {
                     d: sqlite.Database => if (ticks % saveEvery == 0) { store.write(d, game.changes()) }
                     _ => nil
                 }
-                recur()
+                await(pace)
+                recur(next)
             }
         }
-        loop()
+        loop(nil)
     }
     http.serve(listener, handler())
     serving = false

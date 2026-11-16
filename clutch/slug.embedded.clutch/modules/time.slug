@@ -1,7 +1,22 @@
 /**
- * Blocks the current host execution for a whole number of milliseconds.
+ * slug.time — the board's clock and waiting
  *
- * The host rejects negative, fractional, non-finite, and out-of-range values
- * as checked failures. This function does not schedule a Slug timer.
+ * The embedded `slug.time`. Like the desktop module, it measures time on a
+ * clock that never goes back and waits through the scheduler; boards have no
+ * wall clock, so there is no `nowMs`.
  */
-export foreign sleepMs = fn(milliseconds:num):nil
+
+/**
+ * Whole milliseconds since the board started, on the clock that
+ * `select { after }` timers wait on. It never goes back.
+ */
+export foreign monotonicMs = fn():num
+
+/**
+ * Waits `milliseconds`, a non-negative whole number, as `select { after }`
+ * does: only the calling task waits, and the board's other tasks run.
+ */
+export val sleepMs = fn(milliseconds:num):nil {
+    select { after milliseconds }
+    nil
+}

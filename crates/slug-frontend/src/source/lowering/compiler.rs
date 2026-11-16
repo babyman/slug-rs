@@ -48,8 +48,31 @@ pub(super) struct Compiler {
     assets: super::assets::Assets,
 }
 
+/// Rejects `import("slug.builtin")`: the builtins' contract is not a module,
+/// and its names are already in every module.
+fn reject_builtin_import(arguments: &[CallArgument]) -> Result<(), SourceError> {
+    for argument in arguments {
+        if let CallArgument::Positional(
+            argument @ Expr {
+                kind: ExprKind::Value(Value::Str(name)),
+                ..
+            },
+        ) = argument
+            && name.as_ref() == slug_loader::BUILTIN_CONTRACT
+        {
+            return Err(SourceError::semantic(
+                SourceErrorCode::InvalidImport,
+                slug_loader::BUILTIN_IMPORT_HINT,
+                argument.span.clone(),
+            )
+            .with_extent(argument));
+        }
+    }
+    Ok(())
+}
+
 /// The VM's own builtins, which it installs in every module's globals.
-const VM_BUILTINS: [&str; 4] = ["cfg", "int", "stacktrace", "describe"];
+const VM_BUILTINS: [&str; 5] = ["cfg", "int", "stacktrace", "describe", "Error"];
 
 pub(super) struct CompiledProgram {
     pub(super) program: Program,
@@ -124,6 +147,16 @@ impl Compiler {
                 .collect(),
         );
         self
+    }
+
+    /// Whether `name` is a builtin every module's globals have: one the VM
+    /// defines, or one the host's contract declares.
+    fn is_builtin(&self, name: &str) -> bool {
+        VM_BUILTINS.contains(&name)
+            || self
+                .implicit_globals
+                .as_ref()
+                .is_some_and(|names| names.contains(name))
     }
 
     /// Whether `name` is certainly not a global the runtime will have.
@@ -780,8 +813,15 @@ impl Compiler {
                         .with_extent(expression));
                     }
                     self.expression(state, value)?;
-                    if !matches!(binding, Binding::Global { .. }) || !state.fuse_global_update(name)
-                    {
+                    // A module-level binding or a captured `var` updated by
+                    // `+`, `-`, `:+`, or `copy` assigns in the operator, so
+                    // the collection can change in place.
+                    let fused = match binding {
+                        Binding::Global { .. } => state.fuse_global_update(name),
+                        Binding::Capture { slot, .. } => state.fuse_capture_update(slot),
+                        _ => false,
+                    };
+                    if !fused {
                         // Stores consume their operand, while assignment expressions evaluate to it.
                         state.emit(Op::Duplicate, &expression.span);
                         match binding {
@@ -1148,6 +1188,9 @@ impl Compiler {
                 }
                 ExprKind::Call { callee, arguments } => {
                     let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
+                    if import {
+                        reject_builtin_import(arguments)?;
+                    }
                     let positional = arguments
                         .iter()
                         .all(|argument| matches!(argument, CallArgument::Positional(_)));
@@ -1317,12 +1360,35 @@ impl Compiler {
                 }
                 ExprKind::Index { collection, index } => {
                     self.expression(state, collection)?;
-                    if let ExprKind::Value(key) = &index.kind {
-                        let constant = state.constant(key.clone());
-                        state.emit(Op::GetIndexConstant(constant), &expression.span);
+                    // A name's value is indexed where it is, without a
+                    // reference of its own (see `slug_vm`'s `vm::reads`). With
+                    // a computed key the name is read after the key, so only
+                    // a key that cannot assign it is fused.
+                    let source = if matches!(collection.kind, ExprKind::Name(_))
+                        && (matches!(index.kind, ExprKind::Value(_)) || inert_key(index))
+                    {
+                        state.take_trailing_read()
                     } else {
-                        self.expression(state, index)?;
-                        state.emit(Op::GetIndex, &expression.span);
+                        None
+                    };
+                    match (&index.kind, source) {
+                        (ExprKind::Value(key), Some(source)) => {
+                            let constant = state.constant(key.clone());
+                            state
+                                .emit(Op::ReadIndexConstant { source, constant }, &expression.span);
+                        }
+                        (ExprKind::Value(key), None) => {
+                            let constant = state.constant(key.clone());
+                            state.emit(Op::GetIndexConstant(constant), &expression.span);
+                        }
+                        (_, Some(source)) => {
+                            self.expression(state, index)?;
+                            state.emit(Op::ReadIndex { source }, &expression.span);
+                        }
+                        (_, None) => {
+                            self.expression(state, index)?;
+                            state.emit(Op::GetIndex, &expression.span);
+                        }
                     }
                 }
                 ExprKind::Slice {
@@ -1685,6 +1751,10 @@ impl Compiler {
                 self.globals
                     .get(name)
                     .map(|mutable| Binding::Global { mutable: *mutable })
+            })
+            .or_else(|| {
+                self.is_builtin(name)
+                    .then_some(Binding::Global { mutable: false })
             })
             .ok_or_else(|| {
                 SourceError::semantic(
@@ -2574,4 +2644,21 @@ fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
                 || pattern_contains_scoped_defer(pattern)
         }),
     })
+}
+
+/// Whether evaluating `key` can assign no name: names, literals, indexes,
+/// and operators of those, none of which calls anything. An index read
+/// fuses its collection's read after such a key.
+fn inert_key(key: &Expr) -> bool {
+    match &key.kind {
+        ExprKind::Name(_) | ExprKind::Value(_) => true,
+        ExprKind::Index { collection, index } => inert_key(collection) && inert_key(index),
+        ExprKind::Prefix { value, .. } => inert_key(value),
+        ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => !matches!(operator, Binary::Pipeline) && inert_key(left) && inert_key(right),
+        _ => false,
+    }
 }

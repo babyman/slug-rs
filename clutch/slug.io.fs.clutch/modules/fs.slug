@@ -1,82 +1,185 @@
 /**
- * slug.io.fs — explicit-lifecycle file streams
+ * slug.io.fs — files and directories
  *
- * Open functions return opaque file resources. Register `close` with `defer`
- * immediately after opening a file; resource destruction is fallback cleanup,
- * not a replacement for explicit close.
+ * Open functions return opaque file resources, read and written as text
+ * lines or as bytes. Register `close` with `defer` immediately after opening
+ * a file; resource destruction is fallback cleanup, not a replacement for
+ * explicit close. Path functions inspect and change directories.
  *
- * Failures throw `Error` values whose `type` is `native.io` or `native.alloc`.
+ * Every operation runs on a native I/O thread, so waiting for the disk parks
+ * only the calling task while the program's other tasks run.
+ *
+ * ```slug
+ * val fs = import("slug.io.fs")
+ *
+ * // Writes a file so that a crash leaves either the old one or the new one.
+ * val replace = fn(path:str, data:bytes) {
+ *     val partial = path + ".partial"
+ *     val file = fs.openWrite(partial)
+ *     defer fs.close(file)
+ *     fs.write(file, data)
+ *     fs.sync(file)
+ *     fs.rename(partial, path)
+ * }
+ * ```
+ *
+ * Failures throw `Error` values of type `native.io`, whose `msg` names the
+ * operation, the path, and the reason, and whose `data` is `{code, errno}`:
+ * `code` is one of `not_found`, `exists`, `permission`, `not_directory`,
+ * `is_directory`, `not_empty`, `cross_device`, `no_space`, `read_only`,
+ * `too_many_open`, `name_too_long`, `link_loop`, `wrong_mode` (reading a file
+ * opened for writing, or writing one opened for reading), `invalid`, `busy`,
+ * or `io`, and `errno` is the system's own number for it. Running out of
+ * memory throws `native.alloc`.
  */
 
 export resource File
 
-// Typed native bindings, declared in this clutch's manifest.
-foreign openReadRaw = fn(path:str):File|nil
-foreign openWriteRaw = fn(path:str):File|nil
-foreign openAppendRaw = fn(path:str):File|nil
-foreign readLineRaw = fn(file:File):list
-foreign writeRaw = fn(file:File, content:str):num
+// Typed native bindings, declared in this clutch's manifest. Each queues work
+// for the I/O thread, which sends one reply list through `reply`.
+foreign openRaw = fn(path:str, mode:num, reply:chan<list>):list
+foreign readRaw = fn(file:File, maxBytes:num, reply:chan<list>):num
+foreign readLineRaw = fn(file:File, reply:chan<list>):num
+foreign writeRaw = fn(file:File, data:bytes, reply:chan<list>):num
+foreign writeTextRaw = fn(file:File, text:str, reply:chan<list>):num
+foreign syncRaw = fn(file:File, reply:chan<list>):num
 foreign closeRaw = fn(file:File):nil
+foreign statRaw = fn(path:str, reply:chan<list>):num
+foreign listRaw = fn(path:str, reply:chan<list>):num
+foreign makeDirectoryRaw = fn(path:str, parents:num, reply:chan<list>):num
+foreign renameRaw = fn(from:str, to:str, reply:chan<list>):num
+foreign removeRaw = fn(path:str, reply:chan<list>):num
+foreign removeAllRaw = fn(path:str, reply:chan<list>):num
+foreign temporaryDirectoryRaw = fn(prefix:str, reply:chan<list>):num
 
-val opened = fn(file:File|nil):File {
-    if (file == nil) {
-        throw Error {type: "native.io", msg: "cannot open file"}
-    } else {
-        file
+val READ = 0
+val WRITE = 1
+val APPEND = 2
+
+// A channel for one reply.
+val replies = fn():chan<list> { chan(1) }
+
+// The reply to work queued with `reply`, once the I/O thread sends it.
+val wait = fn(queued:num, reply:chan<list>):list {
+    if (queued != 0) {
+        throw Error {type: "native.alloc", msg: "cannot queue file work: out of memory"}
+    }
+    match select { recv reply } {
+        result:list => result
+        _ => throw Error {type: "native.io", msg: "the file I/O thread did not reply"}
+    }
+}
+
+// Throws the failure in `reply` for `action`, such as "open notes.txt".
+val fail = fn(action:str, reply:list) {
+    match reply {
+        [2, errno, code, message] => throw Error {
+            type: "native.io",
+            msg: "cannot " + action + ": " + "$message",
+            data: {code: code, errno: errno},
+        }
+        [5] => throw Error {type: "native.io", msg: "file line exceeds 16 MiB limit"}
+        [6] => throw Error {type: "native.io", msg: "file line contains a NUL byte"}
+        [7] => throw Error {type: "native.io", msg: "file line is not UTF-8"}
+        _ => throw Error {type: "native.alloc", msg: "cannot " + action + ": out of memory"}
+    }
+}
+
+// Returns `reply` when it succeeded, and throws its failure otherwise.
+val check = fn(action:str, reply:list):list {
+    if (reply[0] != 0) { fail(action, reply) }
+    reply
+}
+
+val opened = fn(path:str, mode:num):File {
+    val reply = replies()
+    val [queued, file] = openRaw(path, mode, reply)
+    match file {
+        handle:File => {
+            defer onerror(err) {
+                closeRaw(handle)
+                throw err
+            }
+            check("open " + path, wait(queued, reply))
+            handle
+        }
+        _ => throw Error {type: "native.alloc", msg: "cannot open " + path + ": out of memory"}
     }
 }
 
 /**
- * Opens a text file for line-by-line reading.
+ * Opens a file for reading, as lines or bytes.
  */
 export val openRead = fn(path:str):File {
-    opened(openReadRaw(path))
+    opened(path, READ)
 }
 
 /**
- * Creates or truncates a text file for writing.
+ * Creates or truncates a file for writing.
  */
 export val openWrite = fn(path:str):File {
-    opened(openWriteRaw(path))
+    opened(path, WRITE)
 }
 
 /**
- * Opens or creates a text file and writes at its end.
+ * Opens or creates a file and writes at its end.
  */
 export val openAppend = fn(path:str):File {
-    opened(openAppendRaw(path))
+    opened(path, APPEND)
 }
 
 /**
  * Reads the next line without its trailing newline, or nil at end of file.
- * Lines longer than 16 MiB fail with a `native.io` error.
+ * Lines longer than 16 MiB, holding a NUL byte, or not UTF-8 throw a
+ * `native.io` error.
  */
 export val readLine = fn(file:File):str|nil {
-    match readLineRaw(file) {
+    val reply = replies()
+    match wait(readLineRaw(file, reply), reply) {
         [0, line] => line
-        [1, _] => nil
-        [3, _] => throw Error {type: "native.alloc", msg: "cannot allocate line buffer"}
-        [4, _] => throw Error {type: "native.alloc", msg: "cannot grow line buffer"}
-        [5, _] => throw Error {type: "native.io", msg: "file line exceeds 16 MiB limit"}
-        [6, _] => throw Error {type: "native.io", msg: "file line contains a NUL byte"}
-        _ => throw Error {type: "native.io", msg: "cannot read file"}
+        [1] => nil
+        failure => fail("read file", failure)
     }
 }
 
 /**
- * Writes text to an open writable file and returns its byte length.
+ * Reads the next bytes, at most `maxBytes`, from 1 to 16 MiB, or returns nil
+ * at end of file. It may return fewer bytes than are left. Reading and
+ * `readLine` share the file's position.
  */
-export val write = fn(file:File, content:str):num {
-    val written = writeRaw(file, content)
-    if (written == -1) {
-        throw Error {type: "native.io", msg: "cannot write file"}
-    } else {
-        if (written == -2) {
-            throw Error {type: "native.io", msg: "cannot flush file"}
-        } else {
-            written
-        }
+export val read = fn(file:File, maxBytes:num = 65536):bytes|nil {
+    val reply = replies()
+    match wait(readRaw(file, maxBytes, reply), reply) {
+        [0, data] => data
+        [1] => nil
+        failure => fail("read file", failure)
     }
+}
+
+/**
+ * Writes all of `content`, text as UTF-8 or bytes, and returns its length in
+ * bytes.
+ */
+export val write = fn(file:File, content:str|bytes):num {
+    val reply = replies()
+    val queued = match content {
+        text:str => writeTextRaw(file, text, reply)
+        data:bytes => writeRaw(file, data, reply)
+    }
+    match wait(queued, reply) {
+        [0, length] => length
+        failure => fail("write file", failure)
+    }
+}
+
+/**
+ * Waits until what has been written to `file` is on its device, for data
+ * that must survive a crash or a power cut.
+ */
+export val sync = fn(file:File):nil {
+    val reply = replies()
+    check("sync file", wait(syncRaw(file, reply), reply))
+    nil
 }
 
 /**
@@ -85,4 +188,83 @@ export val write = fn(file:File, content:str):num {
  */
 export val close = fn(file:File):nil {
     closeRaw(file)
+}
+
+/**
+ * What is at `path`, without following a final symbolic link, or nil when
+ * nothing is there: `kind` is "file", "directory", "link", or "other", `size`
+ * is in bytes, and `modifiedMs` is milliseconds since the Unix epoch, as
+ * `slug.time.nowMs` gives.
+ */
+export val stat = fn(path:str):map|nil {
+    val reply = replies()
+    match wait(statRaw(path, reply), reply) {
+        [0, kind, size, modified] => {kind: kind, size: size, modifiedMs: modified}
+        [1] => nil
+        failure => fail("stat " + path, failure)
+    }
+}
+
+/**
+ * The names of the entries in `directory`, sorted, without "." and "..".
+ */
+export val list = fn(directory:str):list<str> {
+    val reply = replies()
+    val names:list<str> = check("list " + directory, wait(listRaw(directory, reply), reply))[1:]
+    names
+}
+
+/**
+ * Makes the directory `path`. With `parents`, it also makes any missing
+ * parents, and a directory already there is not an error.
+ */
+export val makeDirectory = fn(path:str, parents:bool = false):nil {
+    val reply = replies()
+    val flag = if (parents) { 1 } else { 0 }
+    check("make directory " + path, wait(makeDirectoryRaw(path, flag, reply), reply))
+    nil
+}
+
+/**
+ * Renames `from` to `to`. A file already at `to` is replaced atomically:
+ * another program sees the old file or the new one, never neither. Both must
+ * be on the same filesystem.
+ */
+export val rename = fn(from:str, to:str):nil {
+    val reply = replies()
+    check("rename " + from + " to " + to, wait(renameRaw(from, to, reply), reply))
+    nil
+}
+
+/**
+ * Removes a file, a symbolic link, or an empty directory.
+ */
+export val remove = fn(path:str):nil {
+    val reply = replies()
+    check("remove " + path, wait(removeRaw(path, reply), reply))
+    nil
+}
+
+/**
+ * Removes `path` and, for a directory, everything under it. Symbolic links
+ * are removed, never followed. Nothing at `path` is not an error.
+ */
+export val removeAll = fn(path:str):nil {
+    val reply = replies()
+    check("remove " + path, wait(removeAllRaw(path, reply), reply))
+    nil
+}
+
+/**
+ * Makes a new directory that only its owner can read, under the system's
+ * temporary location (`$TMPDIR`, or `/tmp`), and returns its path: `prefix`
+ * followed by six random characters. The caller removes it, normally with
+ * `defer fs.removeAll(path)`.
+ */
+export val temporaryDirectory = fn(prefix:str = "slug-"):str {
+    val reply = replies()
+    match wait(temporaryDirectoryRaw(prefix, reply), reply) {
+        [0, path] => path
+        failure => fail("make a temporary directory " + prefix, failure)
+    }
 }

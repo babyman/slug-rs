@@ -107,8 +107,8 @@ modules and builtins available with the behavior exercised by their source:
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
   program imports it and the host installs the experimental filesystem clutch;
-- `slug.builtin` for host-provided foundational bindings when the fixture or
-  host environment registers them;
+- the builtins, which the runtime defines and the host's `slug.builtin`
+  contract declares;
 - `slug.time` for timer-oriented fixtures;
 - `slug.io.stderr` for standard-error output.
 
@@ -169,8 +169,9 @@ boundary. A conforming host MUST provide:
 - a registry for declared foreign functions, when a program declares them.
 
 The evaluator MUST keep these host capabilities separate from Slug bindings.
-Host services cannot become names visible to a Slug program except through a
-`slug.builtin` export, imported library module, or declared foreign function.
+Host services cannot become names visible to a Slug program except as a
+builtin its `slug.builtin` contract declares, an imported library module, or
+a declared foreign function.
 
 The host MAY obtain an entry program from source, a whole-program compiled
 artifact, statically embedded data, or an in-memory embedding API. Imported
@@ -205,7 +206,11 @@ The reference configuration sources, from lowest to highest precedence, are:
 
 1. `$SLUG_HOME/lib/slug.toml`, when `SLUG_HOME` is set;
 2. `slug.toml` in the selected module root, which replaces colliding library
-   keys;
+   keys. Unless the host selects a module root, the command-line runner reads
+   `slug.toml` from the project root, the nearest directory from the entry
+   program's own upward that holds one, and uses that project's `src/` as the
+   module root; outside a project, the program's directory is the module root
+   ([project root](configuration.md#project-root));
 3. environment variables beginning with `SLUG__`;
 4. command-line options after the entry program name.
 
@@ -429,8 +434,8 @@ across a `recur` iteration.
 An implementation MAY omit Slug-managed concurrency while retaining the same
 source grammar, type checking, bytecode shape, channels, and native ingress.
 In that configuration, an executed `spawn`, `nursery`, timer `select` case, or
-task-await `select` case MUST return a checked runtime error naming the
-unavailable capability. Unreached operations remain valid. Channel readiness
+task-await `select` case MUST return a checked `capability_unavailable`
+runtime error naming the unavailable capability. Unreached operations remain valid. Channel readiness
 operations remain available to the host-driven runtime.
 
 ### Host shutdown
@@ -479,15 +484,16 @@ instead of interpreting `limit N` as a promise of `N` operating-system threads.
 
 ### Spawn capture
 
-When `spawn` executes, it snapshots only the immediate lexical binding cells:
+A spawned task shares the binding cells it captures, as an ordinary closure
+does:
 
-- a parent reassignment after `spawn` is not visible through the captured local
-  binding;
-- captured values are shallow-shared, so channels and mutable objects retain
-  their identity;
-- outer lexical bindings remain live;
+- an assignment by the spawner after `spawn` is visible to the task, and an
+  assignment by the task is visible to the spawner, at the other's next turn;
+- this holds whether the `spawn` is in the function that declares the binding,
+  in a nested block such as an `if` or a `nursery` body, or in a nested
+  function;
 - root and loaded-module globals remain live and shared;
-- ordinary, non-spawn closures continue to share captured mutable cells.
+- a `task var` is per task, and a `fork` snapshots everything it captures.
 
 A dedicated fixture in `../../tests/conformance` must cover this contract;
 until it does, focused VM and CLI tests remain the implementation evidence.
