@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `slug.crypto.hash` gives SHA-256 digests: `sha256Of(data)` at once, or
+  `sha256()`, `update`, and `finish` for data fed in pieces, such as an
+  upload hashed as it is written; `hex` writes a digest as hexadecimal. A
+  small portable C implementation, with no system dependencies.
+
 - `select { after 0 }` yields: a timer case is never ready at once, so the
   task parks and resumes after the other ready tasks, and the values native
   threads have sent, have had their turn. A loop around it used to keep the

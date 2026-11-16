@@ -13,8 +13,8 @@ module-scoped Rust plugin initializer, and manifest-selected typed native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
 distribution remain unimplemented. The `slug.io.fs`, `slug.db.sqlite`,
-`slug.random.secure`, and `slug.core` clutches bind plain C functions through
-typed native bindings. The
+`slug.random.secure`, `slug.crypto.hash`, and `slug.core` clutches bind plain C
+functions through typed native bindings. The
 SQLite clutch's Slug code over raw SQLite calls provides variadic SQL bindings,
 row maps, prepared statements, and transactions. The bundled `slug.core` clutch
 provides standard collections, standard input, and stateless math. Its

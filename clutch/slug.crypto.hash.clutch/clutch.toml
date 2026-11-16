@@ -1,0 +1,30 @@
+# Content hashes: an incremental SHA-256, for naming data by what it holds,
+# such as an upload hashed as it is written. A small portable C
+# implementation with no system dependencies.
+[modules]
+"slug.crypto.hash" = { source = "modules/hash.slug" }
+
+[tests]
+files = ["tests/hash.slug"]
+
+[native]
+profile = "core"
+headers = ["native/source/slug_crypto_hash.h"]
+sources = ["native/source/hash.c"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_crypto_hash.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_crypto_hash.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_crypto_hash.so"
+"windows-x86_64" = "native/windows-x86_64/slug_crypto_hash.dll"
+
+[native.resources."slug.crypto.hash".Sha256]
+type = "slug_hash_sha256"
+release = { symbol = "slug_hash_sha256_release", signature = "(handle<Sha256> hash) -> void" }
+
+[native.functions."slug.crypto.hash"]
+newRaw = { symbol = "slug_hash_sha256_new", signature = "() -> handle<Sha256>" }
+updateRaw = { symbol = "slug_hash_sha256_update", signature = "(handle<Sha256> hash, bytes data) -> i32" }
+updateTextRaw = { symbol = "slug_hash_sha256_update_text", signature = "(handle<Sha256> hash, str text) -> i32" }
+finishRaw = { symbol = "slug_hash_sha256_finish", signature = "(handle<Sha256> hash, out bytes digest) -> i32" }
+ofRaw = { symbol = "slug_hash_sha256_of", signature = "(bytes data, out bytes digest) -> void", thread_safe = true }

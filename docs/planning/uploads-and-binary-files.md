@@ -135,6 +135,10 @@ Consequences:
 
 ### 3. Content hashes: `slug.crypto.hash`
 
+Done 2026-11-15, as planned, with the hash a resource, `Sha256`. Finishing it
+twice, or adding to it after, throws `hash.finished`. All four platforms:
+the C has no system calls.
+
 An incremental SHA-256, in a new native clutch with a small, public-domain C
 implementation, no system dependencies:
 

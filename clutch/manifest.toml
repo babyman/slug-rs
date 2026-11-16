@@ -17,6 +17,7 @@
 "slug.test" = "slug.core.clutch"
 "slug.random" = "slug.core.clutch"
 "slug.random.secure" = "slug.random.secure.clutch"
+"slug.crypto.hash" = "slug.crypto.hash.clutch"
 "slug.gpio" = "slug.embedded.clutch"
 "slug.time" = "slug.core.clutch"
 "slug.arcade" = "slug.arcade.clutch"
