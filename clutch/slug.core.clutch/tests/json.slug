@@ -94,3 +94,28 @@ val readsDeepNesting = fn() {
     val text = "[" * 5000 + "]" * 5000
     assertEqual(json.stringify(json.parse(text)), text)
 }
+
+// parseStrict rejects a repeated key wherever it appears, comparing keys
+// after decoding escapes; the offset is the repeated key's opening quote.
+@testWith(
+    ["{\"body\":\"first\",\"body\":\"second\"}"], [16, "body"],
+    ["{\"body\":\"first\",\"\\u0062ody\":\"second\"}"], [16, "body"],
+    ["{\"outer\":{\"x\":null,\"x\":1}}"], [19, "x"],
+    ["{\"a\":1,\"a\":1}"], [7, "a"],
+    ["{\"a\":1,\"b\":2,\"a\":3}"], [13, "a"],
+    ["[{}, {\"k\":[{\"z\":0,\"z\":0}]}]"], [18, "z"],
+    ["{\"\\ud83d\\ude00\":1,\"😀\":2}"], [18, "😀"]
+)
+val parseStrictRejectsRepeatedKeys = fn(text:str):list {
+    val e = assertThrows(fn() { json.parseStrict(text) }, "json.parse")
+    [e.data.offset, e.data.key]
+}
+
+@test
+val parseStrictKeepsParseBehavior = fn() {
+    val text = "{\"a\":{\"x\":1},\"b\":{\"x\":2},\"c\":[{\"x\":3},{\"x\":4}],\"d\":null}"
+    assertEqual(json.parseStrict(text), json.parse(text))
+    assertEqual(json.parse("{\"x\":null,\"x\":1}"), {x: 1})
+    assertEqual(json.parse("{\"body\":1,\"\\u0062ody\":2}"), {body: 2})
+    assertEqual(assertThrows(fn() { json.parseStrict("{\"a\":1,}") }, "json.parse").data.offset, 7)
+}

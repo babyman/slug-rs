@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `slug.fmt.json.parseStrict(text)` reads JSON as `parse` does but rejects
+  an object, at any depth, that repeats a key, comparing keys after decoding
+  escapes, so `"body"` and `"\u0062ody"` collide. It throws `json.parse`
+  with `data` `{offset, key}`: the repeated key's opening quote and its
+  decoded text. `parse` keeps last-value-wins and is no slower.
+
 - `slug.bytes` writes and reads hexadecimal: `toHex(data)` gives lowercase
   digits, two a byte, and `fromHex(text)` reads them back in either case,
   throwing `bytes.hex` for a character that is not a digit or an odd number

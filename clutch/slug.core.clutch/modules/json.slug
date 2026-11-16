@@ -15,6 +15,9 @@
  * can no longer be valid JSON, or its length when it ends too early. A value
  * with no JSON form throws one whose `type` is `json.type`.
  *
+ * `parseStrict` reads the same documents but rejects an object that repeats a
+ * key, for protocols where a repeated key must not be silently resolved.
+ *
  * Contributed by an agent evaluation run (json-fixes-2) and reviewed for the
  * library.
  */
@@ -34,6 +37,14 @@ val ESCAPED = 0x"225c000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1
 
 val fail = fn(offset) {
     throw Error {type: "json.parse", msg: "invalid JSON at offset $offset", data: {offset: offset}}
+}
+
+val duplicateFail = fn(offset, key) {
+    throw Error {
+        type: "json.parse",
+        msg: "duplicate key \"$key\" at offset $offset",
+        data: {offset: offset, key: key},
+    }
 }
 
 val typeFail = fn(what) {
@@ -531,14 +542,15 @@ val parseString = fn(t, n, i, start = i, out = "") {
     }
 }
 
-// Parses the value starting at i, which is not whitespace.
-val parseValue = fn(t, n, i) {
+// Parses the value starting at i, which is not whitespace. When strict, an
+// object that repeats a key, after decoding escapes, is an error.
+val parseValue = fn(t, n, i, strict) {
     if (i >= n) { fail(n) }
     val c = t[i]
     if (c == "{") {
-        parseObject(t, n, skipWs(t, n, i + 1))
+        parseObject(t, n, skipWs(t, n, i + 1), strict)
     } else if (c == "[") {
-        parseArray(t, n, skipWs(t, n, i + 1))
+        parseArray(t, n, skipWs(t, n, i + 1), strict)
     } else if (c == "\"") {
         parseString(t, n, i + 1)
     } else if (c == "t") {
@@ -554,13 +566,13 @@ val parseValue = fn(t, n, i) {
     }
 }
 
-val arrayItems = fn(t, n, i, acc) {
-    val [v, p] = parseValue(t, n, i)
+val arrayItems = fn(t, n, i, acc, strict) {
+    val [v, p] = parseValue(t, n, i, strict)
     val q = skipWs(t, n, p)
     if (q >= n) { fail(n) }
     val c = t[q]
     if (c == ",") {
-        recur(t, n, skipWs(t, n, q + 1), acc :+ v)
+        recur(t, n, skipWs(t, n, q + 1), acc :+ v, strict)
     } else if (c == "]") {
         [acc :+ v, q + 1]
     } else {
@@ -569,24 +581,27 @@ val arrayItems = fn(t, n, i, acc) {
 }
 
 // Parses array contents starting at i, the first non-whitespace after "[".
-val parseArray = fn(t, n, i) {
-    if (i < n && t[i] == "]") { [[], i + 1] } else { arrayItems(t, n, i, []) }
+val parseArray = fn(t, n, i, strict) {
+    if (i < n && t[i] == "]") { [[], i + 1] } else { arrayItems(t, n, i, [], strict) }
 }
 
-val objectMembers = fn(t, n, i, acc) {
+val objectMembers = fn(t, n, i, acc, strict) {
     if (i >= n) { fail(n) }
     if (t[i] != "\"") { fail(i) }
     val [k, p] = parseString(t, n, i + 1)
     val q = skipWs(t, n, p)
     if (q >= n) { fail(n) }
     if (t[q] != ":") { fail(q) }
-    val [v, r] = parseValue(t, n, skipWs(t, n, q + 1))
+    val [v, r] = parseValue(t, n, skipWs(t, n, q + 1), strict)
     val s = skipWs(t, n, r)
     if (s >= n) { fail(n) }
     val c = t[s]
     val members = acc + {[k]: v}
+    // A key already present leaves the size unchanged, even when its first
+    // value was null.
+    if (strict && len(members) == len(acc)) { duplicateFail(i, k) }
     if (c == ",") {
-        recur(t, n, skipWs(t, n, s + 1), members)
+        recur(t, n, skipWs(t, n, s + 1), members, strict)
     } else if (c == "}") {
         [members, s + 1]
     } else {
@@ -595,8 +610,16 @@ val objectMembers = fn(t, n, i, acc) {
 }
 
 // Parses object contents starting at i, the first non-whitespace after "{".
-val parseObject = fn(t, n, i) {
-    if (i < n && t[i] == "}") { [{}, i + 1] } else { objectMembers(t, n, i, {}) }
+val parseObject = fn(t, n, i, strict) {
+    if (i < n && t[i] == "}") { [{}, i + 1] } else { objectMembers(t, n, i, {}, strict) }
+}
+
+val parseDocument = fn(text, strict) {
+    val n = len(text)
+    val [value, end] = parseValue(text, n, skipWs(text, n, 0), strict)
+    val rest = skipWs(text, n, end)
+    if (rest < n) { fail(rest) }
+    value
 }
 
 /**
@@ -612,13 +635,24 @@ val parseObject = fn(t, n, i) {
     ["2.5E-3"], 0.0025,
     ["\"\\u00e9\\ud83d\\ude00\""], "é😀"
 )
-export val parse = fn(text:str) {
-    val n = len(text)
-    val [value, end] = parseValue(text, n, skipWs(text, n, 0))
-    val rest = skipWs(text, n, end)
-    if (rest < n) { fail(rest) }
-    value
-}
+export val parse = fn(text:str) { parseDocument(text, false) }
+
+/**
+ * Returns the Slug value for the JSON document `text`, rejecting any object,
+ * at any depth, that repeats a key. Keys are compared after decoding escapes,
+ * so `"body"` and `"\u0062ody"` are the same key, and a repeat is rejected
+ * whatever the values, even when they are equal or the first is `null`.
+ *
+ * Throws what `parse` throws for invalid JSON. A repeated key throws an
+ * `Error` with `type` "json.parse" and `data` `{offset: n, key: k}`, where
+ * `n` is the index of the repeated key's opening quote and `k` is the decoded
+ * key.
+ */
+@testWith(
+    ["{\"a\": {\"b\": null}, \"c\": [{\"b\": 1}]}"], {a: {b: nil}, c: [{b: 1}]},
+    ["[1, \"x\"]"], [1, "x"]
+)
+export val parseStrict = fn(text:str) { parseDocument(text, true) }
 
 // ---------------------------------------------------------------------------
 // Serialization
