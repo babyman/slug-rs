@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `slug.bytes` writes and reads hexadecimal: `toHex(data)` gives lowercase
+  digits, two a byte, and `fromHex(text)` reads them back in either case,
+  throwing `bytes.hex` for a character that is not a digit or an odd number
+  of digits. Both are native. `slug.crypto.hash`'s `hex` and
+  `slug.random.secure`'s `token` now use `toHex`.
+
 - `slug.crypto.schnorr` verifies BIP-340 Schnorr signatures over secp256k1:
   `verify(publicKey, message, signature)` is `true` or `false`, and a key
   that is not 32 bytes or a signature that is not 64 throws

@@ -18,10 +18,10 @@
 
 foreign bytesRaw = fn(count:num):list
 
+val {toHex} = import("slug.bytes")
+
 // The most bytes one call gives.
 val MAX = 256
-
-val HEX = "0123456789abcdef"
 
 /**
  * `count` random bytes, from 1 to 256. Throws an `Error` of type
@@ -43,11 +43,7 @@ export val bytes = fn(count:num):bytes {
  * as many lowercase hex digits, safe in URLs and cookies.
  */
 export val token = fn(size:num = 16):str {
-    val data = bytes(size)
-    val go = fn(i:num, out:str):str {
-        if (i == len(data)) { out } else { recur(i + 1, out + HEX[data[i] >> 4] + HEX[data[i] & 15]) }
-    }
-    go(0, "")
+    toHex(bytes(size))
 }
 
 /**

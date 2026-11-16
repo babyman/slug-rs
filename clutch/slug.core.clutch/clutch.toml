@@ -38,6 +38,8 @@ sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64", thread_
 [native.functions."slug.bytes"]
 findRaw = { symbol = "slug_core_find", signature = "(bytes data, bytes needle, i64 from) -> i64", thread_safe = true }
 findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }
+toHexRaw = { symbol = "slug_core_to_hex", signature = "(bytes data, out str text) -> bool", thread_safe = true }
+fromHexRaw = { symbol = "slug_core_from_hex", signature = "(str text, out bytes data) -> i64", thread_safe = true }
 
 [native.functions."slug.fmt.json"]
 findAnyRaw = { symbol = "slug_core_find_any", signature = "(bytes data, bytes set, i64 from) -> i64", thread_safe = true }

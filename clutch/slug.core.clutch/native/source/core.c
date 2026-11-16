@@ -420,6 +420,64 @@ int32_t slug_core_notify_signals(int64_t kinds, slug_producer *events) {
   return watch_signals(kinds) ? SLUG_CORE_SIGNALS_WATCHING : SLUG_CORE_SIGNALS_FAILED;
 }
 
+/* The per-thread buffer the hex functions return through: grown as needed,
+ * kept for the thread's next call, and never shrunk. Holds at least one byte,
+ * so an empty result still points somewhere. */
+static _Thread_local uint8_t *hex_buffer = NULL;
+static _Thread_local size_t hex_capacity = 0;
+
+static uint8_t *hex_room(size_t size) {
+  if (size == 0) size = 1;
+  if (size > hex_capacity) {
+    uint8_t *grown = realloc(hex_buffer, size);
+    if (grown == NULL) return NULL;
+    hex_buffer = grown;
+    hex_capacity = size;
+  }
+  return hex_buffer;
+}
+
+bool slug_core_to_hex(const uint8_t *data, size_t data_length, const char **text,
+                      size_t *length) {
+  static const char digits[] = "0123456789abcdef";
+  if (data_length > SIZE_MAX / 2) return false;
+  uint8_t *out = hex_room(data_length * 2);
+  if (out == NULL) return false;
+  for (size_t i = 0; i < data_length; i++) {
+    out[i * 2] = (uint8_t)digits[data[i] >> 4];
+    out[i * 2 + 1] = (uint8_t)digits[data[i] & 15];
+  }
+  *text = (const char *)out;
+  *length = data_length * 2;
+  return true;
+}
+
+/* The value of the hexadecimal digit `c`, or -1. */
+static int hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+int64_t slug_core_from_hex(const char *text, size_t text_length, const uint8_t **data,
+                           size_t *length) {
+  /* Every character is checked before the odd length is, so the error names
+   * the first bad digit wherever it is. */
+  for (size_t i = 0; i < text_length; i++) {
+    if (hex_digit(text[i]) < 0) return (int64_t)i;
+  }
+  if (text_length % 2 != 0) return SLUG_CORE_HEX_ODD;
+  uint8_t *out = hex_room(text_length / 2);
+  if (out == NULL) return SLUG_CORE_HEX_NO_MEMORY;
+  for (size_t i = 0; i < text_length / 2; i++) {
+    out[i] = (uint8_t)(hex_digit(text[i * 2]) << 4 | hex_digit(text[i * 2 + 1]));
+  }
+  *data = out;
+  *length = text_length / 2;
+  return SLUG_CORE_HEX_OK;
+}
+
 int64_t slug_core_now_ms(void) {
 #if defined(_WIN32)
   /* 100-nanosecond intervals since 1601-01-01. */

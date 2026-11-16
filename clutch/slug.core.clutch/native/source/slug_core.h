@@ -70,6 +70,27 @@ int64_t slug_core_find(const uint8_t *data, size_t data_length, const uint8_t *n
 int64_t slug_core_find_any(const uint8_t *data, size_t data_length, const uint8_t *set,
                            size_t set_length, int64_t from);
 
+/* slug_core_from_hex results other than an offset. */
+#define SLUG_CORE_HEX_OK (-1)
+#define SLUG_CORE_HEX_NO_MEMORY (-2)
+#define SLUG_CORE_HEX_ODD (-3)
+
+/* Writes `data` as lowercase hexadecimal, two digits a byte, into a
+ * per-thread buffer, points `text` and `length` at it, and returns true. The
+ * buffer stays valid until the thread's next hex call. Returns false,
+ * writing nothing, when memory runs out. */
+bool slug_core_to_hex(const uint8_t *data, size_t data_length, const char **text,
+                      size_t *length);
+
+/* Decodes `text`, pairs of hexadecimal digits in either case, into a
+ * per-thread buffer as slug_core_to_hex does, points `data` and `length` at
+ * it, and returns SLUG_CORE_HEX_OK. Otherwise writes nothing and returns the
+ * byte offset of the first character that is not a hexadecimal digit,
+ * SLUG_CORE_HEX_ODD when the digits are all valid but odd in number, or
+ * SLUG_CORE_HEX_NO_MEMORY. */
+int64_t slug_core_from_hex(const char *text, size_t text_length, const uint8_t **data,
+                           size_t *length);
+
 /* Milliseconds since the Unix epoch on the system's wall clock, which can
  * jump when the clock is set. */
 int64_t slug_core_now_ms(void);

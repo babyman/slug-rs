@@ -15,7 +15,8 @@
  * A public key is the 32-byte x coordinate of the signer's point, an
  * x-only key; a signature is 64 bytes. A message may be any length, though
  * signers usually sign a 32-byte digest, such as one from
- * `slug.crypto.hash`.
+ * `slug.crypto.hash`. Keys and signatures written as hexadecimal, as
+ * browsers and Nostr send them, are read with `slug.bytes`'s `fromHex`.
  */
 
 // Typed native binding, declared in this clutch's manifest.
