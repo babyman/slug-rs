@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug.crypto.schnorr` verifies BIP-340 Schnorr signatures over secp256k1:
+  `verify(publicKey, message, signature)` is `true` or `false`, and a key
+  that is not 32 bytes or a signature that is not 64 throws
+  `schnorr.length`. It is bitcoin-core's libsecp256k1 0.8.0, vendored and
+  compiled into the clutch, with no system dependencies; it passes BIP-340's
+  test vectors and verifies signatures from `@noble/curves`. The clutch
+  `slug.crypto.hash.clutch` is now `slug.crypto.clutch`, holding both.
+
 - A spawned task shares every variable it captures, as any closure does: a
   `var` the spawner or the task assigns is seen by the other, however the
   `spawn` is nested. It used to snapshot the variables of the function holding

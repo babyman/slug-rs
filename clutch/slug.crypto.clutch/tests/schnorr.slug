@@ -1,0 +1,173 @@
+val {verify} = import("slug.crypto.schnorr")
+val {sha256Of} = import("slug.crypto.hash")
+val {toBytes} = import("slug.string")
+val {each, range} = import("slug.std")
+val {assertEqual, assertTrue, assertFalse, assertThrows} = import("slug.test")
+
+// BIP-340's verification test vectors, from bip-0340/test-vectors.csv:
+// https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
+val Vector = struct {
+    index: num,
+    publicKey: bytes,
+    message: bytes,
+    signature: bytes,
+    valid: bool,
+    comment: str,
+}
+
+val VECTORS = [
+    Vector {index: 0, publicKey: 0x"f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9", message: 0x"0000000000000000000000000000000000000000000000000000000000000000",
+     signature: 0x"e907831f80848d1069a5371b402410364bdf1c5f8307b0084c55f1ce2dca821525f66a4a85ea8b71e482a74f382d2ce5ebeee8fdb2172f477df4900d310536c0",
+     valid: true, comment: ""},
+    Vector {index: 1, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"6896bd60eeae296db48a229ff71dfe071bde413e6d43f917dc8dcf8c78de33418906d11ac976abccb20b091292bff4ea897efcb639ea871cfa95f6de339e4b0a",
+     valid: true, comment: ""},
+    Vector {index: 2, publicKey: 0x"dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8", message: 0x"7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c",
+     signature: 0x"5831aaeed7b44bb74e5eab94ba9d4294c49bcf2a60728d8b4c200f50dd313c1bab745879a5ad954a72c45a91c3a51d3c7adea98d82f8481e0e1e03674a6f3fb7",
+     valid: true, comment: ""},
+    Vector {index: 3, publicKey: 0x"25d1dff95105f5253c4022f628a996ad3a0d95fbf21d468a1b33f8c160d8f517", message: 0x"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     signature: 0x"7eb0509757e246f19449885651611cb965ecc1a187dd51b64fda1edc9637d5ec97582b9cb13db3933705b32ba982af5af25fd78881ebb32771fc5922efc66ea3",
+     valid: true, comment: "test fails if msg is reduced modulo p or n"},
+    Vector {index: 4, publicKey: 0x"d69c3509bb99e412e68b0fe8544e72837dfa30746d8be2aa65975f29d22dc7b9", message: 0x"4df3c3f68fcc83b27e9d42c90431a72499f17875c81a599b566c9889b9696703",
+     signature: 0x"00000000000000000000003b78ce563f89a0ed9414f5aa28ad0d96d6795f9c6376afb1548af603b3eb45c9f8207dee1060cb71c04e80f593060b07d28308d7f4",
+     valid: true, comment: ""},
+    Vector {index: 5, publicKey: 0x"eefdea4cdb677750a420fee807eacf21eb9898ae79b9768766e4faa04a2d4a34", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"6cff5c3ba86c69ea4b7376f31a9bcb4f74c1976089b2d9963da2e5543e17776969e89b4c5564d00349106b8497785dd7d1d713a8ae82b32fa79d5f7fc407d39b",
+     valid: false, comment: "public key not on the curve"},
+    Vector {index: 6, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a14602975563cc27944640ac607cd107ae10923d9ef7a73c643e166be5ebeafa34b1ac553e2",
+     valid: false, comment: "has_even_y(R) is false"},
+    Vector {index: 7, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"1fa62e331edbc21c394792d2ab1100a7b432b013df3f6ff4f99fcb33e0e1515f28890b3edb6e7189b630448b515ce4f8622a954cfe545735aaea5134fccdb2bd",
+     valid: false, comment: "negated message"},
+    Vector {index: 8, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"6cff5c3ba86c69ea4b7376f31a9bcb4f74c1976089b2d9963da2e5543e177769961764b3aa9b2ffcb6ef947b6887a226e8d7c93e00c5ed0c1834ff0d0c2e6da6",
+     valid: false, comment: "negated s value"},
+    Vector {index: 9, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"0000000000000000000000000000000000000000000000000000000000000000123dda8328af9c23a94c1feecfd123ba4fb73476f0d594dcb65c6425bd186051",
+     valid: false, comment: "sG - eP is infinite. Test fails in single verification if has_even_y(inf) is defined as true and x(inf) as 0"},
+    Vector {index: 10, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"00000000000000000000000000000000000000000000000000000000000000017615fbaf5ae28864013c099742deadb4dba87f11ac6754f93780d5a1837cf197",
+     valid: false, comment: "sG - eP is infinite. Test fails in single verification if has_even_y(inf) is defined as true and x(inf) as 1"},
+    Vector {index: 11, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"4a298dacae57395a15d0795ddbfd1dcb564da82b0f269bc70a74f8220429ba1d69e89b4c5564d00349106b8497785dd7d1d713a8ae82b32fa79d5f7fc407d39b",
+     valid: false, comment: "sig[0:32] is not an X coordinate on the curve"},
+    Vector {index: 12, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f69e89b4c5564d00349106b8497785dd7d1d713a8ae82b32fa79d5f7fc407d39b",
+     valid: false, comment: "sig[0:32] is equal to field size"},
+    Vector {index: 13, publicKey: 0x"dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"6cff5c3ba86c69ea4b7376f31a9bcb4f74c1976089b2d9963da2e5543e177769fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+     valid: false, comment: "sig[32:64] is equal to curve order"},
+    Vector {index: 14, publicKey: 0x"fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc30", message: 0x"243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89",
+     signature: 0x"6cff5c3ba86c69ea4b7376f31a9bcb4f74c1976089b2d9963da2e5543e17776969e89b4c5564d00349106b8497785dd7d1d713a8ae82b32fa79d5f7fc407d39b",
+     valid: false, comment: "public key is not a valid X coordinate because it exceeds the field size"},
+    Vector {index: 15, publicKey: 0x"778caa53b4393ac467774d09497a87224bf9fab6f6e68b23086497324d6fd117", message: 0x"",
+     signature: 0x"71535db165ecd9fbbc046e5ffaea61186bb6ad436732fccc25291a55895464cf6069ce26bf03466228f19a3a62db8a649f2d560fac652827d1af0574e427ab63",
+     valid: true, comment: "message of size 0 (added 2022-12)"},
+    Vector {index: 16, publicKey: 0x"778caa53b4393ac467774d09497a87224bf9fab6f6e68b23086497324d6fd117", message: 0x"11",
+     signature: 0x"08a20a0afef64124649232e0693c583ab1b9934ae63b4c3511f3ae1134c6a303ea3173bfea6683bd101fa5aa5dbc1996fe7cacfc5a577d33ec14564cec2bacbf",
+     valid: true, comment: "message of size 1 (added 2022-12)"},
+    Vector {index: 17, publicKey: 0x"778caa53b4393ac467774d09497a87224bf9fab6f6e68b23086497324d6fd117", message: 0x"0102030405060708090a0b0c0d0e0f1011",
+     signature: 0x"5130f39a4059b43bc7cac09a19ece52b5d8699d1a71e3c52da9afdb6b50ac370c4a482b77bf960f8681540e25b6771ece1e5a37fd80e5a51897c5566a97ea5a5",
+     valid: true, comment: "message of size 17 (added 2022-12)"},
+    Vector {index: 18, publicKey: 0x"778caa53b4393ac467774d09497a87224bf9fab6f6e68b23086497324d6fd117", message: 0x"99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+     signature: 0x"403b12b0d8555a344175ea7ec746566303321e5dbfa8be6f091635163eca79a8585ed3e3170807e7c03b720fc54c7b23897fcba0e9d0b4a06894cfd249f22367",
+     valid: true, comment: "message of size 100 (added 2022-12)"}
+]
+
+@test
+val passesTheBip340Vectors = fn() {
+    each(VECTORS, fn(v) {
+        assertEqual(verify(v.publicKey, v.message, v.signature), v.valid, "vector ${v.index}: ${v.comment}")
+    })
+}
+
+// A copy of `data` with one bit of the byte at `at` flipped.
+val flip = fn(data:bytes, at:num):bytes {
+    val byte = data[at]
+    val other = if ((byte & 1) == 1) { byte - 1 } else { byte + 1 }
+    data[0:at] + BYTE[other:other + 1] + data[at + 1:len(data)]
+}
+
+// Every byte value, in order, so that BYTE[n:n + 1] is the byte n.
+val BYTE = 0x"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+
+@test
+val rejectsAnyChangedBit = fn() {
+    // Vector 1, and vector 17 for a message that is not 32 bytes.
+    each([VECTORS[1], VECTORS[17]], fn(v) {
+        assertTrue(verify(v.publicKey, v.message, v.signature))
+        each(range(len(v.publicKey)), fn(at) {
+            assertFalse(verify(flip(v.publicKey, at), v.message, v.signature), "key byte $at")
+        })
+        each(range(len(v.message)), fn(at) {
+            assertFalse(verify(v.publicKey, flip(v.message, at), v.signature), "message byte $at")
+        })
+        each(range(len(v.signature)), fn(at) {
+            assertFalse(verify(v.publicKey, v.message, flip(v.signature, at)), "signature byte $at")
+        })
+    })
+}
+
+@test
+val rejectsAnotherSignersKey = fn() {
+    val v = VECTORS[1]
+    assertFalse(verify(VECTORS[2].publicKey, v.message, v.signature))
+}
+
+@test
+val rejectsMessagesThatDifferOnlyInLength = fn() {
+    // Vector 15 signs the empty message; with trailing zero bytes it is
+    // another message.
+    val v = VECTORS[15]
+    assertTrue(verify(v.publicKey, 0x"", v.signature))
+    assertFalse(verify(v.publicKey, 0x"00", v.signature))
+    assertFalse(verify(v.publicKey, 0x"0000000000000000000000000000000000000000000000000000000000000000", v.signature))
+}
+
+@test
+val rejectsOutOfRangeValues = fn() {
+    val v = VECTORS[1]
+    val r = v.signature[0:32]
+    val s = v.signature[32:64]
+    val p = 0x"fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
+    val n = 0x"fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+    val ones = 0x"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    val zero = 0x"0000000000000000000000000000000000000000000000000000000000000000"
+    // r at or above the field size, and s at or above the group order.
+    assertFalse(verify(v.publicKey, v.message, p + s))
+    assertFalse(verify(v.publicKey, v.message, ones + s))
+    assertFalse(verify(v.publicKey, v.message, r + n))
+    assertFalse(verify(v.publicKey, v.message, r + ones))
+    assertFalse(verify(v.publicKey, v.message, zero + zero))
+    // Keys at or above the field size, and zero, which is no point's x.
+    assertFalse(verify(p, v.message, v.signature))
+    assertFalse(verify(ones, v.message, v.signature))
+    assertFalse(verify(zero, v.message, v.signature))
+}
+
+@test
+val verifiesSignaturesFromAnotherImplementation = fn() {
+    // Signed by @noble/curves 1.8.1, the JavaScript implementation browsers
+    // and nostr-tools use, with a fresh key and random aux data: a digest,
+    // as Orble signs, and a message signed whole.
+    val publicKey = 0x"1c11ea80d31f2622a942d17812e8a8709e0a6e4197e1c3f62f9f50d33a54db20"
+    val digest = sha256Of("{\"kind\":\"contribution\",\"body\":\"hello from the browser\"}")
+    assertEqual(digest, 0x"4290caaa8c8027dbc573b4a586affef8fe82c118b2c16eb664b4005791cd8d15")
+    assertTrue(verify(publicKey, digest,
+        0x"885386fda14b4f8385152c48ce49ad148d50002f4b27253ddb0f264eb19dcd6daffb5b89266b02d5dbba9ec409d5aee2e3310d193f3b2fcac08e8d83b7677bda"))
+    assertTrue(verify(publicKey, toBytes("a message signed whole, not digested"),
+        0x"a04e9932bd13321da9e00ab4244a3f51638e28aeddd4fb032ee91b49548ea10d3835fa72cc7ee49f18c8e57df685d7cd10a64ae79ba27fb3edbbe55e9c293941"))
+}
+
+@test
+val wrongLengthsAreArgumentErrors = fn() {
+    val v = VECTORS[1]
+    assertThrows(fn() { verify(v.publicKey[0:31], v.message, v.signature) }, "schnorr.length")
+    assertThrows(fn() { verify(v.publicKey + 0x"00", v.message, v.signature) }, "schnorr.length")
+    assertThrows(fn() { verify(0x"", v.message, v.signature) }, "schnorr.length")
+    assertThrows(fn() { verify(v.publicKey, v.message, v.signature[0:63]) }, "schnorr.length")
+    assertThrows(fn() { verify(v.publicKey, v.message, v.signature + 0x"00") }, "schnorr.length")
+    // 33-byte compressed keys, as ECDSA uses, are not x-only keys.
+    assertThrows(fn() { verify(0x"02" + v.publicKey, v.message, v.signature) }, "schnorr.length")
+}

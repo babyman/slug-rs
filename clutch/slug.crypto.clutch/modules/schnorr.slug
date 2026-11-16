@@ -1,0 +1,42 @@
+/**
+ * slug.crypto.schnorr — BIP-340 Schnorr signatures
+ *
+ * Checks that a message was signed by the holder of a secp256k1 key, as
+ * Bitcoin's Taproot and Nostr sign, without the private key. Verification
+ * is bitcoin-core's libsecp256k1, built into this clutch; it needs no files,
+ * network, or other capability.
+ *
+ * ```slug
+ * val {verify} = import("slug.crypto.schnorr")
+ *
+ * if (verify(publicKey, message, signature)) { accept(message) }
+ * ```
+ *
+ * A public key is the 32-byte x coordinate of the signer's point, an
+ * x-only key; a signature is 64 bytes. A message may be any length, though
+ * signers usually sign a 32-byte digest, such as one from
+ * `slug.crypto.hash`.
+ */
+
+// Typed native binding, declared in this clutch's manifest.
+foreign verifyRaw = fn(publicKey:bytes, message:bytes, signature:bytes):bool
+
+val PUBLIC_KEY_LENGTH = 32
+val SIGNATURE_LENGTH = 64
+
+val wrongLength = fn(what:str, wanted:num, data:bytes) {
+    throw Error {type: "schnorr.length", msg: "$what must be $wanted bytes, not ${len(data)}"}
+}
+
+/**
+ * Whether `signature` is a valid BIP-340 signature of `message` by
+ * `publicKey`. A key that is not on the curve, and a signature with a value
+ * out of range, are not valid: `false`, as is a signature of any other
+ * message or by any other key. Throws an `Error` of type `schnorr.length`
+ * when `publicKey` is not 32 bytes or `signature` not 64.
+ */
+export val verify = fn(publicKey:bytes, message:bytes, signature:bytes):bool {
+    if (len(publicKey) != PUBLIC_KEY_LENGTH) { wrongLength("a public key", PUBLIC_KEY_LENGTH, publicKey) }
+    if (len(signature) != SIGNATURE_LENGTH) { wrongLength("a signature", SIGNATURE_LENGTH, signature) }
+    verifyRaw(publicKey, message, signature)
+}
