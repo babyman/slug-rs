@@ -115,7 +115,8 @@ optional native code. `clutch/` holds them, indexed by `clutch/manifest.toml`:
 `slug.core.clutch` provides `slug.std`, `slug.string`, `slug.fmt.json`,
 `slug.test`, `slug.time`, `slug.io.stdin`, and more; others provide
 `slug.io.fs`, `slug.net.tcp`, `slug.net.http`, `slug.db.sqlite`,
-`slug.crypto.hash`, and `slug.crypto.schnorr`. The runner finds installed
+`slug.crypto.hash`, `slug.crypto.schnorr`, `slug.text.mustache`, and
+`slug.text.markdown`. The runner finds installed
 clutches through `$SLUG_HOME/clutch/manifest.toml`, and a project may index its
 own in `clutch/manifest.toml` at its root. Native calls are generated from
 typed manifests. This checkout is also the clutches' development repository,

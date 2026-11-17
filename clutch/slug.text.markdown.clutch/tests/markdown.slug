@@ -1,0 +1,375 @@
+val markdown = import("slug.text.markdown")
+val {assertEqual, assertTrue, assertThrows} = import("slug.test")
+val {chr, join} = import("slug.string")
+
+val html = fn(source:str, options:map = {}):str { markdown.toHtml(source, options) }
+
+val contains = fn(text:str, part:str):bool {
+    val go = fn(i:num):bool {
+        if (i + len(part) > len(text)) { return false }
+        if (text[i:i + len(part)] == part) { true } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// --- An allowlist check of the output ------------------------------------------
+
+val ALLOWED = {
+    p: [], h1: [], h2: [], h3: [], h4: [], h5: [], h6: [], blockquote: [], ul: [], ol: ["start"], li: [],
+    pre: [], code: ["class"], hr: [], br: [], em: [], strong: [], del: [], a: ["href", "title", "rel"],
+    img: ["src", "alt", "title"], table: [], thead: [], tbody: [], tr: [], th: ["align"], td: ["align"],
+}
+
+val isNameChar = fn(c:str):bool { (c >= "a" && c <= "z") || (c >= "0" && c <= "9") }
+
+// Whether an `href` or `src` value, as a browser reads it, is relative, or
+// uses one of `schemes`: a scheme is a letter, then letters, digits, `+`,
+// `-`, and `.`, before a `:`.
+val urlAllowed = fn(value:str, schemes:list):bool {
+    val text = join(splitOn(value, "&amp;"), "&")
+    val isSchemeChar = fn(c:str):bool { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "+" || c == "-" || c == "." }
+    val colon = fn(i:num):num {
+        if (i >= len(text)) { return -1 }
+        val c = text[i]
+        if (c == ":") { return i }
+        if (!isSchemeChar(c)) { return -1 }
+        recur(i + 1)
+    }
+    val at = if (len(text) > 0 && ((text[0] >= "a" && text[0] <= "z") || (text[0] >= "A" && text[0] <= "Z"))) { colon(0) } else { -1 }
+    if (at < 0) { return !(len(text) >= 2 && (text[0] == "/" || text[0] == "\\") && (text[1] == "/" || text[1] == "\\")) }
+    val scheme = text[:at]
+    val go = fn(i:num):bool { if (i >= len(schemes)) { false } else if (schemes[i] == scheme) { true } else { recur(i + 1) } }
+    go(0)
+}
+
+val splitOn = fn(text:str, separator:str):list {
+    val width = len(separator)
+    val go = fn(i:num, start:num, out:list):list {
+        if (i + width > len(text)) { return out :+ text[start:] }
+        if (text[i:i + width] == separator) { return recur(i + width, i + width, out :+ text[start:i]) }
+        recur(i + 1, start, out)
+    }
+    go(0, 0, [])
+}
+
+/**
+ * Checks that `output` holds only allowed elements and attributes, every
+ * attribute value quoted, and every URL relative or of `schemes`; returns
+ * the problem, or "".
+ */
+val problems = fn(output:str, schemes:list):str {
+    val n = len(output)
+    val tag = fn(i:num):list {
+        val closing = i + 1 < n && output[i + 1] == "/"
+        val nameStart = if (closing) { i + 2 } else { i + 1 }
+        val name = fn(j:num):num { if (j < n && isNameChar(output[j])) { recur(j + 1) } else { j } }
+        val nameEnd = name(nameStart)
+        val tagName = output[nameStart:nameEnd]
+        val allowed = ALLOWED[tagName]
+        if (allowed == nil) { return [-1, "element <$tagName>"] }
+        if (closing) { return if (nameEnd < n && output[nameEnd] == ">") { [nameEnd + 1, ""] } else { [-1, "bad </$tagName"] } }
+        val attributes = fn(j:num):list {
+            if (j < n && output[j] == ">") { return [j + 1, ""] }
+            if (j + 2 < n && output[j:j + 3] == " />") { return [j + 3, ""] }
+            if (j >= n || output[j] != " ") { return [-1, "bad <$tagName"] }
+            val attrEnd = name(j + 1)
+            val attr = output[j + 1:attrEnd]
+            val ok = fn(k:num):bool { if (k >= len(allowed)) { false } else if (allowed[k] == attr) { true } else { recur(k + 1) } }
+            if (!ok(0)) { return [-1, "attribute $attr on <$tagName>"] }
+            if (attrEnd + 1 >= n || output[attrEnd:attrEnd + 2] != "=\"") { return [-1, "unquoted $attr"] }
+            val close = fn(k:num):num { if (k >= n) { -1 } else if (output[k] == "\"") { k } else if (output[k] == "<") { -2 } else { recur(k + 1) } }
+            val end = close(attrEnd + 2)
+            if (end < 0) { return [-1, "unterminated $attr"] }
+            val value = output[attrEnd + 2:end]
+            if ((attr == "href" || attr == "src") && !urlAllowed(value, schemes)) { return [-1, "$attr=\"$value\""] }
+            recur(end + 1)
+        }
+        attributes(nameEnd)
+    }
+    val go = fn(i:num):str {
+        if (i >= n) { return "" }
+        if (output[i] != "<") { return recur(i + 1) }
+        val [next, problem] = tag(i)
+        if (next < 0) { problem } else { recur(next) }
+    }
+    go(0)
+}
+
+val SCHEMES = ["http", "https", "mailto"]
+
+// --- Hostile input ---------------------------------------------------------------
+
+val NUL = chr(0)
+
+val HOSTILE = [
+    "<script>alert(1)</script>",
+    "<SCRIPT SRC=//evil.example/x.js></SCRIPT>",
+    "<img src=x onerror=alert(1)>",
+    "<a href=\"javascript:alert(1)\">x</a>",
+    "<svg onload=alert(1)>",
+    "<iframe src=\"https://evil.example\"></iframe>",
+    "<style>body{display:none}</style>",
+    "<!-- <script>alert(1)</script> -->",
+    "<![CDATA[<script>alert(1)</script>]]>",
+    "<div onmouseover=\"alert(1)\">\n\n*x*\n\n</div>",
+    "<a href='x' onclick='alert(1)'>",
+    "[x](javascript:alert(1))",
+    "[x](JaVaScRiPt:alert(1))",
+    "[x](<javascript:alert(1)>)",
+    "[x]( javascript:alert(1) )",
+    "[x](java&#09;script:alert(1))",
+    "[x](java&#x0A;script:alert(1))",
+    "[x](&#106;avascript:alert(1))",
+    "[x](&#x6A;avascript:alert(1))",
+    "[x](javascript&colon;alert(1))",
+    "[x](&Tab;javascript:alert(1))",
+    "[x](&#1;javascript:alert(1))",
+    "[x](java&#1;script:alert(1))",
+    "[x](java" + NUL + "script:alert(1))",
+    "[x](vbscript:msgbox(1))",
+    "[x](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+    "[x](file:///etc/passwd)",
+    "[x](\\javascript:alert(1))",
+    "[x]: javascript:alert(1)\n\n[x]",
+    "[x]: <javascript:alert(1)> \"t\"\n\n[x][]",
+    "<javascript:alert(1)>",
+    "<vbscript:alert(1)>",
+    "<data:text/html,x>",
+    "![x](javascript:alert(1))",
+    "![x](data:image/png;base64,iVBORw0KGgo=)",
+    "![x](//evil.example/a.png)",
+    "![x](/\\evil.example/a.png)",
+    "![x](\\\\evil.example/a.png)",
+    "![x](https://evil.example/track.gif)",
+    "![x](HTTPS://evil.example/track.gif)",
+    "![x](	//evil.example/a.png)",
+    "![x\" onerror=\"alert(1)](/a.png)",
+    "[x](/a \"t\\\" onclick=\\\"alert(1)\")",
+    "[x](/a 't\" onclick=\"alert(1)')",
+    "[x](/a\" onclick=\"alert(1))",
+    "```\" onclick=\"alert(1)\nx\n```",
+    "``` <script>\n</code></pre><script>alert(1)</script>\n```",
+    "`</code><script>alert(1)</script>`",
+    "    <script>alert(1)</script>",
+    "www.evil.example/\"onmouseover=\"alert(1)",
+    "http://evil.example/'onmouseover='alert(1)",
+    "x@evil.example\"onclick=\"alert(1)",
+    "| <b> | x |\n| - | - |\n| <script> | [y](javascript:z) |",
+    "~~<script>~~ **<img src=x>** *[a](vbscript:b)*",
+    "[a [b](javascript:c) d](/e)",
+    "[[x](/a)](/b)",
+    "&lt;script&gt;alert(1)&lt;/script&gt;",
+    "&#60;script&#62;",
+    "\\<script>alert(1)\\</script>",
+    "<a\nhref=\"javascript:alert(1)\">x</a>",
+    "[x](" + chr(0x202E) + "javascript:alert(1))",
+    "[x](" + chr(0xFF4A) + "avascript:alert(1))",
+    "[x](%6Aavascript:alert(1))",
+]
+
+@test
+export val hostileInputRendersOnlyAllowedHtml = fn() {
+    val each = fn(i:num) {
+        if (i < len(HOSTILE)) {
+            val source = HOSTILE[i]
+            val output = html(source)
+            assertEqual(problems(output, SCHEMES), "", "source " + source + " gave " + output)
+            assertTrue(!contains(output, "<script") && !contains(output, "<img src=\"x\""), "source " + source)
+            recur(i + 1)
+        }
+    }
+    each(0)
+}
+
+@test
+export val rawHtmlIsShownAsText = fn() {
+    assertEqual(html("<b>hi</b>"), "<p>&lt;b&gt;hi&lt;/b&gt;</p>\n")
+    assertEqual(html("<div>\n*x*\n</div>"), "<p>&lt;div&gt;\n<em>x</em>\n&lt;/div&gt;</p>\n")
+    // No Markdown inside a tag.
+    assertEqual(html("<a title=\"*x*\">"), "<p>&lt;a title=&quot;*x*&quot;&gt;</p>\n")
+    assertEqual(html("a <!-- *b* --> c"), "<p>a &lt;!-- *b* --&gt; c</p>\n")
+}
+
+@test
+export val unsafeLinksBecomeText = fn() {
+    assertEqual(html("[run](javascript:alert(1))"), "<p>run</p>\n")
+    assertEqual(html("[run](java&#09;script:alert(1))"), "<p>run</p>\n")
+    assertEqual(html("[run](a&#1;x)"), "<p>run</p>\n")
+    // A browser drops leading control characters, so this is relative.
+    assertEqual(html("[run](&#1;x)"), "<p><a href=\"%01x\">run</a></p>\n")
+    assertEqual(html("<javascript:alert(1)>"), "<p>javascript:alert(1)</p>\n")
+    assertEqual(html("[*a*](data:x)"), "<p><em>a</em></p>\n")
+    // Percent-encoded schemes are paths, as browsers read them.
+    assertEqual(html("[x](%6Aavascript:a)"), "<p><a href=\"%6Aavascript:a\">x</a></p>\n")
+}
+
+@test
+export val linksFollowThePolicy = fn() {
+    assertEqual(html("[a](/x) [b](x?y#z) [c](https://e.example) [d](mailto:a@e.example)"),
+        "<p><a href=\"/x\">a</a> <a href=\"x?y#z\">b</a> <a href=\"https://e.example\">c</a> <a href=\"mailto:a@e.example\">d</a></p>\n")
+    assertEqual(html("[a](irc://e.example) [b](//e.example/x)"), "<p>a <a href=\"//e.example/x\">b</a></p>\n")
+    assertEqual(html("[a](/x) [b](https://e.example)", {links: ["https"]}), "<p>a <a href=\"https://e.example\">b</a></p>\n")
+    assertEqual(html("[a](//e.example)", {links: ["https"]}), "<p>a</p>\n")
+    assertEqual(html("[a](irc://e.example)", {links: ["irc"]}), "<p><a href=\"irc://e.example\">a</a></p>\n")
+    assertEqual(html("[a](HTTPS://e.example)", {links: ["https"]}), "<p><a href=\"HTTPS://e.example\">a</a></p>\n")
+}
+
+@test
+export val relGoesOnLinksToOtherSites = fn() {
+    val options = {rel: "nofollow noopener"}
+    assertEqual(html("[a](/x) [b](https://e.example) www.e.example", options),
+        "<p><a href=\"/x\">a</a> <a href=\"https://e.example\" rel=\"nofollow noopener\">b</a> <a href=\"http://www.e.example\" rel=\"nofollow noopener\">www.e.example</a></p>\n")
+}
+
+@test
+export val imagesAreRelativeOnlyByDefault = fn() {
+    assertEqual(html("![a *b*](/i.png \"t\")"), "<p><img src=\"/i.png\" alt=\"a b\" title=\"t\" /></p>\n")
+    assertEqual(html("![a *b*](https://e.example/i.png)"), "<p>a b</p>\n")
+    assertEqual(html("![a](//e.example/i.png)"), "<p>a</p>\n")
+    assertEqual(html("![a](/\\e.example/i.png)"), "<p>a</p>\n")
+    assertEqual(html("![a](/i.png)", {images: []}), "<p>a</p>\n")
+    assertEqual(html("![a](https://e.example/i.png)", {images: ["https"]}), "<p><img src=\"https://e.example/i.png\" alt=\"a\" /></p>\n")
+    assertEqual(html("![a <b>](/i.png)"), "<p><img src=\"/i.png\" alt=\"a &lt;b&gt;\" /></p>\n")
+}
+
+@test
+export val linksDoNotNest = fn() {
+    assertEqual(html("[a <https://e.example> b](/x)"), "<p><a href=\"/x\">a https://e.example b</a></p>\n")
+    assertEqual(html("[see www.e.example](/x)"), "<p><a href=\"/x\">see www.e.example</a></p>\n")
+}
+
+@test
+export val codeStaysText = fn() {
+    assertEqual(html("`<b>&amp;`"), "<p><code>&lt;b&gt;&amp;amp;</code></p>\n")
+    assertEqual(html("```html\n<b>x</b>\n```"), "<pre><code class=\"language-html\">&lt;b&gt;x&lt;/b&gt;\n</code></pre>\n")
+    assertEqual(html("```a\"b\nx\n```"), "<pre><code class=\"language-a&quot;b\">x\n</code></pre>\n")
+}
+
+@test
+export val urlsAreEncoded = fn() {
+    assertEqual(html("[a](/x\"y'z<w>)"), "<p><a href=\"/x%22y&#x27;z%3Cw%3E\">a</a></p>\n")
+    assertEqual(html("[a](/é?q=a&b)"), "<p><a href=\"/%C3%A9?q=a&amp;b\">a</a></p>\n")
+    assertEqual(html("[a](/x \"q\\\"&\")"), "<p><a href=\"/x\" title=\"q&quot;&amp;\">a</a></p>\n")
+}
+
+// --- GitHub extensions ---------------------------------------------------------
+
+@test
+export val tables = fn() {
+    assertEqual(html("| a | b | c |\n|:--|:-:|--:|\n| 1 | *2* | `|` |\n| x \\| y |"),
+        "<table>\n<thead>\n<tr>\n<th align=\"left\">a</th>\n<th align=\"center\">b</th>\n<th align=\"right\">c</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\">1</td>\n<td align=\"center\"><em>2</em></td>\n<td align=\"right\">`</td>\n</tr>\n<tr>\n<td align=\"left\">x | y</td>\n<td align=\"center\"></td>\n<td align=\"right\"></td>\n</tr>\n</tbody>\n</table>\n")
+    assertEqual(html("Intro\n| a |\n| - |\n\nafter"),
+        "<p>Intro</p>\n<table>\n<thead>\n<tr>\n<th>a</th>\n</tr>\n</thead>\n</table>\n<p>after</p>\n")
+    assertEqual(html("a | b\n--- | ---\n1 | 2"),
+        "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n")
+    // The header and delimiter rows must have as many cells.
+    assertEqual(html("| a | b |\n| - |"), "<p>| a | b |\n| - |</p>\n")
+    // A delimiter row needs a pipe.
+    assertEqual(html("a\n:-"), "<p>a\n:-</p>\n")
+}
+
+@test
+export val strikethrough = fn() {
+    assertEqual(html("~a~ ~~b~~ ~~~c~~~ ~d~~"), "<p><del>a</del> <del>b</del> ~~~c~~~ ~d~~</p>\n")
+    assertEqual(html("~~a *b~~ c*"), "<p><del>a *b</del> c*</p>\n")
+}
+
+@test
+export val extendedAutolinks = fn() {
+    assertEqual(html("Visit www.e.example/a_b, or https://e.example/x(y)).\n"),
+        "<p>Visit <a href=\"http://www.e.example/a_b\">www.e.example/a_b</a>, or <a href=\"https://e.example/x(y)\">https://e.example/x(y)</a>).</p>\n")
+    assertEqual(html("Mail a.b+c@e.example. or mailto:d@e.example"),
+        "<p>Mail <a href=\"mailto:a.b+c@e.example\">a.b+c@e.example</a>. or <a href=\"mailto:d@e.example\">mailto:d@e.example</a></p>\n")
+    // No `_` in a domain's last two segments.
+    assertEqual(html("http://localhost:8080/x &amp; www.e.a_b www.a_b.e.example"), "<p><a href=\"http://localhost:8080/x\">http://localhost:8080/x</a> &amp; www.e.a_b <a href=\"http://www.a_b.e.example\">www.a_b.e.example</a></p>\n")
+    assertEqual(html("![http://e.example/i](/i.png)"), "<p><img src=\"/i.png\" alt=\"http://e.example/i\" /></p>\n")
+    assertEqual(html("`www.e.example` xwww.e.example"), "<p><code>www.e.example</code> xwww.e.example</p>\n")
+    assertEqual(html("ftp://e.example"), "<p>ftp://e.example</p>\n")
+}
+
+// --- Documents -----------------------------------------------------------------
+
+@test
+export val ordinaryDocument = fn() {
+    val source = "# Notes\n\nSome *emphasis*, **strong**, and `code`.\n\n> quoted\n> text\n\n1. one\n2. two\n   - nested\n\n---\n\n```slug\nval x = 1\n```\n"
+    assertEqual(html(source), "<h1>Notes</h1>\n<p>Some <em>emphasis</em>, <strong>strong</strong>, and <code>code</code>.</p>\n<blockquote>\n<p>quoted\ntext</p>\n</blockquote>\n<ol>\n<li>one</li>\n<li>two\n<ul>\n<li>nested</li>\n</ul>\n</li>\n</ol>\n<hr />\n<pre><code class=\"language-slug\">val x = 1\n</code></pre>\n")
+}
+
+@test
+export val unicode = fn() {
+    assertEqual(html("*héllo* 世界 🎉 **Ünïcödé**"), "<p><em>héllo</em> 世界 🎉 <strong>Ünïcödé</strong></p>\n")
+    // Unicode punctuation and whitespace count in flanking.
+    assertEqual(html("*«a»*" + chr(0x3000) + "*b*"), "<p><em>«a»</em>" + chr(0x3000) + "<em>b</em></p>\n")
+    // Labels match by Unicode case folding.
+    assertEqual(html("[ẞ]\n\n[SS]: /x"), "<p><a href=\"/x\">ẞ</a></p>\n")
+    assertEqual(html("a" + NUL + "b"), "<p>a" + chr(0xFFFD) + "b</p>\n")
+    assertEqual(html("a\r\nb\rc"), "<p>a\nb\nc</p>\n")
+    assertEqual(html("&#0; &#xD800; &#1114112; &#12345678; &copy; &nosuch;"), "<p>" + chr(0xFFFD) + " " + chr(0xFFFD) + " " + chr(0xFFFD) + " &amp;#12345678; © &amp;nosuch;</p>\n")
+}
+
+@test
+export val emptyInput = fn() {
+    assertEqual(html(""), "")
+    assertEqual(html("\n\n  \n"), "")
+}
+
+// --- Limits and options --------------------------------------------------------
+
+val limitOf = fn(work):map {
+    val error = assertThrows(work, "markdown.limit")
+    error.data
+}
+
+@test
+export val sizeLimit = fn() {
+    assertEqual(limitOf(fn() { html("a" * 65537) }), {limit: "bytes", max: 65536})
+    assertEqual(len(html("a" * 65536)), 65536 + 8)
+    // Bytes, not characters.
+    assertEqual(limitOf(fn() { html("é" * 6, {maxBytes: 11}) }), {limit: "bytes", max: 11})
+    assertEqual(html("é" * 5, {maxBytes: 11}), "<p>ééééé</p>\n")
+}
+
+@test
+export val depthLimit = fn() {
+    assertEqual(limitOf(fn() { html("> " * 33 + "a") }), {limit: "depth", max: 32})
+    assertTrue(contains(html("> " * 32 + "a"), "<p>a</p>"))
+    assertEqual(limitOf(fn() { html("- " * 17 + "a") }), {limit: "depth", max: 32})
+    assertEqual(limitOf(fn() { html("*a " * 33 + "b" + " a*" * 33) }), {limit: "depth", max: 32})
+    assertTrue(contains(html("*a " * 32 + "b" + " a*" * 32), "b"))
+    assertEqual(limitOf(fn() { html("![" * 40 + "a" + "](/x)" * 40, {maxDepth: 4}) }), {limit: "depth", max: 4})
+    assertEqual(limitOf(fn() { html(">" * 100000 + "a*" * 100000, {maxBytes: 1000000}) }), {limit: "depth", max: 32})
+}
+
+@test
+export val pathologicalInputIsLinear = fn() {
+    // Some of cmark's pathological cases: a quadratic parser would take
+    // minutes on these.
+    assertEqual(html("[" * 5000 + "a" + "]" * 5000), "<p>" + "[" * 5000 + "a" + "]" * 5000 + "</p>\n")
+    assertEqual(html("a_ " * 5000), "<p>" + "a_ " * 4999 + "a_</p>\n")
+    assertEqual(html("[a](<b" * 3000), "<p>" + "[a](&lt;b" * 3000 + "</p>\n")
+    assertEqual(html("</" + "<!--" * 5000), "<p>&lt;/" + "&lt;!--" * 5000 + "</p>\n")
+    assertEqual(html("*a_ " * 5000), "<p>" + "*a_ " * 4999 + "*a_</p>\n")
+    // Backtick runs of every length from 1 to 150, none closing another.
+    val runs = fn(k:num, out:str):str { if (k > 150) { out } else { recur(k + 1, out + "e" + "`" * k) } }
+    assertEqual(html(runs(1, "")), "<p>" + runs(1, "") + "</p>\n")
+}
+
+@test
+export val badOptions = fn() {
+    assertThrows(fn() { html("a", {colour: "red"}) }, "markdown.options")
+    assertThrows(fn() { html("a", {links: ["javascript"]}) }, "markdown.options")
+    assertThrows(fn() { html("a", {images: ["data"]}) }, "markdown.options")
+    assertThrows(fn() { html("a", {links: ["HTTP"]}) }, "markdown.options")
+    assertThrows(fn() { html("a", {links: "https"}) }, "markdown.options")
+    assertThrows(fn() { html("a", {rel: "x\" onclick=\"y"}) }, "markdown.options")
+    assertThrows(fn() { html("a", {maxBytes: 0}) }, "markdown.options")
+    assertThrows(fn() { html("a", {maxDepth: 1.5}) }, "markdown.options")
+}
+
+@test
+export val sourceIsNotChanged = fn() {
+    val source = "*a*\r\n\t" + NUL + "b  \n"
+    val original = source + ""
+    html(source)
+    assertEqual(source, original)
+}

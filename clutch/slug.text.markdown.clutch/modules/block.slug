@@ -1,0 +1,708 @@
+/**
+ * slug.text.markdown.block — Markdown's block structure, for slug.text.markdown
+ *
+ * `parseBlocks(text, maxDepth)` reads lines into a tree of blocks, as
+ * cmark's block parser does: each line first continues the open containers
+ * it can, then may start new blocks, and what remains is text for the
+ * innermost one, or a lazy continuation of an open paragraph. HTML blocks
+ * are not recognised; their lines are ordinary text. GitHub's tables start
+ * where a paragraph's last line is a header row and the next line a
+ * matching delimiter row.
+ *
+ * Returns `{document, refs}`: the document node, whose blocks are maps
+ * (below) with their inline content still text, and the link reference
+ * definitions by normalized label.
+ *
+ * - `{type: "blockquote", children}`, `{type: "item", children}`
+ * - `{type: "list", ordered, start, tight, children}`
+ * - `{type: "paragraph", text}`, `{type: "heading", level, text}`
+ * - `{type: "code", info, text}`, `{type: "thematic"}`
+ * - `{type: "table", aligns, head, rows}`: `aligns` holds "", "left",
+ *   "center", or "right" per column; `head` the header cells' text and
+ *   `rows` each row's.
+ */
+
+val {join, split, toBytes} = import("slug.string")
+val bytes = import("slug.bytes")
+val {parseReferences, unescape, isSpaceOrTab, isDigit} = import("slug.text.markdown.inline")
+
+val CONTAINERS = {document: true, blockquote: true, item: true}
+
+val ACCEPTS_LINES = {paragraph: true, heading: true, code: true, table: true}
+
+// The characters a block start other than indented code can begin with.
+val STARTS = {
+    ">": true, "#": true, "`": true, "~": true, "=": true, "-": true, "*": true, "_": true, "+": true,
+    ":": true, "|": true, "0": true, "1": true, "2": true, "3": true, "4": true, "5": true, "6": true,
+    "7": true, "8": true, "9": true,
+}
+
+// The blocks whose lines are never blank, for a list's looseness.
+val NEVER_BLANK = {blockquote: true, heading: true, thematic: true, table: true}
+
+// The blocks that count toward the nesting limit.
+val NESTING = {blockquote: true, list: true, item: true}
+
+val canContain = fn(parent:str, child:str):bool {
+    if (parent == "list") { child == "item" } else { CONTAINERS[parent] == true && child != "item" }
+}
+
+val trimEnd = fn(text:str):str {
+    val go = fn(i:num):num {
+        if (i > 0 && (isSpaceOrTab(text[i - 1]) || text[i - 1] == "\n")) { recur(i - 1) } else { i }
+    }
+    text[:go(len(text))]
+}
+
+val trim = fn(text:str):str {
+    val go = fn(i:num):num { if (i < len(text) && isSpaceOrTab(text[i])) { recur(i + 1) } else { i } }
+    trimEnd(text[go(0):])
+}
+
+val isBlankText = fn(text:str):bool {
+    val go = fn(i:num):bool {
+        if (i >= len(text)) { return true }
+        val c = text[i]
+        if (c == " " || c == "\t" || c == "\n") { recur(i + 1) } else { false }
+    }
+    go(0)
+}
+
+// An ATX heading's text without its closing sequence of `#`s.
+val chopClosingHashes = fn(text:str):str {
+    val content = trimEnd(text)
+    val hashes = fn(i:num):num { if (i > 0 && content[i - 1] == "#") { recur(i - 1) } else { i } }
+    val start = hashes(len(content))
+    if (start == len(content)) { return content }
+    if (start == 0) { return "" }
+    if (isSpaceOrTab(content[start - 1])) { trimEnd(content[:start]) } else { content }
+}
+
+// The cells of a table row: split at each `|` that no backslash escapes,
+// without a leading or trailing pipe, trimmed, with `\|` made `|`.
+val splitRow = fn(text:str):list {
+    val row = trim(text)
+    val n = len(row)
+    val start = if (n > 0 && row[0] == "|") { 1 } else { 0 }
+    val go = fn(i:num, cellStart:num, cells:list):list {
+        if (i >= n) {
+            val last = row[cellStart:]
+            return if (trim(last) == "" && cellStart > start) { cells } else { cells :+ last }
+        }
+        val c = row[i]
+        if (c == "\\" && i + 1 < n) { return recur(i + 2, cellStart, cells) }
+        if (c == "|") { return recur(i + 1, i + 1, cells :+ row[cellStart:i]) }
+        recur(i + 1, cellStart, cells)
+    }
+    val cells = go(start, start, [])
+    val clean = fn(i:num, out:list):list {
+        if (i >= len(cells)) { return out }
+        recur(i + 1, out :+ join(splitOn(trim(cells[i]), "\\|"), "|"))
+    }
+    clean(0, [])
+}
+
+val splitOn = fn(text:str, separator:str):list {
+    val width = len(separator)
+    val go = fn(i:num, start:num, out:list):list {
+        if (i + width > len(text)) { return out :+ text[start:] }
+        if (text[i:i + width] == separator) { return recur(i + width, i + width, out :+ text[start:i]) }
+        recur(i + 1, start, out)
+    }
+    go(0, 0, [])
+}
+
+// The column alignments a delimiter row gives, or nil when `text` is not
+// one: cells of `-`s with optional colons at either end, and a `|`.
+val PIPE = toBytes("|")
+
+val delimiterRow = fn(text:str) {
+    if (bytes.find(toBytes(text), PIPE) == nil) { return nil }
+    val cells = splitRow(text)
+    val go = fn(i:num, out:list) {
+        if (i >= len(cells)) { return out }
+        val cell = cells[i]
+        val n = len(cell)
+        val left = n > 0 && cell[0] == ":"
+        val right = n > 1 && cell[n - 1] == ":"
+        val dashes = cell[(if (left) { 1 } else { 0 }):(if (right) { n - 1 } else { n })]
+        if (!allDashes(dashes)) { return nil }
+        val align = if (left && right) { "center" } else if (left) { "left" } else if (right) { "right" } else { "" }
+        recur(i + 1, out :+ align)
+    }
+    go(0, [])
+}
+
+val allDashes = fn(text:str):bool {
+    val go = fn(i:num):bool { if (i >= len(text)) { true } else if (text[i] == "-") { recur(i + 1) } else { false } }
+    len(text) > 0 && go(0)
+}
+
+/**
+ * Parses `text`, whose lines each end in `\n`, into blocks. Throws a
+ * `markdown.limit` error when containers nest more than `maxDepth` deep.
+ */
+export val parseBlocks = fn(text:str, maxDepth:num):map {
+    // Blocks by id, with their children as linked lists, as cmark keeps them.
+    // A block joins its parent's children when it closes.
+    var blocks = {}
+    var firstChild = {}
+    var lastChild = {}
+    var nextSibling = {}
+    var blockCount = 0
+    // Every line of text a leaf block holds, in order: each leaf's lines are
+    // `count` lines from `from`, since only the innermost open block takes
+    // lines.
+    var texts = []
+    // The open blocks, by depth; the document is at 0.
+    var stack = {0: 0}
+    var top = 0
+    var refs = {}
+
+    val newBlock = fn(fields:map):num {
+        val id = blockCount
+        blockCount = id + 1
+        blocks = blocks + {[id]: fields + {lastLineBlank: false, from: len(texts), count: 0}}
+        id
+    }
+    newBlock({type: "document"})
+
+    val block = fn(id:num):map { blocks[id] ?? {} }
+    val set = fn(id:num, fields:map) { blocks = blocks + {[id]: block(id) + fields} }
+    val at = fn(depth:num):num { stack[depth] ?? 0 }
+    val typeAt = fn(depth:num):str { block(at(depth)).type }
+
+    val appendChild = fn(parent:num, child:num) {
+        val last = lastChild[parent]
+        if (last == nil) { firstChild = firstChild + {[parent]: child} } else { nextSibling = nextSibling + {[last]: child} }
+        lastChild = lastChild + {[parent]: child}
+    }
+
+    val children = fn(id:num):list {
+        val go = fn(child, out:list):list {
+            if (child == nil) { out } else { recur(nextSibling[child], out :+ child) }
+        }
+        go(firstChild[id], [])
+    }
+
+    val lines = fn(id:num):list {
+        val b = block(id)
+        texts[b.from:b.from + b.count]
+    }
+
+    // Whether a block or its last descendant list or item ended on a blank
+    // line.
+    val endsWithBlankLine = fn(id:num):bool {
+        val b = block(id)
+        if (b.lastLineBlank) { return true }
+        if (b.type == "list" || b.type == "item") {
+            val last = lastChild[id]
+            if (last != nil) { return recur(last) }
+        }
+        false
+    }
+
+    // Finishes a block as it closes; false drops it.
+    val finalize = fn(id:num):bool {
+        val b = block(id)
+        val kind = b.type
+        if (kind == "paragraph") {
+            val [rest, found] = parseReferences(join(lines(id), "\n") + "\n", refs)
+            refs = found
+            if (isBlankText(rest)) { return false }
+            set(id, {text: trimEnd(rest)})
+        } else if (kind == "heading") {
+            if (!b.setext) { set(id, {text: join(lines(id), "")}) }
+        } else if (kind == "code") {
+            val content = lines(id)
+            if (b.fenced) {
+                val body = content[1:]
+                set(id, {info: unescape(trim(content[0])), text: if (len(body) == 0) { "" } else { join(body, "\n") + "\n" }})
+            } else {
+                val blankTail = fn(i:num):num { if (i > 0 && isBlankText(content[i - 1])) { recur(i - 1) } else { i } }
+                val kept = content[:blankTail(len(content))]
+                set(id, {info: "", text: if (len(kept) == 0) { "" } else { join(kept, "\n") + "\n" }})
+            }
+        } else if (kind == "table") {
+            val rows = lines(id)
+            val go = fn(i:num, out:list):list { if (i >= len(rows)) { out } else { recur(i + 1, out :+ splitRow(rows[i])) } }
+            set(id, {rows: go(0, [])})
+        } else if (kind == "list") {
+            val items = children(id)
+            val looseItem = fn(i:num):bool {
+                if (i >= len(items)) { return false }
+                val item = items[i]
+                val more = i + 1 < len(items)
+                if (block(item).lastLineBlank && more) { return true }
+                val kids = children(item)
+                val loose = fn(j:num):bool {
+                    if (j >= len(kids)) { return false }
+                    if ((more || j + 1 < len(kids)) && endsWithBlankLine(kids[j])) { true } else { recur(j + 1) }
+                }
+                if (loose(0)) { true } else { recur(i + 1) }
+            }
+            set(id, {tight: !looseItem(0)})
+        }
+        true
+    }
+
+    val closeTop = fn() {
+        val id = at(top)
+        val keep = finalize(id)
+        top = top - 1
+        if (keep) { appendChild(at(top), id) }
+    }
+
+    val closeAbove = fn(depth:num) {
+        if (top > depth) {
+            closeTop()
+            recur(depth)
+        }
+    }
+
+    // Opens a block of `fields` as the last child of the block at `depth`,
+    // or of the nearest ancestor that can hold it; returns its depth.
+    val addChild = fn(depth:num, fields:map):num {
+        closeAbove(depth)
+        val fit = fn() {
+            if (!canContain(typeAt(top), fields.type)) {
+                closeTop()
+                recur()
+            }
+        }
+        fit()
+        if (top + 1 > maxDepth && NESTING[fields.type] == true) {
+            throw Error {type: "markdown.limit", msg: "blocks nest more than $maxDepth deep", data: {limit: "depth", max: maxDepth}}
+        }
+        val id = newBlock(fields)
+        top = top + 1
+        stack = stack + {[top]: id}
+        top
+    }
+
+    // --- The current line ---
+
+    var line = ""
+    var lineNumber = 0
+    var offset = 0
+    var column = 0
+    var partialTab = false
+    var firstNonspace = 0
+    var firstNonspaceColumn = 0
+    var indent = 0
+    var blank = false
+
+    val charAt = fn(i:num):str { if (i < len(line)) { line[i] } else { "" } }
+
+    val findFirstNonspace = fn() {
+        val go = fn(i:num, col:num) {
+            if (i < len(line)) {
+                val c = line[i]
+                if (c == " ") { return recur(i + 1, col + 1) }
+                if (c == "\t") { return recur(i + 1, col + (4 - col % 4)) }
+            }
+            firstNonspace = i
+            firstNonspaceColumn = col
+        }
+        go(offset, column)
+        indent = firstNonspaceColumn - column
+        blank = firstNonspace >= len(line)
+    }
+
+    // Moves `count` characters along the line, or `count` columns, where a
+    // tab may be partly consumed.
+    val advance = fn(count:num, columns:bool) {
+        if (count <= 0 || offset >= len(line)) { return nil }
+        if (line[offset] == "\t") {
+            val toTab = 4 - column % 4
+            if (columns) {
+                partialTab = toTab > count
+                val step = if (toTab < count) { toTab } else { count }
+                column = column + step
+                if (!partialTab) { offset = offset + 1 }
+                return recur(count - step, columns)
+            }
+            partialTab = false
+            column = column + toTab
+            offset = offset + 1
+            return recur(count - 1, columns)
+        }
+        partialTab = false
+        offset = offset + 1
+        column = column + 1
+        recur(count - 1, columns)
+    }
+
+    val addLineText = fn(depth:num, content:str) {
+        val id = at(depth)
+        texts = texts :+ content
+        set(id, {count: block(id).count + 1})
+    }
+
+    // Adds the rest of the line to the block at `depth`, a partly consumed
+    // tab as the spaces left of it.
+    val addLine = fn(depth:num) {
+        if (partialTab) {
+            offset = offset + 1
+            val spaces = " " * (4 - column % 4)
+            addLineText(depth, spaces + line[offset:])
+        } else {
+            addLineText(depth, line[offset:])
+        }
+    }
+
+    // --- Block starts ---
+
+    // The length of an ATX heading's opening at the first nonspace, with the
+    // spaces after it, and its level; nil when there is none.
+    val atxStart = fn() {
+        val hashes = fn(i:num):num { if (charAt(i) == "#") { recur(i + 1) } else { i } }
+        val end = hashes(firstNonspace)
+        val level = end - firstNonspace
+        if (level < 1 || level > 6) { return nil }
+        if (end < len(line) && !isSpaceOrTab(line[end])) { return nil }
+        val spaces = fn(i:num):num { if (isSpaceOrTab(charAt(i))) { recur(i + 1) } else { i } }
+        [spaces(end) - firstNonspace, level]
+    }
+
+    // The length of a code fence's opening at the first nonspace, or 0.
+    val openFence = fn():num {
+        val c = charAt(firstNonspace)
+        if (c != "`" && c != "~") { return 0 }
+        val run = fn(i:num):num { if (charAt(i) == c) { recur(i + 1) } else { i } }
+        val end = run(firstNonspace)
+        if (end - firstNonspace < 3) { return 0 }
+        if (c == "`") {
+            val noBacktick = fn(i:num):bool { if (i >= len(line)) { true } else if (line[i] == "`") { false } else { recur(i + 1) } }
+            if (!noBacktick(end)) { return 0 }
+        }
+        end - firstNonspace
+    }
+
+    // The length of a closing fence of `c`s at the first nonspace, or 0.
+    val closeFence = fn(c:str):num {
+        val run = fn(i:num):num { if (charAt(i) == c) { recur(i + 1) } else { i } }
+        val end = run(firstNonspace)
+        val spaces = fn(i:num):num { if (isSpaceOrTab(charAt(i))) { recur(i + 1) } else { i } }
+        if (end - firstNonspace < 3 || spaces(end) < len(line)) { 0 } else { end - firstNonspace }
+    }
+
+    // A setext underline's level at the first nonspace, or 0.
+    val setextLevel = fn():num {
+        val c = charAt(firstNonspace)
+        if (c != "=" && c != "-") { return 0 }
+        val run = fn(i:num):num { if (charAt(i) == c) { recur(i + 1) } else { i } }
+        val spaces = fn(i:num):num { if (isSpaceOrTab(charAt(i))) { recur(i + 1) } else { i } }
+        if (spaces(run(firstNonspace)) < len(line)) { 0 } else if (c == "=") { 1 } else { 2 }
+    }
+
+    val isThematicBreak = fn():bool {
+        val c = charAt(firstNonspace)
+        if (c != "*" && c != "-" && c != "_") { return false }
+        val go = fn(i:num, count:num):bool {
+            if (i >= len(line)) { return count >= 3 }
+            val d = line[i]
+            if (d == c) { return recur(i + 1, count + 1) }
+            if (isSpaceOrTab(d)) { return recur(i + 1, count) }
+            false
+        }
+        go(firstNonspace, 0)
+    }
+
+    // The list marker at the first nonspace as its length and list fields,
+    // or nil. Interrupting a paragraph, it must start at 1 and have text.
+    val listMarker = fn(interrupts:bool) {
+        val c = charAt(firstNonspace)
+        val hasText = fn(i:num):bool {
+            if (isSpaceOrTab(charAt(i))) { recur(i + 1) } else { i < len(line) }
+        }
+        val spaceAfter = fn(i:num):bool { i >= len(line) || isSpaceOrTab(line[i]) }
+        if (c == "*" || c == "-" || c == "+") {
+            val after = firstNonspace + 1
+            if (!spaceAfter(after) || (interrupts && !hasText(after))) { return nil }
+            return [1, {ordered: false, bullet: c, delimiter: "", start: 1}]
+        }
+        if (!isDigit(c)) { return nil }
+        val digits = fn(i:num, value:num):list {
+            if (i - firstNonspace < 9 && isDigit(charAt(i))) { recur(i + 1, value * 10 + digitValue(charAt(i))) } else { [i, value] }
+        }
+        val [end, start] = digits(firstNonspace, 0)
+        val d = charAt(end)
+        if (d != "." && d != ")") { return nil }
+        if (interrupts && start != 1) { return nil }
+        if (!spaceAfter(end + 1) || (interrupts && !hasText(end + 1))) { return nil }
+        [end + 1 - firstNonspace, {ordered: true, bullet: "", delimiter: d, start: start}]
+    }
+
+    // A table's start: the last line of the paragraph at `depth` as its
+    // header row and this line as a delimiter row with as many cells.
+    val tableStart = fn(depth:num) {
+        val aligns = delimiterRow(line[firstNonspace:])
+        if (aligns == nil) { return nil }
+        val paragraph = block(at(depth))
+        val head = splitRow(texts[paragraph.from + paragraph.count - 1])
+        if (len(head) != len(aligns)) { return nil }
+        {aligns: aligns, head: head}
+    }
+
+    // --- One line ---
+
+    // Continues the open blocks the line's start can; returns the depth of
+    // the last one continued, or -1 when the line closed a fenced code block
+    // and is used up.
+    val continueOpen = fn(depth:num):num {
+        if (depth > top) { return top }
+        val id = at(depth)
+        val b = block(id)
+        findFirstNonspace()
+        val kind = b.type
+        if (kind == "blockquote") {
+            if (indent > 3 || charAt(firstNonspace) != ">") { return depth - 1 }
+            advance(indent + 1, true)
+            if (isSpaceOrTab(charAt(offset))) { advance(1, true) }
+            return recur(depth + 1)
+        }
+        if (kind == "item") {
+            if (indent >= b.markerOffset + b.padding) {
+                advance(b.markerOffset + b.padding, true)
+                return recur(depth + 1)
+            }
+            if (blank && (lastChild[id] != nil || depth < top)) {
+                advance(firstNonspace - offset, false)
+                return recur(depth + 1)
+            }
+            return depth - 1
+        }
+        if (kind == "code") {
+            if (b.fenced) {
+                if (indent <= 3 && charAt(firstNonspace) == b.fenceChar && closeFence(b.fenceChar) >= b.fenceLength) {
+                    closeTop()
+                    return -1
+                }
+                val skip = fn(i:num) {
+                    if (i > 0 && isSpaceOrTab(charAt(offset))) {
+                        advance(1, true)
+                        recur(i - 1)
+                    }
+                }
+                skip(b.fenceOffset)
+                return recur(depth + 1)
+            }
+            if (indent >= 4) {
+                advance(4, true)
+                return recur(depth + 1)
+            }
+            if (blank) {
+                advance(firstNonspace - offset, false)
+                return recur(depth + 1)
+            }
+            return depth - 1
+        }
+        if (kind == "heading" || kind == "thematic") { return depth - 1 }
+        if (kind == "paragraph" || kind == "table") {
+            if (blank) { return depth - 1 }
+            return recur(depth + 1)
+        }
+        recur(depth + 1)
+    }
+
+    // Starts the blocks the rest of the line opens inside the block at
+    // `depth`; returns the depth of the innermost.
+    val openNew = fn(depth:num, allMatched:bool, maybeLazy:bool):num {
+        val kind = typeAt(depth)
+        if (kind == "code") { return depth }
+        findFirstNonspace()
+        val indented = indent >= 4
+        val c = charAt(firstNonspace)
+        if (!indented && STARTS[c] != true) { return depth }
+        if (!indented) {
+            if (c == ">") {
+                advance(firstNonspace + 1 - offset, false)
+                if (isSpaceOrTab(charAt(offset))) { advance(1, true) }
+                return recur(addChild(depth, {type: "blockquote"}), allMatched, false)
+            }
+            val atx = atxStart()
+            if (atx != nil) {
+                advance(firstNonspace + atx[0] - offset, false)
+                return addChild(depth, {type: "heading", level: atx[1], setext: false})
+            }
+            val fence = openFence()
+            if (fence > 0) {
+                val fenceOffset = firstNonspace - offset
+                val opened = addChild(depth, {type: "code", fenced: true, fenceChar: c, fenceLength: fence, fenceOffset: fenceOffset})
+                advance(firstNonspace + fence - offset, false)
+                return opened
+            }
+            if (kind == "paragraph") {
+                val level = setextLevel()
+                if (level > 0) {
+                    val id = at(depth)
+                    val [rest, found] = parseReferences(join(lines(id), "\n") + "\n", refs)
+                    refs = found
+                    if (isBlankText(rest)) {
+                        set(id, {from: len(texts), count: 0})
+                    } else {
+                        set(id, {type: "heading", level: level, setext: true, text: trimEnd(rest)})
+                        offset = len(line)
+                    }
+                    return depth
+                }
+            }
+            if (!(kind == "paragraph" && !allMatched) && isThematicBreak()) {
+                val opened = addChild(depth, {type: "thematic"})
+                offset = len(line)
+                return opened
+            }
+            val marker = listMarker(kind == "paragraph")
+            if (marker != nil) {
+                val [length, fields] = marker
+                val markerOffset = indent
+                advance(firstNonspace + length - offset, false)
+                val savedTab = partialTab
+                val savedOffset = offset
+                val savedColumn = column
+                val spaces = fn() {
+                    if (column - savedColumn <= 5 && isSpaceOrTab(charAt(offset))) {
+                        advance(1, true)
+                        recur()
+                    }
+                }
+                spaces()
+                val width = column - savedColumn
+                val padding = if (width >= 5 || width < 1 || offset >= len(line)) {
+                    offset = savedOffset
+                    column = savedColumn
+                    partialTab = savedTab
+                    if (width > 0) { advance(1, true) }
+                    length + 1
+                } else {
+                    length + width
+                }
+                val list = fields + {markerOffset: markerOffset, padding: padding}
+                val current = block(at(depth))
+                val sameList = kind == "list" && current.ordered == list.ordered && current.bullet == list.bullet
+                    && current.delimiter == list.delimiter
+                val listDepth = if (sameList) { depth } else { addChild(depth, list + {type: "list"}) }
+                val item = addChild(listDepth, {type: "item", markerOffset: markerOffset, padding: padding, startLine: lineNumber})
+                return recur(item, allMatched, false)
+            }
+        }
+        if (indented && !maybeLazy && !blank && kind != "table") {
+            advance(4, true)
+            return addChild(depth, {type: "code", fenced: false})
+        }
+        if (!indented && kind == "paragraph") {
+            val table = tableStart(depth)
+            if (table != nil) {
+                val id = at(depth)
+                val count = block(id).count
+                val parent = depth - 1
+                if (count > 1) {
+                    set(id, {count: count - 1})
+                    closeTop()
+                } else {
+                    top = top - 1
+                }
+                val opened = addChild(parent, {type: "table", aligns: table.aligns, head: table.head})
+                set(at(opened), {from: len(texts)})
+                offset = len(line)
+                return opened
+            }
+        }
+        depth
+    }
+
+    // Adds what remains of the line to the block at `depth`, or as a lazy
+    // continuation of the open paragraph.
+    val addText = fn(depth:num, matched:num) {
+        findFirstNonspace()
+        val id = at(depth)
+        val b = block(id)
+        if (blank) {
+            val last = if (depth < top) { at(depth + 1) } else { lastChild[id] }
+            if (last != nil) { set(last, {lastLineBlank: true}) }
+        }
+        val kind = b.type
+        val emptyItem = kind == "item" && lastChild[id] == nil && depth == top && b.startLine == lineNumber
+        // Blank lines in fenced code, and the line that opens an empty item,
+        // do not make a list loose.
+        val lineBlank = blank && NEVER_BLANK[kind] != true && !(kind == "code" && b.fenced) && !emptyItem
+        set(id, {lastLineBlank: lineBlank})
+        val clearAbove = fn(d:num) {
+            if (d < depth) {
+                set(at(d), {lastLineBlank: false})
+                recur(d + 1)
+            }
+        }
+        clearAbove(0)
+        if (top != matched && depth == matched && !blank && typeAt(top) == "paragraph") {
+            addLine(top)
+            return nil
+        }
+        closeAbove(depth)
+        if (kind == "code") {
+            addLine(depth)
+        } else if (blank) {
+            nil
+        } else if (ACCEPTS_LINES[kind] == true) {
+            if (kind == "heading" && !b.setext) {
+                addLineText(depth, chopClosingHashes(line[firstNonspace:]))
+            } else {
+                advance(firstNonspace - offset, false)
+                addLine(depth)
+            }
+        } else {
+            val paragraph = addChild(depth, {type: "paragraph"})
+            advance(firstNonspace - offset, false)
+            addLine(paragraph)
+        }
+    }
+
+    val processLine = fn(text:str) {
+        line = text
+        lineNumber = lineNumber + 1
+        offset = 0
+        column = 0
+        partialTab = false
+        blank = false
+        val matched = continueOpen(1)
+        if (matched < 0) { return nil }
+        val maybeLazy = typeAt(top) == "paragraph"
+        val depth = openNew(matched, matched == top, maybeLazy)
+        addText(depth, matched)
+    }
+
+    // `text` ends in a line ending, so the last part is empty.
+    val all = split(text, "\n")
+    val each = fn(i:num) {
+        if (i < len(all) - 1) {
+            processLine(all[i])
+            recur(i + 1)
+        }
+    }
+    each(0)
+    closeAbove(0)
+
+    // The tree from `id`, without the parse's bookkeeping.
+    val build = fn(id:num):map {
+        val b = block(id)
+        val kind = b.type
+        if (kind == "paragraph") { return {type: kind, text: b.text} }
+        if (kind == "heading") { return {type: kind, level: b.level, text: b.text} }
+        if (kind == "code") { return {type: kind, info: b.info, text: b.text} }
+        if (kind == "thematic") { return {type: kind} }
+        if (kind == "table") { return {type: kind, aligns: b.aligns, head: b.head, rows: b.rows} }
+        val kids = children(id)
+        val go = fn(i:num, out:list):list { if (i >= len(kids)) { out } else { recur(i + 1, out :+ build(kids[i])) } }
+        if (kind == "list") {
+            return {type: kind, ordered: b.ordered, start: b.start, tight: b.tight, children: go(0, [])}
+        }
+        {type: kind, children: go(0, [])}
+    }
+    {document: build(0), refs: refs}
+}
+
+val digitValue = fn(c:str):num {
+    val go = fn(i:num):num { if ("0123456789"[i] == c) { i } else { recur(i + 1) } }
+    go(0)
+}

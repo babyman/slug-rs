@@ -1,0 +1,11 @@
+# Markdown to safe HTML: CommonMark 0.31.2 with GitHub's tables,
+# strikethrough, and extended autolinks, raw HTML shown as text, and link
+# and image URLs held to an allowlist. Written in Slug, with no native code.
+[modules]
+"slug.text.markdown" = { source = "modules/markdown.slug" }
+"slug.text.markdown.block" = { source = "modules/block.slug" }
+"slug.text.markdown.inline" = { source = "modules/inline.slug" }
+"slug.text.markdown.data" = { source = "modules/data.slug" }
+
+[tests]
+files = ["tests/markdown.slug", "tests/spec.slug"]

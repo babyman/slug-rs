@@ -1,0 +1,30 @@
+// Runs the tests that tests/markdown.slug and tests/spec.slug export, as one
+// program, so they can run compiled: `make test-clutches` compiles it with
+// `slug compile` and runs the artifact, whose modules and assets are the
+// compiled ones, after `slug test` has run the same tests from source.
+val test = import("slug.test")
+val unit = import("markdown")
+val spec = import("spec")
+
+val run = fn(suite:str, tests:map):num {
+    val names = keys(tests)
+    val go = fn(i:num, failed:num):num {
+        if (i >= len(names)) { return failed }
+        val name = names[i]
+        val failure = match tests[name] {
+            f: fn => test.runTest(f)
+            _ => nil
+        }
+        if (failure == nil) { return recur(i + 1, failed) }
+        println("FAIL $suite.$name: ${failure.msg}")
+        recur(i + 1, failed + 1)
+    }
+    go(0, 0)
+}
+
+val main = fn() {
+    val failed = run("markdown", unit) + run("spec", spec)
+    val count = len(keys(unit)) + len(keys(spec))
+    if (failed > 0) { test.fail("$failed of $count compiled tests failed") }
+    println("slug.text.markdown compiled: $count passed")
+}

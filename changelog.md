@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- The `slug.text.markdown` clutch renders Markdown as safe HTML:
+  `toHtml(source, options)`. The dialect is CommonMark 0.31.2 with GitHub's
+  tables, strikethrough, and extended autolinks; raw HTML is shown as
+  escaped text, and code is always escaped. The output holds only a fixed
+  list of elements and attributes, and link and image URLs are classified
+  as a browser reads them (after entities, without control characters) and
+  held to the `links` and `images` allowlists, by default relative, `http`,
+  `https`, and `mailto` links and relative images only; `javascript`,
+  `vbscript`, `data`, and `file` are never allowed. `maxBytes` (65536) and
+  `maxDepth` (32) bound the input, throwing `markdown.limit`. It is written
+  in Slug, passes the CommonMark and GFM spec examples apart from 77
+  documented raw-HTML and autolink differences, runs cmark's pathological
+  inputs in linear time, and its tests run compiled as well as from source.
+
 - `slug.fmt.json.parseStrict(text)` reads JSON as `parse` does but rejects
   an object, at any depth, that repeats a key, comparing keys after decoding
   escapes, so `"body"` and `"\u0062ody"` collide. It throws `json.parse`

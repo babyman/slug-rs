@@ -1,0 +1,387 @@
+[
+ {
+  "example": 21,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;/bar\\/)&quot;&gt;</p>\n"
+ },
+ {
+  "example": 31,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;&amp;ouml;&amp;ouml;.html&quot;&gt;</p>\n"
+ },
+ {
+  "example": 148,
+  "reason": "raw-html",
+  "html": "<p>&lt;table&gt;&lt;tr&gt;&lt;td&gt;\n&lt;pre&gt;\n<strong>Hello</strong>,</p>\n<p><em>world</em>.\n&lt;/pre&gt;\n&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</p>\n"
+ },
+ {
+  "example": 149,
+  "reason": "raw-html",
+  "html": "<p>&lt;table&gt;\n&lt;tr&gt;\n&lt;td&gt;\nhi\n&lt;/td&gt;\n&lt;/tr&gt;\n&lt;/table&gt;</p>\n<p>okay.</p>\n"
+ },
+ {
+  "example": 150,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;\n<em>hello</em>\n&lt;foo&gt;&lt;a&gt;</p>\n"
+ },
+ {
+  "example": 151,
+  "reason": "raw-html",
+  "html": "<p>&lt;/div&gt;\n<em>foo</em></p>\n"
+ },
+ {
+  "example": 152,
+  "reason": "raw-html",
+  "html": "<p>&lt;DIV CLASS=&quot;foo&quot;&gt;</p>\n<p><em>Markdown</em></p>\n<p>&lt;/DIV&gt;</p>\n"
+ },
+ {
+  "example": 153,
+  "reason": "raw-html",
+  "html": "<p>&lt;div id=&quot;foo&quot;\nclass=&quot;bar&quot;&gt;\n&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 154,
+  "reason": "raw-html",
+  "html": "<p>&lt;div id=&quot;foo&quot; class=&quot;bar\nbaz&quot;&gt;\n&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 155,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;\n<em>foo</em></p>\n<p><em>bar</em></p>\n"
+ },
+ {
+  "example": 156,
+  "reason": "raw-html",
+  "html": "<p>&lt;div id=&quot;foo&quot;\n<em>hi</em></p>\n"
+ },
+ {
+  "example": 157,
+  "reason": "raw-html",
+  "html": "<p>&lt;div class\nfoo</p>\n"
+ },
+ {
+  "example": 158,
+  "reason": "raw-html",
+  "html": "<p>&lt;div *???-&amp;&amp;&amp;-&lt;---\n<em>foo</em></p>\n"
+ },
+ {
+  "example": 159,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;&lt;a href=&quot;bar&quot;&gt;<em>foo</em>&lt;/a&gt;&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 160,
+  "reason": "raw-html",
+  "html": "<p>&lt;table&gt;&lt;tr&gt;&lt;td&gt;\nfoo\n&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</p>\n"
+ },
+ {
+  "example": 161,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;&lt;/div&gt;</p>\n<pre><code class=\"language-c\">int x = 33;\n</code></pre>\n"
+ },
+ {
+  "example": 162,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;foo&quot;&gt;\n<em>bar</em>\n&lt;/a&gt;</p>\n"
+ },
+ {
+  "example": 163,
+  "reason": "raw-html",
+  "html": "<p>&lt;Warning&gt;\n<em>bar</em>\n&lt;/Warning&gt;</p>\n"
+ },
+ {
+  "example": 164,
+  "reason": "raw-html",
+  "html": "<p>&lt;i class=&quot;foo&quot;&gt;\n<em>bar</em>\n&lt;/i&gt;</p>\n"
+ },
+ {
+  "example": 165,
+  "reason": "raw-html",
+  "html": "<p>&lt;/ins&gt;\n<em>bar</em></p>\n"
+ },
+ {
+  "example": 166,
+  "reason": "raw-html",
+  "html": "<p>&lt;del&gt;\n<em>foo</em>\n&lt;/del&gt;</p>\n"
+ },
+ {
+  "example": 167,
+  "reason": "raw-html",
+  "html": "<p>&lt;del&gt;</p>\n<p><em>foo</em></p>\n<p>&lt;/del&gt;</p>\n"
+ },
+ {
+  "example": 168,
+  "reason": "raw-html",
+  "html": "<p>&lt;del&gt;<em>foo</em>&lt;/del&gt;</p>\n"
+ },
+ {
+  "example": 169,
+  "reason": "raw-html",
+  "html": "<p>&lt;pre language=&quot;haskell&quot;&gt;&lt;code&gt;\nimport Text.HTML.TagSoup</p>\n<p>main :: IO ()\nmain = print $ parseTags tags\n&lt;/code&gt;&lt;/pre&gt;\nokay</p>\n"
+ },
+ {
+  "example": 170,
+  "reason": "raw-html",
+  "html": "<p>&lt;script type=&quot;text/javascript&quot;&gt;\n// JavaScript example</p>\n<p>document.getElementById(&quot;demo&quot;).innerHTML = &quot;Hello JavaScript!&quot;;\n&lt;/script&gt;\nokay</p>\n"
+ },
+ {
+  "example": 171,
+  "reason": "raw-html",
+  "html": "<p>&lt;textarea&gt;</p>\n<p><em>foo</em></p>\n<p><em>bar</em></p>\n<p>&lt;/textarea&gt;</p>\n"
+ },
+ {
+  "example": 172,
+  "reason": "raw-html",
+  "html": "<p>&lt;style\ntype=&quot;text/css&quot;&gt;\nh1 {color:red;}</p>\n<p>p {color:blue;}\n&lt;/style&gt;\nokay</p>\n"
+ },
+ {
+  "example": 173,
+  "reason": "raw-html",
+  "html": "<p>&lt;style\ntype=&quot;text/css&quot;&gt;</p>\n<p>foo</p>\n"
+ },
+ {
+  "example": 174,
+  "reason": "raw-html",
+  "html": "<blockquote>\n<p>&lt;div&gt;\nfoo</p>\n</blockquote>\n<p>bar</p>\n"
+ },
+ {
+  "example": 175,
+  "reason": "raw-html",
+  "html": "<ul>\n<li>&lt;div&gt;</li>\n<li>foo</li>\n</ul>\n"
+ },
+ {
+  "example": 176,
+  "reason": "raw-html",
+  "html": "<p>&lt;style&gt;p{color:red;}&lt;/style&gt;\n<em>foo</em></p>\n"
+ },
+ {
+  "example": 177,
+  "reason": "raw-html",
+  "html": "<p>&lt;!-- foo --&gt;<em>bar</em>\n<em>baz</em></p>\n"
+ },
+ {
+  "example": 178,
+  "reason": "raw-html",
+  "html": "<p>&lt;script&gt;\nfoo\n&lt;/script&gt;1. <em>bar</em></p>\n"
+ },
+ {
+  "example": 179,
+  "reason": "raw-html",
+  "html": "<p>&lt;!-- Foo</p>\n<p>bar\nbaz --&gt;\nokay</p>\n"
+ },
+ {
+  "example": 180,
+  "reason": "raw-html",
+  "html": "<p>&lt;?php</p>\n<p>echo '&gt;';</p>\n<p>?&gt;\nokay</p>\n"
+ },
+ {
+  "example": 181,
+  "reason": "raw-html",
+  "html": "<p>&lt;!DOCTYPE html&gt;</p>\n"
+ },
+ {
+  "example": 182,
+  "reason": "raw-html",
+  "html": "<p>&lt;![CDATA[\nfunction matchwo(a,b)\n{\nif (a &lt; b &amp;&amp; a &lt; 0) then {\nreturn 1;</p>\n<p>} else {</p>\n<pre><code>return 0;\n</code></pre>\n<p>}\n}\n]]&gt;\nokay</p>\n"
+ },
+ {
+  "example": 183,
+  "reason": "raw-html",
+  "html": "<p>&lt;!-- foo --&gt;</p>\n<pre><code>&lt;!-- foo --&gt;\n</code></pre>\n"
+ },
+ {
+  "example": 184,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;</p>\n<pre><code>&lt;div&gt;\n</code></pre>\n"
+ },
+ {
+  "example": 185,
+  "reason": "raw-html",
+  "html": "<p>Foo\n&lt;div&gt;\nbar\n&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 186,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;\nbar\n&lt;/div&gt;\n<em>foo</em></p>\n"
+ },
+ {
+  "example": 187,
+  "reason": "raw-html",
+  "html": "<p>Foo\n&lt;a href=&quot;bar&quot;&gt;\nbaz</p>\n"
+ },
+ {
+  "example": 188,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;</p>\n<p><em>Emphasized</em> text.</p>\n<p>&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 189,
+  "reason": "raw-html",
+  "html": "<p>&lt;div&gt;\n<em>Emphasized</em> text.\n&lt;/div&gt;</p>\n"
+ },
+ {
+  "example": 190,
+  "reason": "raw-html",
+  "html": "<p>&lt;table&gt;</p>\n<p>&lt;tr&gt;</p>\n<p>&lt;td&gt;\nHi\n&lt;/td&gt;</p>\n<p>&lt;/tr&gt;</p>\n<p>&lt;/table&gt;</p>\n"
+ },
+ {
+  "example": 191,
+  "reason": "raw-html",
+  "html": "<p>&lt;table&gt;</p>\n<p>&lt;tr&gt;</p>\n<pre><code>&lt;td&gt;\n  Hi\n&lt;/td&gt;\n</code></pre>\n<p>&lt;/tr&gt;</p>\n<p>&lt;/table&gt;</p>\n"
+ },
+ {
+  "example": 201,
+  "reason": "raw-html",
+  "html": "<p>[foo]: &lt;bar&gt;(baz)</p>\n<p>[foo]</p>\n"
+ },
+ {
+  "example": 308,
+  "reason": "raw-html",
+  "html": "<ul>\n<li>foo</li>\n<li>bar</li>\n</ul>\n<p>&lt;!-- --&gt;</p>\n<ul>\n<li>baz</li>\n<li>bim</li>\n</ul>\n"
+ },
+ {
+  "example": 309,
+  "reason": "raw-html",
+  "html": "<ul>\n<li>\n<p>foo</p>\n<p>notcode</p>\n</li>\n<li>\n<p>foo</p>\n</li>\n</ul>\n<p>&lt;!-- --&gt;</p>\n<pre><code>code\n</code></pre>\n"
+ },
+ {
+  "example": 344,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;`&quot;&gt;`</p>\n"
+ },
+ {
+  "example": 475,
+  "reason": "raw-html",
+  "html": "<p>*&lt;img src=&quot;foo&quot; title=&quot;*&quot;/&gt;</p>\n"
+ },
+ {
+  "example": 476,
+  "reason": "raw-html",
+  "html": "<p>**&lt;a href=&quot;**&quot;&gt;</p>\n"
+ },
+ {
+  "example": 477,
+  "reason": "raw-html",
+  "html": "<p>__&lt;a href=&quot;__&quot;&gt;</p>\n"
+ },
+ {
+  "example": 491,
+  "reason": "raw-html",
+  "html": "<p>[link](&lt;foo\nbar&gt;)</p>\n"
+ },
+ {
+  "example": 494,
+  "reason": "raw-html",
+  "html": "<p>[a](&lt;b)c\n[a](&lt;b)c&gt;\n[a](&lt;b&gt;c)</p>\n"
+ },
+ {
+  "example": 524,
+  "reason": "raw-html",
+  "html": "<p>[foo &lt;bar attr=&quot;](baz)&quot;&gt;</p>\n"
+ },
+ {
+  "example": 536,
+  "reason": "raw-html",
+  "html": "<p>[foo &lt;bar attr=&quot;][ref]&quot;&gt;</p>\n"
+ },
+ {
+  "example": 602,
+  "reason": "extended-autolink",
+  "html": "<p>&lt;<a href=\"https://foo.bar/baz\">https://foo.bar/baz</a> bim&gt;</p>\n"
+ },
+ {
+  "example": 606,
+  "reason": "extended-autolink",
+  "html": "<p>&lt;<a href=\"mailto:foo+@bar.example.com\">foo+@bar.example.com</a>&gt;</p>\n"
+ },
+ {
+  "example": 608,
+  "reason": "extended-autolink",
+  "html": "<p>&lt; <a href=\"https://foo.bar\">https://foo.bar</a> &gt;</p>\n"
+ },
+ {
+  "example": 611,
+  "reason": "extended-autolink",
+  "html": "<p><a href=\"https://example.com\">https://example.com</a></p>\n"
+ },
+ {
+  "example": 612,
+  "reason": "extended-autolink",
+  "html": "<p><a href=\"mailto:foo@bar.example.com\">foo@bar.example.com</a></p>\n"
+ },
+ {
+  "example": 613,
+  "reason": "raw-html",
+  "html": "<p>&lt;a&gt;&lt;bab&gt;&lt;c2c&gt;</p>\n"
+ },
+ {
+  "example": 614,
+  "reason": "raw-html",
+  "html": "<p>&lt;a/&gt;&lt;b2/&gt;</p>\n"
+ },
+ {
+  "example": 615,
+  "reason": "raw-html",
+  "html": "<p>&lt;a  /&gt;&lt;b2\ndata=&quot;foo&quot; &gt;</p>\n"
+ },
+ {
+  "example": 616,
+  "reason": "raw-html",
+  "html": "<p>&lt;a foo=&quot;bar&quot; bam = 'baz &lt;em&gt;&quot;&lt;/em&gt;'\n_boolean zoop:33=zoop:33 /&gt;</p>\n"
+ },
+ {
+  "example": 617,
+  "reason": "raw-html",
+  "html": "<p>Foo &lt;responsive-image src=&quot;foo.jpg&quot; /&gt;</p>\n"
+ },
+ {
+  "example": 623,
+  "reason": "raw-html",
+  "html": "<p>&lt;/a&gt;&lt;/foo &gt;</p>\n"
+ },
+ {
+  "example": 625,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;!-- this is a --\ncomment - with hyphens --&gt;</p>\n"
+ },
+ {
+  "example": 626,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;!--&gt; foo --&gt;</p>\n<p>foo &lt;!---&gt; foo --&gt;</p>\n"
+ },
+ {
+  "example": 627,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;?php echo $a; ?&gt;</p>\n"
+ },
+ {
+  "example": 628,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;!ELEMENT br EMPTY&gt;</p>\n"
+ },
+ {
+  "example": 629,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;![CDATA[&gt;&amp;&lt;]]&gt;</p>\n"
+ },
+ {
+  "example": 630,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;a href=&quot;&amp;ouml;&quot;&gt;</p>\n"
+ },
+ {
+  "example": 631,
+  "reason": "raw-html",
+  "html": "<p>foo &lt;a href=&quot;\\*&quot;&gt;</p>\n"
+ },
+ {
+  "example": 642,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;foo  \nbar&quot;&gt;</p>\n"
+ },
+ {
+  "example": 643,
+  "reason": "raw-html",
+  "html": "<p>&lt;a href=&quot;foo\\\nbar&quot;&gt;</p>\n"
+ }
+]
