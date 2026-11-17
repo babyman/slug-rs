@@ -2814,3 +2814,30 @@ running beside the previous tick's drawing. With every player in one town a
 key still takes about two drawings to show, so 1000 players are served but
 not yet responsive; a tick's drawing is about 1.0 s of CPU and needs to be
 about three times faster, from more cores or less work per page.
+
+## Map keys hashed in place (2026-11-17)
+
+A map larger than `INDEX_THRESHOLD` used to build a `MapKey`, the key's
+canonical form, for every lookup, insert, and index rebuild, only to hash it
+and drop it. That cloned a string key's reference count and allocated a
+vector for a list or struct key. `hash_map_key` now feeds the same canonical
+bytes to the hasher straight from the `Value`, and `is_map_key` checks a key
+without building anything, which also covers maps of every size (literal
+and update key checks).
+
+PGO A/B against 2be203b, 9 interleaved rounds: tuned 0.99x, hold-out 1.00x;
+every Crawl workload, `http-server`, and `word-frequency` within spread
+(0.99-1.01x). Microbenchmarks (scratchpad, PGO, 9 rounds):
+
+| workload | ratio |
+|---|---:|
+| integer keys, 2000 entries (control) | 1.00x |
+| runtime string keys, 2000 entries | 0.98x |
+| `[x, y]` keys, 2350 entries | 0.87x |
+| small maps built with `[x, y]` keys | 0.85x |
+| string keys, shared map, 1 fork | 0.99x wall |
+| string keys, shared map, 4 forks | 0.98x wall, 0.98x CPU |
+
+Kept for list and struct keys. The string-key reference count was not a
+measurable contention source: 4 forks cost the same ~3.5x CPU of one fork
+before and after, so that overhead is elsewhere in the lookup loop.

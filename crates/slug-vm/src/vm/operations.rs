@@ -7,7 +7,7 @@ use core::cell::RefCell;
 
 use crate::{
     BinaryOperator, MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
-    collections::{Bytes, Map, MapKey},
+    collections::{Bytes, Map},
 };
 
 use super::RuntimeErrorKind;
@@ -683,9 +683,7 @@ fn resolve_map_pattern_keys(
         .collect()
 }
 
-pub(super) fn is_map_key(value: &Value) -> bool {
-    MapKey::from_value(value).is_some()
-}
+pub(super) use crate::collections::is_map_key;
 
 /// Why `value` cannot be a map key, naming the part of a list or struct that
 /// cannot.

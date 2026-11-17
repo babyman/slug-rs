@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Map keys are hashed and checked in place: a lookup or update on a map of
+  more than 32 entries no longer builds a copy of its key first, and the
+  key check of a map literal or update no longer does either. Maps keyed by
+  lists or structs, such as `{[[x, y]]: cell}`, are 13-15% faster in
+  microbenchmarks; other keys and the benchmark corpus are unchanged.
+
 - A function in a library module can index a name it destructured from an
   import: after `val {TABLE} = import("tables")`, `TABLE[key]` and
   `TABLE.field` inside a function threw `cannot index binding`, because the

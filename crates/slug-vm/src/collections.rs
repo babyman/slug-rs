@@ -12,74 +12,72 @@ use core::hash::{BuildHasher, Hash, Hasher};
 use crate::platform::MapHasher;
 use core::ops::Deref;
 
-use crate::{EnumValue, Value};
+use crate::Value;
 
-/// Canonical, hashable map-key representation.
-///
-/// Equal Slug map keys always produce the same variant and payload, so equal
-/// keys hash identically in a map's index.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MapKey {
-    Bool(bool),
-    Int(i64),
-    Float(u64),
-    Str(Str),
-    Bytes(Rc<Vec<u8>>),
-    /// An enum value, equal to another of the same module, type, and case.
-    Enum(Rc<EnumValue>),
-    /// A native resource, by identity: equal only to itself.
-    Resource(usize),
-    /// A channel, by identity: equal only to itself.
-    Channel(usize),
-    /// A list of keys, equal to a list of equal keys in the same order.
-    List(Vec<MapKey>),
-    /// A struct, by its schema's identity and its fields' keys in order.
-    Struct(usize, Vec<MapKey>),
+/// Whether `value` can be a map key: a boolean, a finite number, a string,
+/// bytes, an enum value, a native resource or channel (by identity), or a
+/// list or struct of keys.
+pub(crate) fn is_map_key(value: &Value) -> bool {
+    match value {
+        Value::Bool(_)
+        | Value::Int(_)
+        | Value::Str(_)
+        | Value::Bytes(_)
+        | Value::Enum(_)
+        | Value::NativeResource(_)
+        | Value::Channel(_) => true,
+        Value::Float(value) => value.is_finite(),
+        Value::List(values) => values.iter().all(is_map_key),
+        Value::Struct(value) => value.values.iter().all(is_map_key),
+        _ => false,
+    }
 }
 
-impl MapKey {
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::float_cmp,
-        reason = "the range and integral-value checks make this conversion exact"
-    )]
-    pub(crate) fn from_value(value: &Value) -> Option<Self> {
-        match value {
-            Value::Bool(value) => Some(Self::Bool(*value)),
-            Value::Int(value) => Some(Self::Int(*value)),
-            Value::Float(value)
-                if value.is_finite()
-                    && *value >= i64::MIN as f64
-                    && *value < -(i64::MIN as f64)
-                    && (*value as i64) as f64 == *value =>
-            {
-                Some(Self::Int(*value as i64))
-            }
-            Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
-            Value::Str(value) => Some(Self::Str(value.clone())),
-            Value::Bytes(value) => Some(Self::Bytes(value.clone())),
-            Value::Enum(value) => Some(Self::Enum(value.clone())),
-            Value::NativeResource(resource) => {
-                Some(Self::Resource(Rc::as_ptr(resource).cast::<()>() as usize))
-            }
-            Value::Channel(channel) => {
-                Some(Self::Channel(Rc::as_ptr(channel).cast::<()>() as usize))
-            }
-            Value::List(values) => values
-                .iter()
-                .map(Self::from_value)
-                .collect::<Option<_>>()
-                .map(Self::List),
-            Value::Struct(value) => value
-                .values
-                .iter()
-                .map(Self::from_value)
-                .collect::<Option<_>>()
-                .map(|fields| Self::Struct(Rc::as_ptr(&value.schema) as usize, fields)),
-            _ => None,
+/// Feeds a map key's canonical form to `state`, in place, and returns whether
+/// `value` is a key at all (see [`is_map_key`]).
+///
+/// Equal Slug map keys feed the same bytes, so they hash identically in a
+/// map's index: a float with an integral value in the integer range hashes
+/// as that integer, an enum by its module, type, and case, a resource or
+/// channel by its address, and a list or struct by its parts in order, a
+/// struct with its schema's identity.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::float_cmp,
+    reason = "the range and integral-value checks make this conversion exact"
+)]
+fn hash_map_key<H: Hasher>(value: &Value, state: &mut H) -> bool {
+    match value {
+        Value::Bool(value) => (0u8, value).hash(state),
+        Value::Int(value) => (1u8, value).hash(state),
+        Value::Float(value)
+            if value.is_finite()
+                && *value >= i64::MIN as f64
+                && *value < -(i64::MIN as f64)
+                && (*value as i64) as f64 == *value =>
+        {
+            (1u8, *value as i64).hash(state);
         }
+        Value::Float(value) if value.is_finite() => (2u8, value.to_bits()).hash(state),
+        Value::Str(value) => (3u8, value).hash(state),
+        Value::Bytes(value) => (4u8, value.as_slice()).hash(state),
+        Value::Enum(value) => (5u8, &*value.module, &*value.name, &*value.case).hash(state),
+        Value::NativeResource(resource) => {
+            (6u8, Rc::as_ptr(resource).cast::<()>() as usize).hash(state);
+        }
+        Value::Channel(channel) => (9u8, Rc::as_ptr(channel).cast::<()>() as usize).hash(state),
+        Value::List(values) => {
+            (7u8, values.len()).hash(state);
+            return values.iter().all(|value| hash_map_key(value, state));
+        }
+        Value::Struct(value) => {
+            (8u8, Rc::as_ptr(&value.schema) as usize, value.values.len()).hash(state);
+            return value.values.iter().all(|value| hash_map_key(value, state));
+        }
+        _ => return false,
     }
+    true
 }
 
 /// An immutable Slug string.
@@ -619,7 +617,7 @@ const INDEX_THRESHOLD: usize = 32;
 
 /// An immutable, unordered Slug map.
 ///
-/// Keys are unique under Slug key equality (see `MapKey`). A map literal that
+/// Keys are unique under Slug key equality (see `hash_map_key`). A map literal that
 /// repeats a key is an error; a host that builds a map from entries that
 /// repeat a key keeps the last value, as a merge in that order would. Entry
 /// order is a storage detail and is never observable as map semantics.
@@ -712,7 +710,7 @@ fn same_key(candidate: &Value, key: &Value) -> bool {
 /// An open-addressing table of entry positions for a large map.
 ///
 /// The table stores only `u32` positions into the map's entries and hashes a
-/// key's canonical form (see `MapKey`) on demand, so it never duplicates a
+/// key's canonical form (see `hash_map_key`) on demand, so it never duplicates a
 /// key. Linear probing keeps the load factor at most one half, and removal
 /// shifts later entries back instead of leaving tombstones.
 #[derive(Clone)]
@@ -756,19 +754,8 @@ impl MapIndex {
     )]
     fn home(&self, key: &Value) -> Option<usize> {
         let mut hasher = self.hasher.build_hasher();
-        match MapKey::from_value(key)? {
-            MapKey::Bool(value) => (0u8, value).hash(&mut hasher),
-            MapKey::Int(value) => (1u8, value).hash(&mut hasher),
-            MapKey::Float(bits) => (2u8, bits).hash(&mut hasher),
-            MapKey::Str(value) => (3u8, &*value).hash(&mut hasher),
-            MapKey::Bytes(value) => (4u8, value.as_slice()).hash(&mut hasher),
-            MapKey::Enum(value) => {
-                (5u8, &*value.module, &*value.name, &*value.case).hash(&mut hasher);
-            }
-            MapKey::Resource(address) => (6u8, address).hash(&mut hasher),
-            MapKey::Channel(address) => (9u8, address).hash(&mut hasher),
-            MapKey::List(values) => (7u8, values).hash(&mut hasher),
-            MapKey::Struct(schema, fields) => (8u8, schema, fields).hash(&mut hasher),
+        if !hash_map_key(key, &mut hasher) {
+            return None;
         }
         Some(hasher.finish() as usize & self.mask())
     }
