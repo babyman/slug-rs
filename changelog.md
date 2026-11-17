@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `slug.fmt.json`'s `parse` and `parseStrict` refuse a document with more
+  than 1000 arrays and objects open at once, throwing `json.limit` with
+  `data` `{limit: "depth", max, offset}`, `offset` being the bracket that
+  opens one level too many. Each level held about 1.7 KB while it was read,
+  so 300 KB of `[` cost about 250 MB; now a document is refused at its
+  first level too many. An `options` argument sets the limit,
+  `json.parse(text, {maxDepth: 5000})`, and `json.DEFAULT_MAX_DEPTH` names
+  the default; an unknown option or a bad value throws `json.options`. A
+  document nested deeper than 1000 that parsed before now needs the option.
+
 - A deeply nested value no longer aborts the program. Interpolating or
   printing one, throwing one, using one as a map key, or a native function
   returning one walked it by recursion and overflowed the native stack at

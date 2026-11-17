@@ -18,6 +18,11 @@
  * `parseStrict` reads the same documents but rejects an object that repeats a
  * key, for protocols where a repeated key must not be silently resolved.
  *
+ * Both refuse a document with more than 1000 arrays and objects open at once,
+ * throwing an `Error` whose `type` is `json.limit`: reading one costs memory
+ * for every level, so untrusted input must not choose how deep it goes. The
+ * `maxDepth` option raises or lowers the limit.
+ *
  * Contributed by an agent evaluation run (json-fixes-2) and reviewed for the
  * library.
  */
@@ -49,6 +54,44 @@ val duplicateFail = fn(offset, key) {
 
 val typeFail = fn(what) {
     throw Error {type: "json.type", msg: "$what has no JSON form"}
+}
+
+val depthFail = fn(offset, max) {
+    throw Error {
+        type: "json.limit",
+        msg: "JSON nested deeper than $max at offset $offset",
+        data: {limit: "depth", max: max, offset: offset},
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Options
+
+/**
+ * The `maxDepth` a parse allows unless its options say otherwise.
+ */
+export val DEFAULT_MAX_DEPTH = 1000
+
+val optionsError = fn(message:str) {
+    throw Error {type: "json.options", msg: message}
+}
+
+// The most arrays and objects a document may have open at once, from the
+// options of `parse` or `parseStrict`.
+val maxDepthOf = fn(options:map):num {
+    val names = keys(options)
+    val known = fn(i:num) {
+        if (i < len(names)) {
+            if (names[i] != "maxDepth") { optionsError("unknown option `${names[i]}`") }
+            recur(i + 1)
+        }
+    }
+    known(0)
+    match options.maxDepth {
+        nil => DEFAULT_MAX_DEPTH
+        d:num if (d >= 1 && int(d) == d) => d
+        _ => optionsError("`maxDepth` must be a positive integer")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -543,14 +586,18 @@ val parseString = fn(t, n, i, start = i, out = "") {
 }
 
 // Parses the value starting at i, which is not whitespace. When strict, an
-// object that repeats a key, after decoding escapes, is an error.
-val parseValue = fn(t, n, i, strict) {
+// object that repeats a key, after decoding escapes, is an error. `room` is
+// how many more arrays and objects may open inside the ones already open;
+// `max` is the whole limit, for the error.
+val parseValue = fn(t, n, i, strict, room, max) {
     if (i >= n) { fail(n) }
     val c = t[i]
     if (c == "{") {
-        parseObject(t, n, skipWs(t, n, i + 1), strict)
+        if (room == 0) { depthFail(i, max) }
+        parseObject(t, n, skipWs(t, n, i + 1), strict, room - 1, max)
     } else if (c == "[") {
-        parseArray(t, n, skipWs(t, n, i + 1), strict)
+        if (room == 0) { depthFail(i, max) }
+        parseArray(t, n, skipWs(t, n, i + 1), strict, room - 1, max)
     } else if (c == "\"") {
         parseString(t, n, i + 1)
     } else if (c == "t") {
@@ -566,13 +613,13 @@ val parseValue = fn(t, n, i, strict) {
     }
 }
 
-val arrayItems = fn(t, n, i, acc, strict) {
-    val [v, p] = parseValue(t, n, i, strict)
+val arrayItems = fn(t, n, i, acc, strict, room, max) {
+    val [v, p] = parseValue(t, n, i, strict, room, max)
     val q = skipWs(t, n, p)
     if (q >= n) { fail(n) }
     val c = t[q]
     if (c == ",") {
-        recur(t, n, skipWs(t, n, q + 1), acc :+ v, strict)
+        recur(t, n, skipWs(t, n, q + 1), acc :+ v, strict, room, max)
     } else if (c == "]") {
         [acc :+ v, q + 1]
     } else {
@@ -581,18 +628,18 @@ val arrayItems = fn(t, n, i, acc, strict) {
 }
 
 // Parses array contents starting at i, the first non-whitespace after "[".
-val parseArray = fn(t, n, i, strict) {
-    if (i < n && t[i] == "]") { [[], i + 1] } else { arrayItems(t, n, i, [], strict) }
+val parseArray = fn(t, n, i, strict, room, max) {
+    if (i < n && t[i] == "]") { [[], i + 1] } else { arrayItems(t, n, i, [], strict, room, max) }
 }
 
-val objectMembers = fn(t, n, i, acc, strict) {
+val objectMembers = fn(t, n, i, acc, strict, room, max) {
     if (i >= n) { fail(n) }
     if (t[i] != "\"") { fail(i) }
     val [k, p] = parseString(t, n, i + 1)
     val q = skipWs(t, n, p)
     if (q >= n) { fail(n) }
     if (t[q] != ":") { fail(q) }
-    val [v, r] = parseValue(t, n, skipWs(t, n, q + 1), strict)
+    val [v, r] = parseValue(t, n, skipWs(t, n, q + 1), strict, room, max)
     val s = skipWs(t, n, r)
     if (s >= n) { fail(n) }
     val c = t[s]
@@ -601,7 +648,7 @@ val objectMembers = fn(t, n, i, acc, strict) {
     // value was null.
     if (strict && len(members) == len(acc)) { duplicateFail(i, k) }
     if (c == ",") {
-        recur(t, n, skipWs(t, n, s + 1), members, strict)
+        recur(t, n, skipWs(t, n, s + 1), members, strict, room, max)
     } else if (c == "}") {
         [members, s + 1]
     } else {
@@ -610,13 +657,14 @@ val objectMembers = fn(t, n, i, acc, strict) {
 }
 
 // Parses object contents starting at i, the first non-whitespace after "{".
-val parseObject = fn(t, n, i, strict) {
-    if (i < n && t[i] == "}") { [{}, i + 1] } else { objectMembers(t, n, i, {}, strict) }
+val parseObject = fn(t, n, i, strict, room, max) {
+    if (i < n && t[i] == "}") { [{}, i + 1] } else { objectMembers(t, n, i, {}, strict, room, max) }
 }
 
-val parseDocument = fn(text, strict) {
+val parseDocument = fn(text, strict, options) {
+    val max = maxDepthOf(options)
     val n = len(text)
-    val [value, end] = parseValue(text, n, skipWs(text, n, 0), strict)
+    val [value, end] = parseValue(text, n, skipWs(text, n, 0), strict, max, max)
     val rest = skipWs(text, n, end)
     if (rest < n) { fail(rest) }
     value
@@ -628,6 +676,13 @@ val parseDocument = fn(text, strict) {
  * Throws an `Error` with `type` "json.parse" and `data` `{offset: n}` when
  * `text` is not valid JSON; `n` is the index of the first character at which
  * the text can no longer be valid, or `len(text)` when it ends too early.
+ *
+ * `options` may set `maxDepth`, the most arrays and objects that may be open
+ * at once; default `DEFAULT_MAX_DEPTH` (1000). A deeper document throws an
+ * `Error` with `type` "json.limit" and `data` `{limit: "depth", max, offset}`,
+ * where `offset` is the index of the bracket that opens one level too many.
+ * An unknown option or a `maxDepth` that is not a positive integer throws one
+ * with `type` "json.options".
  */
 @testWith(
     ["{\"a\": [1, 2.5, \"x\"], \"b\": null}"], {a: [1, 2.5, "x"], b: nil},
@@ -635,7 +690,7 @@ val parseDocument = fn(text, strict) {
     ["2.5E-3"], 0.0025,
     ["\"\\u00e9\\ud83d\\ude00\""], "é😀"
 )
-export val parse = fn(text:str) { parseDocument(text, false) }
+export val parse = fn(text:str, options:map = {}) { parseDocument(text, false, options) }
 
 /**
  * Returns the Slug value for the JSON document `text`, rejecting any object,
@@ -643,7 +698,8 @@ export val parse = fn(text:str) { parseDocument(text, false) }
  * so `"body"` and `"\u0062ody"` are the same key, and a repeat is rejected
  * whatever the values, even when they are equal or the first is `null`.
  *
- * Throws what `parse` throws for invalid JSON. A repeated key throws an
+ * Takes the options `parse` takes, and throws what `parse` throws for invalid
+ * JSON, a document nested too deep, or bad options. A repeated key throws an
  * `Error` with `type` "json.parse" and `data` `{offset: n, key: k}`, where
  * `n` is the index of the repeated key's opening quote and `k` is the decoded
  * key.
@@ -652,7 +708,7 @@ export val parse = fn(text:str) { parseDocument(text, false) }
     ["{\"a\": {\"b\": null}, \"c\": [{\"b\": 1}]}"], {a: {b: nil}, c: [{b: 1}]},
     ["[1, \"x\"]"], [1, "x"]
 )
-export val parseStrict = fn(text:str) { parseDocument(text, true) }
+export val parseStrict = fn(text:str, options:map = {}) { parseDocument(text, true, options) }
 
 // ---------------------------------------------------------------------------
 // Serialization
