@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A deeply nested value no longer aborts the program. Interpolating or
+  printing one, throwing one, using one as a map key, or a native function
+  returning one walked it by recursion and overflowed the native stack at
+  about 100,000 levels (fewer in a fork), killing the process with no Slug
+  error to catch; a few hundred kilobytes of `[[[...` read by `json.parse`
+  was enough. These now use a stack of their own and handle any depth.
+  Equality, dropping, and `to_json` already did.
+
 - Map keys are hashed and checked in place: a lookup or update on a map of
   more than 32 entries no longer builds a copy of its key first, and the
   key check of a map literal or update no longer does either. Maps keyed by

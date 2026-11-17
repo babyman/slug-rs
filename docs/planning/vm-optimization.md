@@ -2841,3 +2841,22 @@ every Crawl workload, `http-server`, and `word-frequency` within spread
 Kept for list and struct keys. The string-key reference count was not a
 measurable contention source: 4 forks cost the same ~3.5x CPU of one fork
 before and after, so that overhead is elsewhere in the lookup loop.
+
+## Deep values walked without recursion (2026-11-17)
+
+Formatting a value (interpolation, `println`, `throw`), checking and hashing
+a map key, and checking a native result for non-finite numbers recursed
+through nested values, overflowing the native stack (aborting the process)
+at about 100,000 levels on the main thread and fewer in a fork. Each now
+recurses only 64 levels and walks anything deeper with a stack of its own.
+A first version that always used the work list made formatting 3-7%
+slower in microbenchmarks (an allocation per call); recursing first made
+it 1-5% faster than before, as the hand-written recursion skips
+`debug_list`'s builders.
+
+PGO A/B against c40401e: 9 rounds over the corpus tuned 1.00x, hold-out
+1.01x; 15 rounds on the workloads that moved: crawl-history 1.02x,
+crawl-ticks/pages/crowd and http-server 1.01x, text-wrap 1.01x. The
+list-key microbenchmarks read 1.01-1.02x, so the residue is likely the
+depth count on the map-key path (Crawl keys a few maps by `[x, y]`).
+Accepted for the crash fix; not chased.

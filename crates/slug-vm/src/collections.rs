@@ -14,10 +14,37 @@ use core::ops::Deref;
 
 use crate::Value;
 
+/// How many lists and structs inside each other a map key is checked or
+/// hashed through by recursion; deeper parts take a stack of their own, so
+/// a key nested deeper than the native stack can hold is still handled.
+const KEY_RECURSION: u32 = 64;
+
+/// The parts of a list or struct key, or `None` for any other value.
+fn key_parts(value: &Value) -> Option<&[Value]> {
+    match value {
+        Value::List(values) => Some(values),
+        Value::Struct(value) => Some(&value.values),
+        _ => None,
+    }
+}
+
 /// Whether `value` can be a map key: a boolean, a finite number, a string,
 /// bytes, an enum value, a native resource or channel (by identity), or a
 /// list or struct of keys.
 pub(crate) fn is_map_key(value: &Value) -> bool {
+    is_key_within(value, 0)
+}
+
+fn is_key_within(value: &Value, depth: u32) -> bool {
+    match key_parts(value) {
+        Some(_) if depth >= KEY_RECURSION => first_non_key(value).is_none(),
+        Some(parts) => parts.iter().all(|part| is_key_within(part, depth + 1)),
+        None => is_scalar_key(value),
+    }
+}
+
+/// Whether `value`, which holds no other values, can be a map key.
+fn is_scalar_key(value: &Value) -> bool {
     match value {
         Value::Bool(_)
         | Value::Int(_)
@@ -27,10 +54,23 @@ pub(crate) fn is_map_key(value: &Value) -> bool {
         | Value::NativeResource(_)
         | Value::Channel(_) => true,
         Value::Float(value) => value.is_finite(),
-        Value::List(values) => values.iter().all(is_map_key),
-        Value::Struct(value) => value.values.iter().all(is_map_key),
         _ => false,
     }
+}
+
+/// The first value in `value`, in order, that keeps it from being a map
+/// key, or `None` when it is one. A list or struct is never that value
+/// itself: one of its parts is.
+pub(crate) fn first_non_key(value: &Value) -> Option<&Value> {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match key_parts(value) {
+            Some(parts) => pending.extend(parts.iter().rev()),
+            None if is_scalar_key(value) => {}
+            None => return Some(value),
+        }
+    }
+    None
 }
 
 /// Feeds a map key's canonical form to `state`, in place, and returns whether
@@ -39,15 +79,62 @@ pub(crate) fn is_map_key(value: &Value) -> bool {
 /// Equal Slug map keys feed the same bytes, so they hash identically in a
 /// map's index: a float with an integral value in the integer range hashes
 /// as that integer, an enum by its module, type, and case, a resource or
-/// channel by its address, and a list or struct by its parts in order, a
-/// struct with its schema's identity.
+/// channel by its address, and a list or struct by its length, then its
+/// parts in order, a struct with its schema's identity. A key is fed in the
+/// same order whether it is walked by recursion or past [`KEY_RECURSION`].
+fn hash_map_key<H: Hasher>(value: &Value, state: &mut H) -> bool {
+    hash_key_within(value, state, 0)
+}
+
+fn hash_key_within<H: Hasher>(value: &Value, state: &mut H, depth: u32) -> bool {
+    match key_parts(value) {
+        Some(_) if depth >= KEY_RECURSION => hash_key_deep(value, state),
+        Some(parts) => {
+            hash_key_header(value, state);
+            parts
+                .iter()
+                .all(|part| hash_key_within(part, state, depth + 1))
+        }
+        None => hash_scalar_key(value, state),
+    }
+}
+
+/// [`hash_map_key`] with a stack of its own, in the same order.
+fn hash_key_deep<H: Hasher>(value: &Value, state: &mut H) -> bool {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match key_parts(value) {
+            Some(parts) => {
+                hash_key_header(value, state);
+                pending.extend(parts.iter().rev());
+            }
+            None if hash_scalar_key(value, state) => {}
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Feeds what a list or struct key is before its parts.
+fn hash_key_header<H: Hasher>(value: &Value, state: &mut H) {
+    match value {
+        Value::List(values) => (7u8, values.len()).hash(state),
+        Value::Struct(value) => {
+            (8u8, Rc::as_ptr(&value.schema) as usize, value.values.len()).hash(state);
+        }
+        _ => {}
+    }
+}
+
+/// Feeds a key that holds no other values, or returns `false` for a value
+/// that cannot be one.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::float_cmp,
     reason = "the range and integral-value checks make this conversion exact"
 )]
-fn hash_map_key<H: Hasher>(value: &Value, state: &mut H) -> bool {
+fn hash_scalar_key<H: Hasher>(value: &Value, state: &mut H) -> bool {
     match value {
         Value::Bool(value) => (0u8, value).hash(state),
         Value::Int(value) => (1u8, value).hash(state),
@@ -67,14 +154,6 @@ fn hash_map_key<H: Hasher>(value: &Value, state: &mut H) -> bool {
             (6u8, Rc::as_ptr(resource).cast::<()>() as usize).hash(state);
         }
         Value::Channel(channel) => (9u8, Rc::as_ptr(channel).cast::<()>() as usize).hash(state),
-        Value::List(values) => {
-            (7u8, values.len()).hash(state);
-            return values.iter().all(|value| hash_map_key(value, state));
-        }
-        Value::Struct(value) => {
-            (8u8, Rc::as_ptr(&value.schema) as usize, value.values.len()).hash(state);
-            return value.values.iter().all(|value| hash_map_key(value, state));
-        }
         _ => return false,
     }
     true
@@ -922,6 +1001,11 @@ impl Map {
 
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &(Value, Value)> {
         self.0.entries.iter()
+    }
+
+    /// The entries, in storage order, which is not map semantics.
+    pub(crate) fn entries(&self) -> &[(Value, Value)] {
+        &self.0.entries
     }
 
     pub(crate) fn view(&self) -> MapView<'_> {
