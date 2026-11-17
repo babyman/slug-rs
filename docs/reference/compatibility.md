@@ -11,8 +11,9 @@ implemented source subset without preserving undocumented behavior.
 - The public Rust bytecode types support in-process construction and checked
   execution during pre-release development. They are an unstable embedding and
   testing surface, not a portable representation.
-- Once published, each `.cslug` format/VM-compatibility pair is a portable
-  whole-program artifact contract as defined in `compiled-artifacts.md`.
+- Each `.cslug` format/VM-compatibility pair is a portable whole-program
+  artifact contract as defined in `compiled-artifacts.md`. Format version 1 is
+  implemented, by `slug compile` and `slug run`.
 - Once published, each native module ABI major version is a compatibility
   contract as defined in `native-abi.md` and its released C declarations.
 
@@ -22,7 +23,9 @@ implemented source subset without preserving undocumented behavior.
   layout, and closure representation may change without Rust API compatibility.
 - Public bytecode types must not be serialized, exchanged between versions, or
   treated as a separately stable `.cslug` contract.
-- No `.cslug` artifact version is implemented or accepted yet.
+- A `.cslug` artifact runs only on a VM with its exact VM-compatibility
+  version; later VMs may reject it. The version-2 compiled-module role in
+  `compiled-modules.md` is adopted but not implemented.
 - The static Rust native facade is version 0 and no native module ABI version is
   implemented or accepted yet.
 - A specification section is not proof that the current Rust VM implements it;

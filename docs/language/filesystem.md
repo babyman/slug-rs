@@ -106,7 +106,7 @@ rather than a thrown value.
 
 ## Installation
 
-The experimental CLI installation provides this module through the
+The CLI installation provides this module through the
 `slug.io.fs` entry in `$SLUG_HOME/clutch/manifest.toml`, which selects the
 `$SLUG_HOME/clutch/slug.io.fs.clutch` clutch. The module is Slug code over typed
 native bindings declared in the clutch manifest, with the `events` native

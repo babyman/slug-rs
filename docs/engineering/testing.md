@@ -14,6 +14,11 @@ guarantee when the language documents say otherwise.
 | `crates/slug/tests/legacy_syntax_conformance.rs` | The repository's schema-1 fixtures in `tests/conformance/legacy-syntax/`. | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 | `crates/slug/tests/interactive_server.rs` | Server protocol lifecycle, sessions, output events, and root execution. | `cargo test -p slug --features metrics --test interactive_server` |
 | `crates/slug-repl/tests/interactive_repl.rs` | Terminal client's process transport, prompts, and diagnostic rendering. | `cargo test -p slug-repl --features metrics --test interactive_repl` |
+| `crates/slug-vm/tests/cslug_host.rs` | `.cslug` artifact encoding, verification, and host execution. | `cargo test -p slug-vm --test cslug_host` |
+| `crates/slug/tests/restricted_host.rs` | The in-memory restricted host. | `cargo test -p slug --test restricted_host` |
+| `crates/slug/tests/test_runner.rs` | `slug test` against clutches in a temporary `SLUG_HOME`. | `cargo test -p slug --test test_runner` |
+| `crates/slug/tests/typed_native.rs`, `typed_core.rs`, `typed_net.rs`, `typed_sqlite.rs` | Typed native clutches through the desktop loader: the binding model, `slug.core`, `slug.net.tcp`, and `slug.db.sqlite`. They need a C compiler, and SQLite for `typed_sqlite`. | `cargo test -p slug --test typed_native` (and so on) |
+| Clutch `[tests]` files | Each clutch's Slug tests, run by `slug test` after staging native libraries. | `make test-clutches` |
 
 The VM and CLI targets are common loops, so Make exposes them directly. Run the
 listed `cargo test --test …` command for the remaining focused integration
@@ -31,8 +36,11 @@ stable while reorganizing tests.
 
 ## Feature matrix
 
-`make check` validates the default scheduler runtime with metrics and invokes
-`make slim` for every supported no-default-features configuration. `make slim`
+`make check` runs formatting and Clippy checks, validates the default
+scheduler runtime with metrics, invokes `make slim` for every supported
+no-default-features configuration and `make cooperative` for the
+concurrency-without-threads configuration, checks the documentation, and runs
+`make test-clutches`. `make slim`
 runs tests and strict Clippy both without extra features and with `metrics`.
 Use `cargo test -p slug-vm --no-default-features --test vm` for a focused slim VM loop.
 

@@ -18,7 +18,7 @@ not parse source, inspect target descriptors, load a `.cslug` file from device
 storage, discover a provider, or dynamically link a library.
 
 This plan implements [Build embedded firmware from closed `.cslug`
-artifacts](../decisions/2026-10-09-embedded-static-build-toolchain.md).
+artifacts](../../decisions/2026-10-09-embedded-static-build-toolchain.md).
 
 ## Definition of done
 

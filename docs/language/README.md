@@ -10,10 +10,12 @@ directory.
 
 ## Purpose
 
-This directory is the normative language package for an independent Slug
-implementation. It contains the grammar and behavioral requirements a remote
-developer needs without consulting the Go implementation, bytecode, or host
-object model.
+This directory is the normative language package. The Rust implementation in
+this repository is Slug's reference implementation; the earlier Go
+implementation is legacy and no longer consulted. The reference does not
+define the language, though: these documents do, and another implementation
+needs only them, the public library sources, and the conformance fixtures, not
+the Rust source, its bytecode, or its value representations.
 
 Start with this file, then read the documents in the order shown below. The
 keywords **MUST**, **MUST NOT**, **SHOULD**, and **MAY** in the requirements are
@@ -55,25 +57,26 @@ EBNF when a structural grammar limitation prevents the EBNF from expressing an
 observable rule. Record any disagreement as a defect instead of choosing an
 implementation-specific interpretation.
 
-## Required handoff contents
+## Source-level contracts
 
-The normative documents in this directory define the specification, but
-source-level conformance also requires the public library and fixture suite. A
-complete handoff MUST preserve this repository layout:
+The normative documents define the language, but source-level conformance
+also depends on the public library and the fixture suite:
 
 ```text
 slug/
 ├── docs/
 │   └── language/                 # this package
 ├── lib/
-│   └── slug/                     # public standard-library source
+│   └── slug/                     # the `slug.builtin` contract and `slug.channel`
+├── clutch/                       # the standard library, as clutches
+│   └── slug.core.clutch/         # `slug.std`, `slug.string`, `slug.test`, ...
 └── tests/
     └── conformance/              # source fixtures and `.fixture.toml` sidecars
 ```
 
-The implementation MUST treat `lib/slug` and `tests/conformance` as
-source-level contracts, not as a dependency on Go. It may implement their
-behavior in another host language, provided the Slug-visible modules, exports,
+An implementation MUST treat `lib/slug`, the standard-library clutches, and
+`tests/conformance` as source-level contracts. It may implement their native
+parts in another host language, provided the Slug-visible modules, exports,
 values, diagnostics, and stream behavior remain compatible.
 
 Each entry fixture is a `.slug` source file with an adjacent, versioned
@@ -81,30 +84,22 @@ Each entry fixture is a `.slug` source file with an adjacent, versioned
 outcome and can specify exact streams, module and library roots, a timeout, and
 an exact diagnostic for failures. The complete metadata contract is in
 [`../reference/conformance-fixtures.md`](../reference/conformance-fixtures.md).
+Each clutch declares its own Slug test files, run with `slug test`.
 
-## Clean-room implementation path
+## Implementation path
 
 1. Implement lexical rules and grammar from `slug.ebnf` and the Language
    Specification.
 2. Implement values, scope, functions, control flow, collections, patterns,
    and diagnostics before optimizing execution.
-3. Implement module loading and the public `lib/slug` surface, including
-   exports, live imports, and cyclic initialization.
+3. Implement module loading, including exports, live imports, and cyclic
+   initialization.
 4. Implement configuration from `configuration.md`, then run the versioned
    fixtures in `tests/conformance`.
-5. Implement structured concurrency, channels, tasks, `select`, cleanup, and
-   `recur` according to Runtime Requirements.
+5. Implement clutch loading and run the standard-library clutches' tests.
+6. Implement structured concurrency, channels, tasks, `fork`, `select`,
+   cleanup, and `recur` according to Runtime Requirements.
 
 An implementation may use an interpreter, bytecode VM, JIT, or another
-strategy. It MUST NOT require the reference Go source, its internal bytecode,
-goroutines, or Go object representations to satisfy this package.
-
-## Handoff acceptance checklist
-
-Before sending the package, verify that the recipient receives:
-
-- this `docs/language` directory;
-- `lib/slug` and `tests/conformance` at the relative paths above;
-- the intended Slug version or commit identifier;
-- the fixture sidecars that describe each entry source; and
-- no reference implementation source as a required runtime dependency.
+strategy. It MUST NOT require the reference implementation's source, private
+bytecode, or Rust value representations to satisfy this package.

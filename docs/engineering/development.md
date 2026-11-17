@@ -11,7 +11,10 @@ appropriate handoff check.
 | Documentation only | `make docs-check` | `git diff --check` |
 
 `make check` runs Rust formatting validation, Clippy with warnings denied, all
-tests, and documentation checks. CI runs the same target.
+tests, the slim and cooperative feature configurations, documentation checks,
+and the clutches' Slug tests. CI runs the same target, and also builds the
+ESP32-S3 firmware: check a `slug-vm` change by running `cargo +esp check` in
+`firmware/slug-esp32-s3` before committing, since the VM is `no_std` there.
 
 ## Toolchain policy
 

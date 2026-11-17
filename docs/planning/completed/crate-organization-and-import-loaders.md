@@ -1,9 +1,9 @@
 # Crate organization and import loaders plan
 
 This task list implements [Crate organization and import
-loaders](../decisions/2026-09-26-crate-organization-and-import-loaders.md). It
+loaders](../../decisions/2026-09-26-crate-organization-and-import-loaders.md). It
 supersedes the crate-packaging and embedded-loader follow-up work in
-[Host-Owned Module Resolution](host-owned-module-resolution.md); the earlier
+[Host-Owned Module Resolution](../host-owned-module-resolution.md); the earlier
 plan remains the baseline for resolver and Clutch lifecycle invariants.
 
 ## Scope and invariants

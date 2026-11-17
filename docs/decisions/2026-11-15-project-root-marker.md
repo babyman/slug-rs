@@ -4,7 +4,7 @@
 
 Accepted (2026-11-15). Prerequisite of
 [layered clutch repositories](2026-11-15-layered-clutch-repositories.md).
-Implementation: [project roots and layered clutches](../planning/project-roots-and-layered-clutches.md).
+Implementation: [project roots and layered clutches](../planning/completed/project-roots-and-layered-clutches.md).
 
 ## Context
 
@@ -83,7 +83,7 @@ Documents to update when implemented: `language/configuration.md` (project
 TOML location and the library source path section),
 `language/runtime-requirements.md` (command-line runner and configuration
 sources), and the module-resolution section of
-`reference/experimental-clutches.md`.
+`reference/clutches.md`.
 
 Tests: CLI tests for a subdirectory entry importing a root module and reading
 root configuration, a nested project, a library-fallback entry not searching,

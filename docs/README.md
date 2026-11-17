@@ -39,7 +39,7 @@ a specified feature is implemented.
 | [compatibility.md](reference/compatibility.md) | Promises and intentional non-promises. |
 | [compiled-artifacts.md](reference/compiled-artifacts.md) | VM-first `.cslug` whole-program artifact contract. |
 | [compiled-modules.md](reference/compiled-modules.md) | Version-2 contract for importable compiled modules and closed linking. |
-| [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
+| [clutches.md](reference/clutches.md) | Clutches: how modules, native libraries, tests, and assets are packaged and resolved. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
 | [value-json.md](reference/value-json.md) | The one JSON encoding of every Slug value. |
@@ -62,7 +62,6 @@ a specified feature is implemented.
 | [testing.md](engineering/testing.md) | Test-layer selection and regression policy. |
 | [benchmarking.md](engineering/benchmarking.md) | Internal and end-to-end benchmark layers. |
 | [benchmark-baseline-2026-09-16.md](engineering/benchmark-baseline-2026-09-16.md) | Initial local source-benchmark baseline. |
-| [vm-optimization.md](planning/vm-optimization.md) | Staged private VM and bytecode optimization plan. |
 
 ### Planning
 
@@ -76,9 +75,21 @@ a specified feature is implemented.
 | [interactive-slim-retained-cells.md](planning/interactive-slim-retained-cells.md) | Retained interactive cells with one execution model across runtime configurations. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
 | [agent-facing-direction.md](planning/agent-facing-direction.md) | Product direction for agent-written, human-reviewed code, with ordered work and measures. |
-| [project-roots-and-layered-clutches.md](planning/project-roots-and-layered-clutches.md) | `slug.toml` project-root discovery, then project clutch repositories layered over `$SLUG_HOME`. |
-| [uploads-and-binary-files.md](planning/uploads-and-binary-files.md) | Binary files and directories, streamed request bodies, SHA-256, and multipart uploads, for Orble's files milestone. |
-| [completed/](planning/completed/) | Retained plans for completed or superseded implementation work, including: |
+| [fork-tasks.md](planning/fork-tasks.md) | `fork` and `task var`: cooperative semantics done, worker threads and embedded multi-core in progress. |
+| [vm-optimization.md](planning/vm-optimization.md) | Staged private VM and bytecode optimization plan (paused at diminishing returns). |
+
+### Completed plans
+
+[`planning/completed/`](planning/completed/) retains plans for completed or
+superseded implementation work. The most useful for context:
+
+| Document | Purpose |
+|---|---|
+| [project-roots-and-layered-clutches.md](planning/completed/project-roots-and-layered-clutches.md) | `slug.toml` project-root discovery, then project clutch repositories layered over `$SLUG_HOME`. |
+| [runtime-owned-builtins.md](planning/completed/runtime-owned-builtins.md) | The runtime defines every builtin; `slug.builtin` becomes a host-supplied contract. |
+| [uploads-and-binary-files.md](planning/completed/uploads-and-binary-files.md) | Binary files and directories, streamed request bodies, SHA-256, and multipart uploads, for Orble's files milestone. |
+| [net-tcp.md](planning/completed/net-tcp.md) | `slug.net.tcp` clutch and the HTTP agent project built on it. |
+| [clutch-assets.md](planning/completed/clutch-assets.md) | Compile-time `asset("name")` embedding from a clutch's or project's `assets/`. |
 | [cslug-whole-program-artifacts.md](planning/completed/cslug-whole-program-artifacts.md) | Completed `.cslug` codec, verifier, host persistence, and firmware artifact path. |
 | [esp32-s3-static-clutch-gpio.md](planning/completed/esp32-s3-static-clutch-gpio.md) | Completed ESP32-S3 static-provider GPIO plan and on-device verification record. |
 | [general-frozen-firmware-programs.md](planning/completed/general-frozen-firmware-programs.md) | Superseded private frozen-image firmware plan. |

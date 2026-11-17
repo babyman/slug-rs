@@ -2,9 +2,10 @@
 
 Slug is a small, expressive language for writing programs with values,
 functions, pattern matching, modules, checked errors, and structured
-concurrency. This repository, **slug-rs**, is a clean-room Rust implementation
-of that language. It is deliberately building the language foundation before
-adding compatibility layers or speculative abstractions.
+concurrency. This repository, **slug-rs**, is the reference implementation of
+that language, in Rust; it replaces the earlier Go implementation, which is now
+legacy. It is deliberately building the language foundation before adding
+compatibility layers or speculative abstractions.
 
 The project is useful in two related ways:
 
@@ -48,10 +49,16 @@ The implemented subset already covers the core of day-to-day source programs:
   enums, type aliases, indexing, slicing, and persistent collection updates;
 - `if`, `match`, destructuring, pinned patterns, checked match coverage, and
   source annotations with progressively stronger static checking;
-- imports, isolated cached modules, configuration through `cfg`, and the
-  built-in `print`, `println`, `len`, `chan`, and `close` functions;
-- channels, tasks, nurseries, `select`, timers, `defer`, `throw`, error
-  recovery, and contextual stack traces; and
+- imports, isolated cached modules, projects marked by `slug.toml`,
+  configuration through `cfg`, compile-time `asset` embedding, module
+  introspection with `describe`, and the built-in `print`, `println`, `len`,
+  `keys`, `chan`, and `close` functions;
+- channels, tasks, nurseries, `select`, timers, `fork` tasks that see a
+  snapshot and may run on worker threads, per-task `task var`s, `defer`,
+  `throw`, error recovery, and contextual stack traces;
+- a standard library shipped as clutches: collections, strings, bytes, math,
+  JSON and TOML, time, randomness, standard input, signals, testing, and,
+  from separate clutches, files, TCP, HTTP, SQLite, and cryptography; and
 - compilation of closed whole-program `.cslug` artifacts for portable
   execution on compatible Slug VMs.
 
@@ -101,21 +108,26 @@ history, and retains successful bindings between submissions. Use `:quit`,
 `:exit`, or end-of-file to close it. Set `SLUG_SERVER` to select a different
 local server executable.
 
-### Use optional native modules
+### Use the library clutches
 
-The desktop loader can activate experimental local *clutches*: module providers
-such as `slug.core`, `slug.io.stdin`, `slug.io.fs`, and `slug.db.sqlite`.
-Their native calls are generated from typed manifests and remain experimental.
-This checkout is also their development repository, so stage them before a
-program imports one:
+Slug's library ships as *clutches*: directories that provide modules, with
+optional native code. `clutch/` holds them, indexed by `clutch/manifest.toml`:
+`slug.core.clutch` provides `slug.std`, `slug.string`, `slug.fmt.json`,
+`slug.test`, `slug.time`, `slug.io.stdin`, and more; others provide
+`slug.io.fs`, `slug.net.tcp`, `slug.net.http`, `slug.db.sqlite`,
+`slug.crypto.hash`, and `slug.crypto.schnorr`. The runner finds installed
+clutches through `$SLUG_HOME/clutch/manifest.toml`, and a project may index its
+own in `clutch/manifest.toml` at its root. Native calls are generated from
+typed manifests. This checkout is also the clutches' development repository,
+so stage their native libraries before a program imports one:
 
 ```sh
 make stage-native-clutches
 ```
 
-Staged platform libraries are local build outputs, not release artifacts. See
-[experimental clutches](docs/reference/experimental-clutches.md) for the
-provider model and [native ABI](docs/reference/native-abi.md) for the host
+Staged platform libraries are local build outputs, not release artifacts. The
+clutch format is still version 0 and may change. See
+[clutches](docs/reference/clutches.md) for the provider model and [native ABI](docs/reference/native-abi.md) for the host
 boundary.
 
 ## Inside the project
@@ -130,6 +142,10 @@ slug-rs is a Rust workspace with deliberately narrow boundaries:
 | `crates/slug-repl` | Terminal client for `slug --server`. |
 | `crates/slug-*-loader` | Desktop, nil, and other host-specific import resolution. |
 | `crates/slug-native-*` | Typed native manifests and the adapter that is exclusively responsible for shim calls. |
+| `crates/slug-static-host`, `crates/slug-embedded-build`, `firmware/` | Static module contracts, firmware build descriptors, and the ESP32-S3 firmware. |
+| `clutch/` | The standard library and other modules, as clutches. |
+| `lib/` | The `slug.builtin` contract, `slug.channel`, and installed tools such as the `slug test` runner. |
+| `tests/conformance` | Portable source fixtures with versioned sidecars. |
 
 The VM executes `Program`s made of chunks, constants, and typed instruction
 variants—not serialized opcode bytes. Malformed bytecode, invalid source, and
@@ -146,8 +162,9 @@ Rust 1.96.1 (including `rustfmt` and Clippy) is pinned in
 make check
 ```
 
-`make check` validates formatting, strict Clippy, the full test suite, and the
-supported slim-runtime feature matrix. While iterating, use focused commands
+`make check` validates formatting, strict Clippy, the full test suite, the
+slim and cooperative feature configurations, the documentation, and the
+clutches' Slug tests. While iterating, use focused commands
 such as `make test-vm`, `make test-cli`, or `make slim`. See the
 [testing guide](docs/engineering/testing.md) for test routing and
 [AGENTS.md](AGENTS.md) for repository working rules.

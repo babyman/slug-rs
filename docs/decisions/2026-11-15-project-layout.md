@@ -112,7 +112,7 @@ clutch never reads the project's assets.
 
 Documents to update when implemented: `language/configuration.md` (the
 project root section), `language/testing.md` (tests in a project), the assets section of
-`reference/experimental-clutches.md` and of the language specification, and
+`reference/clutches.md` and of the language specification, and
 the clutch assets decision's note about programs outside a clutch.
 
 Tests: a program in `src/` and one in `tests/` importing from `src/`; a

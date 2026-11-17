@@ -37,6 +37,25 @@ for file in "$root"/docs/language/*; do
     test "$name" = 'README.md' || grep -F "\`$name\`" "$language_index" >/dev/null
 done
 
+# Every relative Markdown link to a file or directory must resolve. Links
+# outside `docs/` (in source files) are not checked.
+broken=$(find "$root/docs" -name '*.md' -type f | while IFS= read -r file; do
+    directory=$(dirname -- "$file")
+    grep -o -E '\]\([^)[:space:]]+\)' "$file" |
+        sed -e 's/^](//' -e 's/)$//' -e 's/#.*//' |
+        grep -v -E '^(https?:|mailto:|$)' |
+        grep -E '(\.[A-Za-z]+|/)$' |
+        while IFS= read -r target; do
+            path=$directory/$target
+            test -e "$path" || printf '%s: %s\n' "${file#"$root"/}" "$target"
+        done
+done)
+if test -n "$broken"; then
+    printf '%s\n' "$broken" >&2
+    printf '%s\n' 'documentation contains broken relative links' >&2
+    exit 1
+fi
+
 if grep -R -I -n -E '[[:blank:]]+$' "$root/docs"; then
     printf '%s\n' 'documentation contains trailing whitespace' >&2
     exit 1

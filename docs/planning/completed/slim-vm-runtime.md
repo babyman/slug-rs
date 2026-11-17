@@ -3,7 +3,7 @@
 This document tracks the remaining mechanical extraction work for the optional
 `concurrency` runtime. It is an implementation checklist, not a source-language
 specification or a new compatibility policy. The host-driven progress model is
-recorded in [Host-driven VM progress](../decisions/2026-09-11-host-driven-vm-progress.md).
+recorded in [Host-driven VM progress](../../decisions/2026-09-11-host-driven-vm-progress.md).
 
 ## Current boundary
 

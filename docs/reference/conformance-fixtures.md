@@ -65,8 +65,8 @@ that the Rust implementation currently supports. `tests/conformance/nominal-type
 covers public nominal declarations, transparent aliases, imported type paths,
 alias-cycle diagnostics, and observable enum behavior.
 `tests/conformance/fork/` specifies `fork` and `task var`
-([parallel fork tasks](../decisions/2026-11-07-parallel-fork-tasks.md)) ahead
-of their implementation; its fixtures are pending until the phases of
-[the fork plan](../planning/fork-tasks.md) that implement them land.
+([parallel fork tasks](../decisions/2026-11-07-parallel-fork-tasks.md)); it was
+written ahead of their implementation, and none of its fixtures is pending
+now.
 `crates/slug/tests/legacy_syntax_conformance.rs` runs the complete `tests/conformance/`
 tree through `slug-fixtures` as part of `make test`.

@@ -164,7 +164,7 @@ opcode layout is serialized.
 - [ ] Update the implementation architecture map and crate-local contributor
   guidance to name the resolver, module runtime, desktop loader, and embedded
   loader ownership boundaries.
-- [ ] Keep `runtime-requirements.md`, the experimental-Clutch reference, the
+- [ ] Keep `runtime-requirements.md`, the clutches reference, the
   compiled-artifact reference, README capability statement, and changelog
   aligned with the implemented—not merely planned—surface.
 - [ ] Run focused module-loader, CLI, configuration, interactive, VM/native,

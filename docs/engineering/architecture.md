@@ -1,7 +1,9 @@
 # Architecture
 
-Slug is a clean-room Rust implementation of the Slug language. It currently
-implements a small source subset through a checked bytecode virtual machine.
+This repository is the reference implementation of Slug, in Rust. It runs
+the implemented subset of the language through a checked bytecode virtual
+machine; the [language support matrix](../generated/language-support.md)
+reports which subset.
 
 ## Navigation and ownership
 
@@ -14,11 +16,15 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source semantics | `crates/slug-frontend/src/source/semantics/{typecheck,environment,semantic}.rs` | Resolves bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
 | Source lowering | `crates/slug-frontend/src/source/lowering/{compiler,state}.rs` | Consumes AST plus semantic analysis and constructs the public-but-unstable bytecode representation. |
 | In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
-| Compiled artifacts | `docs/reference/compiled-artifacts.md` | VM-first `.cslug` whole-program contract; implementation pending. |
+| Compiled artifacts | `crates/slug-vm/src/cslug.rs` | Encodes, decodes, and verifies version-1 `.cslug` whole-program artifacts, as [Compiled Artifacts](../reference/compiled-artifacts.md) specifies. |
 | Modules and graph caches | `crates/slug-frontend/src/module.rs` | Owns source-module compilation, semantic snapshots, isolated initialization, live exports, and cycle detection. |
 | Desktop imports and Clutches | `crates/slug-desktop-loader/` | Resolves importer-relative, project-root, library-root, and Clutch modules; owns desktop-native activation and shutdown. |
 | Restricted imports | `crates/slug-nil-loader/` and `crates/slug-restricted-host/` | Provides a deny-all resolver and a thin in-memory host convenience façade. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
+| Typed native bindings | `crates/slug-native-manifest/` | Parses a clutch manifest's `[native]` bindings into canonical signatures and generates C shims; the desktop loader and static builds share it. |
+| Typed native calls | `crates/slug-native-adapter/` | `no_std` code that verifies a shim table and is the only code that calls a shim entry. |
+| Static and embedded hosts | `crates/slug-static-host/`, `crates/slug-embedded-build/`, `firmware/` | Source contracts for statically selected modules, target-descriptor validation for firmware builds, and the ESP32-S3 firmware. `crates/slug-typed-static-test/` links two shims into one static image as a test. |
+| Clutches | `clutch/` | The standard library and other modules, as clutches indexed by `clutch/manifest.toml`; see [Clutches](../reference/clutches.md). |
 | Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values, channels, tasks, and persistent collection storage remain coupled by runtime lifecycle. |
 | Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, and polling; focused modules own frames/local storage, checked operand-stack access, errors, cleanup unwinding, operations, scheduler state, timers, and progress. |
 | CLI and server | `crates/slug/src/{main,server,interactive}/` | Owns desktop configuration assembly, entry lookup, VM/frontend composition, public error presentation, and `slug --server`. |
@@ -60,7 +66,7 @@ native lifecycle details outside that graph.
   construct them, but only a `Vm` may turn an owned `Program` into an immutable
   `InstalledProgram` for execution. Their layouts, variants, constructors, and
   semantics are not a stable Rust API or serialized format.
-- `.cslug` is the future versioned, validated serialized form of a complete
+- `.cslug` is the versioned, validated serialized form of a complete
   `CompiledProgram`. It follows VM/bytecode compatibility and must not create
   a VM-independent IR or serialize Rust memory layouts directly.
 - Native extensions use an opaque call and resource boundary. They must not

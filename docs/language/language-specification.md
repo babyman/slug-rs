@@ -730,7 +730,8 @@ explicit unavailable import is a checked module error.
 The desktop command-line host resolves a module relative to the importing
 source, then the project module root, before searching its configured library
 root. It uses `$SLUG_HOME/lib` as that root when `SLUG_HOME` is set. Its
-experimental clutch provider is searched last through `$SLUG_HOME/clutch`.
+clutch providers, installed in `$SLUG_HOME/clutch` and a project's own
+`clutch/`, are searched last ([Clutches](../reference/clutches.md)).
 A missing or malformed module is a language error.
 
 ```slug
@@ -797,7 +798,7 @@ source file is inside a [project](configuration.md#project-root) has the
 assets in the project's `assets` folder. Other modules have none, and a host
 that provides no assets has none. A call that is not one string literal, is
 piped, or names no such file is a compile error with the code
-`invalid_asset`. See [Experimental Clutches](../reference/experimental-clutches.md#assets).
+`invalid_asset`. See [Clutches](../reference/clutches.md#assets).
 
 ## Implicit builtin module
 
@@ -1568,7 +1569,7 @@ Closing a channel is idempotent. The selection policy among simultaneously
 ready cases is intentionally unspecified.
 
 `chan(capacity = 0)` and `close(channel)` are implicitly available builtins,
-also exported by `slug.builtin`. The public `slug.channel` surface is
+declared by the host's `slug.builtin` contract. The public `slug.channel` surface is
 `send(channel, value)`, `recv(channel, timeout = 0)`, `await(handle,
 timeout = 0)`, `trySend(channel, value)`, and `tryRecv(channel)`. These are
 library bindings, not global Slug bindings. `channel` is an internal runtime

@@ -232,7 +232,7 @@ filesystem coverage until the prototype is removed.
   shim fixtures, which the uniform shim entry record retires when the loader
   lands.
 - [x] Update `docs/reference/native-abi.md`,
-  `docs/reference/experimental-clutches.md`, and the README clutch paragraph
+  `docs/reference/clutches.md`, and the README clutch paragraph
   for typed bindings.
 
 [Step 1 measurements](typed-native-calls-step-1-results.md) records the

@@ -3,11 +3,12 @@
 ## Status and purpose
 
 This document specifies the observable runtime obligations of a conforming
-Slug implementation. It is written for a clean-room implementation: a
-developer must be able to implement the language from this document, the
+Slug implementation. The Rust implementation in this repository is the
+reference implementation, but it does not define the language: a developer
+must be able to implement Slug from this document, the
 [Language Specification](language-specification.md), the public library
-sources, and source-level conformance fixtures without reading or copying an
-existing implementation.
+sources, and the source-level conformance fixtures without reading or copying
+the Rust source.
 
 These requirements deliberately do **not** standardize private VM bytecode,
 opcode numbers, instruction layout, stack layout, garbage collection, host
@@ -26,38 +27,54 @@ describe conformance requirements. A requirement is observable when it changes
 a Slug value, error, stream, module binding, task outcome, or the completion of
 a conformance fixture.
 
-## Clean-room conformance target
+## Conformance target
 
 A conforming implementation MUST execute Slug source files and the public
-library sources. It MUST NOT require Go ASTs, Go object representations, Go
-goroutines, or the current bytecode. The source-level conformance target is:
+library sources. It MUST NOT require the reference implementation's private
+bytecode, Rust value representations, or host threads. The source-level
+conformance target is:
 
 - `../../tests/conformance`: entry fixtures, each consisting of a `.slug`
   source file and an adjacent, versioned `<stem>.fixture.toml` sidecar.
-- `../../lib/slug`: source implementations of required standard-library modules.
+- `../../lib/slug`: the `slug.builtin` contract and the `slug.channel` module.
+- `../../clutch`: the standard library, as clutches. `slug.core.clutch`
+  provides `slug.std`, `slug.string`, `slug.math`, `slug.bytes`,
+  `slug.fmt.json`, `slug.fmt.toml`, `slug.test`, `slug.time`, `slug.random`,
+  `slug.io.stdin`, and `slug.os.signal`; other clutches provide filesystem,
+  networking, database, and cryptography modules. Each clutch's `[tests]`
+  declare its Slug test files.
 
 Every entry fixture's sidecar defines its expected `success`, `parse-error`,
 `semantic-error`, or `runtime-error` outcome. It can also make standard output,
 standard error, a timeout, module and library roots, and a failure diagnostic
-observable. A clean-room runner MUST reject missing or invalid sidecars rather
+observable. A runner MUST reject missing or invalid sidecars rather
 than infer expectations from directory names or host behavior. The full schema
 and validation rules are specified in
 [`../reference/conformance-fixtures.md`](../reference/conformance-fixtures.md).
 
 ### Fixture environment
 
-For each fixture, the runner MUST set the fixture directory as the project
-module root and the repository's `lib` directory as the standard-library root.
-A dot-separated import name `a.b` resolves to `a/b.slug`. The importing
-directory is searched before the standard-library root. The fixture receives no
-implicit host bindings beyond the documented builtins, standard-library modules,
-and optional command-line arguments.
+For each fixture, the runner MUST set the fixture's module root, by default
+the fixture directory, as the project module root, and the sidecar's
+`library_root`, when present, as the library root. A dot-separated import name
+`a.b` resolves to `a/b.slug`. The importing directory is searched before the
+module root, and the module root before the library root. The fixture
+receives no clutches, configuration, or environment, and no implicit host
+bindings beyond the documented builtins and optional command-line arguments.
 
-The reference command-line shape is:
+The reference command-line shapes are:
 
 ```text
-slug [-root MODULE_ROOT] program.slug [arguments...]
+slug [--diagnostic-format=json] [--allow-unexported] program.slug [arguments...]
+slug [--diagnostic-format=json] compile program.slug output.cslug
+slug [--diagnostic-format=json] run program.cslug [arguments...]
+slug [--diagnostic-format=json] report program.slug|program.cslug
+slug --server
 ```
+
+Without a configured module root, the runner finds the
+[project root](configuration.md#project-root) from the entry program's
+directory, and imports search that project's `src/`.
 
 When the program argument does not name a readable file in the working
 directory or selected module root, the command-line runner searches its
@@ -83,7 +100,8 @@ may appear in either order. Arguments after the entry program are program
 arguments and cannot select a runner mode.
 The final expression value is not implicitly printed by the command-line
 runner. `print` and `println` write to standard output; only `println` appends
-a newline. `slug.io.stderr.println` writes to standard error.
+a newline. No library module yet writes to standard error; the runner
+writes diagnostics there.
 
 ### Portable fixture metadata
 
@@ -97,24 +115,17 @@ serialization.
 
 ### Required fixture library surface
 
-For the current source fixtures, a conformance environment MUST make these
-modules and builtins available with the behavior exercised by their source:
+The current source fixtures import only modules beside them. A conformance
+environment MUST provide the builtins, which the runtime defines and the
+host's `slug.builtin` contract declares: `import`, `int`, `len`, `keys`,
+`print`, `println`, `chan`, `close`, `cfg`, `describe`, `stacktrace`, and
+`Error`. A fixture that names a `library_root` may also import modules from
+it, such as `slug.channel`.
 
-- builtins including `import`, `int`, `len`, `keys`, `print`, `println`, `chan`,
-  and `close`;
-- `slug.std`, `slug.io.stdin`, `slug.math`, and `slug.string` from the
-  installed `slug.core` Clutch, and `slug.test`, for assertions and core collection operations;
-- `slug.channel` for channel operations, `await`, `send`, and `recv`;
-- `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
-  program imports it and the host installs the experimental filesystem clutch;
-- the builtins, which the runtime defines and the host's `slug.builtin`
-  contract declares;
-- `slug.time` for timer-oriented fixtures;
-- `slug.io.stderr` for standard-error output.
-
-The normative signatures and behavior belong to the source modules in
-installed Clutches or `../../lib/slug` and their library-reference
-pages. A clean-room implementation may write them in another implementation
+The standard library is tested by each clutch's declared test files, run with
+`slug test` against installed clutches, rather than by fixtures. The normative
+signatures and behavior of library modules belong to their sources in
+`../../clutch` and `../../lib/slug` and to their documentation comments. Another implementation may write them in another
 language, but it MUST expose the same Slug-visible module names, exports,
 results, errors, and stream behavior.
 
@@ -139,14 +150,10 @@ struct values. Hosts MUST NOT expose a non-finite value to Slug code.
 
 The source fixtures are the portable acceptance surface. The repository also
 contains implementation tests, which may clarify a rule but are not a required
-dependency for a clean-room implementation. The [VM throughput rewrite plan](https://github.com/sluglang/slug/blob/master/docs/planned/vm-throughput-rewrite.md)
-records implementation history and is non-normative where it conflicts with
-this document or the Language Specification.
-
-The [VM throughput rewrite plan](https://github.com/sluglang/slug/blob/master/docs/planned/vm-throughput-rewrite.md)
-records the more detailed semantic contract and planned implementation work.
-An implementation must not trade away a requirement in this document for an
-optimization.
+dependency for another implementation. Planning documents and decision records
+are non-normative where they conflict with this document or the Language
+Specification. An implementation must not trade away a requirement in this
+document for an optimization.
 
 ## Required host services
 
@@ -254,7 +261,7 @@ Every profile supplies one fixed store to the entry program and all imported
 modules. Changing the host's inputs after evaluation begins cannot change that
 store.
 
-## Clean-room implementation checklist
+## Implementation checklist
 
 An independent implementation can reach useful conformance in the following
 order without adopting any reference-internal representation:
@@ -263,13 +270,15 @@ order without adopting any reference-internal representation:
    flow, lists, maps, structs, and patterns from the Language Specification.
 2. Implement source-order evaluation, language diagnostics, scope cleanup, and
    `recur` before adding task execution.
-3. Load source modules and `../../lib/slug`, including exports, live imports, cyclic
-   initialization, and the `slug.test` assertion library.
+3. Load source modules, including exports, live imports, and cyclic
+   initialization.
 4. Run the versioned fixtures in `../../tests/conformance`, treating every
    host crash as a conformance failure.
-5. Implement channels, task handles, nurseries, spawn capture, await, timers,
-   and `select`, then run the remaining fixtures.
-6. Verify standard output, standard error, exit status, and diagnostic source
+5. Load clutches and run their declared tests, beginning with
+   `slug.core.clutch` and its `slug.test` assertion library.
+6. Implement channels, task handles, nurseries, spawn capture, `fork`,
+   `task var`, await, timers, and `select`, then run the remaining fixtures.
+7. Verify standard output, standard error, exit status, and diagnostic source
    location in addition to assertion results.
 
 A passing fixture suite is necessary but not sufficient: the implementation
@@ -422,7 +431,7 @@ The function-root scope persists between `recur` iterations. Deferred actions
 registered in that scope persist and run exactly once, in LIFO order, on the
 function's final return or error. A nested lexical scope abandoned by `recur`
 exits normally, including its deferred actions, before the next iteration
-begins. This distinction is defined by [ADR-040](/adr/adr-040).
+begins.
 
 Function-root nursery state and any associated limiter identity also persist
 across a `recur` iteration.
@@ -465,8 +474,7 @@ the first temporal unobserved failure without physically interrupting host
 execution.
 
 Cancellation is logical. The runtime reports cancellation through task
-settlement, but is not required to forcibly terminate a host goroutine or
-thread.
+settlement, but is not required to forcibly terminate a host thread.
 
 ### Limits
 
@@ -574,7 +582,7 @@ cell. Runtime and source failures remain structured protocol errors.
 
 ## Required implementation isolation
 
-The VM may use threads, goroutines, frames, environments, stacks, or slots
+The VM may use threads, frames, environments, stacks, or slots
 internally. Those choices are conforming only when they preserve the contracts
 above. The VM must not import a concrete host runtime merely to acquire runtime
 services. Keep the dependency direction from runtime orchestration into VM

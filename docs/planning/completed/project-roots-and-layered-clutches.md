@@ -1,9 +1,9 @@
 # Project Roots and Layered Clutches Plan
 
-This task list implements two proposed decisions, in order:
+This task list implemented two decisions, in order:
 
-1. [Project root marker](../decisions/2026-11-15-project-root-marker.md)
-2. [Layered clutch repositories](../decisions/2026-11-15-layered-clutch-repositories.md)
+1. [Project root marker](../../decisions/2026-11-15-project-root-marker.md)
+2. [Layered clutch repositories](../../decisions/2026-11-15-layered-clutch-repositories.md)
 
 ## Scope and invariants
 
@@ -60,7 +60,7 @@ changes root (none has a `slug.toml` above it).
   both manifests; a project clutch's asset.
 - [x] `.cslug` run: a foreign module whose clutch is not visible is not
   found, and the error names it. No change needed.
-- [x] Update `reference/experimental-clutches.md`, including the note that a
+- [x] Update `reference/clutches.md`, including the note that a
   project's native libraries load when its programs run.
 
 **Gate:** full suite, `make docs-check`, and `cargo +esp check` for
@@ -76,7 +76,7 @@ changes root (none has a `slug.toml` above it).
 
 ## 5. Project layout
 
-Implements [project layout](../decisions/2026-11-15-project-layout.md).
+Implements [project layout](../../decisions/2026-11-15-project-layout.md).
 
 - [x] `ProgramLayout` in `crates/slug/src/host.rs`: a project's module root is
   its `src/`; configuration and `clutch/` come from the project root.
@@ -88,7 +88,7 @@ Implements [project layout](../decisions/2026-11-15-project-layout.md).
   module not importable, a missing `src/` and `assets/`, project and clutch
   assets, a `.cslug` carrying a project asset.
 - [x] Update `language/configuration.md`, `language/testing.md`, the
-  specification's assets section, and `reference/experimental-clutches.md`.
+  specification's assets section, and `reference/clutches.md`.
 - [x] Move Orble to the layout (in ../orble, uncommitted there).
 
 ## 6. First user (separate change)

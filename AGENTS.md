@@ -1,7 +1,9 @@
 # AGENTS.md
 
-Slug is a clean-room Rust implementation of the Slug language. It currently
-contains a checked bytecode VM and a deliberately small source-language subset.
+This repository is the reference implementation of the Slug language, in
+Rust; the earlier Go implementation is legacy. It contains a checked bytecode
+VM and the implemented subset of the language, which the support matrix
+lists.
 Build the language foundation before adding compatibility layers or speculative
 abstractions.
 
@@ -19,6 +21,11 @@ crates/slug-nil-loader/       Deny-all resolver for restricted hosts
 crates/slug-restricted-host/  In-memory restricted host facade
 crates/slug/                  CLI, configuration, fixture tooling, and server mode
 crates/slug-repl/             Terminal REPL client for `slug --server`
+crates/slug-static-host/      Source contracts for statically selected modules
+crates/slug-embedded-build/   Firmware build descriptors and static providers
+firmware/   ESP32-S3 firmware (checked with `cargo +esp check`)
+clutch/     Standard library and other modules, as clutches
+lib/        The `slug.builtin` contract, `slug.channel`, and installed tools
 tests/      Shared Slug conformance fixtures
 docs/       Architecture, development policy, and canonical language documents
 .agents/    Agent workflows and decision-record guidance

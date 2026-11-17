@@ -87,7 +87,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Transparent `type Name = Annotation` aliases | implemented | `language/nominal-types.md` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `crates/slug/tests/cli.rs` |
 | Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `crates/slug/tests/cli.rs` and `crates/slug/tests/module_loader.rs` |
-| Module metadata introspection | specified only | `language/language-specification.md` |
+| Module declaration introspection with `describe` | implemented | `crates/slug/tests/cli.rs` and `crates/slug/tests/module_loader.rs` |
 | Checked source and runtime diagnostics with locations | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
-| Standard library and remaining concurrency APIs | partial | `lib/slug/channel.slug` and `crates/slug/tests/cli.rs` |
+| Standard library and remaining concurrency APIs | partial | `lib/slug/channel.slug`, `clutch/slug.core.clutch`, and `crates/slug/tests/test_runner.rs` |

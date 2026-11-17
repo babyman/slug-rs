@@ -174,7 +174,7 @@ releases resources, so it leaves the switch active.
 ### 4. Documentation and records
 
 - [x] Remove the prototype sections from `native-abi.md` and
-  `experimental-clutches.md`, delete `ffi-helpers.md`, and update the docs
+  `clutches.md`, delete `ffi-helpers.md`, and update the docs
   index, the README, and `AGENTS.md`.
 
   The README needed no change. `native-abi.md` also gained a shutdown bullet

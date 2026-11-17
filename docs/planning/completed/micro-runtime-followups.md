@@ -4,7 +4,7 @@ This document turns the review of `feature/micro` into an actionable work
 queue. It covers correctness, availability, lifecycle safety, and maintenance
 of the new default-enabled `concurrency` Cargo feature. It does not change the
 source-language contract or the host-driven progress decision recorded in
-[Host-driven VM progress](../decisions/2026-09-11-host-driven-vm-progress.md).
+[Host-driven VM progress](../../decisions/2026-09-11-host-driven-vm-progress.md).
 
 ## Goals and invariants
 
