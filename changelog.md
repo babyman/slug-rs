@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A function in a library module can index a name it destructured from an
+  import: after `val {TABLE} = import("tables")`, `TABLE[key]` and
+  `TABLE.field` inside a function threw `cannot index binding`, because the
+  in-place index read was given the import's live binding rather than its
+  value. Calls, `len`, and reads outside functions were not affected.
+
 - The `slug.text.markdown` clutch renders Markdown as safe HTML:
   `toHtml(source, options)`. The dialect is CommonMark 0.31.2 with GitHub's
   tables, strikethrough, and extended autolinks; raw HTML is shown as

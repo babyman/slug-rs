@@ -18,12 +18,7 @@
 
 val {ord, chr, join, toBytes} = import("slug.string")
 val bytes = import("slug.bytes")
-// Bound from the module's map: indexing a destructured import inside a
-// function fails ("cannot index binding").
-val data = import("slug.text.markdown.data")
-val ENTITIES = data.ENTITIES
-val PUNCTUATION = data.PUNCTUATION
-val FOLDS = data.FOLDS
+val {ENTITIES, PUNCTUATION, FOLDS} = import("slug.text.markdown.data")
 
 // --- Characters --------------------------------------------------------------
 
