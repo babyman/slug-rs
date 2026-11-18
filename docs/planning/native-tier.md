@@ -90,6 +90,74 @@ What it does not say:
   produce it from bytecode and handle everything the kernels did not touch
   (below).
 
+## Gate 0: a data-heavy function (2026-11-17)
+
+The sight cast is Crawl's hottest code: in `crawl-ticks`, `outdoorSight`'s
+`cast` loop and the `around` closure it calls take 44% of the instructions
+(19% and 25%), by the counting build's sampled stacks. Gate 0 compiled
+that code, `rays` → `cast` → `at`, with a small baseline compiler in a
+scratch branch rather than by hand: it reads the closures' real bytecode
+and lowers each instruction on its own, in the boxed style above. Values
+stay the VM's 24-byte `Value`s in a native frame. Integer arithmetic and
+comparisons run inline behind tag guards, and so do truthiness tests and
+copies of uncounted values. Everything else is a call into the VM's own
+Rust code: index reads (with the chunk's map hints), map construction and
+`UpdateCapture`'s merge, the native `len` call, the clone or drop of every
+counted value, and every slow path, including module bindings read through
+`level.WIDTH`. Calls between the three guard the callee's tag and chunk,
+push a shadow frame, and check the attention flag, as the earlier `boxed`
+kernels do.
+
+A driver runs one player's sight 4,000 times on the world `crawl-ticks`
+builds (seed 6, 40 ticks; 112 rays, 418 cast steps, 120 squares seen), on
+the same closures and captures either way: interpreted, or through a test
+builtin that enters the compiled `rays`. Both give the same squares and
+checksum. Timings are medians of 9 interleaved rounds, less start-up:
+
+| build | interpreter | boxed native | gain |
+|---|---:|---:|---:|
+| release | 381 µs a pass | 144 µs | 2.65x |
+| PGO | 225 µs a pass | 136 µs | **1.65x** |
+
+PGO speeds the interpreter 1.7x here and the compiled path hardly at all,
+because the compiled code's time is almost all in the runtime calls. A
+profile of the PGO compiled run:
+
+| work | share |
+|---|---:|
+| index reads (`index_value`, hinted map reads, key comparisons) | 27% |
+| clones and drops of counted values | 23% |
+| map literal and the merge into `found` | 13% |
+| reading module bindings through (`level.WIDTH`, `level.HEIGHT`) | 9% |
+| the generated code itself | 8% |
+| arithmetic slow paths taken because an operand was a binding | 8% |
+| allocator | 6% |
+| the `len` native call | 4% |
+
+What it says:
+
+- **The gate passes, narrowly: 1.65x against the 1.5x bar.** The gain
+  is the dispatch and stack traffic around the runtime's calls, which is
+  what the interpreter spends 40% of this code's time on.
+- If time follows instructions, compiling only these two functions would
+  make `crawl-ticks` about 1.2x faster. Compiling all of a data-heavy program
+  at this ratio would make it about 1.6x faster, not the 5-10x of the
+  numeric kernels.
+- Type specialization, the second tier, has little to remove here: 92%
+  of the compiled time is runtime work. More gain would have to come from
+  the runtime operations: inline reference counts and list indexing in
+  compiled code (most of the clone/drop share is a call into
+  `Value::clone`'s or `drop`'s general match), and the cheap fixes the
+  interpreter also wants.
+- Two of those fixes are visible here and help both tiers. Resolving module bindings when they are read
+  would remove the binding reads and the slow arithmetic, about 17% of
+  the compiled time and a similar absolute cost in the interpreter. A
+  table of one-character strings would remove an allocation and free per
+  `row[x]`.
+- The bound is somewhat generous to native code: the shadow frame is
+  lighter than a VM `Frame`, and the fork-snapshot check on
+  `UpdateCapture` was left out. Both are small against 325 ns a step.
+
 ## Constraints
 
 - **The interpreter stays the reference and the only tier on embedded
@@ -142,12 +210,13 @@ function compiles after it crosses a threshold, on the VM thread at first.
 Each phase is accepted on the usual interleaved PGO A/B with hold-outs, and
 a phase that does not pay stops the plan.
 
-- [ ] **Gate 0: bound a data-heavy program.** Lower one of Crawl's hot
+- [x] **Gate 0: bound a data-heavy program.** Lower one of Crawl's hot
   functions (the sight cast's `around`, or `seeOutdoors`'s inner loop) by
   hand in the boxed style, calling the real runtime helpers for maps and
   lists, and time it against the interpreter. If the boxed tier gains less
   than about 1.5x there, the tier is worth it only for numeric code, and
-  the decision below changes.
+  the decision below changes. *Done: 1.65x on PGO builds, see "Gate 0"
+  above; passes narrowly, and nearly all the rest is runtime work.*
 - [ ] **Decide:** the exemption from `unsafe_code`, the Cranelift
   dependency, and desktop-only scope (a decision record).
 - [ ] **Phase 1: baseline tier** for straight-line arithmetic, locals,
