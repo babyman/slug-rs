@@ -3011,3 +3011,51 @@ register VM would remove about 7% (Stage 7 count), checks 0%. None is a
 2x lever alone. `fib`, which neither counts nor allocates, is still 2.4x
 CPython: about 40 ns a call against about 16 ns. The call path, entering
 and leaving a frame, is the cost to size next.
+
+### The call path: about two thirds of `fib`
+
+`fib(37)` (`fib.slug` with a larger argument, 24M calls; `fib(35)` takes
+34.5 ns a call) ran under `sample` on a `strip -x` copy of a symbolized
+profile-guided build of 37083ae; `llvm-objdump -d -l` on the symbolized
+build mapped the 1,612 samples to source lines. Profile-guided layout
+splits inlined code, so each sample was assigned to the nearest preceding
+`slug-vm` source line in address order and the lines grouped by role. The
+attribution is approximate at block boundaries; the totals are the
+finding.
+
+| share of `fib` | what |
+|---:|---|
+| 27% | call: `CallGlobal` handler, `call_global`, `enter_positional_closure` (arity checks, locals vector from the pool, arguments drained into it), the call-span lookup, the 120-byte `Frame` push, the closure's atomic count |
+| 27% | return: `return_without_cleanup`'s checks, `pop_frame` (with its globals compare), truncating the stack, recycling the locals, the frame's drop with its closure's atomic decrement |
+| 13% | dispatch loop re-entry: a call and a return each change `frame_epoch`, so the inner loop exits and the outer loop reruns its suspension and attention checks, the program compare, the chunk lookup, and the instruction-pointer load |
+| 10% | per-instruction skeleton and the opcode `match` |
+| 23% | the instructions' own work (local reads, the compare and branch, the subtractions and the addition) |
+
+About 68% of `fib`'s time, some 23 ns of each 34.5 ns call, goes to entering
+and leaving a frame. CPython 3.15 takes about 16 ns for the whole call,
+its arithmetic included.
+
+Real programs call less often but not rarely: a frame every 24 instructions
+in `crawl-history`, every 16 in `crawl-game`. At 23 ns a call and return,
+the call path would be about 7% of `http-server`, 9-11% of
+`crawl-crowd`, `invaders-game`, and `crawl-history`, and 20% of
+`crawl-game` (frames created times 23 ns, against each program's time;
+calls with captures or the general path cost more).
+
+This is the first cost found that is large and in one place. A call path
+redesign would take these together:
+
+- locals in the operand stack, where the arguments already are, instead of
+  a separate pooled vector the arguments are drained into;
+- a smaller frame: the call span recovered from the caller's saved
+  instruction pointer when an error needs it, and cleanup scopes, the
+  provided-argument bitmap, and the cleanup flags moved out of the common
+  frame;
+- calls and returns that switch the dispatch loop's code and instruction
+  pointer in place instead of leaving the inner loop;
+- no atomic count per call for module functions, which live as long as
+  their program (`Code` already has an immortal mark).
+
+At 8 ns for a call and return, `fib` would take about 0.57x as long, near
+CPython's per-call time, and the real programs 5-13% less (`crawl-game`
+about 13%).
