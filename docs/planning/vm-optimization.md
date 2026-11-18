@@ -2860,3 +2860,122 @@ crawl-ticks/pages/crowd and http-server 1.01x, text-wrap 1.01x. The
 list-key microbenchmarks read 1.01-1.02x, so the residue is likely the
 depth count on the map-key path (Crawl keys a few maps by `[x, y]`).
 Accepted for the crash fix; not chased.
+
+## Ceilings before structural work (2026-11-17)
+
+Before choosing among the structural options (trusted bytecode, quickening
+with inline caches, ownership-based reference counting, typed register
+lowering, a native-code tier), two scratch builds measured what the first
+two could reach. Neither patch was committed.
+
+### Trusted bytecode: 1.00x
+
+A perturbation build ran verified bytecode with no checks the verifier
+already guarantees: unchecked instruction fetch, unchecked stack pops and
+peeks, unchecked frame, local, capture, and operand-constant access, and no
+store of the instruction pointer to the frame for opcodes that cannot call,
+return, or suspend (`Constant`, `Nil`, `Pop`, `GetLocal`, `SetLocal`,
+`GetCapture`, the jumps, `ConstantBinary`, `LocalConstantBinary`).
+
+PGO A/B against c6b8871, 9 interleaved rounds: tuned 1.00x, hold-out 1.00x,
+every workload within 0.97-1.02x and inside its spread. The checks are
+predicted branches that cost nothing measurable, so an unchecked fast path
+is dropped as an option, along with the change to the workspace's
+`unsafe_code = "deny"` it would have needed.
+
+### Type stability per site
+
+A counting build recorded, for each executed arithmetic or comparison, index
+read, and call, its site and a key: the operand kinds, the container kind
+(with the schema for structs), or the callee's identity. It ran on the tuned
+workloads only; the hold-outs were not profiled.
+
+| workload | arith share | arith dominant key | index share | call share | call dominant callee |
+|---|---:|---:|---:|---:|---:|
+| invaders-game | 25.0% | 100.0% | 7.0% | 4.4% | 97.2% |
+| http-server | 15.5% | 99.9% | 6.7% | 9.0% | 99.9% |
+| crawl-game | 13.9% | 99.0% | 14.4% | 8.9% | 91.0% |
+| crawl-ticks | 25.1% | 98.6% | 12.9% | 3.6% | 99.7% |
+| crawl-history | 13.0% | 99.9% | 6.1% | 4.9% | 97.2% |
+| crawl-crowd | 19.4% | 99.3% | 9.7% | 7.1% | 99.9% |
+
+"Share" is of all executed instructions; "dominant" is how many executions
+matched their site's most common key, the hit rate of a one-entry inline
+cache that never respecializes. Index reads matched 100% by container kind
+everywhere. The microbenchmarks are monomorphic throughout.
+
+Findings:
+
+- Sites are almost perfectly stable, but the operations they cover are
+  25-45% of a real program's instructions, and most are `Int` by `Int`
+  arithmetic, which `numeric_in_place` already computes in place. A
+  specialized instruction would remove a tag check, which the trusted
+  bytecode build shows is not where the time goes. Generic quickening is
+  not worth its cost here; where an inline cache could pay is in calls
+  and map reads, which do real work.
+- Struct field reads are about 0% of index reads in every workload; Crawl
+  uses maps (50-60% of index reads). Compile-time struct field positions
+  would not help the current programs.
+- `typed-n-body` and `typed-spectral-norm` execute exactly as many
+  instructions as their untyped twins, with `*Num` opcodes in place of the
+  generic ones, and run in the same time. Declared types do not change the
+  work today.
+- Module bindings reach operations unresolved. `Int` by `Binding` (a
+  destructured import's live binding) is 6-10% of Crawl's arithmetic, which
+  misses the in-place path and resolves through `pop_slow`, and a `Binding`
+  callee is 8-18% of Crawl's calls, resolved through the generic call path.
+  Resolving the binding at the read would put both on the fast paths.
+
+With the Stage 7 count (a register VM would execute about 80% of the
+dispatches), these leave the cost of each instruction in value handling:
+24-byte copies, reference-count increments and decrements, drops, and
+operand-stack pushes, plus the work inside calls and map reads. The next
+measurement sizes that traffic before ownership-based reference counting is
+considered.
+
+### Reference-count traffic: about 6-11% of real programs
+
+Before considering ownership-based reference counting (borrow inference and
+reuse of uniquely owned values, as Perceus does), two scratch builds sized
+the traffic it would remove. A hand-written `Value::clone` counted the
+reference-count increments each clone makes, attributed to the executing
+opcode, and a counting global allocator counted allocations; the existing
+metrics give copy-on-write updates. The tuned workloads only were counted.
+
+| workload | increments per instruction | allocations per instruction | shared-owner updates |
+|---|---:|---:|---:|
+| invaders-game | 0.11 | 0.083 | 3.2% (76M elements copied) |
+| http-server | 0.35 | 0.176 | 9.1% |
+| crawl-game | 0.36 | 0.067 | 1.5% |
+| crawl-ticks | 0.19 | 0.098 | 4.3% |
+| crawl-history | 0.33 | 0.124 | 9.3% |
+| crawl-crowd | 0.34 | 0.141 | 9.5% |
+
+Increments come mostly from calls (`CallPositional`, `CallGlobal`),
+`GetGlobal`, `GetCapture`, and constant-key index reads. Allocations come
+from `MakeClosure` (20-27% in Crawl and `http-server`), calls, and index
+reads (`GetIndex` 45% in `crawl-game`).
+
+To price the traffic, a perturbation build gave every clone of a counted
+value one extra increment and decrement (a `black_box`ed clone, dropped),
+doubling the pairs. PGO A/B against the hand-written clone alone, 9
+interleaved rounds: tuned 1.05x, hold-out 1.09x; `crawl-game` 1.11x,
+`crawl-history`, `crawl-crowd`, and `http-server` 1.09x, `crawl-ticks`
+1.06x, `invaders-game` 1.06x; `fib` 0.99x. Each extra pair cost 2.1-3.7 ns
+(atomic counts, `threads` build), so the pairs real programs make today
+take about 6-11% of their time. This is a lower bound in one way (clones of
+`Rc` fields outside `Value::clone`, such as a frame's closure, were not
+counted) and an upper bound in another (the extra pair touches a cache line
+the real one just loaded).
+
+Ownership-based counting would remove part of that 6-11%, not all of it,
+and its reuse half has little to reuse: shared-owner updates are 2-10% of
+collection updates, after the fused updates of 2026-11-06 and 2026-11-13.
+`invaders-game`'s shared byte copies are the exception. That makes it a
+few-percent option for weeks of compiler work, not the lever for a 2x
+change.
+
+Allocations, at 0.07-0.18 an instruction against 7-11 ns an instruction,
+are the larger unmeasured cost: at 10 ns for an allocation and its free
+they would be 8-25% of real programs' time. They are the next thing to
+price, with the same perturbation method.
