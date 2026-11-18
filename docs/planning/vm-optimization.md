@@ -3082,3 +3082,27 @@ iterations calling `increment(value)` took 405 ms against 171 ms with
 the callee's three instructions. What the redesign would buy has to be
 bounded by removing real work from the path (the locals vector, the frame's
 size, the atomic counts), not by moving where the path stalls.
+
+### Frame size: about 3 ns a call for 80 bytes
+
+Module functions' closures are already immortal once the entry program
+initializes (`run_program_settled` calls `immortalize_code` before
+`main`), so a call to one makes no atomic read-modify-write; the profile's
+`sync.rs` samples were the count loads stalling. That test had nothing to
+remove and was not run.
+
+`Frame` is 136 bytes; the fields every call uses (closure, instruction
+pointer, stack base, locals, scope depth) need about 56, and the call span,
+cleanup scopes, provided-argument bitmap, and cleanup fields take the
+other 80. Moving those out touches about 75 sites, so a reverse
+perturbation bounded it first: 80 bytes of padding, written on every push
+and read on every pop, made the frame 216 bytes. PGO A/B against
+8499cef, 9 interleaved rounds: tuned 1.02x, hold-out 1.01x; `fib` 1.07x
+and `defer-errors` 1.07x, `function-call` 1.04x, the real programs
+0.99-1.02x (`crawl-game` 1.02x). Per call that is 2.7-2.8 ns for 80 bytes
+in `fib` and `crawl-game` alike.
+
+Shrinking the frame by the same 80 bytes would therefore save at most
+about 3 ns of the 23 ns call, some 7% of `fib` and 1-2% of the real
+programs. Not worth the change alone; worth folding into a larger call
+path change if one goes ahead.
