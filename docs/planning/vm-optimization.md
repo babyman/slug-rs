@@ -2979,3 +2979,35 @@ Allocations, at 0.07-0.18 an instruction against 7-11 ns an instruction,
 are the larger unmeasured cost: at 10 ns for an allocation and its free
 they would be 8-25% of real programs' time. They are the next thing to
 price, with the same perturbation method.
+
+### Allocations: about 4-8% of real programs
+
+The same perturbation priced allocation. The control build wrapped
+mimalloc in a pass-through global allocator; the candidate's wrapper also
+allocated and freed one extra block of the same layout before every
+allocation. PGO A/B, 9 interleaved rounds: tuned 1.06x, hold-out 1.07x;
+`crawl-ticks` and `crawl-crowd` 1.08x, `crawl-history` and `invaders-game`
+1.07x, `http-server` 1.05x, `crawl-game` 1.04x; among the microbenchmarks
+`defer-errors` 1.22x and `word-frequency` 1.13x, `fib` and
+`shared-append` 1.00x.
+
+Divided by each program's allocation count (execution and compilation),
+an extra allocation and free cost 2.9-5.5 ns, so the allocator calls real
+programs make take about 4-8% of their time. That is a lower bound: the
+extra block is freed at once and comes back from mimalloc's free list hot,
+while a real allocation is also initialized, touched again later, and
+freed elsewhere.
+
+Two sources are cheap to remove. Indexing a string builds a new `Str` (two
+allocations) for every character, most of `crawl-game`'s `GetIndex`
+allocations; a shared table of one-character ASCII strings would remove
+them. `MakeClosure` allocates the closure, its capture vector, and a copy
+of the program's capture metadata (`capture_sources.to_vec()`), which the
+program already holds and could share.
+
+Together the measured costs explain about a quarter of a real program's
+time: reference counting 6-11%, allocator calls 4-8%, the dispatches a
+register VM would remove about 7% (Stage 7 count), checks 0%. None is a
+2x lever alone. `fib`, which neither counts nor allocates, is still 2.4x
+CPython: about 40 ns a call against about 16 ns. The call path, entering
+and leaving a frame, is the cost to size next.
