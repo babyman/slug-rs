@@ -77,6 +77,7 @@ a specified feature is implemented.
 | [agent-facing-direction.md](planning/agent-facing-direction.md) | Product direction for agent-written, human-reviewed code, with ordered work and measures. |
 | [fork-tasks.md](planning/fork-tasks.md) | `fork` and `task var`: cooperative semantics done, worker threads and embedded multi-core in progress. |
 | [vm-optimization.md](planning/vm-optimization.md) | Staged private VM and bytecode optimization plan (paused at diminishing returns). |
+| [native-tier.md](planning/native-tier.md) | Scoping a desktop native-code tier: measured bound, constraints, gated phases. |
 
 ### Completed plans
 
