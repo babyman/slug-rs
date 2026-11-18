@@ -3059,3 +3059,26 @@ redesign would take these together:
 At 8 ns for a call and return, `fib` would take about 0.57x as long, near
 CPython's per-call time, and the real programs 5-13% less (`crawl-game`
 about 13%).
+
+### Re-entry removed: 1.00x
+
+The profile put 13% of `fib` in leaving and re-entering the dispatch loop
+on each call and return. A scratch build removed it: when a call or
+return changes the frame within the same program, the inner loop switches
+its chunk, code slice, and instruction pointer in place and runs the
+suspension and attention checks there, instead of breaking out to the
+outer loop. PGO A/B against edec428, 9 interleaved rounds: tuned 1.00x,
+hold-out 0.99x, `fib` 1.03x, every real program 0.99-1.01x. Not kept.
+
+As with the fetch chain (43% of samples, 4% of time), the samples landed
+on loads that wait for the call's own stores (the pushed frame, its
+instruction pointer), not on work the re-entry adds. The profile shares
+above say where the call path stalls, not what removing a piece buys.
+
+The absolute cost holds up when measured directly: a `recur` loop of 10M
+iterations calling `increment(value)` took 405 ms against 171 ms with
+`value + 1` written in place, 23.4 ns more per iteration (PGO build of
+37083ae, medians of 7 interleaved runs). That is the call and return plus
+the callee's three instructions. What the redesign would buy has to be
+bounded by removing real work from the path (the locals vector, the frame's
+size, the atomic counts), not by moving where the path stalls.
