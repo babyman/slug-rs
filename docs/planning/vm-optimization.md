@@ -3106,3 +3106,39 @@ Shrinking the frame by the same 80 bytes would therefore save at most
 about 3 ns of the 23 ns call, some 7% of `fib` and 1-2% of the real
 programs. Not worth the change alone; worth folding into a larger call
 path change if one goes ahead.
+
+### The locals vector: about 2-4 ns a call
+
+Moving locals onto the operand stack would rewrite every local access
+path, so the same doubling bounded what it could save: each exact
+positional call (`enter_positional_closure`) first took a second vector
+from the pool, filled it to the callee's local count, wrote its argument
+slots with `nil`, cleared it, and returned it. PGO A/B against 2f41714,
+9 interleaved rounds: tuned 1.03x, hold-out 1.03x; `fib` 1.04x
+(1.6 ns a call), `crawl-game` 1.04x and `crawl-crowd` 1.02x (about 4 ns a
+frame), the other real programs 1.00-1.02x. The doubled work writes
+`nil`s where the real one moves arguments, so it reads a little low.
+
+Where the call's 23 ns stand:
+
+| piece | removing it buys |
+|---|---|
+| leaving and re-entering the dispatch loop | nothing (1.00x) |
+| atomic closure counts | nothing for module functions, already immortal |
+| the frame's 80 cold bytes | at most about 3 ns |
+| the pooled locals vector | about 2-4 ns |
+
+Together that is at most about 7 ns. The other 16 or so are spread over
+the call and return instructions' own dispatch, the arity and binding
+checks, the global read, the call-span lookup, frame bookkeeping, and the
+stack truncation, with no piece large on its own. A call path redesign
+that took all of these together could bring a call to perhaps 15 ns:
+`fib` about 0.75x, the real programs 3-6%. That is worth doing when the
+call path is next opened, but it does not close the 2.3x gap to CPython.
+
+Across this round (checks, quickening, reference counts, allocations,
+dispatch count, and the call path), the costs are spread thin: the largest
+single removable piece is single-digit percent of a real program.
+Interpreter work from here buys percents, as the 2026-11-14 decision
+expected; a 2x step needs code that keeps values in machine registers
+between operations, which only a native-code tier provides.
