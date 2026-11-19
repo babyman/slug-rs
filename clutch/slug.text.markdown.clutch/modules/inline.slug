@@ -1,0 +1,1182 @@
+/**
+ * slug.text.markdown.inline — Markdown's inline syntax, for slug.text.markdown
+ *
+ * `parseInlines(text, refs, maxDepth)` reads a paragraph's, heading's, or
+ * table cell's text into inline nodes; the scanners for link labels,
+ * destinations, and titles, and `parseReferences`, serve the block parser's
+ * link reference definitions. It follows cmark's algorithms (delimiter and
+ * bracket stacks), which keep every input linear. GitHub's extended
+ * autolinks are found afterwards, in the text outside links and images, as
+ * cmark-gfm finds them.
+ *
+ * Nodes are maps: `{type: "text", text}`, `{type: "softbreak"}`,
+ * `{type: "hardbreak"}`, `{type: "code", text}`, `{type: "html", text}` (raw
+ * HTML, which slug.text.markdown shows as text), `{type: "emph"|"strong"|"del",
+ * children}`, and `{type: "link"|"image", url, title, children}`. A `url` has
+ * its escapes and entities resolved; `title` is "" when there is none.
+ */
+
+val {ord, chr, join, toBytes} = import("slug.string")
+val bytes = import("slug.bytes")
+val {ENTITIES, PUNCTUATION, FOLDS} = import("slug.text.markdown.data")
+
+// --- Characters --------------------------------------------------------------
+
+val setOf = fn(text:str):map {
+    val go = fn(i:num, out:map):map {
+        if (i == len(text)) { return out }
+        recur(i + 1, out + {[text[i]]: true})
+    }
+    go(0, {})
+}
+
+val ASCII_PUNCTUATION = setOf('!"#$%&' + "'" + '()*+,-./:;<=>?@[\]^_`{|}~')
+
+val FIRST_NON_ASCII = chr(128)
+
+// Unicode whitespace for flanking: space, tab, line ending, form feed, and
+// the Zs category.
+val SPACES = setOf(join([" ", "\t", "\n", "\r", "\f", chr(0xA0), chr(0x1680), chr(0x2000), chr(0x2001), chr(0x2002),
+    chr(0x2003), chr(0x2004), chr(0x2005), chr(0x2006), chr(0x2007), chr(0x2008), chr(0x2009), chr(0x200A),
+    chr(0x202F), chr(0x205F), chr(0x3000)], ""))
+
+val LOWER = {
+    A: "a", B: "b", C: "c", D: "d", E: "e", F: "f", G: "g", H: "h", I: "i", J: "j", K: "k", L: "l", M: "m",
+    N: "n", O: "o", P: "p", Q: "q", R: "r", S: "s", T: "t", U: "u", V: "v", W: "w", X: "x", Y: "y", Z: "z",
+}
+
+export val isAsciiPunctuation = fn(c:str):bool { ASCII_PUNCTUATION[c] == true }
+
+export val isDigit = fn(c:str):bool { c >= "0" && c <= "9" && len(c) == 1 }
+
+export val isAlpha = fn(c:str):bool { len(c) == 1 && ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z")) }
+
+export val isAlnum = fn(c:str):bool { isAlpha(c) || isDigit(c) }
+
+export val isSpaceOrTab = fn(c:str):bool { c == " " || c == "\t" }
+
+val isWhitespace = fn(c:str):bool { SPACES[c] == true }
+
+// Whether `c` is Unicode punctuation: ASCII punctuation, or in the P or S
+// categories.
+val isPunctuation = fn(c:str):bool {
+    if (c < FIRST_NON_ASCII) { return ASCII_PUNCTUATION[c] == true }
+    val code = ord(c)
+    val search = fn(low:num, high:num):bool {
+        if (low > high) { return false }
+        val middle = int((low + high) / 2)
+        val range = PUNCTUATION[middle]
+        if (code < range[0]) { return recur(low, middle - 1) }
+        if (code > range[1]) { return recur(middle + 1, high) }
+        true
+    }
+    search(0, len(PUNCTUATION) - 1)
+}
+
+// `c` case folded, as link labels compare.
+val fold = fn(c:str):str {
+    if (c < FIRST_NON_ASCII) { LOWER[c] ?? c } else { FOLDS[c] ?? c }
+}
+
+// --- Entities and escapes ----------------------------------------------------
+
+val hexValue = fn(c:str):num {
+    if (isDigit(c)) { return ord(c) - 48 }
+    if (c >= "a" && c <= "f") { return ord(c) - 87 }
+    if (c >= "A" && c <= "F") { return ord(c) - 55 }
+    -1
+}
+
+val codepointText = fn(code:num):str {
+    if (code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) { chr(0xFFFD) } else { chr(code) }
+}
+
+/**
+ * The entity or numeric character reference at `pos`, which holds `&`, as
+ * `[text, length]`; nil when there is none there.
+ */
+export val entityAt = fn(s:str, pos:num) {
+    val n = len(s)
+    if (pos + 2 >= n) { return nil }
+    if (s[pos + 1] == "#") {
+        val hex = s[pos + 2] == "x" || s[pos + 2] == "X"
+        val start = if (hex) { pos + 3 } else { pos + 2 }
+        val most = if (hex) { 6 } else { 7 }
+        val digits = fn(i:num, value:num):list {
+            if (i < n && i - start < most) {
+                val d = if (hex) { hexValue(s[i]) } else if (isDigit(s[i])) { ord(s[i]) - 48 } else { -1 }
+                if (d >= 0) { return recur(i + 1, value * (if (hex) { 16 } else { 10 }) + d) }
+            }
+            [i, value]
+        }
+        val [end, value] = digits(start, 0)
+        if (end == start || end >= n || s[end] != ";") { return nil }
+        return [codepointText(value), end + 1 - pos]
+    }
+    val name = fn(i:num):num {
+        if (i < n && i - pos <= 32 && isAlnum(s[i])) { recur(i + 1) } else { i }
+    }
+    val end = name(pos + 1)
+    if (end == pos + 1 || end >= n || s[end] != ";") { return nil }
+    val text = ENTITIES[s[pos + 1:end]]
+    if (text == nil) { nil } else { [text, end + 1 - pos] }
+}
+
+/**
+ * `s` with its backslash escapes and character references resolved, as
+ * link destinations, titles, and code block info strings are.
+ */
+export val unescape = fn(s:str):str {
+    val n = len(s)
+    val go = fn(i:num, start:num, out:str):str {
+        if (i >= n) { return if (start == 0) { s } else { out + s[start:] } }
+        val c = s[i]
+        if (c == "\\" && i + 1 < n && isAsciiPunctuation(s[i + 1])) {
+            return recur(i + 2, i + 2, out + s[start:i] + s[i + 1])
+        }
+        if (c == "&") {
+            val entity = entityAt(s, i)
+            if (entity != nil) {
+                return recur(i + entity[1], i + entity[1], out + s[start:i] + entity[0])
+            }
+        }
+        recur(i + 1, start, out)
+    }
+    go(0, 0, "")
+}
+
+/**
+ * A link label as references match it: case folded, with each run of
+ * whitespace one space, and trimmed.
+ */
+export val normalizeLabel = fn(raw:str):str {
+    val go = fn(i:num, out:str, space:bool):str {
+        if (i >= len(raw)) { return out }
+        val c = raw[i]
+        if (c == " " || c == "\t" || c == "\n" || c == "\r") { return recur(i + 1, out, len(out) > 0) }
+        recur(i + 1, (if (space) { out + " " } else { out }) + fold(c), false)
+    }
+    go(0, "", false)
+}
+
+// --- Link scanners -----------------------------------------------------------
+
+// The position after the spaces, tabs, and line endings at `pos`.
+export val skipSpacechars = fn(s:str, pos:num):num {
+    if (pos < len(s)) {
+        val c = s[pos]
+        if (c == " " || c == "\t" || c == "\n" || c == "\r" || c == "\f") { return recur(s, pos + 1) }
+    }
+    pos
+}
+
+val skipSpaces = fn(s:str, pos:num):num {
+    if (pos < len(s) && isSpaceOrTab(s[pos])) { recur(s, pos + 1) } else { pos }
+}
+
+/**
+ * The link destination at `pos` as `[end, destination]`, the destination
+ * still escaped and without its angle brackets; nil when there is none. A
+ * bare destination may be empty only before `)`.
+ */
+export val scanDestination = fn(s:str, pos:num) {
+    val n = len(s)
+    if (pos < n && s[pos] == "<") {
+        val angled = fn(i:num) {
+            if (i >= n) { return nil }
+            val c = s[i]
+            if (c == ">") { return [i + 1, s[pos + 1:i]] }
+            if (c == "\n" || c == "<") { return nil }
+            if (c == "\\" && i + 1 < n && isAsciiPunctuation(s[i + 1])) { return recur(i + 2) }
+            recur(i + 1)
+        }
+        return angled(pos + 1)
+    }
+    val bare = fn(i:num, depth:num) {
+        if (i >= n) { return nil }
+        val c = s[i]
+        if (c == "\\" && i + 1 < n && isAsciiPunctuation(s[i + 1])) { return recur(i + 2, depth) }
+        if (c == "(") {
+            if (depth >= 32) { return nil }
+            return recur(i + 1, depth + 1)
+        }
+        if (c == ")") {
+            if (depth == 0) { return [i, s[pos:i]] }
+            return recur(i + 1, depth - 1)
+        }
+        if (c <= " " || c == "\177") {
+            if (i == pos || depth != 0) { return nil }
+            return [i, s[pos:i]]
+        }
+        recur(i + 1, depth)
+    }
+    bare(pos, 0)
+}
+
+/**
+ * The length of the link title at `pos`, or 0 when there is none.
+ */
+export val scanTitle = fn(s:str, pos:num):num {
+    val n = len(s)
+    if (pos >= n) { return 0 }
+    val open = s[pos]
+    val close = if (open == "\"") { "\"" } else if (open == "'") { "'" } else if (open == "(") { ")" } else { "" }
+    if (close == "") { return 0 }
+    val go = fn(i:num):num {
+        if (i >= n) { return 0 }
+        val c = s[i]
+        if (c == "\\" && i + 1 < n) { return recur(i + 2) }
+        if (c == close) { return i + 1 - pos }
+        if (open == "(" && c == "(") { return 0 }
+        recur(i + 1)
+    }
+    go(pos + 1)
+}
+
+/**
+ * The link label at `pos`, which holds `[`, as `[end, raw]`, raw being the
+ * text between the brackets; nil when there is none.
+ */
+export val scanLabel = fn(s:str, pos:num) {
+    val n = len(s)
+    if (pos >= n || s[pos] != "[") { return nil }
+    val go = fn(i:num) {
+        if (i >= n || i - pos > 1000) { return nil }
+        val c = s[i]
+        if (c == "[") { return nil }
+        if (c == "]") { return [i + 1, s[pos + 1:i]] }
+        if (c == "\\" && i + 1 < n && isAsciiPunctuation(s[i + 1])) { return recur(i + 2) }
+        recur(i + 1)
+    }
+    go(pos + 1)
+}
+
+val cleanTitle = fn(raw:str):str {
+    if (len(raw) < 2) { "" } else { unescape(raw[1:len(raw) - 1]) }
+}
+
+// The position after the line ending at `pos`, or -1 when `pos` is not at
+// one; the end of the text counts.
+val lineEndAt = fn(s:str, pos:num):num {
+    if (pos >= len(s)) { return pos }
+    if (s[pos] == "\n") { return pos + 1 }
+    if (s[pos] == "\r") { return if (pos + 1 < len(s) && s[pos + 1] == "\n") { pos + 2 } else { pos + 1 } }
+    -1
+}
+
+// Spaces and tabs, at most one line ending, and spaces and tabs again.
+val skipSpaceNewline = fn(s:str, pos:num):num {
+    val first = skipSpaces(s, pos)
+    val after = lineEndAt(s, first)
+    if (after >= 0 && after > first) { skipSpaces(s, after) } else { first }
+}
+
+// One link reference definition at `pos` as [end, label, url, title], or nil.
+val referenceAt = fn(s:str, pos:num) {
+    val label = scanLabel(s, pos)
+    if (label == nil) { return nil }
+    val key = normalizeLabel(label[1])
+    if (key == "") { return nil }
+    val colon = label[0]
+    if (colon >= len(s) || s[colon] != ":") { return nil }
+    val destination = scanDestination(s, skipSpaceNewline(s, colon + 1))
+    if (destination == nil) { return nil }
+    val beforeTitle = destination[0]
+    val titleAt = skipSpaceNewline(s, beforeTitle)
+    val titleLength = if (titleAt == beforeTitle) { 0 } else { scanTitle(s, titleAt) }
+    if (titleLength > 0) {
+        val end = lineEndAt(s, skipSpaces(s, titleAt + titleLength))
+        if (end >= 0) { return [end, key, unescape(destination[1]), cleanTitle(s[titleAt:titleAt + titleLength])] }
+    }
+    val end = lineEndAt(s, skipSpaces(s, beforeTitle))
+    if (end < 0) { return nil }
+    [end, key, unescape(destination[1]), ""]
+}
+
+/**
+ * Reads the link reference definitions that begin `content`, a paragraph's
+ * lines each ending in a line ending, into `refs`, where an earlier
+ * definition of a label wins. Returns `[rest, refs]`, rest being the content
+ * after them.
+ */
+export val parseReferences = fn(content:str, refs:map):list {
+    val go = fn(pos:num, refs:map):list {
+        if (pos >= len(content) || content[pos] != "[") { return [content[pos:], refs] }
+        val found = referenceAt(content, pos)
+        if (found == nil) { return [content[pos:], refs] }
+        val [end, key, url, title] = found
+        recur(end, if (refs[key] == nil) { refs + {[key]: {url: url, title: title}} } else { refs })
+    }
+    go(0, refs)
+}
+
+// --- Autolinks ---------------------------------------------------------------
+
+// The end of an autolink's URI after `<` at `pos`, or -1.
+val uriAutolinkEnd = fn(s:str, pos:num):num {
+    val n = len(s)
+    val scheme = fn(i:num):num {
+        if (i < n && (isAlnum(s[i]) || s[i] == "+" || s[i] == "." || s[i] == "-")) { recur(i + 1) } else { i }
+    }
+    if (pos + 1 >= n || !isAlpha(s[pos + 1])) { return -1 }
+    val colon = scheme(pos + 2)
+    val length = colon - (pos + 1)
+    if (length < 2 || length > 32 || colon >= n || s[colon] != ":") { return -1 }
+    val rest = fn(i:num):num {
+        if (i >= n) { return -1 }
+        val c = s[i]
+        if (c == ">") { return i + 1 }
+        if (c == "<" || c <= " " || c == "\177") { return -1 }
+        recur(i + 1)
+    }
+    rest(colon + 1)
+}
+
+val EMAIL_LOCAL = setOf(".!#$%&'*+/=?^_`{|}~-")
+
+// The end of an autolink's email address after `<` at `pos`, or -1.
+val emailAutolinkEnd = fn(s:str, pos:num):num {
+    val n = len(s)
+    val local = fn(i:num):num {
+        if (i < n && (isAlnum(s[i]) || EMAIL_LOCAL[s[i]] == true)) { recur(i + 1) } else { i }
+    }
+    val at = local(pos + 1)
+    if (at == pos + 1 || at >= n || s[at] != "@") { return -1 }
+    // One domain label at `i`: its end, or -1.
+    val label = fn(i:num):num {
+        val go = fn(j:num):num {
+            if (j < n && j - i < 63 && (isAlnum(s[j]) || s[j] == "-")) { recur(j + 1) } else { j }
+        }
+        if (i >= n || !isAlnum(s[i])) { return -1 }
+        val end = go(i + 1)
+        if (s[end - 1] == "-") { -1 } else { end }
+    }
+    val labels = fn(i:num):num {
+        val end = label(i)
+        if (end < 0) { return -1 }
+        if (end < n && s[end] == ".") { return recur(end + 1) }
+        if (end < n && s[end] == ">") { return end + 1 }
+        -1
+    }
+    labels(at + 1)
+}
+
+// GFM's extended autolinks, as cmark-gfm finds them: `www.` links, URLs
+// with `http://`, `https://`, or `ftp://`, `mailto:` and `xmpp:` addresses,
+// and bare email addresses, in text.
+
+val isHostChar = fn(c:str):bool { isAlnum(c) || (c >= FIRST_NON_ASCII && !isWhitespace(c)) }
+
+// The end of a domain at `start`, or -1: segments of host characters, `-`,
+// and `_` between periods, no `_` in the last two segments, at most 253
+// characters, and, when `needPeriod`, at least one period.
+val domainEnd = fn(s:str, start:num, needPeriod:bool):num {
+    val n = len(s)
+    val go = fn(i:num, periods:num, underscoresBefore:num, underscores:num):list {
+        if (i < n && i - start <= 253) {
+            val c = s[i]
+            if (c == "_") { return recur(i + 1, periods, underscoresBefore, underscores + 1) }
+            if (c == ".") { return recur(i + 1, periods + 1, underscores, 0) }
+            if (c == "-" || isHostChar(c)) { return recur(i + 1, periods, underscoresBefore, underscores) }
+        }
+        [i, periods, underscoresBefore + underscores]
+    }
+    val [end, periods, underscores] = go(start, 0, 0, 0)
+    if (end == start || end - start > 253 || (needPeriod && periods == 0) || underscores > 0) { -1 } else { end }
+}
+
+// Where an extended autolink that runs from `start` to `end` really ends:
+// without trailing punctuation, an unmatched `)`, or an entity-like `&x;`.
+val trimAutolink = fn(s:str, start:num, end:num):num {
+    val count = fn(i:num, opening:num, closing:num):list {
+        if (i >= end) { return [opening, closing] }
+        recur(i + 1, opening + (if (s[i] == "(") { 1 } else { 0 }), closing + (if (s[i] == ")") { 1 } else { 0 }))
+    }
+    val [opening, closing] = count(start, 0, 0)
+    val go = fn(at:num, closing:num):num {
+        if (at <= start) { return at }
+        val c = s[at - 1]
+        if (c == "?" || c == "!" || c == "." || c == "," || c == ":" || c == "*" || c == "_" || c == "~" || c == "'" || c == "\"") {
+            return recur(at - 1, closing)
+        }
+        if (c == ";") {
+            val back = fn(i:num):num { if (i > start && isAlpha(s[i])) { recur(i - 1) } else { i } }
+            val amp = back(at - 2)
+            return recur(if (amp < at - 2 && s[amp] == "&") { amp } else { at - 1 }, closing)
+        }
+        if (c == ")" && closing > opening) { return recur(at - 1, closing - 1) }
+        at
+    }
+    go(end, closing)
+}
+
+// The end of the path after a domain: the next whitespace or `<`.
+val pathEnd = fn(s:str, i:num):num {
+    if (i < len(s) && !isWhitespace(s[i]) && s[i] != "<") { recur(s, i + 1) } else { i }
+}
+
+val isLocalChar = fn(c:str):bool { isAlnum(c) || c == "." || c == "+" || c == "-" || c == "_" }
+
+// The end of the email address at `start`, or -1: local characters, `@`,
+// and a domain with a period, ending in a letter.
+val emailEnd = fn(s:str, start:num):num {
+    val n = len(s)
+    val local = fn(i:num):num { if (i < n && isLocalChar(s[i])) { recur(i + 1) } else { i } }
+    val at = local(start)
+    if (at == start || at >= n || s[at] != "@") { return -1 }
+    val domain = fn(i:num, periods:num):list {
+        if (i < n) {
+            val d = s[i]
+            if (isAlnum(d) || d == "-" || d == "_") { return recur(i + 1, periods) }
+            if (d == "." && i + 1 < n && isAlnum(s[i + 1])) { return recur(i + 1, periods + 1) }
+        }
+        [i, periods]
+    }
+    val [end, periods] = domain(at + 1, 0)
+    if (end - at < 2 || periods == 0 || !isAlpha(s[end - 1])) { -1 } else { end }
+}
+
+val URL_SCHEMES = ["http://", "https://", "ftp://"]
+
+/**
+ * The extended autolink at `pos` as `[end, url]`, or nil. A `www.` link
+ * starts after whitespace, `*`, `_`, `~`, or `(`; a URL or `mailto:` or
+ * `xmpp:` address after anything but a letter; a bare email address where
+ * the character before could not be part of it.
+ */
+val extendedAutolinkAt = fn(s:str, pos:num) {
+    val before = if (pos == 0) { "\n" } else { s[pos - 1] }
+    val c = s[pos]
+    if (c == "w") {
+        if (s[pos:pos + 4] == "www." && (isWhitespace(before) || before == "*" || before == "_" || before == "~" || before == "(")) {
+            val domain = domainEnd(s, pos, true)
+            if (domain < 0) { return nil }
+            val end = trimAutolink(s, pos, pathEnd(s, domain))
+            return [end, "http://" + s[pos:end]]
+        }
+    } else if ((c == "h" || c == "f") && !isAlpha(before)) {
+        val scheme = fn(i:num):num {
+            if (i >= len(URL_SCHEMES)) { return 0 }
+            val prefix = URL_SCHEMES[i]
+            if (s[pos:pos + len(prefix)] == prefix) { len(prefix) } else { recur(i + 1) }
+        }
+        val length = scheme(0)
+        if (length > 0) {
+            val domain = domainEnd(s, pos + length, false)
+            if (domain < 0) { return nil }
+            val end = trimAutolink(s, pos, pathEnd(s, domain))
+            return [end, s[pos:end]]
+        }
+    } else if (c == "m" && !isAlpha(before) && s[pos:pos + 7] == "mailto:") {
+        val end = emailEnd(s, pos + 7)
+        return if (end < 0) { nil } else { [end, s[pos:end]] }
+    } else if (c == "x" && !isAlpha(before) && s[pos:pos + 5] == "xmpp:") {
+        val end = emailEnd(s, pos + 5)
+        if (end < 0) { return nil }
+        val jidEnd = fn(i:num):num {
+            if (i < len(s) && (isAlnum(s[i]) || s[i] == "@" || s[i] == "." || s[i] == "-" || s[i] == "_")) { recur(i + 1) } else { i }
+        }
+        val full = if (end < len(s) && s[end] == "/") { trimAutolink(s, pos, jidEnd(end + 1)) } else { end }
+        return [full, s[pos:full]]
+    }
+    if (!isLocalChar(c) || isLocalChar(before) || before == "@") { return nil }
+    val end = emailEnd(s, pos)
+    if (end < 0) { nil } else { [end, "mailto:" + s[pos:end]] }
+}
+
+// --- Raw HTML ----------------------------------------------------------------
+
+val isTagWhitespace = fn(c:str):bool { c == " " || c == "\t" || c == "\n" || c == "\r" || c == "\f" }
+
+val skipTagWhitespace = fn(s:str, i:num):num {
+    if (i < len(s) && isTagWhitespace(s[i])) { recur(s, i + 1) } else { i }
+}
+
+// The end of `text` at or after `from`, or -1.
+val find = fn(s:str, text:str, from:num):num {
+    val last = len(s) - len(text)
+    val first = text[0]
+    val go = fn(i:num):num {
+        if (i > last) { return -1 }
+        if (s[i] == first && s[i:i + len(text)] == text) { i + len(text) } else { recur(i + 1) }
+    }
+    go(from)
+}
+
+val tagNameEnd = fn(s:str, i:num):num {
+    if (i < len(s) && (isAlnum(s[i]) || s[i] == "-")) { recur(s, i + 1) } else { i }
+}
+
+val isAttributeNameStart = fn(c:str):bool { isAlpha(c) || c == "_" || c == ":" }
+
+val attributeNameEnd = fn(s:str, i:num):num {
+    if (i < len(s) && (isAlnum(s[i]) || s[i] == "_" || s[i] == "." || s[i] == ":" || s[i] == "-")) { recur(s, i + 1) } else { i }
+}
+
+// The end of an attribute value at `i`, or -1.
+val attributeValueEnd = fn(s:str, i:num):num {
+    val n = len(s)
+    if (i >= n) { return -1 }
+    val q = s[i]
+    if (q == "\"" || q == "'") {
+        val go = fn(j:num):num { if (j >= n) { -1 } else if (s[j] == q) { j + 1 } else { recur(j + 1) } }
+        return go(i + 1)
+    }
+    val bare = fn(j:num):num {
+        if (j < n) {
+            val c = s[j]
+            if (!(c <= " " || c == "\"" || c == "'" || c == "=" || c == "<" || c == ">" || c == "`")) { return recur(j + 1) }
+        }
+        j
+    }
+    val end = bare(i)
+    if (end == i) { -1 } else { end }
+}
+
+// The end of an open tag's attributes and close at `i`, or -1.
+val openTagRest = fn(s:str, i:num):num {
+    val n = len(s)
+    val after = skipTagWhitespace(s, i)
+    if (after < n && s[after] == ">") { return after + 1 }
+    if (after + 1 < n && s[after] == "/" && s[after + 1] == ">") { return after + 2 }
+    if (after == i || after >= n || !isAttributeNameStart(s[after])) { return -1 }
+    val nameEnd = attributeNameEnd(s, after + 1)
+    val equals = skipTagWhitespace(s, nameEnd)
+    if (equals < n && s[equals] == "=") {
+        val valueEnd = attributeValueEnd(s, skipTagWhitespace(s, equals + 1))
+        if (valueEnd < 0) { return -1 }
+        return recur(s, valueEnd)
+    }
+    recur(s, nameEnd)
+}
+
+// --- Inline parsing ----------------------------------------------------------
+
+val CONTAINER_INLINES = {emph: true, strong: true, del: true, link: true, image: true}
+
+val SPECIAL_CHARS = "\n`\\&<[]!*_~"
+val SPECIAL = setOf(SPECIAL_CHARS)
+val SPECIAL_BYTES = toBytes(SPECIAL_CHARS)
+
+/**
+ * Parses `text`, the content of a paragraph, heading, or table cell, into
+ * inline nodes, finding reference links in `refs`. Throws a `markdown.limit`
+ * error when emphasis, links, and strikethrough nest more than `maxDepth`
+ * deep.
+ */
+export val parseInlines = fn(text:str, refs:map, maxDepth:num):list {
+    val s = text
+    val n = len(s)
+    var pos = 0
+    // In ASCII text, positions in its bytes are positions in it, so native
+    // searches can find the next character that may start syntax.
+    val data = toBytes(s)
+    val ascii = len(data) == n
+
+    // The inline nodes, a doubly linked list by id, as cmark keeps them: a
+    // container's `kids` are [first, last] of a list of its own.
+    var nodes = {}
+    var nextOf = {}
+    var prevOf = {}
+    var head = -1
+    var tail = -1
+    var nodeCount = 0
+
+    val append = fn(node:map):num {
+        val id = nodeCount
+        nodeCount = id + 1
+        nodes = nodes + {[id]: node}
+        prevOf = prevOf + {[id]: tail}
+        nextOf = nextOf + {[id]: -1}
+        if (tail >= 0) { nextOf = nextOf + {[tail]: id} } else { head = id }
+        tail = id
+        id
+    }
+
+    val addText = fn(t:str):num { append({type: "text", text: t}) }
+
+    val unlink = fn(id:num) {
+        val p = prevOf[id] ?? -1
+        val q = nextOf[id] ?? -1
+        if (p >= 0) { nextOf = nextOf + {[p]: q} } else { head = q }
+        if (q >= 0) { prevOf = prevOf + {[q]: p} } else { tail = p }
+    }
+
+    // Moves the nodes between `after` and `before` (-1: to the end) into a
+    // new `container`, which takes their place.
+    val wrap = fn(container:map, after:num, before:num):num {
+        val firstKid = nextOf[after] ?? -1
+        val lastKid = if (before >= 0) { prevOf[before] ?? -1 } else { tail }
+        val empty = firstKid < 0 || firstKid == before
+        val id = nodeCount
+        nodeCount = id + 1
+        nodes = nodes + {[id]: container + {kids: if (empty) { nil } else { [firstKid, lastKid] }}}
+        if (!empty) {
+            nextOf = nextOf + {[lastKid]: -1}
+            prevOf = prevOf + {[firstKid]: -1}
+        }
+        nextOf = nextOf + {[after]: id, [id]: before}
+        prevOf = prevOf + {[id]: after}
+        if (before >= 0) { prevOf = prevOf + {[before]: id} } else { tail = id }
+        id
+    }
+
+    // The delimiter runs of `*`, `_`, and `~` that may open or close, in a
+    // doubly linked list by id; ids increase along the text.
+    var delims = {}
+    var delimPrev = {}
+    var delimNext = {}
+    var lastDelim = -1
+    var delimCount = 0
+
+    val pushDelim = fn(c:str, node:num, length:num, canOpen:bool, canClose:bool) {
+        val id = delimCount
+        delimCount = id + 1
+        delims = delims + {[id]: {char: c, node: node, length: length, canOpen: canOpen, canClose: canClose}}
+        delimPrev = delimPrev + {[id]: lastDelim}
+        delimNext = delimNext + {[id]: -1}
+        if (lastDelim >= 0) { delimNext = delimNext + {[lastDelim]: id} }
+        lastDelim = id
+    }
+
+    val removeDelim = fn(id:num) {
+        val p = delimPrev[id] ?? -1
+        val q = delimNext[id] ?? -1
+        if (p >= 0) { delimNext = delimNext + {[p]: q} }
+        if (q >= 0) { delimPrev = delimPrev + {[q]: p} } else { lastDelim = p }
+    }
+
+    val delimText = fn(id:num):str { nodes[delims[id].node].text }
+
+    // Brackets that may open a link or image, a stack by depth.
+    var brackets = {}
+    var bracketCount = 0
+    var noLinkOpeners = true
+
+    val pushBracket = fn(node:num, image:bool) {
+        if (bracketCount > 0) {
+            val top = bracketCount - 1
+            brackets = brackets + {[top]: brackets[top] + {bracketAfter: true}}
+        }
+        brackets = brackets + {[bracketCount]: {node: node, image: image, delimBottom: delimCount, position: pos, bracketAfter: false}}
+        bracketCount = bracketCount + 1
+        if (!image) { noLinkOpeners = false }
+    }
+
+    // What earlier scans learned of the rest of the text, so pathological
+    // input does not rescan it: the last position of each backtick run
+    // length once a scan reached the end, and which raw HTML closers are
+    // absent.
+    var backticks = {}
+    var scannedBackticks = false
+    var missing = {}
+
+    // --- Emphasis ---
+
+    // Wraps the nodes between delimiters `opener` and `closer` in emphasis,
+    // strong emphasis, or strikethrough; returns the next closer to try.
+    val insertEmphasis = fn(opener:num, closer:num):num {
+        val o = delims[opener]
+        val c = delims[closer]
+        val openerLength = len(nodes[o.node].text)
+        val closerLength = len(nodes[c.node].text)
+        val strike = c.char == "~"
+        val used = if (strike) { closerLength } else if (closerLength >= 2 && openerLength >= 2) { 2 } else { 1 }
+        val dropBetween = fn(d:num) {
+            if (d >= 0 && d != opener) {
+                val p = delimPrev[d] ?? -1
+                removeDelim(d)
+                recur(p)
+            }
+        }
+        dropBetween(delimPrev[closer] ?? -1)
+        val kind = if (strike) { "del" } else if (used == 1) { "emph" } else { "strong" }
+        wrap({type: kind}, o.node, c.node)
+        nodes = nodes + {[o.node]: {type: "text", text: o.char * (openerLength - used)}}
+        nodes = nodes + {[c.node]: {type: "text", text: c.char * (closerLength - used)}}
+        if (openerLength == used) {
+            unlink(o.node)
+            removeDelim(opener)
+        }
+        if (closerLength == used) {
+            unlink(c.node)
+            val next = delimNext[closer] ?? -1
+            removeDelim(closer)
+            return next
+        }
+        closer
+    }
+
+    // Resolves the emphasis among the delimiters from id `bottom` on, then
+    // removes them.
+    val processEmphasis = fn(bottom:num) {
+        var openersBottom = {}
+        val earliest = fn(d:num, found:num):num {
+            if (d >= 0 && d >= bottom) { recur(delimPrev[d] ?? -1, d) } else { found }
+        }
+        val each = fn(closer:num) {
+            if (closer < 0) { return nil }
+            val c = delims[closer]
+            if (!c.canClose) { return recur(delimNext[closer] ?? -1) }
+            val key = c.char + (if (c.canOpen) { "o" } else { "-" }) + (c.length % 3)
+            val floor = openersBottom[key] ?? bottom
+            val closerLength = len(nodes[c.node].text)
+            val search = fn(o:num):num {
+                if (o < 0 || o < floor) { return -1 }
+                val d = delims[o]
+                if (d.canOpen && d.char == c.char) {
+                    if (c.char == "~") {
+                        if (len(nodes[d.node].text) == closerLength) { return o }
+                    } else {
+                        val odd = (c.canOpen || d.canClose) && c.length % 3 != 0 && (d.length + c.length) % 3 == 0
+                        if (!odd) { return o }
+                    }
+                }
+                recur(delimPrev[o] ?? -1)
+            }
+            val opener = search(delimPrev[closer] ?? -1)
+            if (opener >= 0) { return recur(insertEmphasis(opener, closer)) }
+            val next = delimNext[closer] ?? -1
+            openersBottom = openersBottom + {[key]: closer}
+            if (!c.canOpen) { removeDelim(closer) }
+            recur(next)
+        }
+        each(earliest(lastDelim, -1))
+        val clear = fn() {
+            if (lastDelim >= 0 && lastDelim >= bottom) {
+                removeDelim(lastDelim)
+                recur()
+            }
+        }
+        clear()
+    }
+
+    // The length of the delimiter run at `pos` and whether it can open and
+    // close emphasis, by the flanking rules.
+    val scanDelims = fn(c:str):list {
+        val run = fn(i:num):num { if (i < n && s[i] == c) { recur(i + 1) } else { i } }
+        val end = run(pos)
+        val before = if (pos == 0) { "\n" } else { s[pos - 1] }
+        val after = if (end >= n) { "\n" } else { s[end] }
+        val beforeSpace = isWhitespace(before)
+        val afterSpace = isWhitespace(after)
+        val beforePunct = isPunctuation(before)
+        val afterPunct = isPunctuation(after)
+        val left = !afterSpace && (!afterPunct || beforeSpace || beforePunct)
+        val right = !beforeSpace && (!beforePunct || afterSpace || afterPunct)
+        if (c == "_") {
+            [end - pos, left && (!right || beforePunct), right && (!left || afterPunct)]
+        } else {
+            [end - pos, left, right]
+        }
+    }
+
+    // --- Brackets ---
+
+    val closeBracket = fn() {
+        pos = pos + 1
+        val initial = pos
+        if (bracketCount == 0) {
+            addText("]")
+            return nil
+        }
+        val opener = brackets[bracketCount - 1]
+        if (!opener.image && noLinkOpeners) {
+            bracketCount = bracketCount - 1
+            addText("]")
+            return nil
+        }
+        // An inline link: `(destination "title")`.
+        var target = nil
+        if (pos < n && s[pos] == "(") {
+            val destination = scanDestination(s, skipSpacechars(s, pos + 1))
+            if (destination != nil) {
+                val endUrl = destination[0]
+                val startTitle = skipSpacechars(s, endUrl)
+                val endTitle = if (startTitle == endUrl) { startTitle } else { startTitle + scanTitle(s, startTitle) }
+                val endAll = skipSpacechars(s, endTitle)
+                if (endAll < n && s[endAll] == ")") {
+                    pos = endAll + 1
+                    target = {url: unescape(destination[1]), title: cleanTitle(s[startTitle:endTitle])}
+                }
+            }
+        }
+        // A reference: full `[label]`, collapsed `[]`, or shortcut.
+        if (target == nil) {
+            val [labelEnd, labelText] = scanLabel(s, pos) ?? [-1, ""]
+            val explicit = labelEnd >= 0 && normalizeLabel(labelText) != ""
+            if (explicit) { pos = labelEnd }
+            val raw = if (explicit) {
+                labelText
+            } else if (!opener.bracketAfter) {
+                if (labelEnd >= 0) { pos = labelEnd }
+                s[opener.position:initial - 1]
+            } else {
+                nil
+            }
+            if (raw != nil) {
+                val ref = refs[normalizeLabel(raw)]
+                if (ref != nil) { target = ref }
+            }
+            if (target == nil) {
+                bracketCount = bracketCount - 1
+                pos = initial
+                addText("]")
+                return nil
+            }
+        }
+        processEmphasis(opener.delimBottom)
+        wrap({type: if (opener.image) { "image" } else { "link" }, url: target.url, title: target.title}, opener.node, -1)
+        unlink(opener.node)
+        bracketCount = bracketCount - 1
+        if (!opener.image) { noLinkOpeners = true }
+    }
+
+    // --- Code spans ---
+
+    // The position after the backtick run of exactly `length` that closes a
+    // code span begun before `pos`, or -1.
+    val closingBackticks = fn(length:num):num {
+        if (length > 1000) { return -1 }
+        if (scannedBackticks && (backticks[length] ?? -1) < pos) { return -1 }
+        val go = fn(i:num):num {
+            if (i >= n) {
+                scannedBackticks = true
+                return -1
+            }
+            if (s[i] != "`") { return recur(i + 1) }
+            val run = fn(j:num):num { if (j < n && s[j] == "`") { recur(j + 1) } else { j } }
+            val end = run(i)
+            if (end - i <= 1000) { backticks = backticks + {[end - i]: i} }
+            if (end - i == length) { end } else { recur(end) }
+        }
+        go(pos)
+    }
+
+    val codeSpan = fn() {
+        val run = fn(j:num):num { if (j < n && s[j] == "`") { recur(j + 1) } else { j } }
+        val start = pos
+        val afterOpen = run(pos)
+        val length = afterOpen - start
+        pos = afterOpen
+        val end = closingBackticks(length)
+        if (end < 0) {
+            addText(s[start:afterOpen])
+            return nil
+        }
+        val content = join(splitLines(s[afterOpen:end - length]), " ")
+        val strip = len(content) >= 2 && content[0] == " " && content[len(content) - 1] == " " && trimmedLength(content) > 0
+        append({type: "code", text: if (strip) { content[1:len(content) - 1] } else { content }})
+        pos = end
+    }
+
+    // --- Raw HTML ---
+
+    // The end of the raw HTML at `pos`, which holds `<`, or -1.
+    val htmlEnd = fn():num {
+        if (pos + 1 >= n) { return -1 }
+        val c = s[pos + 1]
+        if (isAlpha(c)) { return openTagRest(s, tagNameEnd(s, pos + 2)) }
+        if (c == "/") {
+            if (pos + 2 >= n || !isAlpha(s[pos + 2])) { return -1 }
+            val after = skipTagWhitespace(s, tagNameEnd(s, pos + 3))
+            return if (after < n && s[after] == ">") { after + 1 } else { -1 }
+        }
+        // Comments, processing instructions, CDATA, and declarations run to
+        // a closer; once one is missing, it is missing for every later start.
+        val closed = fn(kind:str, start:num, closer:str):num {
+            if (missing[kind] == true) { return -1 }
+            val end = find(s, closer, start)
+            if (end < 0) { missing = missing + {[kind]: true} }
+            end
+        }
+        if (c == "?") { return closed("pi", pos + 2, "?>") }
+        if (c != "!") { return -1 }
+        if (s[pos:pos + 4] == "<!--") {
+            if (s[pos:pos + 5] == "<!-->") { return pos + 5 }
+            if (s[pos:pos + 6] == "<!--->") { return pos + 6 }
+            return closed("comment", pos + 4, "-->")
+        }
+        if (s[pos:pos + 9] == "<![CDATA[") { return closed("cdata", pos + 9, "]]>") }
+        if (pos + 2 < n && isAlpha(s[pos + 2])) { return closed("declaration", pos + 3, ">") }
+        -1
+    }
+
+    val angle = fn() {
+        val uri = uriAutolinkEnd(s, pos)
+        val email = if (uri < 0) { emailAutolinkEnd(s, pos) } else { -1 }
+        if (uri >= 0 || email >= 0) {
+            val end = if (uri >= 0) { uri } else { email }
+            val address = s[pos + 1:end - 1]
+            val label = unescapeEntities(address)
+            append({type: "link", url: if (uri >= 0) { label } else { "mailto:" + label }, title: "", label: label})
+            pos = end
+            return nil
+        }
+        val end = htmlEnd()
+        if (end >= 0) {
+            append({type: "html", text: s[pos:end]})
+            pos = end
+            return nil
+        }
+        addText("<")
+        pos = pos + 1
+    }
+
+    // --- Text ---
+
+    // The end of the text run from `i`: the next character that may start
+    // other syntax.
+    val textEnd = fn(i:num):num {
+        if (i >= n) { return i }
+        if (ascii) { return bytes.findAny(data, SPECIAL_BYTES, i) ?? n }
+        val c = s[i]
+        if (SPECIAL[c] == true) { return i }
+        recur(i + 1)
+    }
+
+    val plainText = fn() {
+        val end = textEnd(pos + 1)
+        // Spaces before a line ending belong to it.
+        val content = if (end < n && s[end] == "\n") { trimEnd(s[pos:end]) } else { s[pos:end] }
+        if (content != "") { addText(content) }
+        pos = end
+    }
+
+    val newline = fn() {
+        val at = pos
+        pos = skipSpaces(s, pos + 1)
+        append({type: if (at >= 2 && s[at - 1] == " " && s[at - 2] == " ") { "hardbreak" } else { "softbreak" }})
+    }
+
+    val backslash = fn() {
+        if (pos + 1 < n && s[pos + 1] == "\n") {
+            append({type: "hardbreak"})
+            pos = skipSpaces(s, pos + 2)
+        } else if (pos + 1 < n && isAsciiPunctuation(s[pos + 1])) {
+            addText(s[pos + 1])
+            pos = pos + 2
+        } else {
+            addText("\\")
+            pos = pos + 1
+        }
+    }
+
+    val entity = fn() {
+        val found = entityAt(s, pos)
+        if (found == nil) {
+            addText("&")
+            pos = pos + 1
+        } else {
+            addText(found[0])
+            pos = pos + found[1]
+        }
+    }
+
+    val delimiter = fn(c:str) {
+        val [length, canOpen, canClose] = scanDelims(c)
+        val node = addText(c * length)
+        pos = pos + length
+        if ((canOpen || canClose) && !(c == "~" && length > 2)) {
+            pushDelim(c, node, length, canOpen, canClose)
+        }
+    }
+
+    val step = fn() {
+        val c = s[pos]
+        if (c == "\n") {
+            newline()
+        } else if (c == "`") {
+            codeSpan()
+        } else if (c == "\\") {
+            backslash()
+        } else if (c == "&") {
+            entity()
+        } else if (c == "<") {
+            angle()
+        } else if (c == "[") {
+            pos = pos + 1
+            pushBracket(addText("["), false)
+        } else if (c == "]") {
+            closeBracket()
+        } else if (c == "!" && pos + 1 < n && s[pos + 1] == "[") {
+            pos = pos + 2
+            pushBracket(addText("!["), true)
+        } else if (c == "*" || c == "_" || c == "~") {
+            delimiter(c)
+        } else if (c == "!") {
+            addText("!")
+            pos = pos + 1
+        } else {
+            plainText()
+        }
+    }
+
+    val run = fn() {
+        if (pos < n) {
+            step()
+            recur()
+        }
+    }
+    run()
+    processEmphasis(0)
+
+    // The nodes of the list from `id`, with adjacent text joined and, outside
+    // links, its extended autolinks found.
+    val build = fn(id:num, depth:num, inLink:bool):list {
+        if (depth > maxDepth) {
+            throw Error {
+                type: "markdown.limit",
+                msg: "inline elements nest more than $maxDepth deep",
+                data: {limit: "depth", max: maxDepth},
+            }
+        }
+        val flush = fn(out:list, pending:str):list {
+            if (pending == "") { out } else if (inLink) { out :+ {type: "text", text: pending} } else { out + linkify(pending) }
+        }
+        val go = fn(i:num, out:list, pending:str):list {
+            if (i < 0) { return flush(out, pending) }
+            val node = nodes[i]
+            val next = nextOf[i] ?? -1
+            if (node.type == "text") { return recur(next, out, pending + node.text) }
+            val flushed = flush(out, pending)
+            val built = if (node.label != nil) {
+                {type: node.type, url: node.url, title: node.title, children: [{type: "text", text: node.label}]}
+            } else if (CONTAINER_INLINES[node.type] == true) {
+                val kids = node.kids
+                val linked = inLink || node.type == "link" || node.type == "image"
+                val built = if (kids == nil) { [] } else { build(kids[0], depth + 1, linked) }
+                if (node.type == "link" || node.type == "image") {
+                    {type: node.type, url: node.url, title: node.title, children: built}
+                } else {
+                    {type: node.type, children: built}
+                }
+            } else {
+                node
+            }
+            recur(next, flushed :+ built, "")
+        }
+        go(id, [], "")
+    }
+    build(head, 0, false)
+}
+
+val AT = toBytes("@")
+val SCHEME_SEPARATOR = toBytes("://")
+val WWW = toBytes("www.")
+
+// Whether `text` holds what every extended autolink needs: `@`, `://`, or
+// `www.`; a native search, so most text is not scanned in Slug.
+val mayLink = fn(text:str):bool {
+    val data = toBytes(text)
+    bytes.find(data, AT) != nil || bytes.find(data, SCHEME_SEPARATOR) != nil || bytes.find(data, WWW) != nil
+}
+
+// `text` as text and the extended autolinks in it.
+val linkify = fn(text:str):list {
+    if (!mayLink(text)) { return [{type: "text", text: text}] }
+    val data = toBytes(text)
+    val starts = if (len(data) == len(text)) { candidateStarts(text, data) } else { nil }
+    // Tries each position in `starts` from index `k`, or every position when
+    // there is no list.
+    val go = fn(i:num, k:num, start:num, out:list):list {
+        val at = if (starts == nil) { i } else if (k < len(starts)) { starts[k] } else { len(text) }
+        if (at >= len(text)) { return if (start < len(text)) { out :+ {type: "text", text: text[start:]} } else { out } }
+        if (at < start) { return recur(i, k + 1, start, out) }
+        val found = extendedAutolinkAt(text, at)
+        if (found == nil) { return recur(at + 1, k + 1, start, out) }
+        val [end, url] = found
+        val before = if (start < at) { out :+ {type: "text", text: text[start:at]} } else { out }
+        recur(end, k + 1, end, before :+ {type: "link", url: url, title: "", children: [{type: "text", text: text[at:end]}]})
+    }
+    go(0, 0, 0, [])
+}
+
+// Where an extended autolink could start in ASCII `text`, ascending: at each
+// `www.`, at the scheme before each `://`, and at the local part, or the
+// `mailto:` or `xmpp:` before it, of each `@`.
+val candidateStarts = fn(text:str, data:bytes):list {
+    val all = fn(needle:bytes, from:num, out:list):list {
+        val at = if (from < len(data)) { bytes.find(data, needle, from) } else { nil }
+        if (at == nil) { out } else { recur(needle, at + 1, out :+ at) }
+    }
+    val schemeStart = fn(c:num):num {
+        if (c >= 5 && text[c - 5:c] == "https") {
+            c - 5
+        } else if (c >= 4 && text[c - 4:c] == "http") {
+            c - 4
+        } else if (c >= 3 && text[c - 3:c] == "ftp") {
+            c - 3
+        } else {
+            -1
+        }
+    }
+    val localStart = fn(i:num):num { if (i > 0 && isLocalChar(text[i - 1])) { recur(i - 1) } else { i } }
+    val schemes = fn(found:list, i:num, out:list):list {
+        if (i >= len(found)) { return out }
+        val at = schemeStart(found[i])
+        recur(found, i + 1, if (at >= 0) { out :+ at } else { out })
+    }
+    val emails = fn(found:list, i:num, out:list):list {
+        if (i >= len(found)) { return out }
+        val local = localStart(found[i])
+        val prefixed = if (local >= 7 && text[local - 7:local] == "mailto:") {
+            [local - 7, local]
+        } else if (local >= 5 && text[local - 5:local] == "xmpp:") {
+            [local - 5, local]
+        } else {
+            [local]
+        }
+        recur(found, i + 1, out + prefixed)
+    }
+    merge(merge(all(WWW, 0, []), schemes(all(SCHEME_SEPARATOR, 0, []), 0, [])), emails(all(AT, 0, []), 0, []))
+}
+
+// Two ascending lists of numbers as one.
+val merge = fn(a:list, b:list):list {
+    val go = fn(i:num, j:num, out:list):list {
+        if (i >= len(a)) { return out + b[j:] }
+        if (j >= len(b)) { return out + a[i:] }
+        if (a[i] <= b[j]) { recur(i + 1, j, out :+ a[i]) } else { recur(i, j + 1, out :+ b[j]) }
+    }
+    go(0, 0, [])
+}
+
+// --- Helpers -----------------------------------------------------------------
+
+val splitLines = fn(text:str):list {
+    val go = fn(i:num, start:num, out:list):list {
+        if (i >= len(text)) { return out :+ text[start:] }
+        if (text[i] == "\n") { return recur(i + 1, i + 1, out :+ text[start:i]) }
+        recur(i + 1, start, out)
+    }
+    go(0, 0, [])
+}
+
+val trimmedLength = fn(text:str):num {
+    val go = fn(i:num, count:num):num {
+        if (i >= len(text)) { return count }
+        recur(i + 1, if (text[i] == " ") { count } else { count + 1 })
+    }
+    go(0, 0)
+}
+
+val trimEnd = fn(text:str):str {
+    val go = fn(i:num):num { if (i > 0 && isSpaceOrTab(text[i - 1])) { recur(i - 1) } else { i } }
+    text[:go(len(text))]
+}
+
+// `s` with its character references resolved, but not its backslashes.
+val unescapeEntities = fn(s:str):str {
+    val go = fn(i:num, start:num, out:str):str {
+        if (i >= len(s)) { return if (start == 0) { s } else { out + s[start:] } }
+        if (s[i] == "&") {
+            val entity = entityAt(s, i)
+            if (entity != nil) {
+                return recur(i + entity[1], i + entity[1], out + s[start:i] + entity[0])
+            }
+        }
+        recur(i + 1, start, out)
+    }
+    go(0, 0, "")
+}

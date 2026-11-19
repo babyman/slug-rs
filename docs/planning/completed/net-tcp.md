@@ -27,7 +27,7 @@ The VM runs Slug tasks on one thread, so a native call that blocks in
 `accept` or `recv` stalls every task. `slug.io.stdin` already solves this for
 reading: a native thread does the blocking reads and sends each line into a
 channel the Slug program created, through a producer capability
-([typed native producers](../decisions/2026-10-11-typed-native-producers.md)).
+([typed native producers](../../decisions/2026-10-11-typed-native-producers.md)).
 A task waiting on that channel with `select` parks, and the others run.
 
 `slug.net.tcp` uses the same mechanism:

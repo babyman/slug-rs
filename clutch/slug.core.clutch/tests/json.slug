@@ -91,8 +91,9 @@ val roundTripsSurrogatePairsAndEscapes = fn() {
 
 @test
 val readsDeepNesting = fn() {
+    // Deeper than the default limit, so it asks for the depth it needs.
     val text = "[" * 5000 + "]" * 5000
-    assertEqual(json.stringify(json.parse(text)), text)
+    assertEqual(json.stringify(json.parse(text, {maxDepth: 5000})), text)
 }
 
 // parseStrict rejects a repeated key wherever it appears, comparing keys
@@ -118,4 +119,30 @@ val parseStrictKeepsParseBehavior = fn() {
     assertEqual(json.parse("{\"x\":null,\"x\":1}"), {x: 1})
     assertEqual(json.parse("{\"body\":1,\"\\u0062ody\":2}"), {body: 2})
     assertEqual(assertThrows(fn() { json.parseStrict("{\"a\":1,}") }, "json.parse").data.offset, 7)
+}
+
+// A document may have `maxDepth` arrays and objects open at once, 1000 by
+// default; one more throws `json.limit` at the bracket that opens it.
+@test
+val limitsDepth = fn() {
+    val nested = fn(depth:num):str { "[" * depth + "]" * depth }
+    assertEqual(len(json.parse(nested(json.DEFAULT_MAX_DEPTH))), 1)
+    val e = assertThrows(fn() { json.parse(nested(json.DEFAULT_MAX_DEPTH + 1)) }, "json.limit")
+    assertEqual(e.data, {limit: "depth", max: 1000, offset: 1000})
+    assertEqual(json.parse("[[1]]", {maxDepth: 2}), [[1]])
+    assertEqual(assertThrows(fn() { json.parse("[[[1]]]", {maxDepth: 2}) }, "json.limit").data.offset, 2)
+    assertEqual(assertThrows(fn() { json.parse("{\"a\": {\"b\": [1]}}", {maxDepth: 2}) }, "json.limit").data.offset, 12)
+    assertEqual(assertThrows(fn() { json.parseStrict("{\"a\": [[]]}", {maxDepth: 2}) }, "json.limit").data.offset, 7)
+    assertEqual(json.parse("7", {maxDepth: 1}), 7)
+    // A document far past the limit is refused at its first level too many,
+    // before reading on: a few hundred kilobytes of brackets cost little.
+    assertEqual(assertThrows(fn() { json.parse("[" * 300000) }, "json.limit").data.offset, 1000)
+}
+
+@test
+val checksOptions = fn() {
+    assertThrows(fn() { json.parse("1", {depth: 3}) }, "json.options")
+    assertThrows(fn() { json.parse("1", {maxDepth: 0}) }, "json.options")
+    assertThrows(fn() { json.parse("1", {maxDepth: 2.5}) }, "json.options")
+    assertThrows(fn() { json.parseStrict("1", {maxDepth: "3"}) }, "json.options")
 }

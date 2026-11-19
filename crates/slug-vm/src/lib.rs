@@ -1,9 +1,9 @@
-//! Slug's clean-room bytecode runtime.
+//! Slug's reference bytecode runtime.
 //!
 //! `Program`, `Chunk`, and `Op` are a public but unstable in-process Rust
 //! embedding and testing surface. They are a compiler-to-VM boundary, designed
 //! for clarity and validation rather than persistence or cross-version use.
-//! They are distinct from the future portable `.cslug` compiled-module format
+//! They are distinct from the portable `.cslug` whole-program artifact format
 //! documented in `docs/reference/compiled-artifacts.md`.
 
 #![cfg_attr(target_os = "none", no_std)]

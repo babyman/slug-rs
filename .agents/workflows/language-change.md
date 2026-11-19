@@ -17,11 +17,20 @@ record merely to repeat behavior the existing documentation already decides.
 
 ## 2. Identify the implementation surface
 
-- `src/source/` owns lexing, parsing, and source-to-bytecode compilation.
-- `src/bytecode.rs` owns VM-internal instruction representation.
-- `src/vm/` owns execution, cleanup, value operations, and runtime errors.
-- `src/value.rs` owns language values and value operations.
-- `src/main.rs` owns the public command-line boundary and error presentation.
+- `crates/slug-frontend/src/source/syntax/` owns lexing and parsing.
+- `crates/slug-frontend/src/source/semantics/` owns name resolution and type
+  checking.
+- `crates/slug-frontend/src/source/lowering/` owns source-to-bytecode
+  compilation.
+- `crates/slug-vm/src/bytecode/` owns the VM-internal instruction
+  representation.
+- `crates/slug-vm/src/vm/` owns execution, cleanup, value operations, and
+  runtime errors; `crates/slug-vm/src/value.rs` owns language values.
+- `crates/slug/src/main.rs` owns the public command-line boundary and error
+  presentation.
+
+See [`docs/engineering/architecture.md`](../../docs/engineering/architecture.md)
+for the full ownership map.
 
 Keep semantic rules out of the CLI where they can be represented by the source
 compiler or VM.
@@ -30,9 +39,9 @@ compiler or VM.
 
 Add or update the smallest focused test first:
 
-- Use `tests/vm.rs` for bytecode execution, frames, globals, captures, and
+- Use `crates/slug-vm/tests/vm.rs` for bytecode execution, frames, globals, captures, and
   source-span behavior.
-- Use `tests/cli.rs` for accepted source, output, exit status, and rendered
+- Use `crates/slug/tests/cli.rs` for accepted source, output, exit status, and rendered
   diagnostics.
 
 An error-path change needs a regression assertion that checks the returned

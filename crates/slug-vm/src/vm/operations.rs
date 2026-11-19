@@ -7,7 +7,7 @@ use core::cell::RefCell;
 
 use crate::{
     BinaryOperator, MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
-    collections::{Bytes, Map, MapKey},
+    collections::{Bytes, Map},
 };
 
 use super::RuntimeErrorKind;
@@ -683,22 +683,12 @@ fn resolve_map_pattern_keys(
         .collect()
 }
 
-pub(super) fn is_map_key(value: &Value) -> bool {
-    MapKey::from_value(value).is_some()
-}
+pub(super) use crate::collections::is_map_key;
 
 /// Why `value` cannot be a map key, naming the part of a list or struct that
 /// cannot.
 pub(super) fn map_key_error(value: &Value) -> String {
-    fn unhashable(value: &Value) -> &'static str {
-        let part = match value {
-            Value::List(values) => values.iter().find(|part| !is_map_key(part)),
-            Value::Struct(value) => value.values.iter().find(|part| !is_map_key(part)),
-            _ => None,
-        };
-        part.map_or(value.type_name(), unhashable)
-    }
-    let part = unhashable(value);
+    let part = crate::collections::first_non_key(value).map_or(value.type_name(), Value::type_name);
     if part == value.type_name() {
         format!("{part} cannot be used as a map key")
     } else {

@@ -1,0 +1,82 @@
+// The CommonMark 0.31.2 spec's examples and GFM 0.29's table,
+// strikethrough, and autolink examples, rendered through toHtml. Where this
+// dialect differs from CommonMark by design, commonmark-deviations.json
+// holds the output expected instead, with the reason: `raw-html`, since raw
+// HTML here is text, or `extended-autolink`, since URLs and addresses in text
+// are links here. assets/SOURCES.md says where the files come from.
+val markdown = import("slug.text.markdown")
+val json = import("slug.fmt.json")
+val {fromBytes} = import("slug.string")
+val {assertEqual, assertTrue} = import("slug.test")
+
+// The schemes the examples link to; links and images are otherwise as the
+// spec renders them.
+val OPTIONS = {
+    links: ["relative", "http", "https", "mailto", "irc", "a+b+c", "made-up-scheme", "localhost", "ftp", "xmpp"],
+    images: ["relative", "http", "https"],
+}
+
+val commonmark = json.parse(fromBytes(asset("commonmark-0.31.2.json")))
+val gfm = json.parse(fromBytes(asset("gfm-0.29-extensions.json")))
+val deviations = json.parse(fromBytes(asset("commonmark-deviations.json")))
+
+val byExample = fn(entries:list):map {
+    val go = fn(i:num, out:map):map {
+        if (i >= len(entries)) { return out }
+        recur(i + 1, out + {[entries[i].example]: entries[i]})
+    }
+    go(0, {})
+}
+
+// The examples whose output is not what `expected` (by example number) or
+// the example gives, with the output.
+val failures = fn(examples:list, expected:map):list {
+    val go = fn(i:num, out:list):list {
+        if (i >= len(examples)) { return out }
+        val e = examples[i]
+        val deviation = expected[e.example]
+        val want = if (deviation == nil) { e.html } else { deviation.html }
+        val actual = markdown.toHtml(e.markdown, OPTIONS)
+        recur(i + 1, if (actual == want) { out } else { out :+ {example: e.example, section: e.section, actual: actual} })
+    }
+    go(0, [])
+}
+
+@test
+export val commonmarkExamples = fn() {
+    assertEqual(len(commonmark), 652)
+    assertEqual(failures(commonmark, byExample(deviations)), [])
+}
+
+@test
+export val deviationsAreOnlyRawHtmlAndAutolinks = fn() {
+    val spec = byExample(commonmark)
+    val each = fn(i:num) {
+        if (i < len(deviations)) {
+            val d = deviations[i]
+            val source = spec[d.example].markdown
+            if (d.reason == "raw-html") {
+                assertTrue(contains(source, "<"), "example ${d.example} has no HTML")
+                assertTrue(!contains(d.html, "<" + "div") && !contains(d.html, "<" + "script"), "example ${d.example} keeps a tag")
+            } else {
+                assertEqual(d.reason, "extended-autolink", "example ${d.example}'s reason")
+            }
+            recur(i + 1)
+        }
+    }
+    each(0)
+}
+
+@test
+export val gfmExtensionExamples = fn() {
+    assertEqual(len(gfm), 21)
+    assertEqual(failures(gfm, {}), [])
+}
+
+val contains = fn(text:str, part:str):bool {
+    val go = fn(i:num):bool {
+        if (i + len(part) > len(text)) { return false }
+        if (text[i:i + len(part)] == part) { true } else { recur(i + 1) }
+    }
+    go(0)
+}

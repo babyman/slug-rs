@@ -8,8 +8,8 @@ read it through the builtin
 where it is used.
 
 This page is the operational companion to the [Language Specification](language-specification.md)
-and [Runtime Requirements](runtime-requirements.md). It defines the current portable configuration contract for a
-clean-room implementation.
+and [Runtime Requirements](runtime-requirements.md). It defines the current portable configuration contract for any
+implementation.
 
 ## Reading configuration
 
@@ -83,7 +83,7 @@ project root itself is not searched: `src/orble/app.slug` is the module `orble.a
 `slug.toml` is not a module. Any program in the project, such as `slug src/main.slug` or `slug tests/all.slug`, reads
 the project's `slug.toml` and imports from its `src/`, wherever it runs from. Every directory but the root is optional
 to have, and none can be renamed. Native code lives in a project clutch under `clutch/` (see
-[Experimental Clutches](../reference/experimental-clutches.md#repository-index-and-resolution)).
+[Clutches](../reference/clutches.md#repository-index-and-resolution)).
 
 With no `slug.toml` at or above the entry, the program is in no project: its directory is the module root, holds any
 `slug.toml` and `clutch/` it uses, and it has no assets. An entry program found in the library (`slug hello` reading

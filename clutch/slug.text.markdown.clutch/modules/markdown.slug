@@ -1,0 +1,436 @@
+/**
+ * slug.text.markdown — Markdown to safe HTML
+ *
+ * `toHtml(source, options)` renders Markdown as an HTML fragment that is
+ * safe to place in a page: it holds only the elements and attributes listed
+ * below, every text and attribute value is escaped, and every link and image
+ * URL has passed the policy's allowlist.
+ *
+ * ```slug
+ * val markdown = import("slug.text.markdown")
+ *
+ * markdown.toHtml("# Notes\n\nSee *the* [guide](/guide).")
+ * // <h1>Notes</h1>\n<p>See <em>the</em> <a href="/guide">guide</a>.</p>\n
+ * ```
+ *
+ * The dialect is CommonMark 0.31.2 with GitHub's tables, strikethrough
+ * (`~one~` or `~~two~~` tildes), and extended autolinks (`www.`, `http://`,
+ * `https://`, and `ftp://` links, `mailto:` and `xmpp:` addresses, and email
+ * addresses, in text outside links), with one change: raw
+ * HTML is not HTML. A line that would start an HTML block is paragraph
+ * text, and an inline tag, comment, or declaration is shown as the text it
+ * is, escaped, with no Markdown read inside it. Code spans and code blocks
+ * are always escaped text.
+ *
+ * The output uses only `p`, `h1`–`h6`, `blockquote`, `ul`, `ol` (`start`),
+ * `li`, `pre`, `code` (`class="language-…"` on a fenced block's), `hr`,
+ * `br`, `em`, `strong`, `del`, `a` (`href`, `title`, `rel`), `img` (`src`,
+ * `alt`, `title`), `table`, `thead`, `tbody`, `tr`, `th` and `td` (`align`).
+ * Text is escaped for `&`, `<`, `>`, and `"`; a URL is percent-encoded
+ * outside a safe set of characters, with `&` and `'` escaped as well.
+ *
+ * Link and image URLs are classified after Markdown's escapes and entities
+ * are resolved, as a browser would read them: leading and trailing control
+ * characters and spaces are removed, and tabs and line endings anywhere,
+ * and then the scheme is the letters, digits, `+`, `-`, and `.` before the
+ * first `:`, if the first is a letter, lowercased. A URL with another control
+ * character is refused. A URL with no scheme is `relative`, unless it starts
+ * with two slashes or backslashes, which make it a network-path reference
+ * to another host: allowed only where both `http` and `https` are. A link
+ * whose URL the policy refuses is rendered as its text, and an image as its
+ * description. A link inside a link is rendered as its text.
+ *
+ * Options, all optional:
+ *
+ * - `links`: the schemes links may use, and `"relative"` for relative URLs;
+ *   default `["relative", "http", "https", "mailto"]`.
+ * - `images`: the same for images; default `["relative"]`, so a page does
+ *   not fetch images from other hosts. `[]` shows every image as its
+ *   description.
+ * - `rel`: a `rel` attribute for links that are not relative, such as
+ *   `"nofollow noopener"`; default none.
+ * - `maxBytes`: the most UTF-8 bytes the source may have; default 65536.
+ * - `maxDepth`: how deep blocks (block quotes, lists, and items) and,
+ *   separately, inline elements (emphasis, links, and strikethrough) may
+ *   nest; default 32.
+ *
+ * `javascript`, `vbscript`, `data`, and `file` are never allowed. An unknown
+ * option or a bad value throws a `markdown.options` error. Source over
+ * `maxBytes`, or nesting deeper than `maxDepth`, throws a `markdown.limit`
+ * error whose `data` is `{limit: "bytes"|"depth", max}`. Every other input
+ * renders; the parser's time is linear in the source's length.
+ *
+ * Rendering reads nothing but its arguments: no files, network, or clock.
+ * The source is not changed; the HTML is a view of it.
+ */
+
+val {join, split, toBytes, lower, chr} = import("slug.string")
+val bytes = import("slug.bytes")
+val {parseBlocks} = import("slug.text.markdown.block")
+val {parseInlines, isAlpha, isAlnum} = import("slug.text.markdown.inline")
+
+// --- Options -----------------------------------------------------------------
+
+val DEFAULTS = {
+    links: ["relative", "http", "https", "mailto"],
+    images: ["relative"],
+    rel: "",
+    maxBytes: 65536,
+    maxDepth: 32,
+}
+
+val NEVER = {javascript: true, vbscript: true, data: true, file: true}
+
+val optionsError = fn(message:str) {
+    throw Error {type: "markdown.options", msg: message}
+}
+
+val isScheme = fn(name:str):bool {
+    val go = fn(i:num):bool {
+        if (i >= len(name)) { return true }
+        val c = name[i]
+        if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "+" || c == "-" || c == ".") { recur(i + 1) } else { false }
+    }
+    len(name) > 0 && name[0] >= "a" && name[0] <= "z" && go(0)
+}
+
+// A list of allowed schemes as a set.
+val schemeSet = fn(name:str, value):map {
+    match value {
+        names:list => {
+            val go = fn(i:num, out:map):map {
+                if (i >= len(names)) { return out }
+                val scheme = match names[i] {
+                    s:str => s
+                    _ => optionsError("`$name` must be a list of strings")
+                }
+                if (scheme != "relative" && !isScheme(scheme)) { optionsError("`$name` has `$scheme`, which is not a lowercase scheme") }
+                if (NEVER[scheme] == true) { optionsError("`$name` may not allow `$scheme`") }
+                recur(i + 1, out + {[scheme]: true})
+            }
+            go(0, {})
+        }
+        _ => optionsError("`$name` must be a list of strings")
+    }
+}
+
+val isWholeNumber = fn(value):bool {
+    match value {
+        n:num => n >= 1 && int(n) == n
+        _ => false
+    }
+}
+
+val checkOptions = fn(options:map):map {
+    val names = keys(options)
+    val unknown = fn(i:num) {
+        if (i < len(names)) {
+            val name = names[i]
+            if (DEFAULTS[name] == nil) { optionsError("unknown option `$name`") }
+            recur(i + 1)
+        }
+    }
+    unknown(0)
+    val o = DEFAULTS + options
+    val rel = match o.rel {
+        r:str => r
+        _ => optionsError("`rel` must be a string")
+    }
+    val relOk = fn(i:num):bool {
+        if (i >= len(rel)) { return true }
+        val c = rel[i]
+        if ((c >= "a" && c <= "z") || c == " " || c == "-") { recur(i + 1) } else { false }
+    }
+    if (!relOk(0)) { optionsError("`rel` may hold only lowercase letters, `-`, and spaces") }
+    if (!isWholeNumber(o.maxBytes)) { optionsError("`maxBytes` must be a positive integer") }
+    if (!isWholeNumber(o.maxDepth)) { optionsError("`maxDepth` must be a positive integer") }
+    {links: schemeSet("links", o.links), images: schemeSet("images", o.images), rel: rel, maxBytes: o.maxBytes, maxDepth: o.maxDepth}
+}
+
+// --- URLs --------------------------------------------------------------------
+
+// How a browser would read `url`'s kind: a lowercase scheme, "relative",
+// "network" for `//host`, or "" for a URL refused outright.
+val urlKind = fn(url:str):str {
+    val n = len(url)
+    val first = fn(i:num):num { if (i < n && url[i] <= " ") { recur(i + 1) } else { i } }
+    val last = fn(i:num):num { if (i > 0 && url[i - 1] <= " ") { recur(i - 1) } else { i } }
+    val start = first(0)
+    val end = last(n)
+    // Without tabs and line endings; another control character refuses it.
+    val clean = fn(i:num, out:str) {
+        if (i >= end) { return out }
+        val c = url[i]
+        if (c == "\t" || c == "\n" || c == "\r") { return recur(i + 1, out) }
+        if (c < " " || c == "\177") { return nil }
+        recur(i + 1, out + c)
+    }
+    val cleaned = clean(start, "")
+    if (cleaned == nil) { return "" }
+    val t:str = cleaned
+    val scheme = fn(i:num):num {
+        if (i < len(t) && (isAlnum(t[i]) || t[i] == "+" || t[i] == "-" || t[i] == ".")) { recur(i + 1) } else { i }
+    }
+    if (len(t) > 0 && isAlpha(t[0])) {
+        val colon = scheme(1)
+        if (colon < len(t) && t[colon] == ":") { return lower(t[:colon]) }
+    }
+    val slash = fn(c:str):bool { c == "/" || c == "\\" }
+    if (len(t) >= 2 && slash(t[0]) && slash(t[1])) { "network" } else { "relative" }
+}
+
+val allowed = fn(kind:str, schemes:map):bool {
+    if (kind == "") { return false }
+    if (kind == "network") { return schemes["http"] == true && schemes["https"] == true }
+    schemes[kind] == true
+}
+
+val HEX = "0123456789ABCDEF"
+
+val HREF_SAFE = {
+    "-": true, "_": true, ".": true, "+": true, "!": true, "*": true, "(": true, ")": true, ",": true,
+    "%": true, "#": true, "@": true, "?": true, "=": true, ";": true, ":": true, "/": true, "$": true,
+    "~": true,
+}
+
+// `url` as an attribute value: percent-encoded outside a safe set, with `&`
+// and `'` escaped.
+val escapeHref = fn(url:str):str {
+    val encode = fn(c:str):str {
+        val bytes = toBytes(c)
+        val go = fn(i:num, out:str):str {
+            if (i >= len(bytes)) { return out }
+            val b = bytes[i]
+            recur(i + 1, out + "%" + HEX[b >> 4] + HEX[b & 15])
+        }
+        go(0, "")
+    }
+    val go = fn(i:num, out:str):str {
+        if (i >= len(url)) { return out }
+        val c = url[i]
+        val piece = if (isAlnum(c) || HREF_SAFE[c] == true) {
+            c
+        } else if (c == "&") {
+            "&amp;"
+        } else if (c == "'") {
+            "&#x27;"
+        } else {
+            encode(c)
+        }
+        recur(i + 1, out + piece)
+    }
+    go(0, "")
+}
+
+// --- HTML --------------------------------------------------------------------
+
+val ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;"}
+
+val ESCAPED = toBytes("&<>\"")
+
+val escape = fn(text:str):str {
+    if (bytes.findAny(toBytes(text), ESCAPED) == nil) { return text }
+    val go = fn(i:num, start:num, out:str):str {
+        if (i >= len(text)) { return if (start == 0) { text } else { out + text[start:] } }
+        val e = ESCAPES[text[i]]
+        if (e == nil) { recur(i + 1, start, out) } else { recur(i + 1, i + 1, out + text[start:i] + e) }
+    }
+    go(0, 0, "")
+}
+
+// The text of inline nodes, for an image's description.
+val plainText = fn(nodes:list):str {
+    val go = fn(i:num, out:str):str {
+        if (i >= len(nodes)) { return out }
+        val node = nodes[i]
+        val kind = node.type
+        val text = if (kind == "text" || kind == "code" || kind == "html") {
+            node.text
+        } else if (kind == "softbreak" || kind == "hardbreak") {
+            " "
+        } else {
+            plainText(node.children ?? [])
+        }
+        recur(i + 1, out + text)
+    }
+    go(0, "")
+}
+
+val firstWord = fn(text:str):str {
+    val go = fn(i:num):num {
+        if (i < len(text) && text[i] != " " && text[i] != "\t" && text[i] != "\n") { recur(i + 1) } else { i }
+    }
+    text[:go(0)]
+}
+
+val render = fn(document:map, refs:map, o:map):str {
+    var out = []
+    var atLineStart = true
+
+    val emit = fn(text:str) {
+        if (text != "") {
+            out = out :+ text
+            atLineStart = text[len(text) - 1] == "\n"
+        }
+    }
+    val cr = fn() { if (!atLineStart) { emit("\n") } }
+
+    val inlines = fn(text:str):list { parseInlines(text, refs, o.maxDepth) }
+
+    val renderInlines = fn(nodes:list, inLink:bool) {
+        val each = fn(i:num) {
+            if (i >= len(nodes)) { return nil }
+            val node = nodes[i]
+            val kind = node.type
+            if (kind == "text" || kind == "html") {
+                emit(escape(node.text))
+            } else if (kind == "softbreak") {
+                emit("\n")
+            } else if (kind == "hardbreak") {
+                emit("<br />\n")
+            } else if (kind == "code") {
+                emit("<code>" + escape(node.text) + "</code>")
+            } else if (kind == "emph" || kind == "strong" || kind == "del") {
+                emit("<" + (if (kind == "emph") { "em" } else { kind }) + ">")
+                renderInlines(node.children, inLink)
+                emit("</" + (if (kind == "emph") { "em" } else { kind }) + ">")
+            } else if (kind == "link") {
+                val kind = urlKind(node.url)
+                if (inLink || !allowed(kind, o.links)) {
+                    renderInlines(node.children, inLink)
+                } else {
+                    val title = if (node.title == "") { "" } else { " title=\"" + escape(node.title) + "\"" }
+                    val rel = if (o.rel == "" || kind == "relative") { "" } else { " rel=\"" + o.rel + "\"" }
+                    emit("<a href=\"" + escapeHref(node.url) + "\"" + title + rel + ">")
+                    renderInlines(node.children, true)
+                    emit("</a>")
+                }
+            } else if (kind == "image") {
+                val description = escape(plainText(node.children))
+                if (allowed(urlKind(node.url), o.images)) {
+                    val title = if (node.title == "") { "" } else { " title=\"" + escape(node.title) + "\"" }
+                    emit("<img src=\"" + escapeHref(node.url) + "\" alt=\"" + description + "\"" + title + " />")
+                } else {
+                    emit(description)
+                }
+            }
+            recur(i + 1)
+        }
+        each(0)
+    }
+
+    val renderCells = fn(cells:list, columns:list, tag:str) {
+        val each = fn(i:num) {
+            if (i < len(columns)) {
+                val align = columns[i]
+                emit(if (align == "") { "<$tag>" } else { "<$tag align=\"$align\">" })
+                if (i < len(cells)) { renderInlines(inlines(cells[i]), false) }
+                emit("</$tag>\n")
+                recur(i + 1)
+            }
+        }
+        emit("<tr>\n")
+        each(0)
+        emit("</tr>\n")
+    }
+
+    val renderBlocks = fn(blocks:list, tight:bool) {
+        val each = fn(i:num) {
+            if (i >= len(blocks)) { return nil }
+            val block = blocks[i]
+            val kind = block.type
+            if (kind == "paragraph") {
+                if (tight) {
+                    renderInlines(inlines(block.text), false)
+                } else {
+                    cr()
+                    emit("<p>")
+                    renderInlines(inlines(block.text), false)
+                    emit("</p>\n")
+                }
+            } else if (kind == "heading") {
+                cr()
+                emit("<h${block.level}>")
+                renderInlines(inlines(block.text), false)
+                emit("</h${block.level}>\n")
+            } else if (kind == "blockquote") {
+                cr()
+                emit("<blockquote>\n")
+                renderBlocks(block.children, false)
+                cr()
+                emit("</blockquote>\n")
+            } else if (kind == "list") {
+                cr()
+                val tag = if (block.ordered) { "ol" } else { "ul" }
+                emit(if (block.ordered && block.start != 1) { "<ol start=\"${block.start}\">\n" } else { "<$tag>\n" })
+                renderBlocks(block.children, block.tight)
+                emit("</$tag>\n")
+            } else if (kind == "item") {
+                cr()
+                emit("<li>")
+                renderBlocks(block.children, tight)
+                emit("</li>\n")
+            } else if (kind == "code") {
+                cr()
+                val language = firstWord(block.info)
+                emit(if (language == "") { "<pre><code>" } else { "<pre><code class=\"language-" + escape(language) + "\">" })
+                emit(escape(block.text))
+                emit("</code></pre>\n")
+            } else if (kind == "thematic") {
+                cr()
+                emit("<hr />\n")
+            } else if (kind == "table") {
+                cr()
+                emit("<table>\n<thead>\n")
+                renderCells(block.head, block.aligns, "th")
+                emit("</thead>\n")
+                if (len(block.rows) > 0) {
+                    emit("<tbody>\n")
+                    val rows = fn(j:num) {
+                        if (j < len(block.rows)) {
+                            renderCells(block.rows[j], block.aligns, "td")
+                            recur(j + 1)
+                        }
+                    }
+                    rows(0)
+                    emit("</tbody>\n")
+                }
+                emit("</table>\n")
+            }
+            recur(i + 1)
+        }
+        each(0)
+    }
+
+    renderBlocks(document.children, false)
+    join(out, "")
+}
+
+// --- Source ------------------------------------------------------------------
+
+val replaceAll = fn(text:str, from:str, to:str):str { join(split(text, from), to) }
+
+// `source` with `\n` line endings, one at its end, and U+FFFD for NUL.
+val normalize = fn(source:str):str {
+    val lines = replaceAll(replaceAll(replaceAll(source, "\r\n", "\n"), "\r", "\n"), "\0", "�")
+    if (lines == "" || lines[len(lines) - 1] == "\n") { lines } else { lines + "\n" }
+}
+
+/**
+ * Renders the Markdown `source` as an HTML fragment, under `options` (see
+ * the module's documentation). Throws `markdown.options` for bad options and
+ * `markdown.limit` for source over the size or nesting limits.
+ */
+export val toHtml = fn(source:str, options:map = {}):str {
+    val o = checkOptions(options)
+    val bytes = len(toBytes(source))
+    if (bytes > o.maxBytes) {
+        throw Error {
+            type: "markdown.limit",
+            msg: "the source is $bytes bytes, over the limit of ${o.maxBytes}",
+            data: {limit: "bytes", max: o.maxBytes},
+        }
+    }
+    val parsed = parseBlocks(normalize(source), o.maxDepth)
+    render(parsed.document, parsed.refs, o)
+}

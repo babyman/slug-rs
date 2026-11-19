@@ -8,7 +8,12 @@ core; `task var` gives every task its own copy of a module variable. The
 semantics land first, single-threaded, and threads come after, so every
 phase ships something that works and the threaded phases change only speed.
 
-## What exists today
+## What existed at the start (2026-11-07)
+
+This section records the starting point; later phases changed several of
+these facts. Since [spawn shares captures](../decisions/2026-11-15-spawn-shares-captures.md),
+`spawn` shares every captured cell rather than snapshotting `Capture::Local`
+ones, and freestanding builds now run tasks and timers.
 
 - **Tasks are child VMs.** `Op::Spawn` (`vm/mod.rs`, `spawn_task`) pops a
   closure, snapshots its `Capture::Local` cells, shares its

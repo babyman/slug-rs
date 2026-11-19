@@ -178,4 +178,5 @@ run fails, since slug's diagnostic is on stderr; otherwise a failure shows
 only an exit status.
 
 Installed clutches can also tag functions with `@test` and `@testWith` and
-run them with `slug test`; see `slug-docs/library/core/test.slug`.
+run them with `slug test`; see `slug.test`'s source,
+`clutch/slug.core.clutch/modules/test.slug`.

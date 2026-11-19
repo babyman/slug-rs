@@ -37,7 +37,7 @@ designs, not unfinished requirements of this experiment.
 
 The first experiment's selected local manifest, resolver, and plugin-lifecycle
 rules are recorded in
-[`../reference/experimental-clutches.md`](../reference/experimental-clutches.md).
+[`../reference/clutches.md`](../../reference/clutches.md).
 That version-0 contract narrows this exploration where they differ, notably by
 retaining native library code for the process lifetime rather than requiring
 `dlclose` during VM shutdown.
@@ -1362,7 +1362,7 @@ The next step is to make `slug.io.fs` prove it.
 # Actionable execution plan
 
 The version-0 contract in
-[`../reference/experimental-clutches.md`](../reference/experimental-clutches.md)
+[`../reference/clutches.md`](../../reference/clutches.md)
 defines the work below. Each phase is independently reviewable. Do not begin a
 later phase until the prior phase's exit criteria hold.
 

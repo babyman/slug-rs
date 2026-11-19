@@ -222,7 +222,7 @@ and [rejected-value ownership](2026-09-03-native-producer-rejected-value-ownersh
 records remain the semantic authority for `events`.
 
 Documentation that must be updated: `docs/reference/native-abi.md`,
-`docs/reference/experimental-clutches.md`, `docs/reference/ffi-helpers.md`, the
+`docs/reference/clutches.md`, `docs/reference/ffi-helpers.md`, the
 README's clutch paragraph, and the native fixture notes in `AGENTS.md`.
 
 ## Migration

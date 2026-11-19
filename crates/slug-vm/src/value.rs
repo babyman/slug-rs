@@ -1744,14 +1744,30 @@ impl Value {
     ///
     /// Private bytecode and native callbacks can construct `Value` directly,
     /// so execution boundaries use this to preserve Slug's finite-number rule.
+    ///
+    /// Containers are walked with a stack of their own, so a value nested
+    /// deeper than the native stack can hold is still checked.
     pub(crate) fn contains_non_finite_number(&self) -> bool {
         match self {
             Self::Float(value) => !value.is_finite(),
-            Self::List(values) => values.iter().any(Self::contains_non_finite_number),
-            Self::Map(entries) => entries.iter().any(|(key, value)| {
-                key.contains_non_finite_number() || value.contains_non_finite_number()
-            }),
-            Self::Struct(value) => value.values.iter().any(Self::contains_non_finite_number),
+            Self::List(_) | Self::Map(_) | Self::Struct(_) => {
+                let mut pending = vec![self];
+                while let Some(value) = pending.pop() {
+                    match value {
+                        Self::Float(value) if !value.is_finite() => return true,
+                        Self::List(values) => pending.extend(values.iter()),
+                        Self::Map(entries) => {
+                            for (key, value) in entries.iter() {
+                                pending.push(key);
+                                pending.push(value);
+                            }
+                        }
+                        Self::Struct(value) => pending.extend(value.values.iter()),
+                        _ => {}
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }
@@ -2124,9 +2140,181 @@ impl PartialEq for Value {
     }
 }
 
+/// A container [`Value`]'s `Debug` is part way through: what is left of its
+/// parts, and whether one has been written yet.
+enum Formatting<'a> {
+    List {
+        items: core::slice::Iter<'a, Value>,
+        first: bool,
+    },
+    Map {
+        entries: core::slice::Iter<'a, (Value, Value)>,
+        /// The value of the entry whose key was just written.
+        value: Option<&'a Value>,
+        first: bool,
+    },
+    Struct {
+        fields: core::iter::Zip<core::slice::Iter<'a, StructField>, core::slice::Iter<'a, Value>>,
+        first: bool,
+    },
+}
+
+/// How many lists, maps, and structs inside each other `Debug` writes by
+/// recursion; deeper parts take a stack of their own.
+const FORMAT_RECURSION: u32 = 64;
+
 impl fmt::Debug for Value {
+    /// Writes `[a, b]`, `{key: value}`, and `struct {"field": value}`. The
+    /// first [`FORMAT_RECURSION`] levels recurse, which needs no allocation;
+    /// deeper parts are written with a stack of their own, so a value nested
+    /// deeper than the native stack can hold is written in full rather than
+    /// aborting the process. Pretty-printing (`{:#?}`) is not supported:
+    /// the alternate flag is ignored.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_within(f, 0)
+    }
+}
+
+impl Value {
+    fn fmt_within(&self, f: &mut fmt::Formatter<'_>, depth: u32) -> fmt::Result {
+        if depth >= FORMAT_RECURSION && self.holds_parts() {
+            return self.fmt_deep(f);
+        }
+        let depth = depth + 1;
         match self {
+            Self::List(values) => {
+                f.write_str("[")?;
+                for (index, item) in values.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    item.fmt_within(f, depth)?;
+                }
+                f.write_str("]")
+            }
+            Self::Map(entries) => {
+                f.write_str("{")?;
+                for (index, (key, value)) in entries.entries().iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    key.fmt_within(f, depth)?;
+                    f.write_str(": ")?;
+                    value.fmt_within(f, depth)?;
+                }
+                f.write_str("}")
+            }
+            Self::Struct(value) => {
+                f.write_str("struct {")?;
+                for (index, (field, value)) in
+                    value.schema.fields.iter().zip(&value.values).enumerate()
+                {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{:?}: ", field.name)?;
+                    value.fmt_within(f, depth)?;
+                }
+                f.write_str("}")
+            }
+            leaf => leaf.fmt_leaf(f),
+        }
+    }
+
+    /// [`Value::fmt_within`] with a stack of its own, in the same form.
+    fn fmt_deep(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut open: Vec<Formatting<'_>> = Vec::new();
+        let mut next = Some(self);
+        loop {
+            if let Some(value) = next.take() {
+                match value {
+                    Self::List(values) => {
+                        f.write_str("[")?;
+                        open.push(Formatting::List {
+                            items: values[..].iter(),
+                            first: true,
+                        });
+                    }
+                    Self::Map(entries) => {
+                        f.write_str("{")?;
+                        open.push(Formatting::Map {
+                            entries: entries.entries().iter(),
+                            value: None,
+                            first: true,
+                        });
+                    }
+                    Self::Struct(value) => {
+                        f.write_str("struct {")?;
+                        open.push(Formatting::Struct {
+                            fields: value.schema.fields.iter().zip(value.values.iter()),
+                            first: true,
+                        });
+                    }
+                    leaf => leaf.fmt_leaf(f)?,
+                }
+            }
+            let Some(top) = open.last_mut() else {
+                return Ok(());
+            };
+            match top {
+                Formatting::List { items, first } => {
+                    if let Some(item) = items.next() {
+                        if !core::mem::replace(first, false) {
+                            f.write_str(", ")?;
+                        }
+                        next = Some(item);
+                    } else {
+                        f.write_str("]")?;
+                        open.pop();
+                    }
+                }
+                Formatting::Map {
+                    entries,
+                    value,
+                    first,
+                } => {
+                    if let Some(value) = value.take() {
+                        f.write_str(": ")?;
+                        next = Some(value);
+                    } else if let Some((key, entry)) = entries.next() {
+                        if !core::mem::replace(first, false) {
+                            f.write_str(", ")?;
+                        }
+                        *value = Some(entry);
+                        next = Some(key);
+                    } else {
+                        f.write_str("}")?;
+                        open.pop();
+                    }
+                }
+                Formatting::Struct { fields, first } => {
+                    if let Some((field, value)) = fields.next() {
+                        if !core::mem::replace(first, false) {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{:?}: ", field.name)?;
+                        next = Some(value);
+                    } else {
+                        f.write_str("}")?;
+                        open.pop();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether `Debug` writes this value's parts, as a list, map, or struct.
+    #[inline]
+    fn holds_parts(&self) -> bool {
+        matches!(self, Self::List(_) | Self::Map(_) | Self::Struct(_))
+    }
+
+    /// `Debug` for a value that holds no others to write.
+    fn fmt_leaf(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::List(_) | Self::Map(_) | Self::Struct(_) => {
+                unreachable!("containers are written by Debug")
+            }
             Self::Uninitialized => write!(f, "<uninitialized>"),
             Self::Nil => write!(f, "nil"),
             Self::Bool(value) => write!(f, "{value}"),
@@ -2134,25 +2322,7 @@ impl fmt::Debug for Value {
             Self::Float(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
             Self::Bytes(value) => write!(f, "0x\"{}\"", hex(BytesView::new(value).as_slice())),
-            Self::List(values) => f.debug_list().entries(values.iter()).finish(),
-            Self::Map(entries) => f
-                .debug_map()
-                .entries(entries.view().iter().map(|(key, value)| (key, value)))
-                .finish(),
             Self::StructSchema(_) => write!(f, "<struct schema>"),
-            Self::Struct(value) => {
-                write!(f, "struct ")?;
-                f.debug_map()
-                    .entries(
-                        value
-                            .schema
-                            .fields
-                            .iter()
-                            .zip(&value.values)
-                            .map(|(field, value)| (&field.name, value)),
-                    )
-                    .finish()
-            }
             Self::Enum(value) => write!(f, "{}.{}", value.name, value.case),
             Self::Channel(_) => write!(f, "<chan>"),
             Self::Closure(_) => write!(f, "<fn>"),
@@ -2204,6 +2374,41 @@ fn int_equals_float(integer: i64, float: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_writes_the_same_form_past_its_recursion_depth() {
+        // Lists and maps alternate, each level also holding a leaf, so both
+        // the recursive and the work-list writers see every kind of part on
+        // each side of `FORMAT_RECURSION`.
+        let levels = FORMAT_RECURSION as usize * 3;
+        let mut value = Value::Int(0);
+        let mut expected = String::from("0");
+        for level in 1..=levels {
+            if level % 2 == 0 {
+                value = Value::list(vec![Value::Int(1), value]);
+                expected = format!("[1, {expected}]");
+            } else {
+                value = Value::map(vec![(Value::string("k"), value)]);
+                expected = format!("{{\"k\": {expected}}}");
+            }
+        }
+        assert_eq!(format!("{value:?}"), expected);
+        assert_eq!(format!("{value}"), expected);
+        assert_eq!(value.fmt_deep_string(), expected);
+    }
+
+    impl Value {
+        /// This value written by the work-list writer alone.
+        fn fmt_deep_string(&self) -> String {
+            struct Deep<'a>(&'a Value);
+            impl fmt::Display for Deep<'_> {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    self.0.fmt_deep(f)
+                }
+            }
+            Deep(self).to_string()
+        }
+    }
 
     #[test]
     fn builtin_schemas_are_the_same_wherever_they_are_made() {

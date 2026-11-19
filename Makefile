@@ -64,10 +64,12 @@ test-native:
 	cargo test -p slug-native-manifest
 
 # The clutches' own tests, written in Slug and run by `slug test` with this
-# repository as SLUG_HOME.
+# repository as SLUG_HOME; slug.text.markdown's run compiled as well.
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.games.crawl.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.text.markdown.clutch clutch/slug.games.crawl.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug compile clutch/slug.text.markdown.clutch/tests/compiled.slug target/slug-text-markdown-tests.cslug
+	SLUG_HOME=$(CURDIR) target/debug/slug run target/slug-text-markdown-tests.cslug
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh

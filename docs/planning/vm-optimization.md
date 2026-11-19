@@ -2814,3 +2814,331 @@ running beside the previous tick's drawing. With every player in one town a
 key still takes about two drawings to show, so 1000 players are served but
 not yet responsive; a tick's drawing is about 1.0 s of CPU and needs to be
 about three times faster, from more cores or less work per page.
+
+## Map keys hashed in place (2026-11-17)
+
+A map larger than `INDEX_THRESHOLD` used to build a `MapKey`, the key's
+canonical form, for every lookup, insert, and index rebuild, only to hash it
+and drop it. That cloned a string key's reference count and allocated a
+vector for a list or struct key. `hash_map_key` now feeds the same canonical
+bytes to the hasher straight from the `Value`, and `is_map_key` checks a key
+without building anything, which also covers maps of every size (literal
+and update key checks).
+
+PGO A/B against 2be203b, 9 interleaved rounds: tuned 0.99x, hold-out 1.00x;
+every Crawl workload, `http-server`, and `word-frequency` within spread
+(0.99-1.01x). Microbenchmarks (scratchpad, PGO, 9 rounds):
+
+| workload | ratio |
+|---|---:|
+| integer keys, 2000 entries (control) | 1.00x |
+| runtime string keys, 2000 entries | 0.98x |
+| `[x, y]` keys, 2350 entries | 0.87x |
+| small maps built with `[x, y]` keys | 0.85x |
+| string keys, shared map, 1 fork | 0.99x wall |
+| string keys, shared map, 4 forks | 0.98x wall, 0.98x CPU |
+
+Kept for list and struct keys. The string-key reference count was not a
+measurable contention source: 4 forks cost the same ~3.5x CPU of one fork
+before and after, so that overhead is elsewhere in the lookup loop.
+
+## Deep values walked without recursion (2026-11-17)
+
+Formatting a value (interpolation, `println`, `throw`), checking and hashing
+a map key, and checking a native result for non-finite numbers recursed
+through nested values, overflowing the native stack (aborting the process)
+at about 100,000 levels on the main thread and fewer in a fork. Each now
+recurses only 64 levels and walks anything deeper with a stack of its own.
+A first version that always used the work list made formatting 3-7%
+slower in microbenchmarks (an allocation per call); recursing first made
+it 1-5% faster than before, as the hand-written recursion skips
+`debug_list`'s builders.
+
+PGO A/B against c40401e: 9 rounds over the corpus tuned 1.00x, hold-out
+1.01x; 15 rounds on the workloads that moved: crawl-history 1.02x,
+crawl-ticks/pages/crowd and http-server 1.01x, text-wrap 1.01x. The
+list-key microbenchmarks read 1.01-1.02x, so the residue is likely the
+depth count on the map-key path (Crawl keys a few maps by `[x, y]`).
+Accepted for the crash fix; not chased.
+
+## Ceilings before structural work (2026-11-17)
+
+Before choosing among the structural options (trusted bytecode, quickening
+with inline caches, ownership-based reference counting, typed register
+lowering, a native-code tier), two scratch builds measured what the first
+two could reach. Neither patch was committed.
+
+### Trusted bytecode: 1.00x
+
+A perturbation build ran verified bytecode with no checks the verifier
+already guarantees: unchecked instruction fetch, unchecked stack pops and
+peeks, unchecked frame, local, capture, and operand-constant access, and no
+store of the instruction pointer to the frame for opcodes that cannot call,
+return, or suspend (`Constant`, `Nil`, `Pop`, `GetLocal`, `SetLocal`,
+`GetCapture`, the jumps, `ConstantBinary`, `LocalConstantBinary`).
+
+PGO A/B against c6b8871, 9 interleaved rounds: tuned 1.00x, hold-out 1.00x,
+every workload within 0.97-1.02x and inside its spread. The checks are
+predicted branches that cost nothing measurable, so an unchecked fast path
+is dropped as an option, along with the change to the workspace's
+`unsafe_code = "deny"` it would have needed.
+
+### Type stability per site
+
+A counting build recorded, for each executed arithmetic or comparison, index
+read, and call, its site and a key: the operand kinds, the container kind
+(with the schema for structs), or the callee's identity. It ran on the tuned
+workloads only; the hold-outs were not profiled.
+
+| workload | arith share | arith dominant key | index share | call share | call dominant callee |
+|---|---:|---:|---:|---:|---:|
+| invaders-game | 25.0% | 100.0% | 7.0% | 4.4% | 97.2% |
+| http-server | 15.5% | 99.9% | 6.7% | 9.0% | 99.9% |
+| crawl-game | 13.9% | 99.0% | 14.4% | 8.9% | 91.0% |
+| crawl-ticks | 25.1% | 98.6% | 12.9% | 3.6% | 99.7% |
+| crawl-history | 13.0% | 99.9% | 6.1% | 4.9% | 97.2% |
+| crawl-crowd | 19.4% | 99.3% | 9.7% | 7.1% | 99.9% |
+
+"Share" is of all executed instructions; "dominant" is how many executions
+matched their site's most common key, the hit rate of a one-entry inline
+cache that never respecializes. Index reads matched 100% by container kind
+everywhere. The microbenchmarks are monomorphic throughout.
+
+Findings:
+
+- Sites are almost perfectly stable, but the operations they cover are
+  25-45% of a real program's instructions, and most are `Int` by `Int`
+  arithmetic, which `numeric_in_place` already computes in place. A
+  specialized instruction would remove a tag check, which the trusted
+  bytecode build shows is not where the time goes. Generic quickening is
+  not worth its cost here; where an inline cache could pay is in calls
+  and map reads, which do real work.
+- Struct field reads are about 0% of index reads in every workload; Crawl
+  uses maps (50-60% of index reads). Compile-time struct field positions
+  would not help the current programs.
+- `typed-n-body` and `typed-spectral-norm` execute exactly as many
+  instructions as their untyped twins, with `*Num` opcodes in place of the
+  generic ones, and run in the same time. Declared types do not change the
+  work today.
+- Module bindings reach operations unresolved. `Int` by `Binding` (a
+  destructured import's live binding) is 6-10% of Crawl's arithmetic, which
+  misses the in-place path and resolves through `pop_slow`, and a `Binding`
+  callee is 8-18% of Crawl's calls, resolved through the generic call path.
+  Resolving the binding at the read would put both on the fast paths.
+
+With the Stage 7 count (a register VM would execute about 80% of the
+dispatches), these leave the cost of each instruction in value handling:
+24-byte copies, reference-count increments and decrements, drops, and
+operand-stack pushes, plus the work inside calls and map reads. The next
+measurement sizes that traffic before ownership-based reference counting is
+considered.
+
+### Reference-count traffic: about 6-11% of real programs
+
+Before considering ownership-based reference counting (borrow inference and
+reuse of uniquely owned values, as Perceus does), two scratch builds sized
+the traffic it would remove. A hand-written `Value::clone` counted the
+reference-count increments each clone makes, attributed to the executing
+opcode, and a counting global allocator counted allocations; the existing
+metrics give copy-on-write updates. The tuned workloads only were counted.
+
+| workload | increments per instruction | allocations per instruction | shared-owner updates |
+|---|---:|---:|---:|
+| invaders-game | 0.11 | 0.083 | 3.2% (76M elements copied) |
+| http-server | 0.35 | 0.176 | 9.1% |
+| crawl-game | 0.36 | 0.067 | 1.5% |
+| crawl-ticks | 0.19 | 0.098 | 4.3% |
+| crawl-history | 0.33 | 0.124 | 9.3% |
+| crawl-crowd | 0.34 | 0.141 | 9.5% |
+
+Increments come mostly from calls (`CallPositional`, `CallGlobal`),
+`GetGlobal`, `GetCapture`, and constant-key index reads. Allocations come
+from `MakeClosure` (20-27% in Crawl and `http-server`), calls, and index
+reads (`GetIndex` 45% in `crawl-game`).
+
+To price the traffic, a perturbation build gave every clone of a counted
+value one extra increment and decrement (a `black_box`ed clone, dropped),
+doubling the pairs. PGO A/B against the hand-written clone alone, 9
+interleaved rounds: tuned 1.05x, hold-out 1.09x; `crawl-game` 1.11x,
+`crawl-history`, `crawl-crowd`, and `http-server` 1.09x, `crawl-ticks`
+1.06x, `invaders-game` 1.06x; `fib` 0.99x. Each extra pair cost 2.1-3.7 ns
+(atomic counts, `threads` build), so the pairs real programs make today
+take about 6-11% of their time. This is a lower bound in one way (clones of
+`Rc` fields outside `Value::clone`, such as a frame's closure, were not
+counted) and an upper bound in another (the extra pair touches a cache line
+the real one just loaded).
+
+Ownership-based counting would remove part of that 6-11%, not all of it,
+and its reuse half has little to reuse: shared-owner updates are 2-10% of
+collection updates, after the fused updates of 2026-11-06 and 2026-11-13.
+`invaders-game`'s shared byte copies are the exception. That makes it a
+few-percent option for weeks of compiler work, not the lever for a 2x
+change.
+
+Allocations, at 0.07-0.18 an instruction against 7-11 ns an instruction,
+are the larger unmeasured cost: at 10 ns for an allocation and its free
+they would be 8-25% of real programs' time. They are the next thing to
+price, with the same perturbation method.
+
+### Allocations: about 4-8% of real programs
+
+The same perturbation priced allocation. The control build wrapped
+mimalloc in a pass-through global allocator; the candidate's wrapper also
+allocated and freed one extra block of the same layout before every
+allocation. PGO A/B, 9 interleaved rounds: tuned 1.06x, hold-out 1.07x;
+`crawl-ticks` and `crawl-crowd` 1.08x, `crawl-history` and `invaders-game`
+1.07x, `http-server` 1.05x, `crawl-game` 1.04x; among the microbenchmarks
+`defer-errors` 1.22x and `word-frequency` 1.13x, `fib` and
+`shared-append` 1.00x.
+
+Divided by each program's allocation count (execution and compilation),
+an extra allocation and free cost 2.9-5.5 ns, so the allocator calls real
+programs make take about 4-8% of their time. That is a lower bound: the
+extra block is freed at once and comes back from mimalloc's free list hot,
+while a real allocation is also initialized, touched again later, and
+freed elsewhere.
+
+Two sources are cheap to remove. Indexing a string builds a new `Str` (two
+allocations) for every character, most of `crawl-game`'s `GetIndex`
+allocations; a shared table of one-character ASCII strings would remove
+them. `MakeClosure` allocates the closure, its capture vector, and a copy
+of the program's capture metadata (`capture_sources.to_vec()`), which the
+program already holds and could share.
+
+Together the measured costs explain about a quarter of a real program's
+time: reference counting 6-11%, allocator calls 4-8%, the dispatches a
+register VM would remove about 7% (Stage 7 count), checks 0%. None is a
+2x lever alone. `fib`, which neither counts nor allocates, is still 2.4x
+CPython: about 40 ns a call against about 16 ns. The call path, entering
+and leaving a frame, is the cost to size next.
+
+### The call path: about two thirds of `fib`
+
+`fib(37)` (`fib.slug` with a larger argument, 24M calls; `fib(35)` takes
+34.5 ns a call) ran under `sample` on a `strip -x` copy of a symbolized
+profile-guided build of 37083ae; `llvm-objdump -d -l` on the symbolized
+build mapped the 1,612 samples to source lines. Profile-guided layout
+splits inlined code, so each sample was assigned to the nearest preceding
+`slug-vm` source line in address order and the lines grouped by role. The
+attribution is approximate at block boundaries; the totals are the
+finding.
+
+| share of `fib` | what |
+|---:|---|
+| 27% | call: `CallGlobal` handler, `call_global`, `enter_positional_closure` (arity checks, locals vector from the pool, arguments drained into it), the call-span lookup, the 120-byte `Frame` push, the closure's atomic count |
+| 27% | return: `return_without_cleanup`'s checks, `pop_frame` (with its globals compare), truncating the stack, recycling the locals, the frame's drop with its closure's atomic decrement |
+| 13% | dispatch loop re-entry: a call and a return each change `frame_epoch`, so the inner loop exits and the outer loop reruns its suspension and attention checks, the program compare, the chunk lookup, and the instruction-pointer load |
+| 10% | per-instruction skeleton and the opcode `match` |
+| 23% | the instructions' own work (local reads, the compare and branch, the subtractions and the addition) |
+
+About 68% of `fib`'s time, some 23 ns of each 34.5 ns call, goes to entering
+and leaving a frame. CPython 3.15 takes about 16 ns for the whole call,
+its arithmetic included.
+
+Real programs call less often but not rarely: a frame every 24 instructions
+in `crawl-history`, every 16 in `crawl-game`. At 23 ns a call and return,
+the call path would be about 7% of `http-server`, 9-11% of
+`crawl-crowd`, `invaders-game`, and `crawl-history`, and 20% of
+`crawl-game` (frames created times 23 ns, against each program's time;
+calls with captures or the general path cost more).
+
+This is the first cost found that is large and in one place. A call path
+redesign would take these together:
+
+- locals in the operand stack, where the arguments already are, instead of
+  a separate pooled vector the arguments are drained into;
+- a smaller frame: the call span recovered from the caller's saved
+  instruction pointer when an error needs it, and cleanup scopes, the
+  provided-argument bitmap, and the cleanup flags moved out of the common
+  frame;
+- calls and returns that switch the dispatch loop's code and instruction
+  pointer in place instead of leaving the inner loop;
+- no atomic count per call for module functions, which live as long as
+  their program (`Code` already has an immortal mark).
+
+At 8 ns for a call and return, `fib` would take about 0.57x as long, near
+CPython's per-call time, and the real programs 5-13% less (`crawl-game`
+about 13%).
+
+### Re-entry removed: 1.00x
+
+The profile put 13% of `fib` in leaving and re-entering the dispatch loop
+on each call and return. A scratch build removed it: when a call or
+return changes the frame within the same program, the inner loop switches
+its chunk, code slice, and instruction pointer in place and runs the
+suspension and attention checks there, instead of breaking out to the
+outer loop. PGO A/B against edec428, 9 interleaved rounds: tuned 1.00x,
+hold-out 0.99x, `fib` 1.03x, every real program 0.99-1.01x. Not kept.
+
+As with the fetch chain (43% of samples, 4% of time), the samples landed
+on loads that wait for the call's own stores (the pushed frame, its
+instruction pointer), not on work the re-entry adds. The profile shares
+above say where the call path stalls, not what removing a piece buys.
+
+The absolute cost holds up when measured directly: a `recur` loop of 10M
+iterations calling `increment(value)` took 405 ms against 171 ms with
+`value + 1` written in place, 23.4 ns more per iteration (PGO build of
+37083ae, medians of 7 interleaved runs). That is the call and return plus
+the callee's three instructions. What the redesign would buy has to be
+bounded by removing real work from the path (the locals vector, the frame's
+size, the atomic counts), not by moving where the path stalls.
+
+### Frame size: about 3 ns a call for 80 bytes
+
+Module functions' closures are already immortal once the entry program
+initializes (`run_program_settled` calls `immortalize_code` before
+`main`), so a call to one makes no atomic read-modify-write; the profile's
+`sync.rs` samples were the count loads stalling. That test had nothing to
+remove and was not run.
+
+`Frame` is 136 bytes; the fields every call uses (closure, instruction
+pointer, stack base, locals, scope depth) need about 56, and the call span,
+cleanup scopes, provided-argument bitmap, and cleanup fields take the
+other 80. Moving those out touches about 75 sites, so a reverse
+perturbation bounded it first: 80 bytes of padding, written on every push
+and read on every pop, made the frame 216 bytes. PGO A/B against
+8499cef, 9 interleaved rounds: tuned 1.02x, hold-out 1.01x; `fib` 1.07x
+and `defer-errors` 1.07x, `function-call` 1.04x, the real programs
+0.99-1.02x (`crawl-game` 1.02x). Per call that is 2.7-2.8 ns for 80 bytes
+in `fib` and `crawl-game` alike.
+
+Shrinking the frame by the same 80 bytes would therefore save at most
+about 3 ns of the 23 ns call, some 7% of `fib` and 1-2% of the real
+programs. Not worth the change alone; worth folding into a larger call
+path change if one goes ahead.
+
+### The locals vector: about 2-4 ns a call
+
+Moving locals onto the operand stack would rewrite every local access
+path, so the same doubling bounded what it could save: each exact
+positional call (`enter_positional_closure`) first took a second vector
+from the pool, filled it to the callee's local count, wrote its argument
+slots with `nil`, cleared it, and returned it. PGO A/B against 2f41714,
+9 interleaved rounds: tuned 1.03x, hold-out 1.03x; `fib` 1.04x
+(1.6 ns a call), `crawl-game` 1.04x and `crawl-crowd` 1.02x (about 4 ns a
+frame), the other real programs 1.00-1.02x. The doubled work writes
+`nil`s where the real one moves arguments, so it reads a little low.
+
+Where the call's 23 ns stand:
+
+| piece | removing it buys |
+|---|---|
+| leaving and re-entering the dispatch loop | nothing (1.00x) |
+| atomic closure counts | nothing for module functions, already immortal |
+| the frame's 80 cold bytes | at most about 3 ns |
+| the pooled locals vector | about 2-4 ns |
+
+Together that is at most about 7 ns. The other 16 or so are spread over
+the call and return instructions' own dispatch, the arity and binding
+checks, the global read, the call-span lookup, frame bookkeeping, and the
+stack truncation, with no piece large on its own. A call path redesign
+that took all of these together could bring a call to perhaps 15 ns:
+`fib` about 0.75x, the real programs 3-6%. That is worth doing when the
+call path is next opened, but it does not close the 2.3x gap to CPython.
+
+Across this round (checks, quickening, reference counts, allocations,
+dispatch count, and the call path), the costs are spread thin: the largest
+single removable piece is single-digit percent of a real program.
+Interpreter work from here buys percents, as the 2026-11-14 decision
+expected; a 2x step needs code that keeps values in machine registers
+between operations, which only a native-code tier provides.

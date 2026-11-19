@@ -38,7 +38,7 @@ lifetime. Shutdown deterministically releases registrations and safe plugin
 state, but native library code remains resident for the process lifetime.
 
 The detailed experimental contract is
-[`../reference/experimental-clutches.md`](../reference/experimental-clutches.md).
+[`../reference/clutches.md`](../reference/clutches.md).
 
 ## Consequences
 

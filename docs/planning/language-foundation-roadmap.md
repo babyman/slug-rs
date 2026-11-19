@@ -1,7 +1,7 @@
 # Language Foundation Roadmap
 
 This document tracks implementation work needed to move the Rust VM from its
-current core subset toward clean-room source compatibility. It is a task list,
+current core subset toward full source compatibility with the specification. It is a task list,
 not a source-language specification. The documents under [`language/`](../language/README.md)
 remain authoritative for syntax and observable behavior, and the generated
 [language support matrix](../generated/language-support.md) remains the status
@@ -164,21 +164,21 @@ and the host boundary in
 Implement the public library only after its language and runtime foundations
 are stable:
 
-- [ ] Implement `slug.meta` introspection over retained module, declaration,
+- [x] Implement the `describe` builtin over retained module, declaration,
   tag, and documentation metadata.
 - [x] Implement minimal `foreign` declarations and a module-qualified
   declared-foreign host registry, keeping FFI and ABI adaptation outside the
   language runtime.
-- [ ] Implement `slug.test` assertions and fixture support.
-- [ ] Implement the required `slug.std` core and collection operations.
+- [x] Implement `slug.test` assertions and the `slug test` runner.
+- [x] Implement the required `slug.std` core and collection operations.
 - [x] Implement the `slug.channel` API over the completed channel and task
   runtime.
-- [ ] Implement the `slug.time` API over the completed timer host service.
-- [ ] Run all non-concurrent supported and error-parity fixtures.
-- [ ] Run the remaining concurrency fixtures.
-- [ ] Verify exit status, standard output, standard error, diagnostic category,
+- [x] Implement the `slug.time` API over the completed timer host service.
+- [x] Run all non-concurrent supported and error-parity fixtures.
+- [x] Run the remaining concurrency fixtures.
+- [x] Verify exit status, standard output, standard error, diagnostic category,
   and source location where fixture metadata makes them exact.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 8. Native interface
 

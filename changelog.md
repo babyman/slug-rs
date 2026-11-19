@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+- `slug.fmt.json`'s `parse` and `parseStrict` refuse a document with more
+  than 1000 arrays and objects open at once, throwing `json.limit` with
+  `data` `{limit: "depth", max, offset}`, `offset` being the bracket that
+  opens one level too many. Each level held about 1.7 KB while it was read,
+  so 300 KB of `[` cost about 250 MB; now a document is refused at its
+  first level too many. An `options` argument sets the limit,
+  `json.parse(text, {maxDepth: 5000})`, and `json.DEFAULT_MAX_DEPTH` names
+  the default; an unknown option or a bad value throws `json.options`. A
+  document nested deeper than 1000 that parsed before now needs the option.
+
+- A deeply nested value no longer aborts the program. Interpolating or
+  printing one, throwing one, using one as a map key, or a native function
+  returning one walked it by recursion and overflowed the native stack at
+  about 100,000 levels (fewer in a fork), killing the process with no Slug
+  error to catch; a few hundred kilobytes of `[[[...` read by `json.parse`
+  was enough. These now use a stack of their own and handle any depth.
+  Equality, dropping, and `to_json` already did.
+
+- Map keys are hashed and checked in place: a lookup or update on a map of
+  more than 32 entries no longer builds a copy of its key first, and the
+  key check of a map literal or update no longer does either. Maps keyed by
+  lists or structs, such as `{[[x, y]]: cell}`, are 13-15% faster in
+  microbenchmarks; other keys and the benchmark corpus are unchanged.
+
+- A function in a library module can index a name it destructured from an
+  import: after `val {TABLE} = import("tables")`, `TABLE[key]` and
+  `TABLE.field` inside a function threw `cannot index binding`, because the
+  in-place index read was given the import's live binding rather than its
+  value. Calls, `len`, and reads outside functions were not affected.
+
+- The `slug.text.markdown` clutch renders Markdown as safe HTML:
+  `toHtml(source, options)`. The dialect is CommonMark 0.31.2 with GitHub's
+  tables, strikethrough, and extended autolinks; raw HTML is shown as
+  escaped text, and code is always escaped. The output holds only a fixed
+  list of elements and attributes, and link and image URLs are classified
+  as a browser reads them (after entities, without control characters) and
+  held to the `links` and `images` allowlists, by default relative, `http`,
+  `https`, and `mailto` links and relative images only; `javascript`,
+  `vbscript`, `data`, and `file` are never allowed. `maxBytes` (65536) and
+  `maxDepth` (32) bound the input, throwing `markdown.limit`. It is written
+  in Slug, passes the CommonMark and GFM spec examples apart from 77
+  documented raw-HTML and autolink differences, runs cmark's pathological
+  inputs in linear time, and its tests run compiled as well as from source.
+
 - `slug.fmt.json.parseStrict(text)` reads JSON as `parse` does but rejects
   an object, at any depth, that repeats a key, comparing keys after decoding
   escapes, so `"body"` and `"\u0062ody"` collide. It throws `json.parse`

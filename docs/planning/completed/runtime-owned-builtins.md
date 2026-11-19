@@ -1,6 +1,6 @@
 # Runtime-Owned Builtins Plan
 
-Implements [builtins belong to the runtime](../decisions/2026-11-15-builtins-belong-to-the-runtime.md).
+Implements [builtins belong to the runtime](../../decisions/2026-11-15-builtins-belong-to-the-runtime.md).
 
 ## Scope and invariants
 
@@ -10,7 +10,7 @@ Implements [builtins belong to the runtime](../decisions/2026-11-15-builtins-bel
 - The VM stays `no_std + alloc`. Check the ESP32-S3 firmware with each
   descriptor and the typed native adapter before committing.
 - Interactive sessions keep looking unknown names up when they run, as the
-  [unknown names](../decisions/2026-10-18-unknown-names-are-compile-errors.md)
+  [unknown names](../../decisions/2026-10-18-unknown-names-are-compile-errors.md)
   decision allows.
 
 ## 1. `Error` in the VM
@@ -71,8 +71,8 @@ Implements [builtins belong to the runtime](../decisions/2026-11-15-builtins-bel
   `language/embedded-host-modules.md`.
 - [x] The header comments of `lib/slug/builtin.slug` and the embedded
   contract: they declare, the runtime defines, nothing imports them.
-- [x] Mark the [implicit builtin module](../decisions/2026-08-26-implicit-builtin-module.md)
-  and [embedded builtin contract](../decisions/2026-10-09-embedded-builtin-contract.md)
+- [x] Mark the [implicit builtin module](../../decisions/2026-08-26-implicit-builtin-module.md)
+  and [embedded builtin contract](../../decisions/2026-10-09-embedded-builtin-contract.md)
   decisions superseded in part, and add a changelog entry.
 
 **Gate:** full workspace, clippy, `make docs-check`, the ESP32-S3 checks, and

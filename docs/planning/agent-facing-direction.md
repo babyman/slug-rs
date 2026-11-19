@@ -44,7 +44,8 @@ This comes first because items 3–5 all need it.
 - [x] Provide an equivalent host query over the retained module model:
   `ModuleGraph::capability_report` and `slug_frontend::capability_report`.
 - [ ] Report native provider identity, `cfg` keys, tag arguments, and limits.
-- [ ] Implement `slug.meta` introspection.
+- [x] Implement module introspection, as the `describe` builtin rather than a
+  `slug.meta` module.
 - [ ] Provide a report diff between two program versions for review. Plain
   `diff` of two reports works today.
 

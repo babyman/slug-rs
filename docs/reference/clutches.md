@@ -1,12 +1,13 @@
-# Experimental Clutches
+# Clutches
 
 ## Status
 
-This is the version-0 contract for a local, exploded-clutch experiment. It is
-not source-language syntax, a released package format, or a compatibility
-promise. It defines the smallest composition boundary that implementation work
-may rely on. A later released clutch format requires a new decision record,
-versioned schema, and regression coverage.
+Clutches are how Slug's standard library and other modules are packaged and
+resolved. This is the version-0 contract for local, exploded clutches: a
+directory per clutch, indexed by a repository manifest. Version 0 is not
+source-language syntax or a released package format, and it may still change
+without a compatibility promise. A released clutch format requires a new
+decision record, versioned schema, and regression coverage.
 
 The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
 module-scoped Rust plugin initializer, and manifest-selected typed native
@@ -47,14 +48,17 @@ An exploded clutch is a directory ending in `.clutch` with a root
 
 ```toml
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", plugin = "slug.io.fs.rust" }
+"slug.io.fs" = { source = "modules/fs.slug" }
+"example.rust" = { source = "modules/rust.slug", plugin = "example.rust.plugin" }
 ```
 
 Each key in `[modules]` is the exact module identity the clutch provides. The
 source path is relative to the clutch root, must remain within it, and must
 name a `.slug` file in version 0. A module without a plugin omits `plugin`.
 The optional `plugin` value is an opaque host configuration key, not a
-source-visible path or arbitrary native-library search instruction.
+source-visible path or arbitrary native-library search instruction: it names
+a Rust plugin the host registered, which only tests and Rust embedders use. The
+repository's clutches use a `[native]` library instead.
 
 Optionally, a clutch may provide one native implementation library for any
 subset of its modules. Its `[native]` table uses
@@ -119,7 +123,7 @@ only when the user running slug grants `describe.unexported` with
 file is reported when its module is imported, so it never stops other
 programs from loading the repository.
 
-The experiment does not define archive encoding, signatures, remote fetching,
+Version 0 does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 
 ### Assets
@@ -184,7 +188,7 @@ invalid manifest is a checked module-load error. The loader caches by module
 identity and the selected provider, so a cyclic import still observes the
 existing shared module-instance rules.
 
-The initial experiment loads only source modules. The adopted version-2
+Version 0 loads only source modules. The adopted version-2
 [compiled-module contract](compiled-modules.md) defines the future artifact
 role; implementation remains separate work. Whole-program `.cslug` artifacts
 do not participate in Clutch resolution or grant a fallback capability.
@@ -242,7 +246,7 @@ The first implementation must prove:
 
 ## Relationship to other contracts
 
-This document narrows the exploratory material in
+This document began as a narrowing of the exploratory material in
 [`../planning/completed/experimental-slug-clutches.md`](../planning/completed/experimental-slug-clutches.md).
 It preserves the source module rules in
 [`../language/language-specification.md`](../language/language-specification.md),

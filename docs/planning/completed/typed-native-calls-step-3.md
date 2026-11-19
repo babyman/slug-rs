@@ -170,7 +170,7 @@ as staging does and runs on every CI platform, including Windows.
 
 - [x] Measure standard-input throughput, typed versus prototype, and record
   it.
-- [x] Update `native-abi.md`, `experimental-clutches.md`, and the README for
+- [x] Update `native-abi.md`, `clutches.md`, and the README for
   producers and the moved clutch.
 
 `stdin_typed_versus_prototype_end_to_end`, an ignored test that

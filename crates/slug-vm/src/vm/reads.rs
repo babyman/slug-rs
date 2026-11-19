@@ -64,14 +64,21 @@ impl Vm {
     }
 
     /// `collection[key]`, through the entry position `hint` for a constant
-    /// key into a map.
-    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
+    /// key into a map. A variable can hold a module binding, as a
+    /// destructured import holds the exporter's live one; the binding's
+    /// value is what is indexed, as it is when popped from the stack.
     fn index_read(
         &self,
         collection: &Value,
         key: &Value,
         hint: Option<&crate::sync::Hint>,
     ) -> Result<Value, (RuntimeErrorKind, alloc::string::String)> {
+        if matches!(collection, Value::Binding { .. }) {
+            let resolved = collection
+                .resolve_in(self)
+                .map_err(|message| (RuntimeErrorKind::Name, message))?;
+            return self.index_read(&resolved, key, hint);
+        }
         if let (Value::Map(map), Some(hint)) = (collection, hint) {
             #[cfg(feature = "metrics")]
             {

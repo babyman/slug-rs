@@ -1166,6 +1166,43 @@ fn imported_bindings_preserve_inferred_value_and_function_results() {
 }
 
 #[test]
+fn functions_index_destructured_imports_through_their_live_bindings() {
+    let root = root("indexed-destructured-imports");
+    fs::create_dir_all(&root).expect("create indexed import directory");
+    fs::write(
+        root.join("tables.slug"),
+        "export val TABLE = {a: 1, b: 2}\nexport val ROWS = [10, 20]\n",
+    )
+    .expect("write table module");
+    // A function in a library module reads the imported bindings by index:
+    // a constant key, a computed key, dot access, and a list index.
+    fs::write(
+        root.join("lookups.slug"),
+        "val {TABLE, ROWS} = import(\"tables\")\n\
+         export val lookup = fn(key:str) { [TABLE[\"a\"], TABLE[key], TABLE.b, ROWS[1]] }\n",
+    )
+    .expect("write lookup module");
+
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val lookups = import(\"lookups\")\nexport val result = lookups.lookup(\"b\")\n",
+        )
+        .expect("compile importer of destructured bindings");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main")
+        .expect("index destructured imports inside a function");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [1, 2, 2, 20]}"
+    );
+
+    fs::remove_dir_all(root).expect("remove indexed import directory");
+}
+
+#[test]
 fn imported_callable_snapshots_constrain_local_wrapper_signatures() {
     let root = root("imported-callable-wrapper-inference");
     fs::create_dir_all(&root).expect("create callable module directory");

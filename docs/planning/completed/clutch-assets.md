@@ -1,6 +1,6 @@
 # Clutch Assets Plan
 
-This task list implements [Clutch Assets](../decisions/2026-10-25-clutch-assets.md):
+This task list implements [Clutch Assets](../../decisions/2026-10-25-clutch-assets.md):
 files in a clutch's `assets/` folder, embedded at compile time by
 `asset("name")`.
 
@@ -53,5 +53,5 @@ files in a clutch's `assets/` folder, embedded at compile time by
   non-literal, piped, and out-of-clutch uses fail with `invalid_asset`.
 - [x] A compiled `.cslug` artifact runs with the asset embedded, without the
   clutch present.
-- [x] Language specification, experimental-clutches reference, diagnostic
+- [x] Language specification, clutches reference, diagnostic
   codes, support matrix, and changelog.

@@ -4,7 +4,7 @@
 
 Accepted (2026-11-15). Depends on
 [project root marker](2026-11-15-project-root-marker.md).
-Implementation: [project roots and layered clutches](../planning/project-roots-and-layered-clutches.md).
+Implementation: [project roots and layered clutches](../planning/completed/project-roots-and-layered-clutches.md).
 
 ## Context
 
@@ -92,7 +92,7 @@ clutches. It now takes `--repository DIR` and stages every clutch there with a
 first provides `native/stage-prerequisites.sh`, as `slug.arcade` does for
 its vendored raylib.
 
-Documents to update when implemented: `reference/experimental-clutches.md`
+Documents to update when implemented: `reference/clutches.md`
 (discovery, layering, the conflict error) and the clutch asset rule's
 "needs a project manifest" note.
 

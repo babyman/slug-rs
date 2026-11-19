@@ -496,6 +496,68 @@ fn rejects_deeply_nested_source_without_aborting() {
 }
 
 #[test]
+fn handles_deeply_nested_values_without_aborting() {
+    // Each of these walked a value by recursion and overflowed the native
+    // stack, aborting the process, for a list nested about 100,000 deep: a
+    // few hundred kilobytes of `[[[...` read by `json.parse`.
+    let path = fixture_path("value-nesting-depth");
+    // Forks run on threads with smaller stacks, where the formatter failed
+    // sooner; slim builds have no tasks.
+    let fork = if cfg!(feature = "concurrency") {
+        "    nursery { fork { println(len(\"$deep\")) } }\n"
+    } else {
+        "    println(len(\"$deep\"))\n"
+    };
+    let source = format!(
+        "\
+val build = fn(x, n:num) {{
+    if (n == 0) {{ return x }}
+    recur([x], n - 1)
+}}
+val depth = 200000
+val indexed = fn(m, i:num) {{
+    if (i == 40) {{ return m }}
+    recur(m + {{[[i]]: i}}, i + 1)
+}}
+val badKey = fn() {{
+    defer onerror(err) {{ err.type }}
+    {{[build({{}}, depth)]: 1}}
+}}
+val thrown = fn() {{
+    defer onerror(err) {{ \"caught\" }}
+    throw build(1, depth)
+}}
+val main = fn() {{
+    val deep = build(1, depth)
+    println(len(\"$deep\"))
+    println({{[deep]: \"small\"}}[build(1, depth)])
+    println((indexed({{}}, 0) + {{[deep]: \"indexed\"}})[build(1, depth)])
+    println(badKey())
+    println(thrown())
+{fork}}}
+"
+    );
+    fs::write(&path, source).expect("write deeply nested value source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run deeply nested value source");
+    fs::remove_file(path).expect("remove deeply nested value source");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "status {:?}",
+        output.status
+    );
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "400001\nsmall\nindexed\ntype\ncaught\n400001\n"
+    );
+}
+
+#[test]
 fn rejects_assignment_to_an_immutable_binding_with_a_location() {
     let path = fixture_path("immutable-binding");
     fs::write(&path, "val answer = 1\nanswer = 2\n").expect("write invalid assignment");
