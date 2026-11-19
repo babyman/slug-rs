@@ -26,9 +26,12 @@ pub trait NativeTier: Send + Sync {
 /// A chunk compiled to native code.
 #[doc(hidden)]
 pub trait NativeCode: Send + Sync {
-    /// Runs the chunk from its first instruction, in the active frame, with
-    /// that frame's `locals`.
-    fn run(&self, vm: &mut Vm, locals: Vec<Value>) -> NativeOutcome;
+    /// Runs the chunk from its first instruction, in the active frame, whose
+    /// function is `closure`, with that frame's `locals`.
+    fn run(&self, vm: &mut Vm, closure: Value, locals: Vec<Value>) -> NativeOutcome;
+
+    /// The tier's own type, for native code that calls this code directly.
+    fn as_any(&self) -> &dyn core::any::Any;
 }
 
 /// How native code left its frame.
@@ -37,13 +40,25 @@ pub enum NativeOutcome {
     /// The function returned this value.
     Return(Value),
     /// Native code stopped before instruction `ip`, leaving the frame's
-    /// locals and its own operand-stack values as given; the interpreter
-    /// continues there.
+    /// locals and its own operand-stack values as given, and above it the
+    /// `frames` of the calls native code was making, outermost first; the
+    /// interpreter continues in the innermost.
     Exit {
         ip: usize,
         locals: Vec<Value>,
         stack: Vec<Value>,
+        frames: Vec<NativeFrame>,
     },
+}
+
+/// A call native code was making when it exited, as an interpreter frame:
+/// `closure` stopped before instruction `ip`.
+#[doc(hidden)]
+pub struct NativeFrame {
+    pub closure: Value,
+    pub ip: usize,
+    pub locals: Vec<Value>,
+    pub stack: Vec<Value>,
 }
 
 static TIER: OnceLock<Arc<dyn NativeTier>> = OnceLock::new();
@@ -70,13 +85,47 @@ const SETTLED: u32 = u32::MAX;
 pub(crate) struct NativeSlot {
     state: AtomicU32,
     code: OnceLock<Arc<dyn NativeCode>>,
+    /// Entries into the native code from the interpreter, and how many of
+    /// them it left again early, or declined.
+    entries: AtomicU32,
+    exits: AtomicU32,
 }
+
+/// Entries before a chunk's exits are judged.
+const JUDGED_AFTER: u32 = 64;
+/// Counts are halved here, so recent entries weigh most.
+const DECAY_AT: u32 = 1 << 16;
 
 impl NativeSlot {
     pub(crate) const fn new() -> Self {
         Self {
             state: AtomicU32::new(FRESH),
             code: OnceLock::new(),
+            entries: AtomicU32::new(0),
+            exits: AtomicU32::new(0),
+        }
+    }
+
+    /// Records an entry into the native code from the interpreter, and
+    /// whether it left early or was declined. A chunk that does so on most
+    /// entries, such as a loop around a call native code cannot make,
+    /// costs more entering and leaving than it saves: it settles, and stays
+    /// interpreted from then on.
+    #[inline]
+    pub(crate) fn record_entry(&self, exited: bool) {
+        let mut entries = self.entries.load(Ordering::Relaxed) + 1;
+        let mut exits = self.exits.load(Ordering::Relaxed) + u32::from(exited);
+        let decayed = entries >= DECAY_AT;
+        if decayed {
+            entries /= 2;
+            exits /= 2;
+        }
+        self.entries.store(entries, Ordering::Relaxed);
+        if exited || decayed {
+            self.exits.store(exits, Ordering::Relaxed);
+        }
+        if exited && entries >= JUDGED_AFTER && exits * 2 > entries {
+            self.state.store(SETTLED, Ordering::Relaxed);
         }
     }
 
@@ -139,6 +188,40 @@ impl core::fmt::Debug for NativeSlot {
             .debug_struct("NativeSlot")
             .field("state", &self.state.load(Ordering::Relaxed))
             .field("compiled", &self.code.get().is_some())
+            .field("entries", &self.entries.load(Ordering::Relaxed))
+            .field("exits", &self.exits.load(Ordering::Relaxed))
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compiled() -> NativeSlot {
+        let slot = NativeSlot::new();
+        slot.state.store(COMPILED, Ordering::Relaxed);
+        slot
+    }
+
+    #[test]
+    fn a_chunk_that_mostly_exits_settles() {
+        let slot = compiled();
+        for _ in 0..JUDGED_AFTER - 1 {
+            slot.record_entry(true);
+        }
+        assert_eq!(slot.state.load(Ordering::Relaxed), COMPILED);
+        slot.record_entry(true);
+        assert_eq!(slot.state.load(Ordering::Relaxed), SETTLED);
+    }
+
+    #[test]
+    fn a_chunk_that_mostly_returns_stays_compiled() {
+        let slot = compiled();
+        for entry in 0..DECAY_AT * 3 {
+            slot.record_entry(entry % 3 == 0);
+        }
+        assert_eq!(slot.state.load(Ordering::Relaxed), COMPILED);
+        assert!(slot.entries.load(Ordering::Relaxed) < DECAY_AT);
     }
 }

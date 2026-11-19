@@ -389,8 +389,36 @@ Each is committed on its own and passes the usual checks.
      HTTP server) are 0.99–1.02x, and Cranelift adds about 1 MB of RSS.
      Before tuning the threshold, find out whether the steady ~1% on
      programs that compile nothing comes from the entry check.
-   - *3b:* calls between compiled functions, with the native records and
-     the all-or-nothing exit, for `fib` and `function-call`.
+   - *3b, done (2026-11-19):* calls between compiled functions. A call of
+     a module-level name (`CallGlobalPooled`) goes through `native_call`,
+     which asks the VM for the callee (`Vm::native_callee`: an exact
+     positional closure with native code, counted toward becoming hot) and
+     runs its code directly, with no interpreter frame. The callee's
+     closure is the only record a native activation keeps; the call span
+     comes from the caller's frame when the interpreter rebuilds it. When
+     there is no such callee, or native calls are 256 deep, the caller
+     exits before the call and the interpreter makes it. When a callee
+     exits, its frame is recorded and every caller exits after its call,
+     so the interpreter gets all the frames at once
+     (`NativeOutcome::Exit`'s `frames`) and nothing native stays on the
+     machine stack. Recursion past the depth limit continues in the
+     interpreter, which can enter native code again a frame further on.
+     Generated code reaches its slots from one frame address (Cranelift
+     kept each slot's address in a register, saving ten registers a call),
+     and a branch on a comparison takes the boolean directly. Release
+     build, native off against on: `fib(32)` 474 ms to 108 ms (4.4x), 20M
+     calls of `increment` from a `recur` loop 1,506 ms to 289 ms (5.2x).
+     Every suite and benchmark output is unchanged under `SLUG_NATIVE=all`;
+     52 of the clutch suites' 2,531 hot chunks now compile.
+     `SLUG_NATIVE_DUMP` also prints each compiled chunk's machine code.
+     A chunk whose entries from the interpreter mostly exit early or are
+     declined settles after 64 entries and stays interpreted:
+     `defer-errors`' loop compiles but calls a function that does not, so
+     each iteration entered native code and left at the call, 1.15x slower
+     until it settled. PGO A/B against 3a, 9 rounds: geomean 0.94x tuned,
+     1.01x hold-out; `fib` 0.46x, `function-call` 0.70x, `defer-errors`
+     1.01x, everything else within noise. The Crawl workloads' RSS moves
+     between about 45 and 58 MB from run to run in both builds.
 4. **Leaving native code:** the exit across several native frames, the
    depth limit, and errors.
    Diagnostic snapshots are identical in both modes, and a test recurses

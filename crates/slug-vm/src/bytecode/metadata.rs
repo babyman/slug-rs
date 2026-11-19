@@ -58,6 +58,12 @@ macro_rules! metadata_id {
                 Self(index)
             }
 
+            /// The index `new` was given.
+            #[must_use]
+            pub const fn get(self) -> u32 {
+                self.0
+            }
+
             pub(crate) fn index(self) -> usize {
                 self.0 as usize
             }

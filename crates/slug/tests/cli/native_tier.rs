@@ -236,3 +236,57 @@ fn a_long_compiled_loop_gives_the_interpreters_result() {
          val main = fn() { println(advance(100_000, 0.0, 0.01), count(100_000, 0)) }\n",
     );
 }
+
+#[test]
+fn compiled_calls_give_the_interpreters_results() {
+    let trace = same_with_and_without_native_code(
+        "calls",
+        "val fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }\n\
+         val twice = fn(value) { value * 2 }\n\
+         val both = fn(a, b) { twice(a) + twice(b) + fib(5) }\n\
+         val sum = fn(remaining, total) {\n\
+             if (remaining == 0) { total } else { recur(remaining - 1, total + both(remaining, 1)) }\n\
+         }\n\
+         val main = fn() { println(fib(20), sum(1000, 0), both(\"a\", \"b\")) }\n",
+    );
+    assert!(trace.contains("native: compiled"), "{trace}");
+}
+
+#[test]
+fn a_callee_that_leaves_native_code_takes_its_callers_along() {
+    // `show` calls `println`, which native code does not call: it leaves
+    // before that call, and `run` and `step` leave after theirs, so the
+    // interpreter finishes all three frames.
+    same_with_and_without_native_code(
+        "cascade",
+        "val show = fn(value) { println(value)\n value + 1 }\n\
+         val step = fn(value) { show(value * 2) + 1 }\n\
+         val run = fn(remaining, total) {\n\
+             if (remaining == 0) { total } else { recur(remaining - 1, total + step(remaining)) }\n\
+         }\n\
+         val main = fn() { println(run(5, 0)) }\n",
+    );
+}
+
+#[test]
+fn an_error_in_a_compiled_callee_reports_as_the_interpreter_does() {
+    // The overflow is three native calls deep; the trace names each frame.
+    same_with_and_without_native_code(
+        "callee-error",
+        "val grow = fn(value) { value * 1_000_000_000 }\n\
+         val middle = fn(value) { grow(value) + 1 }\n\
+         val outer = fn(remaining, value) {\n\
+             if (remaining == 0) { value } else { recur(remaining - 1, middle(value)) }\n\
+         }\n\
+         val main = fn() { println(outer(5, 3)) }\n",
+    );
+}
+
+#[test]
+fn recursion_deeper_than_native_calls_go_continues_in_the_interpreter() {
+    same_with_and_without_native_code(
+        "deep",
+        "val sum = fn(n) { if (n == 0) { 0 } else { n + sum(n - 1) } }\n\
+         val main = fn() { println(sum(3000)) }\n",
+    );
+}

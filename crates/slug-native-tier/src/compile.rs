@@ -13,9 +13,14 @@
 //! returns or exits and reset when it recurs. Values move into another
 //! slot by a clone, so each slot owns what it holds.
 //!
-//! Phase 1, step 3a: a function compiles only if it uses constants,
-//! locals, arithmetic, comparisons, branches, a positional `recur`, and
-//! `return` (see [`qualify`]).
+//! A call of a module-level name enters the callee's native code directly
+//! when it is compiled, with no interpreter frame. If the callee leaves to
+//! the interpreter, so does every caller: each leaves its frame as it
+//! stands after the call, and the interpreter continues in the callee's.
+//!
+//! Phase 1, step 3: a function compiles only if it uses constants, locals,
+//! arithmetic, comparisons, branches, calls of module-level names, a
+//! positional `recur`, and `return` (see [`qualify`]).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -32,9 +37,13 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use slug_vm::{BinaryOperator, Constant, Op, Value};
 
 use crate::{
+    ir::Snapshot,
     ir::{Block, Edge, Function, Inst, Terminator, ValueDef, ValueId},
     jit::Jit,
-    runtime::{self, BINARY_OPERATORS, CONTEXT_RET, Compiled, EXITED, ExitTable, RETURNED, layout},
+    runtime::{
+        self, BINARY_OPERATORS, CALL_DECLINED, CALL_RETURNED, CONTEXT_RET, Compiled, EXITED,
+        ExitTable, RETURNED, layout,
+    },
 };
 
 /// Why a function does not compile, or `Ok` if it can.
@@ -52,7 +61,7 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 Op::Constant(index) => {
                     number_constant(function, *index)?;
                 }
-                Op::Nil | Op::True | Op::False => {}
+                Op::Nil | Op::True | Op::False | Op::CallGlobalPooled { .. } => {}
                 Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. } => {
                     number_constant(function, *constant)?;
                 }
@@ -133,10 +142,12 @@ fn compares(operator: BinaryOperator) -> bool {
 
 static COMPILED: AtomicU32 = AtomicU32::new(0);
 
-/// Compiles a function that [`qualify`] accepts.
-pub(crate) fn compile(jit: &Jit, function: &Function) -> Result<Compiled, String> {
+/// Compiles a function that [`qualify`] accepts, printing its machine
+/// code on standard error if `dump`.
+pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Compiled, String> {
     qualify(function)?;
     let mut context = Context::new();
+    context.set_disasm(dump);
     let pointer = jit.isa().pointer_type();
     let call_conv = jit.isa().default_call_conv();
     let mut signature = Signature::new(call_conv);
@@ -155,6 +166,9 @@ pub(crate) fn compile(jit: &Jit, function: &Function) -> Result<Compiled, String
         COMPILED.fetch_add(1, Ordering::Relaxed)
     );
     let entry = jit.define(&name, &mut context)?;
+    if let Some(code) = context.compiled_code().and_then(|code| code.vcode.as_ref()) {
+        eprintln!("{name}:\n{code}");
+    }
     Ok(Compiled::new(entry, function.arity, exits))
 }
 
@@ -165,6 +179,7 @@ struct Runtime {
     clone: cranelift_codegen::ir::SigRef,
     drop: cranelift_codegen::ir::SigRef,
     exit: cranelift_codegen::ir::SigRef,
+    call: cranelift_codegen::ir::SigRef,
 }
 
 struct Lowering<'a> {
@@ -173,12 +188,17 @@ struct Lowering<'a> {
     pointer: types::Type,
     runtime: Runtime,
     /// The native frame: one slot per IR value, then scratch slots for a
-    /// `recur`'s arguments, then one for a constant operand.
+    /// `recur`'s arguments, one for a constant operand, and the arguments
+    /// of a call.
     frame: StackSlot,
     blocks: Vec<CodeBlock>,
     /// Ends the function: drops every owning slot and returns its status.
     cleanup: CodeBlock,
     context: CodeValue,
+    /// The native frame's address.
+    base: CodeValue,
+    /// Each comparison result's value as an `i8`, where it was computed.
+    booleans: Vec<Option<CodeValue>>,
     owning: Vec<bool>,
     exits: Vec<ExitTable>,
     /// Blocks made while another was being filled, filled at the end.
@@ -219,8 +239,22 @@ impl<'a> Lowering<'a> {
             clone: signature(&[pointer, pointer], &[]),
             drop: signature(&[pointer], &[]),
             exit: signature(&[pointer, types::I32, pointer], &[]),
+            call: signature(
+                &[pointer, types::I32, types::I32, pointer, pointer],
+                &[types::I32],
+            ),
         };
-        let slots = function.values.len() + function.arity + 1;
+        let call_arguments = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.insts)
+            .filter_map(|inst| match inst.op {
+                Op::CallGlobalPooled { count, .. } => Some(count),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let slots = function.values.len() + function.arity + 1 + call_arguments;
         let frame = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             u32::try_from(slots * layout::SIZE as usize).expect("frame fits"),
@@ -243,6 +277,8 @@ impl<'a> Lowering<'a> {
             blocks,
             cleanup,
             context: CodeValue::from_u32(0),
+            base: CodeValue::from_u32(0),
+            booleans: vec![None; function.values.len()],
             owning,
             exits: Vec::new(),
             pending: Vec::new(),
@@ -255,6 +291,7 @@ impl<'a> Lowering<'a> {
         self.builder.switch_to_block(entry);
         self.context = self.builder.block_params(entry)[0];
         let arguments = self.builder.block_params(entry)[1];
+        self.base = self.builder.ins().stack_addr(self.pointer, self.frame, 0);
         let function = self.function;
         // Owning slots and unset locals start `nil`.
         for (index, def) in function.values.iter().enumerate() {
@@ -266,7 +303,7 @@ impl<'a> Lowering<'a> {
         // The arguments move into the entry block's parameter slots.
         for (index, param) in function.blocks[0].params.iter().enumerate() {
             let offset = i32::try_from(index).expect("arity fits") * layout::SIZE;
-            let source = self.builder.ins().iadd_imm(arguments, i64::from(offset));
+            let source = Place::At(self.builder.ins().iadd_imm(arguments, i64::from(offset)));
             let target = self.slot(param.index());
             self.copy_words(source, target);
         }
@@ -291,6 +328,7 @@ impl<'a> Lowering<'a> {
                     self.builder.switch_to_block(block);
                     let exit = self.builder.ins().iconst(types::I32, i64::from(id));
                     let base = self.slot(0);
+                    let base = self.address(base);
                     self.call(
                         self.runtime.exit,
                         runtime::native_exit as *const () as usize,
@@ -332,6 +370,7 @@ impl<'a> Lowering<'a> {
             }
             // The `recur` itself is lowered with its block's terminator.
             Op::RecurPositional(_) => {}
+            Op::CallGlobalPooled { name, count } => self.lower_call(inst, name.get(), *count)?,
             op => {
                 let operator = binary_operator(op)
                     .ok_or_else(|| format!("instruction {} is not compiled yet", inst.ip))?;
@@ -366,6 +405,12 @@ impl<'a> Lowering<'a> {
         let left_tag = self.load_tag(left_slot);
         let done = self.builder.create_block();
         let slow = self.builder.create_block();
+        // A comparison also hands its result to `done` as an `i8`, so a
+        // branch on it need not read it back from the slot.
+        let boolean = compares(operator);
+        if boolean {
+            self.builder.append_block_param(done, types::I8);
+        }
 
         // A constant right operand of the other type never takes a path.
         let (int_constant, float_constant) = match right {
@@ -462,6 +507,7 @@ impl<'a> Lowering<'a> {
                     self.builder.ins().brif(overflow, slow, &[], store, &[]);
                     self.builder.switch_to_block(store);
                     self.store_int(result, sum);
+                    self.builder.ins().jump(done, &[]);
                 }
                 B::BitAnd | B::BitOr | B::BitXor => {
                     let value = match operator {
@@ -470,6 +516,7 @@ impl<'a> Lowering<'a> {
                         _ => self.builder.ins().bxor(a, b),
                     };
                     self.store_int(result, value);
+                    self.builder.ins().jump(done, &[]);
                 }
                 _ => {
                     let condition = match operator {
@@ -479,9 +526,9 @@ impl<'a> Lowering<'a> {
                     };
                     let value = self.builder.ins().icmp(condition, a, b);
                     self.store_bool(result, value);
+                    self.builder.ins().jump(done, &[value]);
                 }
             }
-            self.builder.ins().jump(done, &[]);
         } else {
             self.builder.ins().jump(after_int, &[]);
         }
@@ -516,6 +563,7 @@ impl<'a> Lowering<'a> {
                     self.builder.ins().brif(finite, store, &[], slow, &[]);
                     self.builder.switch_to_block(store);
                     self.store_float(result, value);
+                    self.builder.ins().jump(done, &[]);
                 }
                 _ => {
                     let condition = match operator {
@@ -525,9 +573,9 @@ impl<'a> Lowering<'a> {
                     };
                     let value = self.builder.ins().fcmp(condition, a, b);
                     self.store_bool(result, value);
+                    self.builder.ins().jump(done, &[value]);
                 }
             }
-            self.builder.ins().jump(done, &[]);
         } else {
             self.builder.ins().jump(slow, &[]);
         }
@@ -550,6 +598,9 @@ impl<'a> Lowering<'a> {
             .builder
             .ins()
             .iconst(types::I32, i64::try_from(index).expect("index fits"));
+        let left_slot = self.address(left_slot);
+        let right_address = self.address(right_address);
+        let result_address = self.address(result);
         let status = self.call(
             self.runtime.binary,
             runtime::native_binary as *const () as usize,
@@ -558,13 +609,73 @@ impl<'a> Lowering<'a> {
                 operator_code,
                 left_slot,
                 right_address,
-                result,
+                result_address,
             ],
         )[0];
         let exit = self.exit_block(inst);
-        self.builder.ins().brif(status, exit, &[], done, &[]);
+        let result = self.slot(inst.results[0].index());
+        let done_arguments = if boolean {
+            // Read only when the operation succeeded.
+            vec![self.load(types::I8, result, layout::PAYLOAD)]
+        } else {
+            Vec::new()
+        };
+        self.builder
+            .ins()
+            .brif(status, exit, &[], done, &done_arguments);
 
         self.builder.switch_to_block(done);
+        if boolean {
+            self.booleans[inst.results[0].index()] = Some(self.builder.block_params(done)[0]);
+        }
+    }
+
+    /// A call of module-level name `name`: the callee's native code with
+    /// clones of the arguments, or an exit before the call when there is
+    /// none, or after it when the callee exited.
+    fn lower_call(&mut self, inst: &Inst, name: u32, count: usize) -> Result<(), String> {
+        if inst.args.len() != count || inst.results.len() != 1 {
+            return Err(format!("instruction {} is a malformed call", inst.ip));
+        }
+        let base = self.function.values.len() + self.function.arity + 1;
+        for (index, argument) in inst.args.iter().enumerate() {
+            let source = self.slot(argument.index());
+            let target = self.slot(base + index);
+            self.clone_into(source, target);
+        }
+        let arguments = self.slot(base);
+        let arguments = self.address(arguments);
+        let name = self.builder.ins().iconst(types::I32, i64::from(name));
+        let count = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(count).expect("count fits"));
+        let result = self.slot(inst.results[0].index());
+        let result = self.address(result);
+        let status = self.call(
+            self.runtime.call,
+            runtime::native_call as *const () as usize,
+            &[self.context, name, count, arguments, result],
+        )[0];
+        let before = self.exit_block(inst);
+        let after = self.exit_after_call(inst);
+        let done = self.builder.create_block();
+        let not_returned = self.builder.create_block();
+        let returned = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, status, i64::from(CALL_RETURNED));
+        self.builder
+            .ins()
+            .brif(returned, done, &[], not_returned, &[]);
+        self.builder.switch_to_block(not_returned);
+        let declined = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, status, i64::from(CALL_DECLINED));
+        self.builder.ins().brif(declined, before, &[], after, &[]);
+        self.builder.switch_to_block(done);
+        Ok(())
     }
 
     fn lower_terminator(&mut self, block: &Block) -> Result<(), String> {
@@ -584,10 +695,11 @@ impl<'a> Lowering<'a> {
             }
             Terminator::Return(value) => {
                 let source = self.slot(value.index());
-                let target = self
-                    .builder
-                    .ins()
-                    .iadd_imm(self.context, i64::from(CONTEXT_RET));
+                let target = Place::At(
+                    self.builder
+                        .ins()
+                        .iadd_imm(self.context, i64::from(CONTEXT_RET)),
+                );
                 self.copy_words(source, target);
                 if self.owning[value.index()] {
                     // Moved out: the cleanup must not drop it.
@@ -662,13 +774,26 @@ impl<'a> Lowering<'a> {
 
     /// A block that leaves to the interpreter before `inst`.
     fn exit_block(&mut self, inst: &Inst) -> CodeBlock {
+        self.exit_with(inst.ip, &inst.snapshot, 0)
+    }
+
+    /// A block that leaves to the interpreter during call `inst`, whose
+    /// callee left too: past the call, its arguments gone, and the
+    /// callee's frame above.
+    fn exit_after_call(&mut self, inst: &Inst) -> CodeBlock {
+        self.exit_with(inst.ip + 1, &inst.snapshot, inst.args.len())
+    }
+
+    /// A block that leaves to the interpreter at `ip` with the frame from
+    /// `snapshot`, less the top `popped` stack values.
+    fn exit_with(&mut self, ip: usize, snapshot: &Snapshot, popped: usize) -> CodeBlock {
         let id = u32::try_from(self.exits.len()).expect("exit count fits");
         let function = self.function;
         let own = |value: &ValueId| !matches!(function.def(*value), ValueDef::Below(_));
+        let stack = &snapshot.stack[..snapshot.stack.len() - popped];
         self.exits.push(ExitTable {
-            ip: inst.ip,
-            locals: inst
-                .snapshot
+            ip,
+            locals: snapshot
                 .locals
                 .iter()
                 .map(|local| match local {
@@ -676,9 +801,7 @@ impl<'a> Lowering<'a> {
                     crate::ir::Local::Cell => unreachable!("qualified functions have no cells"),
                 })
                 .collect(),
-            stack: inst
-                .snapshot
-                .stack
+            stack: stack
                 .iter()
                 .filter(|value| own(value))
                 .map(|value| value.0)
@@ -691,6 +814,9 @@ impl<'a> Lowering<'a> {
 
     /// Whether `value` is truthy: anything but `nil` and `false`.
     fn truthy(&mut self, value: ValueId) -> CodeValue {
+        if let Some(boolean) = self.booleans[value.index()] {
+            return boolean;
+        }
         let slot = self.slot(value.index());
         let tag = self.load_tag(slot);
         let not_nil = self
@@ -698,10 +824,7 @@ impl<'a> Lowering<'a> {
             .ins()
             .icmp_imm(IntCC::NotEqual, tag, layout::NIL);
         let is_bool = self.builder.ins().icmp_imm(IntCC::Equal, tag, layout::BOOL);
-        let byte =
-            self.builder
-                .ins()
-                .uload8(types::I32, MemFlags::trusted(), slot, layout::PAYLOAD);
+        let byte = self.load(types::I8, slot, layout::PAYLOAD);
         let bool_true = self.builder.ins().icmp_imm(IntCC::NotEqual, byte, 0);
         self.builder.ins().select(is_bool, bool_true, not_nil)
     }
@@ -723,6 +846,7 @@ impl<'a> Lowering<'a> {
             let next = self.builder.create_block();
             self.builder.ins().brif(counted, release, &[], next, &[]);
             self.builder.switch_to_block(release);
+            let slot = self.address(slot);
             self.call(
                 self.runtime.drop,
                 runtime::native_drop as *const () as usize,
@@ -735,7 +859,7 @@ impl<'a> Lowering<'a> {
 
     /// Copies `source` into the free slot `target`, counting a reference
     /// when the value has one.
-    fn clone_into(&mut self, source: CodeValue, target: CodeValue) {
+    fn clone_into(&mut self, source: Place, target: Place) {
         let tag = self.load_tag(source);
         let counted = self.builder.ins().icmp_imm(
             IntCC::SignedGreaterThanOrEqual,
@@ -749,10 +873,11 @@ impl<'a> Lowering<'a> {
             .ins()
             .brif(counted, counting, &[], copying, &[]);
         self.builder.switch_to_block(counting);
+        let (source_address, target_address) = (self.address(source), self.address(target));
         self.call(
             self.runtime.clone,
             runtime::native_clone as *const () as usize,
-            &[source, target],
+            &[source_address, target_address],
         );
         self.builder.ins().jump(next, &[]);
         self.builder.switch_to_block(copying);
@@ -778,24 +903,53 @@ impl<'a> Lowering<'a> {
         self.builder.inst_results(call).to_vec()
     }
 
-    /// The address of slot `index` of the native frame.
-    fn slot(&mut self, index: usize) -> CodeValue {
-        let offset = i32::try_from(index).expect("frame fits") * layout::SIZE;
-        self.builder
-            .ins()
-            .stack_addr(self.pointer, self.frame, offset)
+    /// Slot `index` of the native frame.
+    #[allow(clippy::unused_self)] // Read beside the other places' helpers.
+    fn slot(&self, index: usize) -> Place {
+        Place::Slot(index)
     }
 
-    fn load_tag(&mut self, slot: CodeValue) -> CodeValue {
-        self.builder
-            .ins()
-            .load(types::I64, MemFlags::trusted(), slot, 0)
+    /// The address of `place`, for a Rust function.
+    fn address(&mut self, place: Place) -> CodeValue {
+        match place {
+            Place::Slot(index) => self
+                .builder
+                .ins()
+                .iadd_imm(self.base, i64::from(offset(index, 0))),
+            Place::At(address) => address,
+        }
     }
 
-    fn load_payload(&mut self, slot: CodeValue, kind: types::Type) -> CodeValue {
+    /// The address and offset of byte `within` of `place`. Slots are
+    /// reached from the frame's one base address: Cranelift would keep each
+    /// slot's own address live in a register.
+    fn locate(&self, place: Place, within: i32) -> (CodeValue, i32) {
+        match place {
+            Place::Slot(index) => (self.base, offset(index, within)),
+            Place::At(address) => (address, within),
+        }
+    }
+
+    fn load(&mut self, kind: types::Type, place: Place, within: i32) -> CodeValue {
+        let (address, offset) = self.locate(place, within);
         self.builder
             .ins()
-            .load(kind, MemFlags::trusted(), slot, layout::PAYLOAD)
+            .load(kind, MemFlags::trusted(), address, offset)
+    }
+
+    fn store(&mut self, value: CodeValue, place: Place, within: i32) {
+        let (address, offset) = self.locate(place, within);
+        self.builder
+            .ins()
+            .store(MemFlags::trusted(), value, address, offset);
+    }
+
+    fn load_tag(&mut self, place: Place) -> CodeValue {
+        self.load(types::I64, place, 0)
+    }
+
+    fn load_payload(&mut self, place: Place, kind: types::Type) -> CodeValue {
+        self.load(kind, place, layout::PAYLOAD)
     }
 
     fn operand_payload(&mut self, operand: &Operand, kind: types::Type) -> CodeValue {
@@ -810,62 +964,64 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    fn store_tag(&mut self, slot: CodeValue, tag: i64) {
+    fn store_tag(&mut self, place: Place, tag: i64) {
         let tag = self.builder.ins().iconst(types::I64, tag);
-        self.builder.ins().store(MemFlags::trusted(), tag, slot, 0);
+        self.store(tag, place, 0);
     }
 
-    fn store_int(&mut self, slot: CodeValue, value: CodeValue) {
-        self.store_tag(slot, layout::INT);
-        self.builder
-            .ins()
-            .store(MemFlags::trusted(), value, slot, layout::PAYLOAD);
+    fn store_int(&mut self, place: Place, value: CodeValue) {
+        self.store_tag(place, layout::INT);
+        self.store(value, place, layout::PAYLOAD);
     }
 
-    fn store_float(&mut self, slot: CodeValue, value: CodeValue) {
-        self.store_tag(slot, layout::FLOAT);
-        self.builder
-            .ins()
-            .store(MemFlags::trusted(), value, slot, layout::PAYLOAD);
+    fn store_float(&mut self, place: Place, value: CodeValue) {
+        self.store_tag(place, layout::FLOAT);
+        self.store(value, place, layout::PAYLOAD);
     }
 
-    fn store_bool(&mut self, slot: CodeValue, value: CodeValue) {
-        self.store_tag(slot, layout::BOOL);
+    fn store_bool(&mut self, place: Place, value: CodeValue) {
+        self.store_tag(place, layout::BOOL);
         // An `i8` store writes the one byte.
-        self.builder
-            .ins()
-            .store(MemFlags::trusted(), value, slot, layout::PAYLOAD);
+        self.store(value, place, layout::PAYLOAD);
     }
 
-    fn store_constant(&mut self, slot: CodeValue, value: &Value) {
+    fn store_constant(&mut self, place: Place, value: &Value) {
         match value {
             Value::Bool(value) => {
                 let value = self.builder.ins().iconst(types::I8, i64::from(*value));
-                self.store_bool(slot, value);
+                self.store_bool(place, value);
             }
             Value::Int(value) => {
                 let value = self.builder.ins().iconst(types::I64, *value);
-                self.store_int(slot, value);
+                self.store_int(place, value);
             }
             Value::Float(value) => {
                 let value = self.builder.ins().f64const(*value);
-                self.store_float(slot, value);
+                self.store_float(place, value);
             }
-            _ => self.store_tag(slot, layout::NIL),
+            _ => self.store_tag(place, layout::NIL),
         }
     }
 
-    fn copy_words(&mut self, source: CodeValue, target: CodeValue) {
-        for offset in [0, 8, 16] {
-            let word = self
-                .builder
-                .ins()
-                .load(types::I64, MemFlags::trusted(), source, offset);
-            self.builder
-                .ins()
-                .store(MemFlags::trusted(), word, target, offset);
+    fn copy_words(&mut self, source: Place, target: Place) {
+        for within in [0, 8, 16] {
+            let word = self.load(types::I64, source, within);
+            self.store(word, target, within);
         }
     }
+}
+
+/// A `Value` in memory: a slot of the native frame, which generated code
+/// addresses directly, or one at an address.
+#[derive(Clone, Copy)]
+enum Place {
+    Slot(usize),
+    At(CodeValue),
+}
+
+/// The offset of byte `within` of slot `index` of the native frame.
+fn offset(index: usize, within: i32) -> i32 {
+    i32::try_from(index).expect("frame fits") * layout::SIZE + within
 }
 
 /// An operation's right operand.
@@ -874,8 +1030,9 @@ enum Operand {
     Constant(Value),
 }
 
-/// Which values' slots may own something: parameters, and the results of
-/// arithmetic, which a slow path may make a string or a list.
+/// Which values' slots may own something: parameters, the results of
+/// arithmetic, which a slow path may make a string or a list, and the
+/// results of calls.
 fn owning_values(function: &Function) -> Vec<bool> {
     let mut owning = vec![false; function.values.len()];
     for block in &function.blocks {
@@ -883,9 +1040,11 @@ fn owning_values(function: &Function) -> Vec<bool> {
             owning[param.index()] = true;
         }
         for inst in &block.insts {
-            if let Some(operator) = binary_operator(&inst.op)
-                && !compares(operator)
-            {
+            let owns = match binary_operator(&inst.op) {
+                Some(operator) => !compares(operator),
+                None => matches!(inst.op, Op::CallGlobalPooled { .. }),
+            };
+            if owns {
                 for result in &inst.results {
                     owning[result.index()] = true;
                 }

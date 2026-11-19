@@ -2335,6 +2335,10 @@ impl Vm {
 
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
         let mut program: Option<crate::sync::Code<Program>> = None;
+        // Set after native code exits: the frame it left may be at its first
+        // instruction, which must now be interpreted.
+        #[cfg(feature = "native-hooks")]
+        let mut interpret_entry = false;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
@@ -2372,7 +2376,7 @@ impl Vm {
             // it for the native tier, and run its native code if it has
             // some. `recur` counts its own entries.
             #[cfg(feature = "native-hooks")]
-            if ip == 0 {
+            if ip == 0 && !core::mem::take(&mut interpret_entry) {
                 let index = self
                     .frames
                     .last()
@@ -2380,10 +2384,17 @@ impl Vm {
                     .closure
                     .chunk;
                 if let Some(native) = chunk.native.tick(program, index) {
-                    match self.enter_native(native)? {
+                    let entry = self.enter_native(native)?;
+                    chunk
+                        .native
+                        .record_entry(!matches!(entry, NativeEntry::Returned(_)));
+                    match entry {
                         NativeEntry::Declined => {}
                         NativeEntry::Exited => {
-                            ip = self.frames.last().expect("active frame was checked").ip;
+                            // The active frame may be a new one, of another
+                            // chunk: look it up again.
+                            interpret_entry = true;
+                            continue;
                         }
                         NativeEntry::Returned(value) => {
                             // As `Return` does.
@@ -2466,9 +2477,15 @@ impl Vm {
                 }
             }
         }
-        match native.run(self, locals) {
+        let closure = Value::Closure(frame.closure.clone());
+        match native.run(self, closure, locals) {
             crate::tiering::NativeOutcome::Return(value) => Ok(NativeEntry::Returned(value)),
-            crate::tiering::NativeOutcome::Exit { ip, locals, stack } => {
+            crate::tiering::NativeOutcome::Exit {
+                ip,
+                locals,
+                stack,
+                frames,
+            } => {
                 let frame = self.frames.last_mut().expect("active frame was checked");
                 if locals.len() != frame.locals.len() {
                     return Err(self.error(
@@ -2482,9 +2499,107 @@ impl Vm {
                 }
                 frame.ip = ip;
                 self.stack.extend(stack);
+                for frame in frames {
+                    self.push_native_frame(frame)?;
+                }
                 Ok(NativeEntry::Exited)
             }
         }
+    }
+
+    /// Pushes the frame of a call native code was making when it exited,
+    /// as an exact positional call would have entered it.
+    #[cfg(feature = "native-hooks")]
+    fn push_native_frame(&mut self, frame: crate::tiering::NativeFrame) -> VmResult<()> {
+        let crate::tiering::NativeFrame {
+            closure,
+            ip,
+            locals,
+            stack,
+        } = frame;
+        let Value::Closure(closure) = closure else {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "native code left a frame that is not a closure's".into(),
+                None,
+            ));
+        };
+        let local_count = closure
+            .program
+            .chunk(closure.chunk)
+            .map(|chunk| chunk.locals);
+        if local_count != Some(locals.len()) {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "native code left a frame with the wrong number of locals".into(),
+                None,
+            ));
+        }
+        let locals = locals.into_iter().map(LocalSlot::Direct).collect();
+        self.push_frame(Frame {
+            closure,
+            call_span: self.frame_call_span(),
+            ip,
+            stack_base: self.stack.len(),
+            locals,
+            provided: ProvidedArguments::All,
+            scope_depth: 1,
+            scopes: Vec::new(),
+            cleanup_action: false,
+            cleanup_recovers: false,
+            cleanup_owner_depth: None,
+        });
+        self.stack.extend(stack);
+        Ok(())
+    }
+
+    /// The function native code in `caller` calls as module-level name
+    /// `name` with `count` positional arguments, and its native code, when
+    /// it is a closure an exact positional call enters and it has some.
+    /// Counts the call toward the callee becoming hot. `None` for anything
+    /// else: native code then leaves to the interpreter, which makes the
+    /// call.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_callee(
+        &self,
+        caller: &Value,
+        name: GlobalNameId,
+        count: usize,
+    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
+        let Value::Closure(caller) = caller else {
+            return None;
+        };
+        let slot = caller.global_slots.as_ref()?.get(name.index())?.get();
+        if slot == crate::value::UNRESOLVED_GLOBAL {
+            return None;
+        }
+        let target = match caller.globals.borrow().value(slot) {
+            Value::Binding { cell, .. } => {
+                // A task with its own view of the variables reads them
+                // through it; the interpreter does that.
+                #[cfg(feature = "concurrency")]
+                if self.view.is_some() {
+                    return None;
+                }
+                cell.borrow().clone()
+            }
+            value => value.clone(),
+        };
+        let Value::Closure(closure) = target else {
+            return None;
+        };
+        #[cfg(feature = "concurrency")]
+        if closure.domain != self.domain && !closure.captures.is_empty() {
+            return None;
+        }
+        let chunk = closure.program.chunk(closure.chunk)?;
+        if chunk.arity != count || !chunk.binds_full_positional_calls || chunk.locals < count {
+            return None;
+        }
+        let code = chunk.native.tick(&closure.program, closure.chunk)?.clone();
+        Some((Value::Closure(closure), code))
     }
 
     /// Whether this thread needs attention: native code leaves to the

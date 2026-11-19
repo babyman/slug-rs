@@ -26,7 +26,8 @@ pub struct Config {
     pub threshold: u32,
     /// Report each hot chunk, and any it cannot lift, on standard error.
     pub trace: bool,
-    /// Print each hot chunk's IR on standard error.
+    /// Print each hot chunk's IR, and the machine code of each it
+    /// compiles, on standard error.
     pub dump: bool,
 }
 
@@ -130,7 +131,7 @@ impl NativeTier for Tier {
         // A bug in code generation leaves the chunk interpreted rather than
         // ending the program.
         let compiled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compile::compile(jit, &function)
+            compile::compile(jit, &function, self.config.dump)
         }))
         .unwrap_or_else(|_| Err("code generation panicked".into()));
         match compiled {
