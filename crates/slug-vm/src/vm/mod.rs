@@ -3835,8 +3835,7 @@ impl Vm {
             }
             let value = hint
                 .map_or_else(|| map.get(key), |hint| map.get_hinted(key, hint))
-                .cloned()
-                .unwrap_or(Value::Nil);
+                .map_or(Value::Nil, Value::read_out);
             self.stack.push(value);
             return Ok(());
         }

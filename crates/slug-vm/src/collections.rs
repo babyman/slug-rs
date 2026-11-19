@@ -374,8 +374,36 @@ impl From<Cow<'_, str>> for Str {
 
 impl From<char> for Str {
     fn from(value: char) -> Self {
+        #[cfg(all(feature = "threads", not(target_os = "none")))]
+        if let Ok(byte) = u8::try_from(value)
+            && byte.is_ascii()
+        {
+            return ascii_char(byte);
+        }
         Self(crate::sync::Code::new(StrData::new(value.into())))
     }
+}
+
+/// The one-character string for ASCII `byte`, from a table of immortal
+/// strings shared by every thread: indexing a string, `row[x]`, is then a
+/// table read instead of two allocations and two frees. A shared string is
+/// never changed in place, so appending to one copies it as appending to
+/// any shared string does.
+#[cfg(all(feature = "threads", not(target_os = "none")))]
+fn ascii_char(byte: u8) -> Str {
+    static TABLE: std::sync::OnceLock<Box<[Str]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        (0..128u8)
+            .map(|byte| {
+                let text = Str(crate::sync::Code::new(StrData::new(
+                    char::from(byte).into(),
+                )));
+                crate::sync::immortalize(&text.0);
+                text
+            })
+            .collect()
+    })[usize::from(byte)]
+    .clone()
 }
 
 impl PartialEq<str> for Str {
@@ -1109,6 +1137,26 @@ impl Map {
 
     fn into_storage(self) -> MapStorage {
         crate::sync::Code::try_unwrap(self.0).unwrap_or_else(|storage| (*storage).clone())
+    }
+}
+
+#[cfg(all(test, feature = "threads", not(target_os = "none")))]
+mod ascii_char_tests {
+    use super::Str;
+
+    #[test]
+    fn ascii_characters_share_one_string_each_and_append_by_copying() {
+        let first = Str::from('x');
+        let second = Str::from('x');
+        assert!(crate::sync::Code::ptr_eq(&first.0, &second.0));
+        assert!(!crate::sync::Code::ptr_eq(
+            &Str::from('é').0,
+            &Str::from('é').0
+        ));
+        let appended = first.append("y");
+        assert_eq!(appended.as_ref(), "xy");
+        assert_eq!(second.as_ref(), "x");
+        assert_eq!(Str::from('x').as_ref(), "x");
     }
 }
 

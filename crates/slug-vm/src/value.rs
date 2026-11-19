@@ -1859,6 +1859,24 @@ impl Value {
         }
     }
 
+    /// A copy of this value as read out of a map. A module's export map
+    /// holds its names as live bindings; an initialized `val` can never
+    /// change, so it reads as its value, and the reader does not resolve
+    /// it again at every use. A `var`, a task variable, and a `val` that
+    /// has not run yet (an import cycle) stay bindings.
+    #[inline]
+    pub(crate) fn read_out(&self) -> Value {
+        if let Self::Binding { name, cell } = self
+            && name.kind() == crate::variables::BindingKind::Val
+        {
+            let value = cell.borrow();
+            if !matches!(*value, Self::Uninitialized) {
+                return value.clone();
+            }
+        }
+        self.clone()
+    }
+
     pub(crate) fn replace_binding(&self, value: Value) -> bool {
         let Self::Binding { cell, .. } = self else {
             return false;
@@ -2374,6 +2392,29 @@ fn int_equals_float(integer: i64, float: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn binding(kind: crate::variables::BindingKind, value: Value) -> Value {
+        Value::Binding {
+            name: crate::sync::Code::new(crate::variables::BindingName::new("x".into(), kind)),
+            cell: crate::sync::Code::new(crate::sync::SoloCell::new(value)),
+        }
+    }
+
+    #[test]
+    fn a_map_read_gives_an_initialized_val_as_its_value_and_keeps_other_bindings() {
+        use crate::variables::BindingKind;
+        assert!(matches!(
+            binding(BindingKind::Val, Value::Int(3)).read_out(),
+            Value::Int(3)
+        ));
+        for kept in [
+            binding(BindingKind::Val, Value::Uninitialized),
+            binding(BindingKind::Var, Value::Int(3)),
+            binding(BindingKind::TaskVar, Value::Int(3)),
+        ] {
+            assert!(matches!(kept.read_out(), Value::Binding { .. }));
+        }
+    }
 
     #[test]
     fn debug_writes_the_same_form_past_its_recursion_depth() {

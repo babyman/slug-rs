@@ -3142,3 +3142,29 @@ single removable piece is single-digit percent of a real program.
 Interpreter work from here buys percents, as the 2026-11-14 decision
 expected; a 2x step needs code that keeps values in machine registers
 between operations, which only a native-code tier provides.
+
+### Two runtime fixes from the native-tier gate (2026-11-18)
+
+Gate 0 of [native-tier.md](native-tier.md) profiled Crawl's sight cast and
+found two costs that both tiers pay, both cheap to remove:
+
+- **One-character strings.** `row[x]` built a new string, two allocations
+  and two frees, for every character read. With `threads`, an ASCII
+  character now comes from a table of 128 immortal strings shared by every
+  thread. Appending to one copies it, as appending to any shared string
+  does. Builds without `threads` allocate as before.
+- **Module `val`s read through a map.** A module's export map holds its
+  names as live bindings, so `level.WIDTH` pushed a `Value::Binding`. Every
+  use then resolved it again on the slow pop path, and arithmetic on it
+  missed the in-place numeric path. A map read now returns an initialized
+  `val` as its value (`Value::read_out`). That value can never change, so
+  this is the same value the later resolution would give. A `var`, a task
+  variable, and a `val` that has not run yet (an import cycle) stay
+  bindings. A module-level `val w = level.WIDTH` now holds the value
+  rather than an alias of the binding.
+
+PGO A/B against `de4631a`, 9 interleaved rounds: tuned 0.99x, hold-outs
+1.00x. The gain is on the Crawl workloads: `crawl-ticks` 0.94x,
+`crawl-crowd` 0.97x (spread 1%), `crawl-game` 0.98x (spread 2%),
+`crawl-pages` 0.97x (hold-out, inside its spread). Everything else is
+within its spread.
