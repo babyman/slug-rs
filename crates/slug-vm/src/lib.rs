@@ -34,7 +34,7 @@ pub use bytecode::{VerifiedChunk, VerifiedInstruction};
 pub use sync::{Code, SoloCell};
 #[cfg(feature = "native-hooks")]
 #[doc(hidden)]
-pub use tiering::{NativeTier, install_native_tier};
+pub use tiering::{NativeCode, NativeOutcome, NativeTier, install_native_tier};
 mod value;
 mod variables;
 mod vm;

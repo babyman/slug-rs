@@ -85,6 +85,8 @@ impl<'a> Lifter<'a> {
                 arity: chunk.arity,
                 locals: chunk.locals,
                 cells,
+                exact_positional: chunk.exact_positional,
+                constants: chunk.constants.clone(),
                 values: Vec::new(),
                 blocks: Vec::new(),
             },

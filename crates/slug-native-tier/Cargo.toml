@@ -11,6 +11,11 @@ repository = "https://github.com/babyman/slug-rs"
 workspace = true
 
 [dependencies]
+cranelift-codegen = "0.113.1"
+cranelift-frontend = "0.113.1"
+cranelift-jit = "0.113.1"
+cranelift-module = "0.113.1"
+cranelift-native = "0.113.1"
 slug-vm = { path = "../slug-vm", default-features = false, features = ["native-hooks"] }
 
 [dev-dependencies]

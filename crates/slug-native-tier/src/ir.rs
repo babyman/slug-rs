@@ -15,7 +15,7 @@
 
 use core::fmt;
 
-use slug_vm::Op;
+use slug_vm::{Constant, Op};
 
 /// A value, defined once.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -183,6 +183,10 @@ pub struct Function {
     pub locals: usize,
     /// Which locals are captured, and so live in the frame as cells.
     pub cells: Vec<bool>,
+    /// Whether a call or `recur` with exactly `arity` positional arguments
+    /// binds them straight into the parameters.
+    pub exact_positional: bool,
+    pub constants: Vec<Constant>,
     pub values: Vec<ValueDef>,
     /// The entry block is first; its parameters are the arguments.
     pub blocks: Vec<Block>,

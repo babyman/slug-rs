@@ -359,8 +359,40 @@ Each is committed on its own and passes the usual checks.
    which passed it hours earlier, so it is flaky under this machine's state,
    not caused by the lift.*
 3. **Lowering the subset,** until `fib`, `function-call`, n-body, and
-   spectral-norm run natively.
-4. **Leaving native code:** the exit, the depth limit, and errors.
+   spectral-norm run natively. Split in two, because generated code needs a way
+   out as soon as an operand leaves its fast path, so a single-frame exit
+   moved here from step 4:
+   - *3a, done (2026-11-19):* single-frame native code. A chunk compiles
+     when it uses only number, boolean, and `nil` constants, locals,
+     arithmetic and comparisons, branches, a positional `recur`, and
+     `return`. Integer and float operands of one type take inline fast
+     paths matching the VM's `numeric_binary`; any other operands go
+     through the interpreter's own operation (`Vm::native_binary`). An
+     overflow, a non-finite result, a failed operation, or a thread that
+     needs attention at a `recur` leaves to the interpreter before the
+     instruction, with the frame from its snapshot, so the interpreter
+     raises the error with its usual trace. The VM enters native code at
+     instruction 0 on a call or `recur`. Release build, native off against
+     on: n-body's `advance` 20M times 1.17 s to 0.14 s (8.4x), an integer
+     `recur` loop 20M times 0.72 s to 0.10 s (7.2x), spectral-norm
+     2000x2000 0.48 s to 0.19 s (2.5x; its mixed and divided operands take
+     the slow path). The whole `slug` test suite, the clutch suites, and
+     every benchmark's output are unchanged with every qualifying chunk
+     compiled (`SLUG_NATIVE=all`); one timing-dependent test now pins the
+     interpreter. Only 40 of the clutch suites' 2,531 hot chunks qualify;
+     the rest stop at constant-key map reads (629), captured locals (544),
+     global reads (496), captures (245), other constants (210), and calls
+     (121). PGO A/B against step 2's native build, 9 rounds: geomean
+     1.02x tuned, 1.01x hold-out. The corpus's short runs (5–10 ms) pay
+     for compiling at threshold 1000: n-body 0.91x, but spectral-norm
+     1.12x and function-call 1.08x. The long runs (Crawl, Invaders, the
+     HTTP server) are 0.99–1.02x, and Cranelift adds about 1 MB of RSS.
+     Before tuning the threshold, find out whether the steady ~1% on
+     programs that compile nothing comes from the entry check.
+   - *3b:* calls between compiled functions, with the native records and
+     the all-or-nothing exit, for `fib` and `function-call`.
+4. **Leaving native code:** the exit across several native frames, the
+   depth limit, and errors.
    Diagnostic snapshots are identical in both modes, and a test recurses
    past the depth limit.
 5. **Differential CI:** the conformance corpus, `make test`,

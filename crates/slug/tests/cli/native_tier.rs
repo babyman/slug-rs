@@ -25,6 +25,14 @@ fn traced_run(source: &str, mode: &str, threshold: Option<&str>) -> (String, Str
     )
 }
 
+/// The trace's report of each hot chunk; it also says whether each compiled.
+fn hot_lines(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("native: hot "))
+        .collect()
+}
+
 const LOOPS: &str = "val step = fn(value) { value + 1 }\n\
 val count = fn(remaining, total) {\n\
     if (remaining == 0) { total } else { recur(remaining - 1, step(total)) }\n\
@@ -39,9 +47,8 @@ fn calls_and_recurs_make_a_chunk_hot_once() {
     // `step` is called 50 times and `count` entered once and recurred 50
     // times; each is reported once. `once`, `main`, and the module body
     // stay below 40. Functions bound by `val` are anonymous chunks.
-    let hot = stderr.lines().collect::<Vec<_>>();
+    let hot = hot_lines(&stderr);
     assert_eq!(hot.len(), 2, "{stderr}");
-    assert!(hot.iter().all(|line| line.starts_with("native: hot ")));
 }
 
 #[test]
@@ -49,7 +56,7 @@ fn all_makes_every_entered_chunk_hot_at_its_first_entry() {
     let (stdout, stderr) = traced_run(LOOPS, "all", None);
     assert_eq!(stdout, "50 7\n");
     // The module body and its four functions, each once.
-    let hot = stderr.lines().collect::<Vec<_>>();
+    let hot = hot_lines(&stderr);
     assert_eq!(hot.len(), 5, "{stderr}");
     let mut unique = hot.clone();
     unique.sort_unstable();
@@ -103,4 +110,129 @@ fn dump_prints_the_ir_of_each_hot_chunk_and_every_chunk_lifts() {
     );
     assert!(stderr.contains("recur("), "{stderr}");
     assert!(!stderr.contains("cannot lift"), "{stderr}");
+}
+
+/// Runs `source` interpreted and with every qualifying chunk compiled at
+/// its first entry, and requires the same output, errors, and status.
+fn same_with_and_without_native_code(kind: &str, source: &str) -> String {
+    let path = fixture_path(&format!("native-same-{kind}"));
+    fs::write(&path, source).expect("write native tier fixture");
+    let run = |mode: &str| {
+        slug()
+            .env("SLUG_NATIVE", mode)
+            .env_remove("SLUG_NATIVE_TRACE")
+            .env_remove("SLUG_NATIVE_DUMP")
+            .arg(&path)
+            .output()
+            .expect("run slug")
+    };
+    let interpreted = run("off");
+    let compiled = run("all");
+    let traced = slug()
+        .env("SLUG_NATIVE", "all")
+        .env("SLUG_NATIVE_TRACE", "1")
+        .arg(&path)
+        .output()
+        .expect("run slug");
+    fs::remove_file(&path).expect("remove native tier fixture");
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    assert_eq!(
+        text(&compiled.stdout),
+        text(&interpreted.stdout),
+        "{kind}: stdout"
+    );
+    assert_eq!(
+        text(&compiled.stderr),
+        text(&interpreted.stderr),
+        "{kind}: stderr"
+    );
+    assert_eq!(
+        compiled.status.code(),
+        interpreted.status.code(),
+        "{kind}: status"
+    );
+    text(&traced.stderr)
+}
+
+#[test]
+fn compiled_arithmetic_matches_the_interpreter() {
+    let trace = same_with_and_without_native_code(
+        "arithmetic",
+        "val mix = fn(a, b) {\n\
+             [a + b, a - b, a * b, a / b, a % b, a == b, a < b, a > b]\n\
+         }\n\
+         val ints = fn(a, b) { a * 3 - b + 7 }\n\
+         val floats = fn(a, b) { a * 0.5 + b - 0.25 }\n\
+         val mixed = fn(a, b) { a + b * 2 }\n\
+         val compare = fn(a, b) { if (a < b) { 1 } else { if (a == b) { 0 } else { -1 } } }\n\
+         val bits = fn(a, b) { (a & b) + (a | b) + (a ^ b) + (a << 2) + (b >> 1) }\n\
+         val divide = fn(a, b) { a / b + a % b }\n\
+         val main = fn() {\n\
+             println(ints(5, 2), ints(-9, 4), floats(1.5, 2.0), mixed(1, 2.5), mixed(1.5, 2))\n\
+             println(compare(1, 2), compare(2, 2), compare(3.5, 2), compare(\"a\", \"b\"))\n\
+             println(bits(12, 10), divide(7, 2), divide(7.5, 2), mix(6, 4))\n\
+         }\n",
+    );
+    assert!(trace.contains("native: compiled"), "{trace}");
+}
+
+#[test]
+fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
+    // Strings and lists go through the interpreter's own `+`; the loop
+    // carries them through `recur` and a join.
+    same_with_and_without_native_code(
+        "owning",
+        "val build = fn(remaining, text, items) {\n\
+             if (remaining == 0) { [text, items] } else {\n\
+                 recur(remaining - 1, text + \"ab\", if (remaining > 3) { items + [remaining] } else { items })\n\
+             }\n\
+         }\n\
+         val main = fn() { println(build(10, \"\", [])) }\n",
+    );
+}
+
+#[test]
+fn truthiness_matches_the_interpreter() {
+    same_with_and_without_native_code(
+        "truthiness",
+        "val pick = fn(value) { if (value) { 1 } else { 2 } }\n\
+         val main = fn() { println(pick(nil), pick(false), pick(true), pick(0), pick(0.0), pick(\"\"), pick([])) }\n",
+    );
+}
+
+#[test]
+fn integer_overflow_in_compiled_code_reports_as_the_interpreter_does() {
+    // The overflow happens with the first `recur` argument already on the
+    // stack, so leaving native code must hand that value over too.
+    let trace = same_with_and_without_native_code(
+        "overflow",
+        "val grow = fn(remaining, value) {\n\
+             if (remaining == 0) { value } else { recur(remaining - 1, value * 1000) }\n\
+         }\n\
+         val main = fn() { println(grow(40, 1)) }\n",
+    );
+    assert!(trace.contains("native: compiled"), "{trace}");
+}
+
+#[test]
+fn a_non_finite_float_in_compiled_code_reports_as_the_interpreter_does() {
+    same_with_and_without_native_code(
+        "non-finite",
+        "val grow = fn(remaining, value) {\n\
+             if (remaining == 0) { value } else { recur(remaining - 1, value * 1.0e100) }\n\
+         }\n\
+         val main = fn() { println(grow(10, 1.0)) }\n",
+    );
+}
+
+#[test]
+fn a_long_compiled_loop_gives_the_interpreters_result() {
+    same_with_and_without_native_code(
+        "long-loop",
+        "val advance = fn(remaining, position, velocity) {\n\
+             if (remaining == 0) { position } else { recur(remaining - 1, position + velocity, velocity + 0.000_001) }\n\
+         }\n\
+         val count = fn(remaining, total) { if (remaining == 0) { total } else { recur(remaining - 1, total + 3) } }\n\
+         val main = fn() { println(advance(100_000, 0.0, 0.01), count(100_000, 0)) }\n",
+    );
 }

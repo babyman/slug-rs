@@ -498,6 +498,17 @@ enum ExecutionOutcome {
     Suspended,
 }
 
+/// What entering a frame's native code did.
+#[cfg(feature = "native-hooks")]
+enum NativeEntry {
+    /// The frame stays interpreted.
+    Declined,
+    /// Native code left the frame to the interpreter.
+    Exited,
+    /// The function returned this value.
+    Returned(Value),
+}
+
 /// What the dispatch loop does after an instruction. Jumps write the loop's
 /// instruction pointer instead, and a settled execution leaves its value on
 /// the stack, so the outcome carries no data and decodes with one compare.
@@ -2358,7 +2369,8 @@ impl Vm {
             let code = chunk.code.as_slice();
             let mut ip = self.frames.last().expect("active frame was checked").ip;
             // A frame at its first instruction has just been entered: count
-            // it for the native tier. `recur` counts its own entries.
+            // it for the native tier, and run its native code if it has
+            // some. `recur` counts its own entries.
             #[cfg(feature = "native-hooks")]
             if ip == 0 {
                 let index = self
@@ -2367,7 +2379,25 @@ impl Vm {
                     .expect("active frame was checked")
                     .closure
                     .chunk;
-                chunk.native.tick(program, index);
+                if let Some(native) = chunk.native.tick(program, index) {
+                    match self.enter_native(native)? {
+                        NativeEntry::Declined => {}
+                        NativeEntry::Exited => {
+                            ip = self.frames.last().expect("active frame was checked").ip;
+                        }
+                        NativeEntry::Returned(value) => {
+                            // As `Return` does.
+                            if let Err(value) = self.return_without_cleanup(value)
+                                && let Some(value) = self.begin_return(value)?
+                            {
+                                self.stack.push(value);
+                                let value = self.pop_unresolved()?;
+                                return Ok(ExecutionOutcome::Settled(Ok(value)));
+                            }
+                            continue;
+                        }
+                    }
+                }
             }
             loop {
                 let Some(instruction) = code.get(ip) else {
@@ -2400,12 +2430,88 @@ impl Vm {
     }
 
     /// Counts a `recur`, which re-enters its chunk, for the native tier.
+    /// Once the chunk has native code, the dispatch loop is sent back to its
+    /// frame check, which enters it.
     #[cfg(feature = "native-hooks")]
     #[inline]
-    fn count_recur(&self, program: &Program, chunk: &crate::bytecode::CompiledChunk) {
-        if let Some(frame) = self.frames.last() {
-            chunk.native.tick(program, frame.closure.chunk);
+    fn count_recur(&mut self, program: &Program, chunk: &crate::bytecode::CompiledChunk) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        if chunk.native.tick(program, frame.closure.chunk).is_some() {
+            frame.ip = 0;
+            self.frames_changed();
         }
+    }
+
+    /// Runs the active frame's native code from its first instruction.
+    /// A frame with a captured local stays interpreted.
+    #[cfg(feature = "native-hooks")]
+    fn enter_native(
+        &mut self,
+        native: &alloc::sync::Arc<dyn crate::tiering::NativeCode>,
+    ) -> VmResult<NativeEntry> {
+        let frame = self.frames.last_mut().expect("active frame was checked");
+        let mut locals = Vec::with_capacity(frame.locals.len());
+        for slot in &mut frame.locals {
+            match slot {
+                LocalSlot::Direct(value) => locals.push(core::mem::replace(value, Value::Nil)),
+                LocalSlot::Captured(_) => {
+                    // Nothing was taken from a slot that is not direct yet;
+                    // put back what was.
+                    for (slot, value) in frame.locals.iter_mut().zip(locals) {
+                        *slot = LocalSlot::Direct(value);
+                    }
+                    return Ok(NativeEntry::Declined);
+                }
+            }
+        }
+        match native.run(self, locals) {
+            crate::tiering::NativeOutcome::Return(value) => Ok(NativeEntry::Returned(value)),
+            crate::tiering::NativeOutcome::Exit { ip, locals, stack } => {
+                let frame = self.frames.last_mut().expect("active frame was checked");
+                if locals.len() != frame.locals.len() {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "native code left a frame with the wrong number of locals".into(),
+                        None,
+                    ));
+                }
+                for (slot, value) in frame.locals.iter_mut().zip(locals) {
+                    *slot = LocalSlot::Direct(value);
+                }
+                frame.ip = ip;
+                self.stack.extend(stack);
+                Ok(NativeEntry::Exited)
+            }
+        }
+    }
+
+    /// Whether this thread needs attention: native code leaves to the
+    /// interpreter at its next `recur`, whose own check deals with it.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_needs_attention(&self) -> bool {
+        self.attention.needs_attention()
+    }
+
+    /// `operator` applied as the interpreter applies it, after resolving
+    /// module bindings, for native code's slow paths. `None` when it fails:
+    /// native code then leaves to the interpreter, which fails the same way
+    /// with the error and its trace.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binary(
+        &self,
+        operator: BinaryOperator,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Value> {
+        let left = left.resolve_in(self).ok()?;
+        let right = right.resolve_in(self).ok()?;
+        self.binary_values(operator, left, right).ok()
     }
 
     #[cold]

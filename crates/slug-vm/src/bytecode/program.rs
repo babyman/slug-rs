@@ -34,6 +34,10 @@ pub struct VerifiedChunk {
     pub locals: usize,
     /// Operand-stack values below the chunk's own at its first instruction.
     pub initial_height: usize,
+    /// Whether a call or `recur` with exactly `arity` positional arguments
+    /// binds them straight into the parameters: no parameter is variadic.
+    pub exact_positional: bool,
+    pub constants: Vec<Constant>,
     pub instructions: Vec<VerifiedInstruction>,
 }
 
@@ -1985,6 +1989,8 @@ impl Program {
             arity: chunk.arity,
             locals: chunk.locals,
             initial_height,
+            exact_positional: compiled.binds_full_positional_calls,
+            constants: chunk.constants,
             instructions,
         })
     }
