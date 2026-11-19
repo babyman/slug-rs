@@ -441,9 +441,16 @@ Each is committed on its own and passes the usual checks.
      that cross the budget repeatedly, and recursion 20,000 and 30,000
      deep in forks. The conformance corpus already runs under
      `SLUG_NATIVE=all` in the suite.
-5. **Differential CI:** the conformance corpus, `make test`,
-   `make test-clutches`, and the diagnostic goldens under
-   `SLUG_NATIVE=all`.
+5. **Differential CI, done (2026-11-19):** the conformance corpus,
+   `make test`, `make test-clutches`, and the diagnostic goldens under
+   `SLUG_NATIVE=all`. `make test-native-all`, part of `make check` and so
+   of CI's check job, runs the `slug` suite (which runs the conformance
+   corpus and its exact diagnostics), the clutch suites, and
+   `scripts/native-differential.py`, which runs each source benchmark with
+   native code off and `all` and fails on any difference in output,
+   diagnostics, or status. About 30 s plus the build on an M-series Mac;
+   the benchmarks run in parallel. On macOS the suite hits the
+   `typed_net` listen-queue failure as `make test` does.
 6. **Measure:** a PGO A/B of native on against native off, with
    hold-outs.
 

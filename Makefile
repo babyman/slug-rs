@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-native-all test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -38,6 +38,15 @@ test-native-tier:
 	cargo test -p slug-native-tier
 	cargo test -p slug --features native --test cli native_tier
 
+# Every chunk the tier can compile, compiled at its first entry: the slug
+# suite (with the conformance corpus), the clutch suites, and the
+# benchmarks must give exactly what the interpreter gives.
+test-native-all:
+	SLUG_NATIVE=all cargo test -p slug --features native,metrics --tests --bins
+	cargo build -p slug --features native
+	SLUG_HOME=$(CURDIR) SLUG_NATIVE=all target/debug/slug --allow-unexported test $(CLUTCH_SUITES)
+	python3 -I scripts/native-differential.py target/debug/slug
+
 # Focused subsystem aliases. Keep their integration-test target names stable.
 test-frontend:
 	cargo test -p slug-frontend --all-targets
@@ -72,9 +81,11 @@ test-native:
 
 # The clutches' own tests, written in Slug and run by `slug test` with this
 # repository as SLUG_HOME; slug.text.markdown's run compiled as well.
+CLUTCH_SUITES = clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.text.markdown.clutch clutch/slug.games.crawl.clutch
+
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.text.markdown.clutch clutch/slug.games.crawl.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test $(CLUTCH_SUITES)
 	SLUG_HOME=$(CURDIR) target/debug/slug compile clutch/slug.text.markdown.clutch/tests/compiled.slug target/slug-text-markdown-tests.cslug
 	SLUG_HOME=$(CURDIR) target/debug/slug run target/slug-text-markdown-tests.cslug
 
@@ -118,6 +129,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim cooperative test-native-tier docs-check test-clutches
+check: fmt-check lint test slim cooperative test-native-tier test-native-all docs-check test-clutches
 
 ci: check
