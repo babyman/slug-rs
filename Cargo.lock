@@ -406,6 +406,7 @@ dependencies = [
 name = "slug-native-tier"
 version = "0.1.0"
 dependencies = [
+ "slug-frontend",
  "slug-vm",
 ]
 

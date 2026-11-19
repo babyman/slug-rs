@@ -81,3 +81,26 @@ fn a_bad_setting_is_a_startup_error() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn dump_prints_the_ir_of_each_hot_chunk_and_every_chunk_lifts() {
+    let path = fixture_path("native-dump");
+    fs::write(&path, LOOPS).expect("write native tier fixture");
+    let output = slug()
+        .env("SLUG_NATIVE", "all")
+        .env("SLUG_NATIVE_TRACE", "1")
+        .env("SLUG_NATIVE_DUMP", "1")
+        .arg(&path)
+        .output()
+        .expect("run slug");
+    fs::remove_file(&path).expect("remove native tier fixture");
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert_eq!(
+        stderr.matches("\nfunction ").count() + usize::from(stderr.starts_with("function ")),
+        5,
+        "{stderr}"
+    );
+    assert!(stderr.contains("recur("), "{stderr}");
+    assert!(!stderr.contains("cannot lift"), "{stderr}");
+}

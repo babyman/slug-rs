@@ -12,3 +12,6 @@ workspace = true
 
 [dependencies]
 slug-vm = { path = "../slug-vm", default-features = false, features = ["native-hooks"] }
+
+[dev-dependencies]
+slug-frontend = { path = "../slug-frontend", default-features = false, features = ["concurrency"] }

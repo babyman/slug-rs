@@ -218,9 +218,10 @@ fn configure_fork_limit() -> Result<(), String> {
 
 /// Installs the native tier as `SLUG_NATIVE` asks: `on` (the default),
 /// `all` (every chunk is hot at its first entry), or `off`.
-/// `SLUG_NATIVE_THRESHOLD` sets the entries before a chunk is hot, and
-/// `SLUG_NATIVE_TRACE` reports hot chunks on standard error. A build
-/// without the `native` feature ignores all three.
+/// `SLUG_NATIVE_THRESHOLD` sets the entries before a chunk is hot;
+/// `SLUG_NATIVE_TRACE` reports hot chunks, and any the tier cannot lift, on
+/// standard error; and `SLUG_NATIVE_DUMP` prints their IR there. A build
+/// without the `native` feature ignores them all.
 #[cfg(feature = "native")]
 fn configure_native_tier() -> Result<(), String> {
     let mode = env::var("SLUG_NATIVE").unwrap_or_default();
@@ -247,7 +248,9 @@ fn configure_native_tier() -> Result<(), String> {
                 )
             })?;
     }
-    config.trace = env::var_os("SLUG_NATIVE_TRACE").is_some_and(|value| !value.is_empty());
+    let set = |name| env::var_os(name).is_some_and(|value| !value.is_empty());
+    config.trace = set("SLUG_NATIVE_TRACE");
+    config.dump = set("SLUG_NATIVE_DUMP");
     let _ = slug_native_tier::install(config);
     Ok(())
 }

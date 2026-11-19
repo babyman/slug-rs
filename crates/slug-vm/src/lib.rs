@@ -27,6 +27,9 @@ mod source_diagnostic;
 mod sync;
 #[cfg(feature = "native-hooks")]
 mod tiering;
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use bytecode::{VerifiedChunk, VerifiedInstruction};
 #[doc(hidden)]
 pub use sync::{Code, SoloCell};
 #[cfg(feature = "native-hooks")]

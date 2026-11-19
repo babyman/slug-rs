@@ -341,7 +341,23 @@ Each is committed on its own and passes the usual checks.
    1.04x at a 13% spread). The counters cost nothing measurable.*
 2. **The lift,** with tests that lift every chunk of the conformance corpus
    and the clutches and check stack heights and snapshots against the
-   verifier.
+   verifier. *Done (2026-11-18): `slug-vm` gives the tier
+   each chunk as verification sees it (`Program::verified_chunk`: the
+   unpacked instructions with the verifier's own heights, stack effects,
+   and successors, so the lift cannot disagree with it). `lift` builds the
+   IR in one pass in bytecode order; locals a closure captures stay cells,
+   and reading the caller's stack values is rejected. `Function::check`
+   verifies single definitions, dominance, edge arity, and snapshots. Every
+   chunk of the 158 repository sources that compile alone (3,067 chunks)
+   lifts and checks, as does every chunk entered under `SLUG_NATIVE=all` in
+   the clutch suites (2,531) and all 26 benchmarks; none failed.
+   `SLUG_NATIVE_DUMP` prints the IR. `make test` failed one unrelated
+   test while this step was checked, `typed_net`'s
+   `serves_200_concurrent_clients_each_their_own_data`: some of its 200
+   simultaneous clients are reset on connect (the macOS listen queue,
+   `kern.ipc.somaxconn`, is 128). It fails the same way at step 1's commit,
+   which passed it hours earlier, so it is flaky under this machine's state,
+   not caused by the lift.*
 3. **Lowering the subset,** until `fib`, `function-call`, n-body, and
    spectral-norm run natively.
 4. **Leaving native code:** the exit, the depth limit, and errors.
