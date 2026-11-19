@@ -20,9 +20,15 @@
 //! the interpreter, so does every caller: each leaves its frame as it
 //! stands after the call, and the interpreter continues in the callee's.
 //!
-//! Phase 1, step 3: a function compiles only if it uses constants, locals,
-//! arithmetic, comparisons, branches, calls of module-level names, a
-//! positional `recur`, and `return` (see [`qualify`]).
+//! Reads of globals, captures, and collections, constants that are not
+//! numbers, and list literals call the VM's `native_*` operations, which
+//! read through the running closure; one that cannot answer leaves to the
+//! interpreter before the instruction.
+//!
+//! A function compiles only if it uses constants, locals, arithmetic,
+//! comparisons, `not`, negation, branches, those reads, list literals,
+//! calls of module-level names, a positional `recur`, and `return` (see
+//! [`qualify`]).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -36,7 +42,7 @@ use cranelift_codegen::{
     },
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use slug_vm::{BinaryOperator, Constant, Op, Value};
+use slug_vm::{BinaryOperator, Constant, Op, ReadSource, Value};
 
 use crate::{
     ir::Snapshot,
@@ -44,7 +50,7 @@ use crate::{
     jit::Jit,
     runtime::{
         self, BINARY_OPERATORS, CALL_DECLINED, CALL_RETURNED, CONTEXT_RET, Compiled, EXITED,
-        ExitTable, RETURNED, layout,
+        ExitTable, NO_CONSTANT, RETURNED, SOURCE_CAPTURE, SOURCE_GLOBAL, SOURCE_VALUE, layout,
     },
 };
 
@@ -61,11 +67,30 @@ pub fn qualify(function: &Function) -> Result<(), String> {
         for inst in &block.insts {
             match &inst.op {
                 Op::Constant(index) => {
-                    number_constant(function, *index)?;
+                    if function.constants.get(*index).is_none() {
+                        return Err(format!("constant {index} does not exist"));
+                    }
                 }
-                Op::Nil | Op::True | Op::False | Op::CallGlobalPooled { .. } => {}
+                Op::Nil
+                | Op::True
+                | Op::False
+                | Op::CallGlobalPooled { .. }
+                | Op::GetGlobalPooled(_)
+                | Op::GetCapture(_)
+                | Op::Not
+                | Op::Negate
+                | Op::List(_)
+                | Op::GetIndex
+                | Op::GetIndexConstant(_)
+                | Op::ReadIndex {
+                    source: ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
+                }
+                | Op::ReadIndexConstant {
+                    source: ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
+                    ..
+                } => {}
                 Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. } => {
-                    number_constant(function, *constant)?;
+                    value_constant(function, *constant)?;
                 }
                 Op::RecurPositional(count)
                     if *count == function.arity && function.exact_positional => {}
@@ -92,6 +117,14 @@ pub fn qualify(function: &Function) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// A constant that is a value rather than a function.
+fn value_constant(function: &Function, index: usize) -> Result<&Value, String> {
+    match function.constants.get(index) {
+        Some(Constant::Value(value)) => Ok(value),
+        _ => Err(format!("constant {index} is not a value")),
+    }
 }
 
 /// A constant the tier writes inline: `nil`, a boolean, or a number.
@@ -182,6 +215,12 @@ struct Runtime {
     drop: cranelift_codegen::ir::SigRef,
     exit: cranelift_codegen::ir::SigRef,
     call: cranelift_codegen::ir::SigRef,
+    /// `(context, operand, out) -> status`: globals, captures, constants.
+    operand: cranelift_codegen::ir::SigRef,
+    /// `(context, value, out) -> status`: `Negate` and `Not`.
+    unary: cranelift_codegen::ir::SigRef,
+    index: cranelift_codegen::ir::SigRef,
+    list: cranelift_codegen::ir::SigRef,
 }
 
 struct Lowering<'a> {
@@ -245,13 +284,28 @@ impl<'a> Lowering<'a> {
                 &[pointer, types::I32, types::I32, pointer, pointer],
                 &[types::I32],
             ),
+            operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
+            list: signature(&[pointer, types::I32, pointer, pointer], &[]),
+            unary: signature(&[pointer, pointer, pointer], &[types::I32]),
+            index: signature(
+                &[
+                    pointer,
+                    types::I32,
+                    types::I32,
+                    pointer,
+                    pointer,
+                    types::I32,
+                    pointer,
+                ],
+                &[types::I32],
+            ),
         };
         let call_arguments = function
             .blocks
             .iter()
             .flat_map(|block| &block.insts)
             .filter_map(|inst| match inst.op {
-                Op::CallGlobalPooled { count, .. } => Some(count),
+                Op::CallGlobalPooled { count, .. } | Op::List(count) => Some(count),
                 _ => None,
             })
             .max()
@@ -354,9 +408,40 @@ impl<'a> Lowering<'a> {
     fn lower_inst(&mut self, inst: &Inst) -> Result<(), String> {
         match &inst.op {
             Op::Constant(index) => {
-                let value = number_constant(self.function, *index)?.clone();
                 let slot = self.slot(inst.results[0].index());
-                self.store_constant(slot, &value);
+                if let Ok(value) = number_constant(self.function, *index) {
+                    let value = value.clone();
+                    self.store_constant(slot, &value);
+                } else {
+                    self.lower_operand_op(inst, runtime::native_constant as *const () as usize, *index);
+                }
+            }
+            Op::GetGlobalPooled(name) => {
+                self.lower_operand_op(
+                    inst,
+                    runtime::native_global as *const () as usize,
+                    name.get() as usize,
+                );
+            }
+            Op::GetCapture(index) => {
+                self.lower_operand_op(inst, runtime::native_capture as *const () as usize, *index);
+            }
+            Op::Not => self.lower_not(inst),
+            Op::List(_) => self.lower_list(inst),
+            Op::Negate => self.lower_negate(inst),
+            Op::GetIndex => {
+                self.lower_index(inst, SOURCE_VALUE, 0, Some(inst.args[0]), Some(inst.args[1]), None);
+            }
+            Op::GetIndexConstant(constant) => {
+                self.lower_index(inst, SOURCE_VALUE, 0, Some(inst.args[0]), None, Some(*constant));
+            }
+            Op::ReadIndex { source } => {
+                let (kind, operand, collection) = Self::read_source(inst, source, 1)?;
+                self.lower_index(inst, kind, operand, collection, Some(inst.args[0]), None);
+            }
+            Op::ReadIndexConstant { source, constant } => {
+                let (kind, operand, collection) = Self::read_source(inst, source, 0)?;
+                self.lower_index(inst, kind, operand, collection, None, Some(*constant));
             }
             Op::Nil => {
                 let slot = self.slot(inst.results[0].index());
@@ -379,7 +464,12 @@ impl<'a> Lowering<'a> {
                 let right = match op {
                     Op::LocalConstantBinary { constant, .. }
                     | Op::ConstantBinary { constant, .. } => {
-                        Operand::Constant(number_constant(self.function, *constant)?.clone())
+                        if let Ok(value) = number_constant(self.function, *constant) {
+                            Operand::Constant(value.clone())
+                        } else {
+                            value_constant(self.function, *constant)?;
+                            Operand::Pooled(*constant)
+                        }
                     }
                     _ => Operand::Value(inst.args[1]),
                 };
@@ -418,6 +508,7 @@ impl<'a> Lowering<'a> {
         // and a float one never takes the integer path.
         let (int_constant, number_constant) = match right {
             Operand::Value(_) => (true, true),
+            Operand::Pooled(_) => (false, false),
             Operand::Constant(constant) => (
                 matches!(constant, Value::Int(_)),
                 matches!(constant, Value::Int(_) | Value::Float(_)),
@@ -484,7 +575,7 @@ impl<'a> Lowering<'a> {
                             .icmp_imm(IntCC::Equal, right_tag, layout::INT);
                     self.builder.ins().band(left_is, right_is)
                 }
-                Operand::Constant(_) => left_is,
+                Operand::Constant(_) | Operand::Pooled(_) => left_is,
             };
             let int_block = self.builder.create_block();
             self.builder
@@ -571,7 +662,9 @@ impl<'a> Lowering<'a> {
                     self.builder.ins().f64const(*value as f64)
                 }
                 Operand::Constant(Value::Float(value)) => self.builder.ins().f64const(*value),
-                Operand::Constant(_) => unreachable!("only number constants reach a fast path"),
+                Operand::Constant(_) | Operand::Pooled(_) => {
+                    unreachable!("only number constants reach a fast path")
+                }
             };
             match operator {
                 B::Add
@@ -623,11 +716,26 @@ impl<'a> Lowering<'a> {
 
         // The interpreter's own operation, or an exit if it fails.
         self.builder.switch_to_block(slow);
+        let scratch = self.slot(self.function.values.len() + self.function.arity);
         let right_address = match right {
             Operand::Value(value) => self.slot(value.index()),
             Operand::Constant(constant) => {
-                let scratch = self.slot(self.function.values.len() + self.function.arity);
                 self.store_constant(scratch, constant);
+                scratch
+            }
+            Operand::Pooled(index) => {
+                // Cloned in for the operation and dropped after it.
+                self.store_tag(scratch, layout::NIL);
+                let index = self
+                    .builder
+                    .ins()
+                    .iconst(types::I32, i64::try_from(*index).expect("index fits"));
+                let scratch_address = self.address(scratch);
+                self.call(
+                    self.runtime.operand,
+                    runtime::native_constant as *const () as usize,
+                    &[self.context, index, scratch_address],
+                );
                 scratch
             }
         };
@@ -653,6 +761,14 @@ impl<'a> Lowering<'a> {
                 result_address,
             ],
         )[0];
+        if matches!(right, Operand::Pooled(_)) {
+            let scratch_address = self.address(scratch);
+            self.call(
+                self.runtime.drop,
+                runtime::native_drop as *const () as usize,
+                &[scratch_address],
+            );
+        }
         let exit = self.exit_block(inst);
         let result = self.slot(inst.results[0].index());
         let done_arguments = if boolean {
@@ -669,6 +785,217 @@ impl<'a> Lowering<'a> {
         if boolean {
             self.booleans[inst.results[0].index()] = Some(self.builder.block_params(done)[0]);
         }
+    }
+
+    /// A list of the instruction's arguments, cloned into the call
+    /// scratch slots for the runtime function to take.
+    fn lower_list(&mut self, inst: &Inst) {
+        let base = self.function.values.len() + self.function.arity + 1;
+        for (index, argument) in inst.args.iter().enumerate() {
+            let source = self.slot(argument.index());
+            let target = self.slot(base + index);
+            self.clone_into(source, target);
+        }
+        let values = self.slot(base);
+        let values = self.address(values);
+        let count = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(inst.args.len()).expect("count fits"));
+        let result = self.slot(inst.results[0].index());
+        let out = self.address(result);
+        self.call(
+            self.runtime.list,
+            runtime::native_list as *const () as usize,
+            &[self.context, count, values, out],
+        );
+    }
+
+    /// Continues when `status` is zero, and leaves to the interpreter
+    /// before `inst` otherwise.
+    fn exit_unless_ok(&mut self, inst: &Inst, status: CodeValue) {
+        let exit = self.exit_block(inst);
+        let next = self.builder.create_block();
+        self.builder.ins().brif(status, exit, &[], next, &[]);
+        self.builder.switch_to_block(next);
+    }
+
+    /// An instruction a runtime function computes from the running
+    /// function and one operand, such as a global's name.
+    fn lower_operand_op(&mut self, inst: &Inst, function: usize, operand: usize) {
+        let result = self.slot(inst.results[0].index());
+        let out = self.address(result);
+        let operand = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(operand).expect("operand fits"));
+        let status = self.call(self.runtime.operand, function, &[self.context, operand, out])[0];
+        self.exit_unless_ok(inst, status);
+    }
+
+    /// Where an index read's collection is: a value native code holds (a
+    /// local, after the `pops` popped arguments), a capture, or a global.
+    fn read_source(
+        inst: &Inst,
+        source: &ReadSource,
+        pops: usize,
+    ) -> Result<(u32, u32, Option<ValueId>), String> {
+        let operand = |value: usize| u32::try_from(value).map_err(|_| "operand too large");
+        Ok(match source {
+            ReadSource::Local(_) => (
+                SOURCE_VALUE,
+                0,
+                Some(
+                    *inst
+                        .args
+                        .get(pops)
+                        .ok_or_else(|| format!("instruction {} reads a captured local", inst.ip))?,
+                ),
+            ),
+            ReadSource::Capture(index) => (SOURCE_CAPTURE, operand(*index)?, None),
+            ReadSource::GlobalPooled(name) => (SOURCE_GLOBAL, name.get(), None),
+            ReadSource::Global(_) => {
+                return Err(format!("instruction {} reads a global by name", inst.ip));
+            }
+        })
+    }
+
+    /// An index read through the interpreter's own code: the collection is
+    /// `collection` or `source`'s `operand`, the key `key` or constant
+    /// `constant`.
+    fn lower_index(
+        &mut self,
+        inst: &Inst,
+        source: u32,
+        operand: u32,
+        collection: Option<ValueId>,
+        key: Option<ValueId>,
+        constant: Option<usize>,
+    ) {
+        let address_of = |lowering: &mut Self, value: Option<ValueId>| match value {
+            Some(value) => {
+                let slot = lowering.slot(value.index());
+                lowering.address(slot)
+            }
+            None => lowering.builder.ins().iconst(lowering.pointer, 0),
+        };
+        let collection = address_of(self, collection);
+        let key = address_of(self, key);
+        let source = self.builder.ins().iconst(types::I32, i64::from(source));
+        let operand = self.builder.ins().iconst(types::I32, i64::from(operand));
+        let constant = self.builder.ins().iconst(
+            types::I32,
+            constant.map_or(i64::from(NO_CONSTANT), |index| {
+                i64::try_from(index).expect("constant index fits")
+            }),
+        );
+        let result = self.slot(inst.results[0].index());
+        let out = self.address(result);
+        let status = self.call(
+            self.runtime.index,
+            runtime::native_index as *const () as usize,
+            &[self.context, source, operand, collection, key, constant, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+    }
+
+    /// `not value`: inline for `nil`, booleans, and numbers, and through
+    /// the interpreter's code for anything else, which may be a module
+    /// binding to resolve.
+    fn lower_not(&mut self, inst: &Inst) {
+        let value = inst.args[0];
+        let result_index = inst.results[0].index();
+        let result = self.slot(result_index);
+        if let Some(boolean) = self.booleans[value.index()] {
+            let not = self.builder.ins().icmp_imm(IntCC::Equal, boolean, 0);
+            self.store_bool(result, not);
+            self.booleans[result_index] = Some(not);
+            return;
+        }
+        let operand = self.slot(value.index());
+        let tag = self.load_tag(operand);
+        let inline = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::SignedLessThan, tag, layout::FIRST_COUNTED);
+        let fast = self.builder.create_block();
+        let slow = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.append_block_param(done, types::I8);
+        self.builder.ins().brif(inline, fast, &[], slow, &[]);
+
+        self.builder.switch_to_block(fast);
+        let truthy = self.truthy(value);
+        let not = self.builder.ins().icmp_imm(IntCC::Equal, truthy, 0);
+        self.store_bool(result, not);
+        self.builder.ins().jump(done, &[not]);
+
+        self.builder.switch_to_block(slow);
+        let (value_address, out) = (self.address(operand), self.address(result));
+        let status = self.call(
+            self.runtime.unary,
+            runtime::native_not as *const () as usize,
+            &[self.context, value_address, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+        let byte = self.load(types::I8, result, layout::PAYLOAD);
+        self.builder.ins().jump(done, &[byte]);
+
+        self.builder.switch_to_block(done);
+        self.booleans[result_index] = Some(self.builder.block_params(done)[0]);
+    }
+
+    /// `-value`: inline for an integer other than the smallest and for a
+    /// float, and through the interpreter's code for anything else.
+    fn lower_negate(&mut self, inst: &Inst) {
+        let operand = self.slot(inst.args[0].index());
+        let result = self.slot(inst.results[0].index());
+        let tag = self.load_tag(operand);
+        let int_block = self.builder.create_block();
+        let not_int = self.builder.create_block();
+        let float_block = self.builder.create_block();
+        let slow = self.builder.create_block();
+        let done = self.builder.create_block();
+        let is_int = self.builder.ins().icmp_imm(IntCC::Equal, tag, layout::INT);
+        self.builder.ins().brif(is_int, int_block, &[], not_int, &[]);
+
+        self.builder.switch_to_block(int_block);
+        let integer = self.load_payload(operand, types::I64);
+        // `-i64::MIN` overflows, which the interpreter reports.
+        let smallest = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, integer, i64::MIN);
+        let negate = self.builder.create_block();
+        self.builder.ins().brif(smallest, slow, &[], negate, &[]);
+        self.builder.switch_to_block(negate);
+        let negated = self.builder.ins().ineg(integer);
+        self.store_int(result, negated);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(not_int);
+        let is_float = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, tag, layout::FLOAT);
+        self.builder.ins().brif(is_float, float_block, &[], slow, &[]);
+        self.builder.switch_to_block(float_block);
+        let float = self.load_payload(operand, types::F64);
+        let negated = self.builder.ins().fneg(float);
+        self.store_float(result, negated);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(slow);
+        let (value_address, out) = (self.address(operand), self.address(result));
+        let status = self.call(
+            self.runtime.unary,
+            runtime::native_negate as *const () as usize,
+            &[self.context, value_address, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(done);
     }
 
     /// A call of module-level name `name`: the callee's native code with
@@ -1038,7 +1365,9 @@ impl<'a> Lowering<'a> {
             }
             Operand::Constant(Value::Int(value)) => self.builder.ins().iconst(types::I64, *value),
             Operand::Constant(Value::Float(value)) => self.builder.ins().f64const(*value),
-            Operand::Constant(_) => unreachable!("only number constants reach a fast path"),
+            Operand::Constant(_) | Operand::Pooled(_) => {
+                unreachable!("only number constants reach a fast path")
+            }
         }
     }
 
@@ -1105,7 +1434,10 @@ fn offset(index: usize, within: i32) -> i32 {
 /// An operation's right operand.
 enum Operand {
     Value(ValueId),
+    /// A number, a boolean, or `nil`, written inline.
     Constant(Value),
+    /// Any other value constant of the chunk, by index, cloned in.
+    Pooled(usize),
 }
 
 /// Which values' slots may own something: parameters, the results of
@@ -1120,7 +1452,18 @@ fn owning_values(function: &Function) -> Vec<bool> {
         for inst in &block.insts {
             let owns = match binary_operator(&inst.op) {
                 Some(operator) => !compares(operator),
-                None => matches!(inst.op, Op::CallGlobalPooled { .. }),
+                None => match &inst.op {
+                    Op::Constant(index) => number_constant(function, *index).is_err(),
+                    Op::CallGlobalPooled { .. }
+                    | Op::GetGlobalPooled(_)
+                    | Op::GetCapture(_)
+                    | Op::List(_)
+                    | Op::GetIndex
+                    | Op::GetIndexConstant(_)
+                    | Op::ReadIndex { .. }
+                    | Op::ReadIndexConstant { .. } => true,
+                    _ => false,
+                },
             };
             if owns {
                 for result in &inst.results {

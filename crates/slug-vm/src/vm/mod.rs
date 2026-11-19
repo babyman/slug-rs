@@ -51,6 +51,10 @@ mod error;
 mod fork;
 mod frames;
 mod installation;
+#[cfg(feature = "native-hooks")]
+mod native;
+#[cfg(feature = "native-hooks")]
+pub use native::NativeReadSource;
 #[cfg(all(feature = "threads", not(target_os = "none")))]
 pub(crate) mod island;
 mod operations;
@@ -6435,7 +6439,7 @@ impl Vm {
     }
 
     #[cfg(feature = "metrics")]
-    fn record_collection_construction(&self, elements: usize) {
+    pub(super) fn record_collection_construction(&self, elements: usize) {
         let mut metrics = self.metrics.borrow_mut();
         metrics.collection_constructions += 1;
         metrics.collection_elements_constructed += elements;

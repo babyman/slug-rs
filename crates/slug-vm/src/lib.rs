@@ -92,6 +92,9 @@ pub use vm::InteractiveExecution;
 #[cfg(feature = "concurrency")]
 #[doc(hidden)]
 pub use vm::InteractiveTask;
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use vm::NativeReadSource;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 #[cfg(all(feature = "threads", not(target_os = "none")))]

@@ -67,7 +67,7 @@ impl Vm {
     /// key into a map. A variable can hold a module binding, as a
     /// destructured import holds the exporter's live one; the binding's
     /// value is what is indexed, as it is when popped from the stack.
-    fn index_read(
+    pub(super) fn index_read(
         &self,
         collection: &Value,
         key: &Value,

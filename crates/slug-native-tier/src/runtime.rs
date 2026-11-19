@@ -10,7 +10,10 @@
 
 use std::mem::{MaybeUninit, offset_of, size_of};
 
-use slug_vm::{BinaryOperator, GlobalNameId, NativeCode, NativeFrame, NativeOutcome, Value, Vm};
+use slug_vm::{
+    BinaryOperator, GlobalNameId, NativeCode, NativeFrame, NativeOutcome, NativeReadSource, Value,
+    Vm,
+};
 
 /// Where generated code finds a [`Value`]'s parts. `Value` is `repr(u64)`
 /// on 64-bit targets: a word tag, then its payload from the next word.
@@ -342,6 +345,130 @@ pub(crate) extern "C" fn native_binary(
             }
             None => 1,
         }
+    }
+}
+
+/// Writes `value` to `out` and returns 0, or returns 1 for `None`, so
+/// native code leaves before the instruction and the interpreter runs it.
+///
+/// # Safety
+///
+/// `out` must be a slot holding no value that needs dropping.
+unsafe fn produce(out: *mut Value, value: Option<Value>) -> u32 {
+    match value {
+        Some(value) => {
+            // SAFETY: as the caller promises.
+            unsafe { out.write(value) };
+            0
+        }
+        None => 1,
+    }
+}
+
+/// Module-level name `name` as the running function reads it.
+pub(crate) extern "C" fn native_global(context: *mut Context, name: u32, out: *mut Value) -> u32 {
+    // SAFETY: generated code passes its own context and a free slot.
+    unsafe {
+        let context = &*context;
+        let value = (*context.vm).native_global(&*context.closure, GlobalNameId::new(name));
+        produce(out, value)
+    }
+}
+
+/// Capture `index` of the running function.
+pub(crate) extern "C" fn native_capture(context: *mut Context, index: u32, out: *mut Value) -> u32 {
+    // SAFETY: generated code passes its own context and a free slot.
+    unsafe {
+        let context = &*context;
+        let value = (*context.vm).native_capture(&*context.closure, index as usize);
+        produce(out, value)
+    }
+}
+
+/// Where [`native_index`] finds its collection.
+pub(crate) const SOURCE_VALUE: u32 = 0;
+pub(crate) const SOURCE_CAPTURE: u32 = 1;
+pub(crate) const SOURCE_GLOBAL: u32 = 2;
+/// [`native_index`]'s `constant` when the key is a value.
+pub(crate) const NO_CONSTANT: u32 = u32::MAX;
+
+/// An index read: the collection is `collection` for `SOURCE_VALUE`, or
+/// capture or module-level name `operand`; the key is `key`, or value
+/// constant `constant` of the running function's chunk.
+pub(crate) extern "C" fn native_index(
+    context: *mut Context,
+    source: u32,
+    operand: u32,
+    collection: *const Value,
+    key: *const Value,
+    constant: u32,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, initialized values
+    // where `source` and `constant` say there are some, and a free slot.
+    unsafe {
+        let context = &*context;
+        let source = match source {
+            SOURCE_VALUE => NativeReadSource::Value(&*collection),
+            SOURCE_CAPTURE => NativeReadSource::Capture(operand as usize),
+            _ => NativeReadSource::Global(GlobalNameId::new(operand)),
+        };
+        let (key, constant) = if constant == NO_CONSTANT {
+            (Some(&*key), None)
+        } else {
+            (None, Some(constant as usize))
+        };
+        let value = (*context.vm).native_index(&*context.closure, source, key, constant);
+        produce(out, value)
+    }
+}
+
+/// `-value`, for a value that is not on the fast path.
+pub(crate) extern "C" fn native_negate(
+    context: *mut Context,
+    value: *const Value,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, an initialized value,
+    // and a free slot.
+    unsafe { produce(out, (*(*context).vm).native_negate(&*value)) }
+}
+
+/// `not value`, for a value that is not on the fast path.
+pub(crate) extern "C" fn native_not(
+    context: *mut Context,
+    value: *const Value,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, an initialized value,
+    // and a free slot.
+    unsafe { produce(out, (*(*context).vm).native_not(&*value)) }
+}
+
+/// Constant `index` of the running function's chunk, for one that is not
+/// a number, a boolean, or `nil`.
+pub(crate) extern "C" fn native_constant(context: *mut Context, index: u32, out: *mut Value) -> u32 {
+    // SAFETY: generated code passes its own context and a free slot.
+    unsafe {
+        let context = &*context;
+        let value = (*context.vm).native_constant(&*context.closure, index as usize);
+        produce(out, value)
+    }
+}
+
+/// A list of the `count` values at `values`, which it takes.
+pub(crate) extern "C" fn native_list(
+    context: *mut Context,
+    count: u32,
+    values: *mut Value,
+    out: *mut Value,
+) {
+    // SAFETY: generated code passes its own context, `count` initialized
+    // values it gives up, and a free slot.
+    unsafe {
+        let values = std::slice::from_raw_parts(values, count as usize);
+        let values = values.iter().map(|value| std::ptr::read(value)).collect();
+        out.write((*(*context).vm).native_list(values));
     }
 }
 

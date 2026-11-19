@@ -514,6 +514,32 @@ Each is committed on its own and passes the usual checks.
    **Gate, again:** all four kernels pass at release size (`fib` 4.2x,
    `function-call` 5.1x, n-body 8.4x, spectral-norm about 12x).
 
+### Phase 2 (2026-11-19)
+
+Every blocker of every hot chunk the Crawl workloads, `invaders-game`, and
+`http-server` leave interpreted, counted with a temporary `qualify` that
+lists them all: 524 blocked chunks. Calls of closure values block 349,
+global reads 298, captures 221, `MakeClosure` 126, captured locals 100,
+and index reads about 380 between their sources; no single instruction
+unlocks more than 12 chunks alone, so coverage comes in batches of
+runtime operations, each through a VM `native_*` function that takes the
+running closure (native callees have no VM frame, and may belong to
+another module than the frame on top), reads through that closure's own
+globals and slot cache and a fork's view, and returns `None` wherever the
+interpreter would do more, so native code leaves before the instruction.
+
+1. **Reads** (batch A): `GetGlobalPooled`, `GetCapture`, `GetIndex`,
+   `GetIndexConstant`, `ReadIndex` and `ReadIndexConstant` from a local,
+   a capture, or a global (in place, with the constant key's hint),
+   constants of every kind, binary operations against a non-number
+   constant, `Not` and `Negate` (inline for scalars), and `List`. Hot
+   chunks compiled: the Crawl workloads 8–33 each (were 1–5), Invaders 18
+   (8), `http-server` 10. Tier on against off in one release build, 11
+   interleaved rounds: `crawl-ticks` and `invaders-game` 0.89x, the other
+   Crawl workloads and `http-server` 0.98–1.01x, hold-outs 1.00x. Most
+   newly compiled chunks still call closure values or make closures, so
+   batch B is where they run natively end to end.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.

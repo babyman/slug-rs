@@ -216,6 +216,60 @@ fn compiled_division_and_mixed_numbers_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_reads_of_globals_captures_and_collections_match_the_interpreter() {
+    // Module values and variables, a variable changed between reads, a
+    // closure's captures, index reads of each kind with constant and value
+    // keys, string and function constants, `not`, and negation.
+    let trace = same_with_and_without_native_code(
+        "reads",
+        "val table = {\"a\": 1, \"b\": [10, 20, 30]}\n\
+         var counter = 0\n\
+         val bump = fn() { counter = counter + 1 }\n\
+         val peek = fn() { counter * 2 }\n\
+         val look = fn(key) { [table[key], table[\"a\"], table.b[1], table[\"missing\"]] }\n\
+         val local = fn(items, at) { [items[at], items[0], items[-1]] }\n\
+         val words = fn(name) { if (name == \"x\") { \"is x\" } else { name + \"!\" } }\n\
+         val maker = fn(base) {\n\
+             val items = [base, base + 1]\n\
+             fn(offset) { [base + offset, items[offset], items[1]] }\n\
+         }\n\
+         val invert = fn(value) { [!value, -value] }\n\
+         val choose = fn(flag) { if (!(flag > 2)) { \"small\" } else { \"large\" } }\n\
+         val pick = fn() { fn(value) { value * 3 } }\n\
+         val main = fn() {\n\
+             println(look(\"a\"), look(\"b\"), local([4, 5, 6], 1), local(\"text\", 2))\n\
+             println(peek()); bump(); bump(); println(peek())\n\
+             println(words(\"x\"), words(\"y\"))\n\
+             val add = maker(5)\n\
+             println(add(0), add(1))\n\
+             println(invert(3), invert(-2.5), invert(0), choose(1), choose(5))\n\
+             println(!nil, !false, !\"\", ![], pick()(4))\n\
+         }\n",
+    );
+    // All but `bump` (a global write), `maker` and `pick` (closures),
+    // and `main` (calls of closure values) compile.
+    let compiled = trace.matches("native: compiled").count();
+    assert!(compiled >= 8, "{trace}");
+    // Each failure stops the program, so each has its own.
+    for (kind, body) in [
+        ("index-out-of-range", "read([1, 2], 5)"),
+        ("index-not-a-collection", "read(7, 0)"),
+        ("index-bad-key", "read({\"a\": 1}, [1])"),
+        ("negate-string", "flip(\"a\")"),
+        ("negate-smallest", "flip(-9223372036854775807 - 1)"),
+    ] {
+        same_with_and_without_native_code(
+            kind,
+            &format!(
+                "val read = fn(items, at) {{ items[at] }}\n\
+                 val flip = fn(value) {{ -value }}\n\
+                 val main = fn() {{ println({body}) }}\n"
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.
