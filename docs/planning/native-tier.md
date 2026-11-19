@@ -184,6 +184,9 @@ What it says:
 
 ## Proposed shape
 
+The crate boundary, the `unsafe` exemption, and the IR are fixed by
+[a desktop native tier in its own crate](../decisions/2026-11-18-desktop-native-tier-crate.md).
+
 1. **Baseline tier.** Compile a function's bytecode one instruction at a
    time into Cranelift IR over the existing `Value` layout, as the boxed
    prototype does: a guard and a fast path per instruction, and a call
@@ -217,8 +220,11 @@ a phase that does not pay stops the plan.
   than about 1.5x there, the tier is worth it only for numeric code, and
   the decision below changes. *Done: 1.65x on PGO builds, see "Gate 0"
   above; passes narrowly, and nearly all the rest is runtime work.*
-- [ ] **Decide:** the exemption from `unsafe_code`, the Cranelift
-  dependency, and desktop-only scope (a decision record).
+- [x] **Decide:** the exemption from `unsafe_code`, the Cranelift
+  dependency, and desktop-only scope (a decision record). *Done: [a desktop
+  native tier in its own crate](../decisions/2026-11-18-desktop-native-tier-crate.md),
+  which also places the compiler's input in an IR lifted from verified
+  bytecode.*
 - [ ] **Phase 1: baseline tier** for straight-line arithmetic, locals,
   branches, `recur`, and calls to module functions; everything else stays
   interpreted. Measure `fib`, `function-call`, n-body, spectral-norm, and
