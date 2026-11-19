@@ -279,8 +279,9 @@ sets. Four facts from the VM shape it:
   the records into frames, so stack traces come from the same data as
   today, and overflow and non-finite errors keep their spans.
 - **Depth.** The interpreter has no recursion limit, so native code adds
-  none: past its depth limit, a call leaves native code and the recursion
-  continues in interpreter frames.
+  none: past its stack budget (256 KiB of machine stack from the entry,
+  in bytes because frames differ in size), a call leaves native code and
+  the recursion continues in interpreter frames.
 
 ### What compiles
 
@@ -396,7 +397,8 @@ Each is committed on its own and passes the usual checks.
      runs its code directly, with no interpreter frame. The callee's
      closure is the only record a native activation keeps; the call span
      comes from the caller's frame when the interpreter rebuilds it. When
-     there is no such callee, or native calls are 256 deep, the caller
+     there is no such callee, or native calls are deep (step 4 made this
+     a stack budget), the caller
      exits before the call and the interpreter makes it. When a callee
      exits, its frame is recorded and every caller exits after its call,
      so the interpreter gets all the frames at once
@@ -419,10 +421,26 @@ Each is committed on its own and passes the usual checks.
      1.01x hold-out; `fib` 0.46x, `function-call` 0.70x, `defer-errors`
      1.01x, everything else within noise. The Crawl workloads' RSS moves
      between about 45 and 58 MB from run to run in both builds.
-4. **Leaving native code:** the exit across several native frames, the
-   depth limit, and errors.
+4. **Leaving native code, done (2026-11-19):** the exit across several
+   native frames, the depth limit, and errors.
    Diagnostic snapshots are identical in both modes, and a test recurses
-   past the depth limit.
+   past the depth limit. 3b built the all-or-nothing exit; this step made
+   it safe and tested it:
+   - The depth limit is a byte budget, 256 KiB of machine stack measured
+     from the entry, rather than 256 calls: a function with many values
+     has a large native frame, and 256 of them could overflow a fork
+     thread's 2 MiB stack. Removing the budget makes deep recursion in a
+     fork crash, which a test now catches.
+   - A native call checks the thread's attention flag, as the interpreter
+     checks it at every call, so a cancelled fork deep in native recursion
+     stops. Without it a cancelled `fib(60)` ran on; a test now kills slug
+     after 30 s and fails. The two checks cost about 4% on `fib(32)`
+     (106 to 111 ms; 4.2x over the interpreter).
+   - Tests compare stdout, stderr, and status in both modes for an
+     overflow three native calls deep, an overflow under 5,000 frames
+     that cross the budget repeatedly, and recursion 20,000 and 30,000
+     deep in forks. The conformance corpus already runs under
+     `SLUG_NATIVE=all` in the suite.
 5. **Differential CI:** the conformance corpus, `make test`,
    `make test-clutches`, and the diagnostic goldens under
    `SLUG_NATIVE=all`.

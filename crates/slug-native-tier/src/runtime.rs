@@ -61,16 +61,27 @@ pub(crate) struct ExitTable {
     pub(crate) stack: Vec<u32>,
 }
 
-/// Native calls deeper than this leave to the interpreter, which has no
-/// limit of its own; this bounds the machine stack native code uses.
-pub(crate) const MAX_DEPTH: u32 = 256;
+/// The machine stack native calls may use from where the interpreter
+/// entered native code. A call past it leaves to the interpreter, which
+/// keeps its frames on the heap and has no limit of its own. Frames differ
+/// in size, so the bound is in bytes rather than calls; it leaves most of
+/// a fork thread's 2 MiB stack to everything else.
+pub(crate) const STACK_BUDGET: usize = 256 * 1024;
 
 /// What every activation of one entry from the interpreter shares.
 struct Root {
-    /// Native calls in progress.
-    depth: u32,
+    /// An address near the top of the machine stack at the entry.
+    base: usize,
     /// The frames of exiting calls, innermost first.
     frames: Vec<NativeFrame>,
+}
+
+/// The machine stack used since `root`'s entry, roughly: native frames
+/// and the Rust frames between them.
+#[inline]
+fn stack_used(root: &Root) -> usize {
+    let here = 0u8;
+    root.base.abs_diff(std::ptr::from_ref(&here) as usize)
 }
 
 /// A frame native code left to the interpreter.
@@ -182,9 +193,10 @@ impl NativeCode for Compiled {
             locals.resize(self.arity, Value::Nil);
         }
         let mut root = Root {
-            depth: 0,
+            base: 0,
             frames: Vec::new(),
         };
+        root.base = std::ptr::from_ref(&root) as usize;
         // SAFETY: everything passed lives across the call; the code moves
         // the arguments out of `locals`, so they are forgotten here rather
         // than dropped twice.
@@ -222,7 +234,9 @@ impl NativeCode for Compiled {
 /// positional call enters: writes its result to `out` and returns
 /// `CALL_RETURNED`. Returns `CALL_EXITED` when the callee left to the
 /// interpreter, its frame recorded, and `CALL_DECLINED` when there was no
-/// such callee, or the native calls are too deep.
+/// such callee, the native calls have used their stack budget, or the
+/// thread needs attention (a cancelled fork, say), which the interpreter
+/// checks at every call.
 pub(crate) extern "C" fn native_call(
     context: *mut Context,
     name: u32,
@@ -236,13 +250,15 @@ pub(crate) extern "C" fn native_call(
         let context = &*context;
         let root = context.root;
         let arguments_slice = std::slice::from_raw_parts_mut(arguments, count as usize);
-        let callee = if (*root).depth < MAX_DEPTH
+        let vm = &*context.vm;
+        let callee = if stack_used(&*root) < STACK_BUDGET
+            && !vm.native_needs_attention()
             // An argument the interpreter must resolve first.
             && !arguments_slice
                 .iter()
                 .any(|value| matches!(value, Value::Binding { .. }))
         {
-            (*context.vm).native_callee(&*context.closure, GlobalNameId::new(name), count as usize)
+            vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize)
         } else {
             None
         };
@@ -254,9 +270,7 @@ pub(crate) extern "C" fn native_call(
             std::ptr::drop_in_place(arguments_slice);
             return CALL_DECLINED;
         };
-        (*root).depth += 1;
         let outcome = compiled.enter(context.vm, &raw const closure, root, arguments);
-        (*root).depth -= 1;
         match outcome {
             Ok(value) => {
                 out.write(value);

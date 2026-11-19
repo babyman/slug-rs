@@ -290,3 +290,74 @@ fn recursion_deeper_than_native_calls_go_continues_in_the_interpreter() {
          val main = fn() { println(sum(3000)) }\n",
     );
 }
+
+#[test]
+fn deep_recursion_in_a_fork_stays_within_its_threads_stack() {
+    // Forks run on threads with smaller stacks than the main thread's;
+    // native calls stop at their budget and the interpreter goes on.
+    same_with_and_without_native_code(
+        "deep-fork",
+        "val sum = fn(n) { if (n == 0) { 0 } else { n + sum(n - 1) } }\n\
+         val main = fn() {\n\
+             val a = fork { sum(20000) }\n\
+             val b = fork { sum(30000) }\n\
+             println(select { await a }, select { await b })\n\
+         }\n",
+    );
+}
+
+#[test]
+fn a_fork_cancelled_during_native_recursion_stops() {
+    // `fib(60)` would run for hours; its sibling's failure cancels it, and
+    // compiled code sees that at its next call as the interpreter would.
+    let path = fixture_path("native-cancelled-recursion");
+    fs::write(
+        &path,
+        "val fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }\n\
+         val main = fn() {\n\
+             val run = fn():num {\n\
+                 defer onerror(err) { 0 }\n\
+                 nursery {\n\
+                     fork { fib(60) }\n\
+                     fork { select { after 100 }; throw \"stop\" }\n\
+                 }\n\
+                 1\n\
+             }\n\
+             println(run())\n\
+         }\n",
+    )
+    .expect("write cancelled recursion source");
+    let mut child = slug()
+        .env("SLUG_NATIVE", "all")
+        .arg(&path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run cancelled recursion source");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while child.try_wait().expect("poll slug").is_none() {
+        if std::time::Instant::now() > deadline {
+            child.kill().expect("stop slug");
+            child.wait().expect("reap slug");
+            fs::remove_file(&path).expect("remove cancelled recursion source");
+            panic!("the cancelled fork kept running");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().expect("read slug's output");
+    fs::remove_file(path).expect("remove cancelled recursion source");
+
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "0\n");
+}
+
+#[test]
+fn an_error_below_many_native_and_interpreted_frames_reports_as_the_interpreter_does() {
+    // The recursion passes the native stack budget several times, so the
+    // trace mixes frames rebuilt from native code with interpreted ones.
+    same_with_and_without_native_code(
+        "deep-error",
+        "val down = fn(n, value) { if (n == 0) { value * 9_000_000_000_000_000 } else { 1 + down(n - 1, value) } }\n\
+         val main = fn() { println(down(5000, 7)) }\n",
+    );
+}
