@@ -177,6 +177,45 @@ fn compiled_arithmetic_matches_the_interpreter() {
 }
 
 #[test]
+fn compiled_division_and_mixed_numbers_match_the_interpreter() {
+    // Exact and inexact integer quotients, mixed operands both ways and
+    // against constants, and equality of an integer and a float.
+    let trace = same_with_and_without_native_code(
+        "division",
+        "val divide = fn(a, b) { a / b }\n\
+         val half = fn(a) { a / 2 }\n\
+         val ratio = fn(a) { 1.0 / a }\n\
+         val mixed = fn(a, b) { [a + b, a - b, a * b, a < b, a > b, a == b] }\n\
+         val near = fn(a) { [a + 1, a < 2, a == 2, a == 2.0, a > 1.5] }\n\
+         val main = fn() {\n\
+             println(divide(12, 4), divide(7, 2), divide(-7, 2), divide(-9223372036854775807 - 1, 2))\n\
+             println(divide(7.5, 2), divide(3, 0.5), divide(-1, 3.0), half(9), half(10), half(5.0))\n\
+             println(ratio(4), ratio(0.5), ratio(-3))\n\
+             println(mixed(1, 2.5), mixed(2.5, 1), mixed(2, 2.0), mixed(-0.0, 0))\n\
+             println(near(2), near(2.0), near(1.5))\n\
+         }\n",
+    );
+    assert!(trace.contains("native: compiled"), "{trace}");
+    // Each failure stops the program, so each has its own.
+    for (kind, body) in [
+        ("divide-int-zero", "divide(1, 0)"),
+        ("divide-float-zero", "divide(1.5, 0.0)"),
+        ("divide-mixed-zero", "divide(1, -0.0)"),
+        ("divide-overflow", "divide(-9223372036854775807 - 1, -1)"),
+        ("divide-non-finite", "divide(1.0e300, 1.0e-300)"),
+        ("divide-string", "divide(\"a\", 2)"),
+    ] {
+        same_with_and_without_native_code(
+            kind,
+            &format!(
+                "val divide = fn(a, b) {{ a / b }}\n\
+                 val main = fn() {{ println({body}) }}\n"
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

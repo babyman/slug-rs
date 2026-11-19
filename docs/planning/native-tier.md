@@ -492,6 +492,28 @@ Each is committed on its own and passes the usual checks.
    noise, but two call-heavy tuned workloads pay 3–4% for the entry
    count. Compile time and binary size are recorded above.
 
+7. **Closing the gate.** Mixed integer and float operands and division
+   now run inline. Two integers divide inline when the quotient is exact
+   and continue as floats when it is not; a zero divisor, `i64::MIN / -1`,
+   and a non-finite result still go to the interpreter, which reports
+   them. Two numbers with at least one float convert as `numbers` does;
+   equality of an integer and a float, which compares numerically, stays
+   on the slow path. spectral-norm at 2000x2000 (release, not
+   profile-guided) goes from 0.51 s to 0.04 s, about 12x (it was 2.5x),
+   with identical output.
+
+   On the entry-count cost: in ordinary release builds the `native` build
+   with `SLUG_NATIVE=off` against the interpreter-only build is 1.00x
+   tuned and 1.01x hold-out (`closure-accumulate` 1.02x, inside noise),
+   and the tier on against off in one binary is 1.00x on
+   `closure-accumulate`, `higher-order`, and `defer-errors`. Counting a
+   settled chunk is one load and a compare; what is left of the 3–4% in
+   the profile-guided comparison is the hooks' presence in the
+   interpreter loop, not the counting, and is not pursued further.
+
+   **Gate, again:** all four kernels pass at release size (`fib` 4.2x,
+   `function-call` 5.1x, n-body 8.4x, spectral-norm about 12x).
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.

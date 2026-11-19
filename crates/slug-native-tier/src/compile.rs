@@ -1,9 +1,11 @@
 //! Lowering a lifted function to machine code: the baseline tier.
 //!
 //! Every IR value has a 24-byte slot in the native frame holding a `Value`
-//! exactly as the VM lays it out. Integer and float arithmetic and
-//! comparisons run inline when both operands have the fast path's type;
-//! every other case calls the interpreter's own operation. Anything that
+//! exactly as the VM lays it out. Arithmetic, division, and comparisons
+//! run inline on two integers, and on two numbers of which one is a float
+//! (converted as the VM's `numbers` converts them; equality only on two
+//! floats); every other case, and every error, calls the interpreter's own
+//! operation. Anything that
 //! fails, and a thread that needs attention at a `recur`, leaves to the
 //! interpreter before the instruction, with the frame from its snapshot.
 //!
@@ -412,12 +414,13 @@ impl<'a> Lowering<'a> {
             self.builder.append_block_param(done, types::I8);
         }
 
-        // A constant right operand of the other type never takes a path.
-        let (int_constant, float_constant) = match right {
+        // A constant right operand that is not a number never takes a path,
+        // and a float one never takes the integer path.
+        let (int_constant, number_constant) = match right {
             Operand::Value(_) => (true, true),
             Operand::Constant(constant) => (
                 matches!(constant, Value::Int(_)),
-                matches!(constant, Value::Float(_)),
+                matches!(constant, Value::Int(_) | Value::Float(_)),
             ),
         };
         let int_fast = int_constant
@@ -429,6 +432,8 @@ impl<'a> Lowering<'a> {
                     | B::SubtractNum
                     | B::Multiply
                     | B::MultiplyNum
+                    | B::Divide
+                    | B::DivideNum
                     | B::Equal
                     | B::Greater
                     | B::GreaterNum
@@ -438,7 +443,7 @@ impl<'a> Lowering<'a> {
                     | B::BitOr
                     | B::BitXor
             );
-        let float_fast = float_constant
+        let float_fast = number_constant
             && matches!(
                 operator,
                 B::Add
@@ -447,43 +452,40 @@ impl<'a> Lowering<'a> {
                     | B::SubtractNum
                     | B::Multiply
                     | B::MultiplyNum
+                    | B::Divide
+                    | B::DivideNum
                     | B::Equal
                     | B::Greater
                     | B::GreaterNum
                     | B::Less
                     | B::LessNum
             );
-        // Whether both operands have `tag`, and the right one's payload.
-        let both = |lowering: &mut Self, tag: i64| -> CodeValue {
-            let left_is = lowering.builder.ins().icmp_imm(IntCC::Equal, left_tag, tag);
-            match right {
-                Operand::Value(value) => {
-                    let right_slot = lowering.slot(value.index());
-                    let right_tag = lowering.load_tag(right_slot);
-                    let right_is = lowering
-                        .builder
-                        .ins()
-                        .icmp_imm(IntCC::Equal, right_tag, tag);
-                    lowering.builder.ins().band(left_is, right_is)
-                }
-                Operand::Constant(constant) => {
-                    let matches = match constant {
-                        Value::Int(_) => tag == layout::INT,
-                        Value::Float(_) => tag == layout::FLOAT,
-                        _ => false,
-                    };
-                    if matches {
-                        left_is
-                    } else {
-                        lowering.builder.ins().iconst(types::I8, 0)
-                    }
-                }
-            }
-        };
+        // Equality of an integer and a float is not numeric, so only
+        // two floats take the float path for it.
+        let mixed = operator != B::Equal;
+        let float_fast =
+            float_fast && (mixed || !matches!(right, Operand::Constant(Value::Int(_))));
 
+        // Reached when the operands are not both integers, and by an
+        // integer division with a remainder, which gives a float.
         let after_int = self.builder.create_block();
         if int_fast {
-            let is_int = both(self, layout::INT);
+            let left_is = self
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, left_tag, layout::INT);
+            let is_int = match right {
+                Operand::Value(value) => {
+                    let right_slot = self.slot(value.index());
+                    let right_tag = self.load_tag(right_slot);
+                    let right_is =
+                        self.builder
+                            .ins()
+                            .icmp_imm(IntCC::Equal, right_tag, layout::INT);
+                    self.builder.ins().band(left_is, right_is)
+                }
+                Operand::Constant(_) => left_is,
+            };
             let int_block = self.builder.create_block();
             self.builder
                 .ins()
@@ -507,6 +509,27 @@ impl<'a> Lowering<'a> {
                     self.builder.ins().brif(overflow, slow, &[], store, &[]);
                     self.builder.switch_to_block(store);
                     self.store_int(result, sum);
+                    self.builder.ins().jump(done, &[]);
+                }
+                B::Divide | B::DivideNum => {
+                    // A zero divisor and `i64::MIN / -1` are the
+                    // interpreter's errors to report.
+                    let zero = self.builder.ins().icmp_imm(IntCC::Equal, b, 0);
+                    let minus_one = self.builder.ins().icmp_imm(IntCC::Equal, b, -1);
+                    let min = self.builder.ins().icmp_imm(IntCC::Equal, a, i64::MIN);
+                    let overflow = self.builder.ins().band(minus_one, min);
+                    let fault = self.builder.ins().bor(zero, overflow);
+                    let divide = self.builder.create_block();
+                    self.builder.ins().brif(fault, slow, &[], divide, &[]);
+                    self.builder.switch_to_block(divide);
+                    let remainder = self.builder.ins().srem(a, b);
+                    let exact = self.builder.create_block();
+                    self.builder
+                        .ins()
+                        .brif(remainder, after_int, &[], exact, &[]);
+                    self.builder.switch_to_block(exact);
+                    let quotient = self.builder.ins().sdiv(a, b);
+                    self.store_int(result, quotient);
                     self.builder.ins().jump(done, &[]);
                 }
                 B::BitAnd | B::BitOr | B::BitXor => {
@@ -533,27 +556,45 @@ impl<'a> Lowering<'a> {
             self.builder.ins().jump(after_int, &[]);
         }
 
+        // Two numbers, at least one a float or a quotient with a
+        // remainder: both as floats, as `numbers` in the VM converts them.
         self.builder.switch_to_block(after_int);
         if float_fast {
-            let is_float = both(self, layout::FLOAT);
-            let float_block = self.builder.create_block();
-            self.builder
-                .ins()
-                .brif(is_float, float_block, &[], slow, &[]);
-            self.builder.switch_to_block(float_block);
-            let a = self.load_payload(left_slot, types::F64);
-            let b = self.operand_payload(right, types::F64);
+            let a = self.float_of(left_slot, mixed, slow);
+            let b = match right {
+                Operand::Value(value) => {
+                    let right_slot = self.slot(value.index());
+                    self.float_of(right_slot, mixed, slow)
+                }
+                #[allow(clippy::cast_precision_loss)] // As `numbers` converts.
+                Operand::Constant(Value::Int(value)) if mixed => {
+                    self.builder.ins().f64const(*value as f64)
+                }
+                Operand::Constant(Value::Float(value)) => self.builder.ins().f64const(*value),
+                Operand::Constant(_) => unreachable!("only number constants reach a fast path"),
+            };
             match operator {
                 B::Add
                 | B::AddNum
                 | B::Subtract
                 | B::SubtractNum
                 | B::Multiply
-                | B::MultiplyNum => {
+                | B::MultiplyNum
+                | B::Divide
+                | B::DivideNum => {
+                    if matches!(operator, B::Divide | B::DivideNum) {
+                        // Division by zero is the interpreter's error.
+                        let zero = self.builder.ins().f64const(0.0);
+                        let is_zero = self.builder.ins().fcmp(FloatCC::Equal, b, zero);
+                        let divide = self.builder.create_block();
+                        self.builder.ins().brif(is_zero, slow, &[], divide, &[]);
+                        self.builder.switch_to_block(divide);
+                    }
                     let value = match operator {
                         B::Add | B::AddNum => self.builder.ins().fadd(a, b),
                         B::Subtract | B::SubtractNum => self.builder.ins().fsub(a, b),
-                        _ => self.builder.ins().fmul(a, b),
+                        B::Multiply | B::MultiplyNum => self.builder.ins().fmul(a, b),
+                        _ => self.builder.ins().fdiv(a, b),
                     };
                     // Finite exactly when `value - value` is zero.
                     let difference = self.builder.ins().fsub(value, value);
@@ -942,6 +983,43 @@ impl<'a> Lowering<'a> {
         self.builder
             .ins()
             .store(MemFlags::trusted(), value, address, offset);
+    }
+
+    /// The number in `place` as a float: its payload when it is a float,
+    /// or, when `ints` is set, its integer converted as `numbers` in the VM
+    /// converts it; anything else branches to `slow`.
+    fn float_of(&mut self, place: Place, ints: bool, slow: CodeBlock) -> CodeValue {
+        let tag = self.load_tag(place);
+        let join = self.builder.create_block();
+        self.builder.append_block_param(join, types::F64);
+        let float_block = self.builder.create_block();
+        let other = if ints {
+            self.builder.create_block()
+        } else {
+            slow
+        };
+        let is_float = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, tag, layout::FLOAT);
+        self.builder
+            .ins()
+            .brif(is_float, float_block, &[], other, &[]);
+        self.builder.switch_to_block(float_block);
+        let payload = self.load_payload(place, types::F64);
+        self.builder.ins().jump(join, &[payload]);
+        if ints {
+            self.builder.switch_to_block(other);
+            let is_int = self.builder.ins().icmp_imm(IntCC::Equal, tag, layout::INT);
+            let int_block = self.builder.create_block();
+            self.builder.ins().brif(is_int, int_block, &[], slow, &[]);
+            self.builder.switch_to_block(int_block);
+            let integer = self.load_payload(place, types::I64);
+            let converted = self.builder.ins().fcvt_from_sint(types::F64, integer);
+            self.builder.ins().jump(join, &[converted]);
+        }
+        self.builder.switch_to_block(join);
+        self.builder.block_params(join)[0]
     }
 
     fn load_tag(&mut self, place: Place) -> CodeValue {
