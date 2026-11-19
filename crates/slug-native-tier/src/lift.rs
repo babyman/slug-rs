@@ -7,7 +7,7 @@
 //! blocks in bytecode order are already in a topological order: each block's
 //! predecessors are lifted before it, and SSA construction is one pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use slug_vm::{Capture, Op, Program, ReadSource, VerifiedChunk, VerifiedInstruction};
 
@@ -23,19 +23,26 @@ use crate::ir::{
 /// reads a value below its own on the operand stack.
 pub fn lift(program: &Program, chunk: usize) -> Result<Function, String> {
     let verified = program.verified_chunk(chunk)?;
-    let cells = captured_locals(program, &verified)?;
-    Lifter::new(chunk, &verified, cells).run()
+    let (closures, cells) = closures(program, &verified)?;
+    Lifter::new(chunk, &verified, closures, cells).run()
 }
 
-/// Locals a `MakeClosure` captures, which the VM promotes to cells.
-fn captured_locals(program: &Program, chunk: &VerifiedChunk) -> Result<Vec<bool>, String> {
+/// What each closure the chunk makes captures, by instruction, and which
+/// locals any captures: the VM promotes those to cells.
+type Closures = BTreeMap<usize, (usize, Vec<Capture>)>;
+
+fn closures(program: &Program, chunk: &VerifiedChunk) -> Result<(Closures, Vec<bool>), String> {
+    let mut closures = BTreeMap::new();
     let mut cells = vec![false; chunk.locals];
-    for instruction in &chunk.instructions {
-        let captures = match &instruction.op {
-            Op::MakeClosure { captures, .. } => captures.as_slice(),
-            Op::MakeClosurePooled { captures, .. } => program
-                .captures(*captures)
-                .ok_or("a closure's capture list is missing")?,
+    for (ip, instruction) in chunk.instructions.iter().enumerate() {
+        let (function, captures) = match &instruction.op {
+            Op::MakeClosure { chunk, captures } => (*chunk, captures.as_slice()),
+            Op::MakeClosurePooled { chunk, captures } => (
+                *chunk,
+                program
+                    .captures(*captures)
+                    .ok_or("a closure's capture list is missing")?,
+            ),
             _ => continue,
         };
         for capture in captures {
@@ -45,8 +52,9 @@ fn captured_locals(program: &Program, chunk: &VerifiedChunk) -> Result<Vec<bool>
                     .ok_or_else(|| format!("a closure captures missing local {slot}"))? = true;
             }
         }
+        closures.insert(ip, (function, captures.to_vec()));
     }
-    Ok(cells)
+    Ok((closures, cells))
 }
 
 /// The frame between instructions: what each local and stack slot holds.
@@ -75,7 +83,12 @@ struct Lifter<'a> {
 }
 
 impl<'a> Lifter<'a> {
-    fn new(chunk_index: usize, chunk: &'a VerifiedChunk, cells: Vec<bool>) -> Self {
+    fn new(
+        chunk_index: usize,
+        chunk: &'a VerifiedChunk,
+        closures: Closures,
+        cells: Vec<bool>,
+    ) -> Self {
         let length = chunk.instructions.len();
         Self {
             chunk,
@@ -85,6 +98,7 @@ impl<'a> Lifter<'a> {
                 arity: chunk.arity,
                 locals: chunk.locals,
                 cells,
+                closures,
                 exact_positional: chunk.exact_positional,
                 constants: chunk.constants.clone(),
                 values: Vec::new(),

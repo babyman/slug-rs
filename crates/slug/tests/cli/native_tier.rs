@@ -296,6 +296,68 @@ fn compiled_reads_of_globals_captures_and_collections_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_closures_and_captured_locals_match_the_interpreter() {
+    // Closures capturing locals, parameters, and captures; a captured
+    // `var` changed before and after the capture, through the closure and
+    // around it; a captured parameter of a function that recurs, so each
+    // iteration has fresh cells; index reads and arithmetic on captured
+    // locals; and a capture written by an inner closure.
+    let trace = same_with_and_without_native_code(
+        "closures",
+        "val counter = fn(start) {\n\
+             var count = start\n\
+             val bump = fn() { count = count + 1; count }\n\
+             bump()\n\
+             count = count + 10\n\
+             [bump(), count, bump(), count * 2]\n\
+         }\n\
+         val loop = fn(n, total, keep) {\n\
+             if (n == 0) { [total, keep()] } else {\n\
+                 val items = [n, n * 2]\n\
+                 val first = fn() { items[0] + n }\n\
+                 recur(n - 1, total + first() + items[1], first)\n\
+             }\n\
+         }\n\
+         val nested = fn(x) {\n\
+             var total = 0\n\
+             val outer = fn(y) {\n\
+                 val inner = fn(z) { total = total + x + y + z; total }\n\
+                 inner(1)\n\
+             }\n\
+             outer(2)\n\
+             outer(3)\n\
+             [total, total + 1]\n\
+         }\n\
+         val main = fn() {\n\
+             var index = 0\n\
+             val drive = fn(k, sum) {\n\
+                 if (k == 0) { sum } else {\n\
+                     val c = counter(k)\n\
+                     recur(k - 1, sum + c[0] + c[1] + c[2] + c[3] + loop(4, 0, fn() { 0 })[0] + nested(k)[1])\n\
+                 }\n\
+             }\n\
+             println(drive(300, 0), loop(3, 0, fn() { 0 }), nested(5))\n\
+         }\n",
+    );
+    // All but the module body and `inner`, whose `total = total + ...`
+    // is a fused update of a capture, compile.
+    let compiled = trace.matches("native: compiled").count();
+    assert!(compiled >= 8, "{trace}");
+    // A failure with a captured local in the frame leaves its cell to the
+    // interpreter, which reports it and its trace.
+    same_with_and_without_native_code(
+        "closures-error",
+        "val fails = fn(x) {\n\
+             var v = x\n\
+             val f = fn() { v }\n\
+             v = v + \"s\"\n\
+             f()\n\
+         }\n\
+         val main = fn() { println(fails(5)) }\n",
+    );
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

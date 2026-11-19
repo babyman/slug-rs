@@ -568,6 +568,32 @@ interpreter would do more, so native code leaves before the instruction.
    slower. The callees native code still cannot call are closures that do
    not compile (`MakeClosure`, struct copies) and builtins such as `len`:
    the next batch.
+4. **Closures and captured locals** (batch C): `MakeClosure` and
+   `MakeClosurePooled`, `SetCapture`, and a function a closure captures
+   locals of. Its captured locals live in the activation's context rather
+   than in slots, each a value until a closure captures it and the cell
+   that closure shares after, as the interpreter promotes them; reads,
+   writes, arithmetic, and index reads of one call the runtime; a `recur`
+   gives the next iteration fresh ones; and an exit hands each to the
+   interpreter as its frame's value or cell (`NativeLocal`). Compiled:
+   crawl-crowd 80 of 127 hot chunks (67), `crawl-pages` 61 of 97 (47),
+   Invaders 50 of 65 (38), `http-server` 37 of 78 (26). Tier on against
+   off, one release build, 9 interleaved rounds: `fib` and
+   `function-call` 0.49x, Invaders 0.83x, `crawl-ticks` 0.88x,
+   `http-server` 0.95x, crawl-crowd 0.96–0.98x, the rest 1.00–1.01x
+   (`crawl-pages` read 1.06x once and 1.00x over 15 rounds).
+
+   The callees native code still leaves at are now mostly functions that
+   build structs (`StructPooled`), append to lists (`ListAppend`), slice
+   (`GetSlice`), or copy a module variable's struct (`CopyGlobalPooled`),
+   and the builtin `len`, the most called single callee in the Crawl
+   workloads and `http-server`. An append keeps the interpreter's
+   in-place update only if native code moves a list it reads for the last
+   time rather than cloning it, so `ListAppend` waits for last-use moves.
+   A builtin that fails cannot be retried by the interpreter, which would
+   repeat its effects, so a direct builtin call needs the failure handed
+   over rather than redone. `UpdateCapture` (`total = total + x` on a
+   captured `var`) needs the same moves.
 
 ### Gate
 

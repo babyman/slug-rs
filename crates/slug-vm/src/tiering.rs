@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use crate::{
     Program, Value, Vm,
     sync::{Code, Sendable},
+    value::BindingCell,
 };
 
 /// A native-code tier. The VM counts each chunk's entries (calls and
@@ -100,7 +101,7 @@ pub enum NativeOutcome {
     /// interpreter continues in the innermost.
     Exit {
         ip: usize,
-        locals: Vec<Value>,
+        locals: Vec<NativeLocal>,
         stack: Vec<Value>,
         frames: Vec<NativeFrame>,
     },
@@ -112,8 +113,48 @@ pub enum NativeOutcome {
 pub struct NativeFrame {
     pub closure: Value,
     pub ip: usize,
-    pub locals: Vec<Value>,
+    pub locals: Vec<NativeLocal>,
     pub stack: Vec<Value>,
+}
+
+/// A local of a frame native code runs or leaves: its value, or, once a
+/// closure captured it, the cell that closure shares.
+#[doc(hidden)]
+pub enum NativeLocal {
+    Value(Value),
+    Cell(NativeCell),
+}
+
+/// A captured local's cell.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct NativeCell(pub(crate) BindingCell);
+
+impl NativeLocal {
+    /// The local's value, as `GetLocal` reads it.
+    #[must_use]
+    pub fn get(&self) -> Value {
+        match self {
+            Self::Value(value) => value.clone(),
+            Self::Cell(cell) => cell.0.borrow().clone(),
+        }
+    }
+
+    /// Calls `read` with the local's value, in place.
+    pub fn read<R>(&self, read: impl FnOnce(&Value) -> R) -> R {
+        match self {
+            Self::Value(value) => read(value),
+            Self::Cell(cell) => read(&cell.0.borrow()),
+        }
+    }
+
+    /// Sets the local, as `SetLocal` does.
+    pub fn set(&mut self, value: Value) {
+        match self {
+            Self::Value(local) => *local = value,
+            Self::Cell(cell) => *cell.0.borrow_mut() = value,
+        }
+    }
 }
 
 static TIER: OnceLock<Arc<dyn NativeTier>> = OnceLock::new();

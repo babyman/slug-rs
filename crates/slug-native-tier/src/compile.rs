@@ -50,7 +50,8 @@ use crate::{
     jit::Jit,
     runtime::{
         self, BINARY_OPERATORS, CALL_DECLINED, CALL_RETURNED, CONTEXT_RET, Compiled, EXITED,
-        ExitTable, NO_CONSTANT, RETURNED, SOURCE_CAPTURE, SOURCE_GLOBAL, SOURCE_VALUE, layout,
+        ExitTable, NO_CONSTANT, RETURNED, SOURCE_CAPTURE, SOURCE_CELL, SOURCE_GLOBAL, SOURCE_VALUE,
+        layout,
     },
 };
 
@@ -60,12 +61,19 @@ use crate::{
 ///
 /// Returns the first thing the baseline tier does not compile yet.
 pub fn qualify(function: &Function) -> Result<(), String> {
-    if function.cells.iter().any(|cell| *cell) {
-        return Err("a closure captures one of its locals".into());
-    }
+    let cell = |slot: &usize| function.cells.get(*slot).copied().unwrap_or(true);
     for block in &function.blocks {
         for inst in &block.insts {
             match &inst.op {
+                // Only a captured local's reads and writes are instructions.
+                Op::GetLocal(slot) | Op::SetLocal(slot) if !cell(slot) => {
+                    return Err(format!("local {slot} is read as a cell but is not one"));
+                }
+                Op::MakeClosure { .. } | Op::MakeClosurePooled { .. }
+                    if !function.closures.contains_key(&inst.ip) =>
+                {
+                    return Err(format!("the closure at instruction {} is missing", inst.ip));
+                }
                 Op::Constant(index) => {
                     if function.constants.get(*index).is_none() {
                         return Err(format!("constant {index} does not exist"));
@@ -79,16 +87,23 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::GetGlobalPooled(_)
                 | Op::SetGlobalPooled(_)
                 | Op::GetCapture(_)
+                | Op::SetCapture(_)
+                | Op::GetLocal(_)
+                | Op::SetLocal(_)
+                | Op::MakeClosure { .. }
+                | Op::MakeClosurePooled { .. }
                 | Op::Not
                 | Op::Negate
                 | Op::List(_)
                 | Op::GetIndex
                 | Op::GetIndexConstant(_)
                 | Op::ReadIndex {
-                    source: ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
+                    source:
+                        ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
                 }
                 | Op::ReadIndexConstant {
-                    source: ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
+                    source:
+                        ReadSource::Local(_) | ReadSource::Capture(_) | ReadSource::GlobalPooled(_),
                     ..
                 } => {}
                 Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. } => {
@@ -197,6 +212,12 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
         let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
         Lowering::new(builder, function, pointer, call_conv).lower()?
     };
+    let cells = if function.cells.iter().any(|cell| *cell) {
+        function.cells.clone()
+    } else {
+        Vec::new()
+    };
+    let closures = function.closures.values().cloned().collect();
     let name = format!(
         "slug_{}_{}",
         function.chunk,
@@ -206,7 +227,16 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     if let Some(code) = context.compiled_code().and_then(|code| code.vcode.as_ref()) {
         eprintln!("{name}:\n{code}");
     }
-    Ok(Compiled::new(entry, function.arity, exits, owning))
+    Ok(Compiled::new(
+        entry,
+        function.arity,
+        runtime::Tables {
+            exits,
+            owning,
+            cells,
+            closures,
+        },
+    ))
 }
 
 /// The Rust functions generated code calls, by signature.
@@ -243,6 +273,8 @@ struct Lowering<'a> {
     base: CodeValue,
     /// Each comparison result's value as an `i8`, where it was computed.
     booleans: Vec<Option<CodeValue>>,
+    /// The slot an operation reads a captured local into.
+    cell_operand: usize,
     owning: Vec<bool>,
     exits: Vec<ExitTable>,
     /// Blocks made while another was being filled, filled at the end.
@@ -309,14 +341,16 @@ impl<'a> Lowering<'a> {
             .iter()
             .flat_map(|block| &block.insts)
             .filter_map(|inst| match inst.op {
-                Op::CallGlobalPooled { count, .. } | Op::CallPositional(count) | Op::List(count) => {
-                    Some(count)
-                }
+                Op::CallGlobalPooled { count, .. }
+                | Op::CallPositional(count)
+                | Op::List(count) => Some(count),
                 _ => None,
             })
             .max()
             .unwrap_or(0);
-        let slots = function.values.len() + function.arity + 1 + call_arguments;
+        // The last slot holds a captured local an operation reads.
+        let cell_operand = function.values.len() + function.arity + 1 + call_arguments;
+        let slots = cell_operand + 1;
         let frame = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             u32::try_from(slots * layout::SIZE as usize).expect("frame fits"),
@@ -329,7 +363,9 @@ impl<'a> Lowering<'a> {
             .collect();
         let cleanup = builder.create_block();
         builder.append_block_param(cleanup, types::I32);
-        let owning = owning_values(function);
+        let mut owning = owning_values(function);
+        owning.resize(cell_operand, false);
+        owning.push(function.cells.iter().any(|cell| *cell));
         Self {
             builder,
             function,
@@ -341,6 +377,7 @@ impl<'a> Lowering<'a> {
             context: CodeValue::from_u32(0),
             base: CodeValue::from_u32(0),
             booleans: vec![None; function.values.len()],
+            cell_operand,
             owning,
             exits: Vec::new(),
             pending: Vec::new(),
@@ -356,8 +393,9 @@ impl<'a> Lowering<'a> {
         self.base = self.builder.ins().stack_addr(self.pointer, self.frame, 0);
         let function = self.function;
         // Owning slots and unset locals start `nil`.
-        for (index, def) in function.values.iter().enumerate() {
-            if self.owning[index] || matches!(def, ValueDef::UnsetLocal) {
+        for index in 0..self.owning.len() {
+            let unset = matches!(function.values.get(index), Some(ValueDef::UnsetLocal));
+            if self.owning[index] || unset {
                 let slot = self.slot(index);
                 self.store_tag(slot, layout::NIL);
             }
@@ -423,7 +461,11 @@ impl<'a> Lowering<'a> {
                     let value = value.clone();
                     self.store_constant(slot, &value);
                 } else {
-                    self.lower_operand_op(inst, runtime::native_constant as *const () as usize, *index);
+                    self.lower_operand_op(
+                        inst,
+                        runtime::native_constant as *const () as usize,
+                        *index,
+                    );
                 }
             }
             Op::GetGlobalPooled(name) => {
@@ -436,34 +478,42 @@ impl<'a> Lowering<'a> {
             Op::GetCapture(index) => {
                 self.lower_operand_op(inst, runtime::native_capture as *const () as usize, *index);
             }
+            Op::GetLocal(slot) => {
+                self.lower_operand_op(inst, runtime::native_get_cell as *const () as usize, *slot);
+            }
+            Op::MakeClosure { .. } | Op::MakeClosurePooled { .. } => {
+                let site = self
+                    .function
+                    .closures
+                    .keys()
+                    .position(|ip| *ip == inst.ip)
+                    .ok_or("a closure is missing")?;
+                self.lower_operand_op(inst, runtime::native_closure as *const () as usize, site);
+            }
             Op::SetGlobalPooled(name) => {
-                let name = self.builder.ins().iconst(types::I32, i64::from(name.get()));
-                let value = self.slot(inst.args[0].index());
-                let value = self.address(value);
-                let status = self.call(
-                    self.runtime.operand,
+                self.lower_write(
+                    inst,
                     runtime::native_set_global as *const () as usize,
-                    &[self.context, name, value],
-                )[0];
-                self.exit_unless_ok(inst, status);
+                    name.get() as usize,
+                );
+            }
+            Op::SetLocal(slot) => {
+                self.lower_write(inst, runtime::native_set_cell as *const () as usize, *slot);
+            }
+            Op::SetCapture(index) => {
+                self.lower_write(
+                    inst,
+                    runtime::native_set_capture as *const () as usize,
+                    *index,
+                );
             }
             Op::Not => self.lower_not(inst),
             Op::List(_) => self.lower_list(inst),
             Op::Negate => self.lower_negate(inst),
-            Op::GetIndex => {
-                self.lower_index(inst, SOURCE_VALUE, 0, Some(inst.args[0]), Some(inst.args[1]), None);
-            }
-            Op::GetIndexConstant(constant) => {
-                self.lower_index(inst, SOURCE_VALUE, 0, Some(inst.args[0]), None, Some(*constant));
-            }
-            Op::ReadIndex { source } => {
-                let (kind, operand, collection) = Self::read_source(inst, source, 1)?;
-                self.lower_index(inst, kind, operand, collection, Some(inst.args[0]), None);
-            }
-            Op::ReadIndexConstant { source, constant } => {
-                let (kind, operand, collection) = Self::read_source(inst, source, 0)?;
-                self.lower_index(inst, kind, operand, collection, None, Some(*constant));
-            }
+            Op::GetIndex
+            | Op::GetIndexConstant(_)
+            | Op::ReadIndex { .. }
+            | Op::ReadIndexConstant { .. } => self.lower_index_op(inst)?,
             Op::Nil => {
                 let slot = self.slot(inst.results[0].index());
                 self.store_tag(slot, layout::NIL);
@@ -482,23 +532,88 @@ impl<'a> Lowering<'a> {
                 self.lower_call(inst, Callee::Global(name.get()), *count)?;
             }
             Op::CallPositional(count) => self.lower_call(inst, Callee::Value, *count)?,
-            op => {
-                let operator = binary_operator(op)
-                    .ok_or_else(|| format!("instruction {} is not compiled yet", inst.ip))?;
-                let right = match op {
-                    Op::LocalConstantBinary { constant, .. }
-                    | Op::ConstantBinary { constant, .. } => {
-                        if let Ok(value) = number_constant(self.function, *constant) {
-                            Operand::Constant(value.clone())
-                        } else {
-                            value_constant(self.function, *constant)?;
-                            Operand::Pooled(*constant)
-                        }
-                    }
-                    _ => Operand::Value(inst.args[1]),
-                };
-                self.lower_binary(inst, operator, inst.args[0], &right);
+            op => self.lower_operator(inst, op)?,
+        }
+        Ok(())
+    }
+
+    /// An index read of any of its forms.
+    fn lower_index_op(&mut self, inst: &Inst) -> Result<(), String> {
+        match &inst.op {
+            Op::GetIndex => {
+                self.lower_index(
+                    inst,
+                    SOURCE_VALUE,
+                    0,
+                    Some(inst.args[0]),
+                    Some(inst.args[1]),
+                    None,
+                );
             }
+            Op::GetIndexConstant(constant) => {
+                self.lower_index(
+                    inst,
+                    SOURCE_VALUE,
+                    0,
+                    Some(inst.args[0]),
+                    None,
+                    Some(*constant),
+                );
+            }
+            Op::ReadIndex { source } => {
+                let (kind, operand, collection) = self.read_source(inst, source, 1)?;
+                self.lower_index(inst, kind, operand, collection, Some(inst.args[0]), None);
+            }
+            Op::ReadIndexConstant { source, constant } => {
+                let (kind, operand, collection) = self.read_source(inst, source, 0)?;
+                self.lower_index(inst, kind, operand, collection, None, Some(*constant));
+            }
+            _ => return Err(format!("instruction {} is not an index read", inst.ip)),
+        }
+        Ok(())
+    }
+
+    /// An arithmetic or comparison instruction, whose left operand may be
+    /// a captured local.
+    fn lower_operator(&mut self, inst: &Inst, op: &Op) -> Result<(), String> {
+        let operator = binary_operator(op)
+            .ok_or_else(|| format!("instruction {} is not compiled yet", inst.ip))?;
+        let right = match op {
+            Op::LocalConstantBinary { constant, .. } | Op::ConstantBinary { constant, .. } => {
+                if let Ok(value) = number_constant(self.function, *constant) {
+                    Operand::Constant(value.clone())
+                } else {
+                    value_constant(self.function, *constant)?;
+                    Operand::Pooled(*constant)
+                }
+            }
+            _ => Operand::Value(inst.args[1]),
+        };
+        match op {
+            Op::LocalConstantBinary { slot, .. } if self.function.cells[*slot] => {
+                // Read into a slot of its own for the operation,
+                // and dropped after it.
+                let operand = self.cell_operand;
+                let place = self.slot(operand);
+                let out = self.address(place);
+                let slot = self
+                    .builder
+                    .ins()
+                    .iconst(types::I32, i64::try_from(*slot).expect("slot fits"));
+                self.call(
+                    self.runtime.operand,
+                    runtime::native_get_cell as *const () as usize,
+                    &[self.context, slot, out],
+                );
+                self.lower_binary(inst, operator, operand, &right);
+                let out = self.address(place);
+                self.call(
+                    self.runtime.drop,
+                    runtime::native_drop as *const () as usize,
+                    &[out],
+                );
+            }
+            _ => self.lower_binary(inst, operator, inst.args[0].index(), &right),
         }
         Ok(())
     }
@@ -512,12 +627,12 @@ impl<'a> Lowering<'a> {
         &mut self,
         inst: &Inst,
         operator: BinaryOperator,
-        left: ValueId,
+        left: usize,
         right: &Operand,
     ) {
         use BinaryOperator as B;
         let result = self.slot(inst.results[0].index());
-        let left_slot = self.slot(left.index());
+        let left_slot = self.slot(left);
         let left_tag = self.load_tag(left_slot);
         let done = self.builder.create_block();
         let slow = self.builder.create_block();
@@ -822,10 +937,10 @@ impl<'a> Lowering<'a> {
         }
         let values = self.slot(base);
         let values = self.address(values);
-        let count = self
-            .builder
-            .ins()
-            .iconst(types::I32, i64::try_from(inst.args.len()).expect("count fits"));
+        let count = self.builder.ins().iconst(
+            types::I32,
+            i64::try_from(inst.args.len()).expect("count fits"),
+        );
         let result = self.slot(inst.results[0].index());
         let out = self.address(result);
         self.call(
@@ -853,29 +968,54 @@ impl<'a> Lowering<'a> {
             .builder
             .ins()
             .iconst(types::I32, i64::try_from(operand).expect("operand fits"));
-        let status = self.call(self.runtime.operand, function, &[self.context, operand, out])[0];
+        let status = self.call(
+            self.runtime.operand,
+            function,
+            &[self.context, operand, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+    }
+
+    /// An instruction that writes the value it pops to the place `operand`
+    /// names, through a runtime function that clones it there, leaving to
+    /// the interpreter if that cannot.
+    fn lower_write(&mut self, inst: &Inst, function: usize, operand: usize) {
+        let operand = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(operand).expect("operand fits"));
+        let value = self.slot(inst.args[0].index());
+        let value = self.address(value);
+        let status = self.call(
+            self.runtime.operand,
+            function,
+            &[self.context, operand, value],
+        )[0];
         self.exit_unless_ok(inst, status);
     }
 
     /// Where an index read's collection is: a value native code holds (a
     /// local, after the `pops` popped arguments), a capture, or a global.
     fn read_source(
+        &self,
         inst: &Inst,
         source: &ReadSource,
         pops: usize,
     ) -> Result<(u32, u32, Option<ValueId>), String> {
         let operand = |value: usize| u32::try_from(value).map_err(|_| "operand too large");
         Ok(match source {
-            ReadSource::Local(_) => (
-                SOURCE_VALUE,
-                0,
-                Some(
-                    *inst
-                        .args
-                        .get(pops)
-                        .ok_or_else(|| format!("instruction {} reads a captured local", inst.ip))?,
-                ),
-            ),
+            ReadSource::Local(slot) if self.function.cells[*slot] => {
+                (SOURCE_CELL, operand(*slot)?, None)
+            }
+            ReadSource::Local(_) => {
+                (
+                    SOURCE_VALUE,
+                    0,
+                    Some(*inst.args.get(pops).ok_or_else(|| {
+                        format!("instruction {} reads a captured local", inst.ip)
+                    })?),
+                )
+            }
             ReadSource::Capture(index) => (SOURCE_CAPTURE, operand(*index)?, None),
             ReadSource::GlobalPooled(name) => (SOURCE_GLOBAL, name.get(), None),
             ReadSource::Global(_) => {
@@ -918,7 +1058,15 @@ impl<'a> Lowering<'a> {
         let status = self.call(
             self.runtime.index,
             runtime::native_index as *const () as usize,
-            &[self.context, source, operand, collection, key, constant, out],
+            &[
+                self.context,
+                source,
+                operand,
+                collection,
+                key,
+                constant,
+                out,
+            ],
         )[0];
         self.exit_unless_ok(inst, status);
     }
@@ -981,15 +1129,14 @@ impl<'a> Lowering<'a> {
         let slow = self.builder.create_block();
         let done = self.builder.create_block();
         let is_int = self.builder.ins().icmp_imm(IntCC::Equal, tag, layout::INT);
-        self.builder.ins().brif(is_int, int_block, &[], not_int, &[]);
+        self.builder
+            .ins()
+            .brif(is_int, int_block, &[], not_int, &[]);
 
         self.builder.switch_to_block(int_block);
         let integer = self.load_payload(operand, types::I64);
         // `-i64::MIN` overflows, which the interpreter reports.
-        let smallest = self
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, integer, i64::MIN);
+        let smallest = self.builder.ins().icmp_imm(IntCC::Equal, integer, i64::MIN);
         let negate = self.builder.create_block();
         self.builder.ins().brif(smallest, slow, &[], negate, &[]);
         self.builder.switch_to_block(negate);
@@ -1002,7 +1149,9 @@ impl<'a> Lowering<'a> {
             .builder
             .ins()
             .icmp_imm(IntCC::Equal, tag, layout::FLOAT);
-        self.builder.ins().brif(is_float, float_block, &[], slow, &[]);
+        self.builder
+            .ins()
+            .brif(is_float, float_block, &[], slow, &[]);
         self.builder.switch_to_block(float_block);
         let float = self.load_payload(operand, types::F64);
         let negated = self.builder.ins().fneg(float);
@@ -1132,6 +1281,15 @@ impl<'a> Lowering<'a> {
                     self.clone_into(source, target);
                 }
                 self.drop_owning();
+                if self.function.cells.iter().any(|cell| *cell) {
+                    let arguments = self.slot(scratch_base);
+                    let arguments = self.address(arguments);
+                    self.call(
+                        self.runtime.release,
+                        runtime::native_recur_cells as *const () as usize,
+                        &[self.context, arguments],
+                    );
+                }
                 let params = self.function.blocks[0].params.clone();
                 for (index, param) in params.iter().enumerate() {
                     let source = self.slot(scratch_base + index);
@@ -1199,7 +1357,7 @@ impl<'a> Lowering<'a> {
                 .iter()
                 .map(|local| match local {
                     crate::ir::Local::Value(value) => value.0,
-                    crate::ir::Local::Cell => unreachable!("qualified functions have no cells"),
+                    crate::ir::Local::Cell => runtime::CELL_LOCAL,
                 })
                 .collect(),
             stack: stack
@@ -1516,6 +1674,9 @@ fn owning_values(function: &Function) -> Vec<bool> {
                     | Op::CallPositional(_)
                     | Op::GetGlobalPooled(_)
                     | Op::GetCapture(_)
+                    | Op::GetLocal(_)
+                    | Op::MakeClosure { .. }
+                    | Op::MakeClosurePooled { .. }
                     | Op::List(_)
                     | Op::GetIndex
                     | Op::GetIndexConstant(_)

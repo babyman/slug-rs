@@ -11,7 +11,11 @@
 use alloc::vec::Vec;
 
 use crate::{
-    Constant, Value, bytecode::GlobalNameId, collections::List, value::UNRESOLVED_GLOBAL,
+    Capture, Constant, Value,
+    bytecode::GlobalNameId,
+    collections::List,
+    tiering::{NativeCell, NativeLocal},
+    value::{UNRESOLVED_GLOBAL, binding_cell},
 };
 
 use super::{Vm, operations::negate};
@@ -178,6 +182,82 @@ impl Vm {
         Some(Value::Bool(!value.resolve_in(self).ok()?.is_truthy()))
     }
 
+    /// Sets capture `index` of `caller` to a clone of `value`, as
+    /// `SetCapture` does, and returns whether it did. It does not when the
+    /// task has its own view of the variables, which decides whether the
+    /// write is allowed.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_set_capture(&self, caller: &Value, index: usize, value: &Value) -> bool {
+        #[cfg(feature = "concurrency")]
+        if self.view.is_some() {
+            return false;
+        }
+        let Value::Closure(closure) = caller else {
+            return false;
+        };
+        let Some(capture) = closure.captures.get(index) else {
+            return false;
+        };
+        *capture.borrow_mut() = value.clone();
+        true
+    }
+
+    /// A closure of chunk `chunk` capturing `captures` from `caller`, whose
+    /// frame's locals are `locals`, as `MakeClosure` makes it: a captured
+    /// local becomes a cell its closures share, if it is not one already.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_closure(
+        &self,
+        caller: &Value,
+        chunk: usize,
+        captures: &[Capture],
+        locals: &mut [NativeLocal],
+    ) -> Option<Value> {
+        let Value::Closure(closure) = caller else {
+            return None;
+        };
+        closure.program.chunk(chunk)?;
+        let cells = captures
+            .iter()
+            .map(|capture| match capture {
+                Capture::Local(slot) => {
+                    let local = locals.get_mut(*slot)?;
+                    Some(match local {
+                        NativeLocal::Value(value) => {
+                            let cell = binding_cell(core::mem::replace(value, Value::Nil));
+                            #[cfg(feature = "metrics")]
+                            self.record_local_cell();
+                            *local = NativeLocal::Cell(NativeCell(cell.clone()));
+                            cell
+                        }
+                        NativeLocal::Cell(cell) => cell.0.clone(),
+                    })
+                }
+                Capture::Capture(slot) => closure.captures.get(*slot).cloned(),
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Value::Closure(crate::sync::Code::new(
+            crate::value::Closure {
+                chunk,
+                captures: cells,
+                program: closure.program.clone(),
+                globals: closure.globals.clone(),
+                global_slots: Some(
+                    closure
+                        .global_slots
+                        .clone()
+                        .unwrap_or_else(|| crate::value::global_slots(&closure.program)),
+                ),
+                #[cfg(feature = "concurrency")]
+                capture_sources: captures.to_vec(),
+                #[cfg(feature = "concurrency")]
+                domain: self.domain(),
+            },
+        )))
+    }
+
     /// Constant `index` of `caller`'s chunk, as `Constant` pushes it: a
     /// function constant becomes a closure with no captures in `caller`'s
     /// module.
@@ -191,22 +271,24 @@ impl Vm {
             Constant::Value(value) => return Some(value.clone()),
             Constant::Function(chunk) => *chunk,
         };
-        Some(Value::Closure(crate::sync::Code::new(crate::value::Closure {
-            chunk,
-            captures: Vec::new(),
-            program: closure.program.clone(),
-            globals: closure.globals.clone(),
-            global_slots: Some(
-                closure
-                    .global_slots
-                    .clone()
-                    .unwrap_or_else(|| crate::value::global_slots(&closure.program)),
-            ),
-            #[cfg(feature = "concurrency")]
-            capture_sources: Vec::new(),
-            #[cfg(feature = "concurrency")]
-            domain: self.domain(),
-        })))
+        Some(Value::Closure(crate::sync::Code::new(
+            crate::value::Closure {
+                chunk,
+                captures: Vec::new(),
+                program: closure.program.clone(),
+                globals: closure.globals.clone(),
+                global_slots: Some(
+                    closure
+                        .global_slots
+                        .clone()
+                        .unwrap_or_else(|| crate::value::global_slots(&closure.program)),
+                ),
+                #[cfg(feature = "concurrency")]
+                capture_sources: Vec::new(),
+                #[cfg(feature = "concurrency")]
+                domain: self.domain(),
+            },
+        )))
     }
 
     /// A list of `values`, as `List` makes it.

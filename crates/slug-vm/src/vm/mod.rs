@@ -2502,8 +2502,8 @@ impl Vm {
                         None,
                     ));
                 }
-                for (slot, value) in frame.locals.iter_mut().zip(locals) {
-                    *slot = LocalSlot::Direct(value);
+                for (slot, local) in frame.locals.iter_mut().zip(locals) {
+                    *slot = LocalSlot::from_native(local);
                 }
                 frame.ip = ip;
                 self.stack.extend(stack);
@@ -2543,7 +2543,7 @@ impl Vm {
                 None,
             ));
         }
-        let locals = locals.into_iter().map(LocalSlot::Direct).collect();
+        let locals = locals.into_iter().map(LocalSlot::from_native).collect();
         self.push_frame(Frame {
             closure,
             call_span: self.frame_call_span(),

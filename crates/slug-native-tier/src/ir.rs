@@ -15,7 +15,9 @@
 
 use core::fmt;
 
-use slug_vm::{Constant, Op};
+use std::collections::BTreeMap;
+
+use slug_vm::{Capture, Constant, Op};
 
 /// A value, defined once.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -183,6 +185,9 @@ pub struct Function {
     pub locals: usize,
     /// Which locals are captured, and so live in the frame as cells.
     pub cells: Vec<bool>,
+    /// What each `MakeClosure` or `MakeClosurePooled` makes, by its
+    /// instruction: the closure's chunk and what it captures.
+    pub closures: BTreeMap<usize, (usize, Vec<Capture>)>,
     /// Whether a call or `recur` with exactly `arity` positional arguments
     /// binds them straight into the parameters.
     pub exact_positional: bool,

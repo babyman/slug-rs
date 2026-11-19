@@ -11,8 +11,8 @@
 use std::mem::{MaybeUninit, offset_of, size_of};
 
 use slug_vm::{
-    BinaryOperator, GlobalNameId, NativeCode, NativeFrame, NativeOutcome, NativeReadSource, Value,
-    Vm,
+    BinaryOperator, Capture, GlobalNameId, NativeCode, NativeFrame, NativeLocal, NativeOutcome,
+    NativeReadSource, Value, Vm,
 };
 
 /// Where generated code finds a [`Value`]'s parts. `Value` is `repr(u64)`
@@ -55,8 +55,13 @@ pub(crate) fn layout_matches() -> bool {
         && word(&Value::Float(1.5)) == 1.5f64.to_bits()
 }
 
+/// An exit table's entry for a captured local, which the context holds
+/// rather than a slot.
+pub(crate) const CELL_LOCAL: u32 = u32::MAX;
+
 /// One frame's state as the interpreter will see it at an exit: each
-/// local's and each of the function's own stack values' slot.
+/// local's slot, or [`CELL_LOCAL`], and each of the function's own stack
+/// values' slot.
 #[derive(Clone, Debug)]
 pub(crate) struct ExitTable {
     pub(crate) ip: usize,
@@ -111,7 +116,7 @@ fn stack_used(root: &Root) -> usize {
 /// A frame native code left to the interpreter.
 struct Exited {
     ip: usize,
-    locals: Vec<Value>,
+    locals: Vec<NativeLocal>,
     stack: Vec<Value>,
 }
 
@@ -120,6 +125,11 @@ struct Exited {
 #[repr(C)]
 pub(crate) struct Context {
     vm: *mut Vm,
+    compiled: *const Compiled,
+    /// The captured locals, by slot, of a function a closure captures
+    /// locals of; others' entries are unused, and other functions have
+    /// none.
+    cells: Vec<NativeLocal>,
     exits: *const ExitTable,
     exit_count: usize,
     /// The frame slots that may own something, for [`native_release`].
@@ -157,24 +167,55 @@ pub(crate) struct Compiled {
     arity: usize,
     exits: Vec<ExitTable>,
     owning: Vec<u32>,
+    /// Which locals a closure captures, if any does.
+    cells: Vec<bool>,
+    /// The chunk and captures of each closure the function makes.
+    closures: Vec<(usize, Vec<Capture>)>,
+}
+
+/// What [`Compiled`] is built from besides its code.
+pub(crate) struct Tables {
+    pub(crate) exits: Vec<ExitTable>,
+    pub(crate) owning: Vec<u32>,
+    pub(crate) cells: Vec<bool>,
+    pub(crate) closures: Vec<(usize, Vec<Capture>)>,
 }
 
 impl Compiled {
     /// `entry` must be the address of finalized code generated for a
-    /// function of `arity` parameters with these exit tables and owning
-    /// slots, which stays mapped for the life of the process.
-    pub(crate) fn new(
-        entry: *const u8,
-        arity: usize,
-        exits: Vec<ExitTable>,
-        owning: Vec<u32>,
-    ) -> Self {
+    /// function of `arity` parameters with these tables, which stays
+    /// mapped for the life of the process.
+    pub(crate) fn new(entry: *const u8, arity: usize, tables: Tables) -> Self {
         Self {
             entry: entry as usize,
             arity,
-            exits,
-            owning,
+            exits: tables.exits,
+            owning: tables.owning,
+            cells: tables.cells,
+            closures: tables.closures,
         }
+    }
+
+    /// Fresh cells for an activation: a captured parameter takes its
+    /// argument from `arguments`, leaving `nil` there, and any other
+    /// captured local starts `nil`.
+    ///
+    /// # Safety
+    ///
+    /// `arguments` must point to `arity` initialized values.
+    unsafe fn fresh_cells(&self, arguments: *mut Value) -> Vec<NativeLocal> {
+        self.cells
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                NativeLocal::Value(if *cell && index < self.arity {
+                    // SAFETY: as the caller promises.
+                    unsafe { std::ptr::replace(arguments.add(index), Value::Nil) }
+                } else {
+                    Value::Nil
+                })
+            })
+            .collect()
     }
 
     /// Runs the code with the `arity` arguments at `arguments`, which it
@@ -194,6 +235,9 @@ impl Compiled {
     ) -> Result<Value, Exited> {
         let mut context = Context {
             vm,
+            compiled: self,
+            // SAFETY: as the caller promises.
+            cells: unsafe { self.fresh_cells(arguments) },
             exits: self.exits.as_ptr(),
             exit_count: self.exits.len(),
             owning: self.owning.as_ptr(),
@@ -426,11 +470,12 @@ pub(crate) extern "C" fn native_capture(context: *mut Context, index: u32, out: 
 pub(crate) const SOURCE_VALUE: u32 = 0;
 pub(crate) const SOURCE_CAPTURE: u32 = 1;
 pub(crate) const SOURCE_GLOBAL: u32 = 2;
+pub(crate) const SOURCE_CELL: u32 = 3;
 /// [`native_index`]'s `constant` when the key is a value.
 pub(crate) const NO_CONSTANT: u32 = u32::MAX;
 
 /// An index read: the collection is `collection` for `SOURCE_VALUE`, or
-/// capture or module-level name `operand`; the key is `key`, or value
+/// capture, module-level name, or captured local `operand`; the key is `key`, or value
 /// constant `constant` of the running function's chunk.
 pub(crate) extern "C" fn native_index(
     context: *mut Context,
@@ -445,17 +490,21 @@ pub(crate) extern "C" fn native_index(
     // where `source` and `constant` say there are some, and a free slot.
     unsafe {
         let context = &*context;
-        let source = match source {
-            SOURCE_VALUE => NativeReadSource::Value(&*collection),
-            SOURCE_CAPTURE => NativeReadSource::Capture(operand as usize),
-            _ => NativeReadSource::Global(GlobalNameId::new(operand)),
-        };
         let (key, constant) = if constant == NO_CONSTANT {
             (Some(&*key), None)
         } else {
             (None, Some(constant as usize))
         };
-        let value = (*context.vm).native_index(&*context.closure, source, key, constant);
+        let read = |source: NativeReadSource<'_>| {
+            (*context.vm).native_index(&*context.closure, source, key, constant)
+        };
+        let value = match source {
+            SOURCE_VALUE => read(NativeReadSource::Value(&*collection)),
+            SOURCE_CAPTURE => read(NativeReadSource::Capture(operand as usize)),
+            SOURCE_CELL => (&context.cells)[operand as usize]
+                .read(|collection| read(NativeReadSource::Value(collection))),
+            _ => read(NativeReadSource::Global(GlobalNameId::new(operand))),
+        };
         produce(out, value)
     }
 }
@@ -484,7 +533,11 @@ pub(crate) extern "C" fn native_not(
 
 /// Constant `index` of the running function's chunk, for one that is not
 /// a number, a boolean, or `nil`.
-pub(crate) extern "C" fn native_constant(context: *mut Context, index: u32, out: *mut Value) -> u32 {
+pub(crate) extern "C" fn native_constant(
+    context: *mut Context,
+    index: u32,
+    out: *mut Value,
+) -> u32 {
     // SAFETY: generated code passes its own context and a free slot.
     unsafe {
         let context = &*context;
@@ -506,6 +559,64 @@ pub(crate) extern "C" fn native_list(
         let values = std::slice::from_raw_parts(values, count as usize);
         let values = values.iter().map(|value| std::ptr::read(value)).collect();
         out.write((*(*context).vm).native_list(values));
+    }
+}
+
+/// Captured local `slot`'s value, as `GetLocal` reads it.
+pub(crate) extern "C" fn native_get_cell(context: *mut Context, slot: u32, out: *mut Value) -> u32 {
+    // SAFETY: generated code passes its own context, a captured local's
+    // slot, and a free slot.
+    unsafe { produce(out, Some((&(*context).cells)[slot as usize].get())) }
+}
+
+/// Sets captured local `slot` to a clone of `value`, as `SetLocal` does.
+pub(crate) extern "C" fn native_set_cell(
+    context: *mut Context,
+    slot: u32,
+    value: *const Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, a captured local's
+    // slot, and an initialized value.
+    unsafe { (&mut (*context).cells)[slot as usize].set((*value).clone()) };
+    0
+}
+
+/// Sets capture `index` of the running function to a clone of `value`:
+/// 0, or 1 when the interpreter must.
+pub(crate) extern "C" fn native_set_capture(
+    context: *mut Context,
+    index: u32,
+    value: *const Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context and an initialized
+    // value.
+    unsafe {
+        let context = &*context;
+        u32::from(!(*context.vm).native_set_capture(&*context.closure, index as usize, &*value))
+    }
+}
+
+/// The closure the function's closure `site` makes.
+pub(crate) extern "C" fn native_closure(context: *mut Context, site: u32, out: *mut Value) -> u32 {
+    // SAFETY: generated code passes its own context, a closure site it was
+    // compiled with, and a free slot.
+    unsafe {
+        let context = &mut *context;
+        let compiled = &*context.compiled;
+        let (chunk, captures) = &compiled.closures[site as usize];
+        let value =
+            (*context.vm).native_closure(&*context.closure, *chunk, captures, &mut context.cells);
+        produce(out, value)
+    }
+}
+
+/// Fresh cells for a `recur`, whose arguments are at `arguments`.
+pub(crate) extern "C" fn native_recur_cells(context: *mut Context, arguments: *mut Value) {
+    // SAFETY: generated code passes its own context and its `recur`'s
+    // arguments, each initialized.
+    unsafe {
+        let context = &mut *context;
+        context.cells = (*context.compiled).fresh_cells(arguments);
     }
 }
 
@@ -558,9 +669,22 @@ pub(crate) extern "C" fn native_exit(context: *mut Context, exit: u32, base: *co
         let tables = std::slice::from_raw_parts(context.exits, context.exit_count);
         let table = &tables[exit as usize];
         let read = |slot: &u32| (*base.add(*slot as usize)).clone();
+        let locals = table
+            .locals
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                if *slot == CELL_LOCAL {
+                    // The activation ends here: its cells move out.
+                    std::mem::replace(&mut context.cells[index], NativeLocal::Value(Value::Nil))
+                } else {
+                    NativeLocal::Value(read(slot))
+                }
+            })
+            .collect();
         context.exit = Some(Exited {
             ip: table.ip,
-            locals: table.locals.iter().map(read).collect(),
+            locals,
             stack: table.stack.iter().map(read).collect(),
         });
     }
