@@ -289,6 +289,8 @@ impl Program {
             locals: chunk.locals,
             constants: chunk.constants.clone(),
             index_hints: super::chunk::index_hints(chunk.constants.len()),
+            #[cfg(feature = "native-hooks")]
+            native: crate::tiering::NativeSlot::new(),
             code,
             invalid_instructions,
             captures: chunk.captures.clone(),

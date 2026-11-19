@@ -11,6 +11,7 @@ members = [
     "crates/slug-native-manifest",
     "crates/slug-native-adapter",
     "crates/slug-desktop-loader",
+    "crates/slug-native-tier",
     "crates/slug",
     "crates/slug-repl",
 ]

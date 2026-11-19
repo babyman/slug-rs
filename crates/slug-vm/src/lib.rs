@@ -25,8 +25,13 @@ mod scheduler_signal;
 mod scheduler_signal;
 mod source_diagnostic;
 mod sync;
+#[cfg(feature = "native-hooks")]
+mod tiering;
 #[doc(hidden)]
 pub use sync::{Code, SoloCell};
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use tiering::{NativeTier, install_native_tier};
 mod value;
 mod variables;
 mod vm;

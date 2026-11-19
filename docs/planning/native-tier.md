@@ -330,7 +330,15 @@ Each is committed on its own and passes the usual checks.
 1. **Plumbing that compiles nothing:** the crate, the features, the
    counters, and the entry check. The A/B must show every workload within
    noise. If the counters cost anything, the plan changes before any
-   compiler work.
+   compiler work. *Done (2026-11-18): `slug-vm`'s `native-hooks`
+   feature counts each chunk's entries at the dispatch loop's frame check
+   and at `recur`, and tells the installed `NativeTier` once a chunk is
+   hot; `slug-native-tier` only counts hot chunks so far, and `slug`
+   gains a `native` feature with `SLUG_NATIVE`, `SLUG_NATIVE_THRESHOLD`,
+   and `SLUG_NATIVE_TRACE`. PGO A/B of `native` (tier on, counting)
+   against `67d9d3e`, 9 rounds: tuned 0.99x, hold-out 0.99x, every
+   workload within its spread (Crawl 0.96-0.99x, `fib` 1.02x, n-body
+   1.04x at a 13% spread). The counters cost nothing measurable.*
 2. **The lift,** with tests that lift every chunk of the conformance corpus
    and the clutches and check stack heights and snapshots against the
    verifier.

@@ -216,6 +216,42 @@ fn configure_fork_limit() -> Result<(), String> {
     Ok(())
 }
 
+/// Installs the native tier as `SLUG_NATIVE` asks: `on` (the default),
+/// `all` (every chunk is hot at its first entry), or `off`.
+/// `SLUG_NATIVE_THRESHOLD` sets the entries before a chunk is hot, and
+/// `SLUG_NATIVE_TRACE` reports hot chunks on standard error. A build
+/// without the `native` feature ignores all three.
+#[cfg(feature = "native")]
+fn configure_native_tier() -> Result<(), String> {
+    let mode = env::var("SLUG_NATIVE").unwrap_or_default();
+    let mut config = slug_native_tier::Config::default();
+    match mode.trim() {
+        "" | "on" => {}
+        "all" => config.threshold = 1,
+        "off" => return Ok(()),
+        other => {
+            return Err(format!(
+                "SLUG_NATIVE must be on, all, or off, got `{other}`"
+            ));
+        }
+    }
+    if let Some(value) = env::var_os("SLUG_NATIVE_THRESHOLD") {
+        config.threshold = value
+            .to_str()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|threshold| *threshold > 0)
+            .ok_or_else(|| {
+                format!(
+                    "SLUG_NATIVE_THRESHOLD must be a positive whole number, got `{}`",
+                    value.to_string_lossy()
+                )
+            })?;
+    }
+    config.trace = env::var_os("SLUG_NATIVE_TRACE").is_some_and(|value| !value.is_empty());
+    let _ = slug_native_tier::install(config);
+    Ok(())
+}
+
 fn main() -> ExitCode {
     if env::args_os()
         .nth(1)
@@ -238,6 +274,11 @@ fn main() -> ExitCode {
         remaining.next();
     }
     if let Err(message) = configure_fork_limit() {
+        eprint_startup_error("usage", "environment", message, json);
+        return ExitCode::from(1);
+    }
+    #[cfg(feature = "native")]
+    if let Err(message) = configure_native_tier() {
         eprint_startup_error("usage", "environment", message, json);
         return ExitCode::from(1);
     }

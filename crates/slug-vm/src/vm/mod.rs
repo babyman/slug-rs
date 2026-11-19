@@ -2357,6 +2357,18 @@ impl Vm {
             // local instead.
             let code = chunk.code.as_slice();
             let mut ip = self.frames.last().expect("active frame was checked").ip;
+            // A frame at its first instruction has just been entered: count
+            // it for the native tier. `recur` counts its own entries.
+            #[cfg(feature = "native-hooks")]
+            if ip == 0 {
+                let index = self
+                    .frames
+                    .last()
+                    .expect("active frame was checked")
+                    .closure
+                    .chunk;
+                chunk.native.tick(program, index);
+            }
             loop {
                 let Some(instruction) = code.get(ip) else {
                     return Err(self.missing_return(&chunk.name));
@@ -2384,6 +2396,15 @@ impl Vm {
                     break;
                 }
             }
+        }
+    }
+
+    /// Counts a `recur`, which re-enters its chunk, for the native tier.
+    #[cfg(feature = "native-hooks")]
+    #[inline]
+    fn count_recur(&self, program: &Program, chunk: &crate::bytecode::CompiledChunk) {
+        if let Some(frame) = self.frames.last() {
+            chunk.native.tick(program, frame.closure.chunk);
         }
     }
 
@@ -2855,6 +2876,8 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                #[cfg(feature = "native-hooks")]
+                self.count_recur(program, chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(
@@ -2866,6 +2889,8 @@ impl Vm {
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
+                #[cfg(feature = "native-hooks")]
+                self.count_recur(program, chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(

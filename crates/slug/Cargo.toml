@@ -13,6 +13,8 @@ concurrency = ["slug-frontend/concurrency", "slug-vm/concurrency"]
 # Forks may run on other threads: atomic reference counts.
 threads = ["concurrency", "slug-vm/threads"]
 metrics = ["slug-frontend/metrics", "slug-vm/metrics"]
+# The native-code tier (`slug-native-tier`); see SLUG_NATIVE.
+native = ["threads", "dep:slug-native-tier"]
 
 [lints]
 workspace = true
@@ -24,6 +26,7 @@ serde_json = "1"
 slug-desktop-loader = { path = "../slug-desktop-loader" }
 slug-frontend = { path = "../slug-frontend", default-features = false }
 slug-loader = { path = "../slug-loader" }
+slug-native-tier = { path = "../slug-native-tier", optional = true }
 slug-vm = { path = "../slug-vm", default-features = false }
 toml = "0.8"
 

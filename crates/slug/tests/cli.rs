@@ -40,6 +40,9 @@ mod filesystem;
 mod language_core;
 #[path = "cli/modules.rs"]
 mod modules;
+#[cfg(feature = "native")]
+#[path = "cli/native_tier.rs"]
+mod native_tier;
 #[path = "cli/patterns_and_cleanup.rs"]
 mod patterns_and_cleanup;
 #[path = "cli/report.rs"]

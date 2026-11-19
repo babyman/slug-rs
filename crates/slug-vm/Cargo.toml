@@ -16,6 +16,9 @@ concurrency = []
 # Atomic reference counts, so forks can run on other threads.
 threads = ["concurrency"]
 metrics = []
+# Entry counts per chunk and the hook a native-code tier installs
+# (`slug-native-tier`). Desktop only.
+native-hooks = ["threads"]
 
 [lints]
 workspace = true

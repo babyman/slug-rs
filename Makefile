@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -12,11 +12,13 @@ lint:
 test:
 	cargo test --workspace --lib --bins --tests --features metrics
 
+# The native tier needs threads; built in one command with the slim crates,
+# it would turn threads on in slug-vm for all of them.
 slim:
-	cargo test --workspace --no-default-features
-	cargo test --workspace --no-default-features --features metrics
-	cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-	cargo clippy --workspace --all-targets --no-default-features --features metrics -- -D warnings
+	cargo test --workspace --exclude slug-native-tier --no-default-features
+	cargo test --workspace --exclude slug-native-tier --no-default-features --features metrics
+	cargo clippy --workspace --exclude slug-native-tier --all-targets --no-default-features -- -D warnings
+	cargo clippy --workspace --exclude slug-native-tier --all-targets --no-default-features --features metrics -- -D warnings
 
 # Tasks and forks without threads, as single-core and embedded builds run
 # them: forks take turns cooperatively.
@@ -30,6 +32,11 @@ test-vm:
 
 test-cli:
 	cargo test -p slug --features metrics --test cli
+
+# The native tier: its hooks and the slug binary built with it.
+test-native-tier:
+	cargo test -p slug-native-tier
+	cargo test -p slug --features native --test cli native_tier
 
 # Focused subsystem aliases. Keep their integration-test target names stable.
 test-frontend:
@@ -111,6 +118,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim cooperative docs-check test-clutches
+check: fmt-check lint test slim cooperative test-native-tier docs-check test-clutches
 
 ci: check
