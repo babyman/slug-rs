@@ -7,7 +7,7 @@ take it past CPython and toward the JVM on the programs where the
 interpreter is the limit. This is a scoping plan: it records why the
 interpreter alone will not get there, a measured bound on what native code
 could reach, and the decisions and phases a native tier would need. Nothing
-here is built yet.
+here is built yet; Phase 1 is planned below.
 
 ## Why the interpreter will not close the gap
 
@@ -228,13 +228,137 @@ a phase that does not pay stops the plan.
 - [ ] **Phase 1: baseline tier** for straight-line arithmetic, locals,
   branches, `recur`, and calls to module functions; everything else stays
   interpreted. Measure `fib`, `function-call`, n-body, spectral-norm, and
-  `invaders-game`.
+  `invaders-game`. *Planned: see "Phase 1 plan" below.*
 - [ ] **Phase 2: the rest of the instruction set** through runtime helpers:
   index reads, collection construction, closures and captures, `match`,
   native calls. Measure the Crawl workloads and `http-server`.
 - [ ] **Phase 3: type specialization with deoptimization.**
 - [ ] **Phase 4:** cleanup (`defer`/`onerror`), tasks and forks in native
   frames, compiling off the VM thread.
+
+## Phase 1 plan (2026-11-18)
+
+The baseline tier, within the boundaries the
+[decision record](../decisions/2026-11-18-desktop-native-tier-crate.md)
+sets. Four facts from the VM shape it:
+
+- Every Phase 1 kernel loops through `recur`, which restarts the frame at
+  instruction 0. One entry point, at instruction 0, therefore covers both
+  calls and loops; a loop that becomes hot is entered at its next `recur`,
+  with no separate way to enter a running frame.
+- The compiler emits `EnterScope` and `LeaveScope` only for blocks that
+  contain `defer`. Ordinary branches are plain jumps.
+- A chunk without `MakeClosure` captures none of its locals, so its locals
+  can live in the native frame without touching the VM's `LocalSlot`
+  layout.
+- The tier exists only in the `slug` binary, which builds with `threads`.
+  Native code checks the attention flag synchronously; the cooperative
+  builds' yield at `recur` never arises.
+
+### Execution
+
+- **Entry.** The dispatch loop already looks up the active chunk again
+  whenever `frame_epoch` changes. There, if the frame is at instruction 0
+  and its chunk has a compiled entry, the VM calls the entry instead of
+  interpreting: one load and a branch, on calls and loops only. On return
+  the VM pops the frame and pushes the value, as `Return` does.
+- **Native activations.** A compiled function keeps its locals and
+  temporaries as 24-byte `Value`s on the machine stack, and pushes a small
+  record onto a list the VM owns: the closure, the call span, and the
+  current instruction (Gate 0's shadow frame). A call between compiled
+  functions builds no VM `Frame`.
+- **Leaving native code.** At a call native code does not handle, or when
+  the native records reach a depth limit, the innermost activation calls an
+  exit helper. It walks the records from the bottom and builds a VM `Frame`
+  for each, from the frame snapshot at that activation's current
+  instruction; every activation then returns "exited" and the interpreter
+  continues from the innermost frame. The exit is all or nothing: a native
+  frame never waits on the interpreter, so a task can still suspend
+  anywhere. Phase 3 leaves at a failed guard by the same mechanism.
+- **Errors.** A helper that can fail returns a status. The error path turns
+  the records into frames, so stack traces come from the same data as
+  today, and overflow and non-finite errors keep their spans.
+- **Depth.** The interpreter has no recursion limit, so native code adds
+  none: past its depth limit, a call leaves native code and the recursion
+  continues in interpreter frames.
+
+### What compiles
+
+A chunk compiles only if every instruction in it is one of these;
+otherwise the whole chunk stays interpreted:
+
+- `Constant` (values, not functions), `Nil`, `True`, `False`, `Pop`,
+  `Duplicate`;
+- `GetLocal` (including moves) and `SetLocal`;
+- `GetGlobal`;
+- arithmetic, comparisons, `Not`, `Negate`, `LocalConstantBinary`, and
+  `ConstantBinary`;
+- the jumps and `JumpIfProvided`;
+- `CallPositional`, `CallGlobal`, `RecurPositional`, and `Return`.
+
+Arithmetic on `Int`, `Float`, and `Bool` runs inline behind tag guards;
+every other operand goes to the interpreter's own slow path, which handles
+bindings, strings, and errors. A callee that is an initialized module `val`
+is read at compile time and checked for identity at each call. A call with
+exactly the arity of a compiled closure goes straight to its native entry;
+any other call leaves native code.
+
+### What each crate gains
+
+- **`slug-vm`, behind `native-hooks`:** a counter per chunk (on the `Hint`
+  type the index hints use) and one word for its compiled entry; the hook
+  trait and the entry check in the dispatch loop; the list of native
+  records and building `Frame`s from it; and safe functions for the
+  arithmetic slow paths, clone and drop, reading a binding, building
+  errors, the attention check, and building frames on exit.
+- **`slug-native-tier`:** the lift from bytecode into SSA with a snapshot
+  at every exit point; the check of which chunks qualify; lowering through
+  Cranelift with every type unknown; the `extern "C"` shims and the entry
+  and exit code (the crate's only `unsafe`); and one JIT module behind a
+  mutex, since forks on other threads share programs.
+- **Controls:** `SLUG_NATIVE=off|on|all` (`all` compiles every qualifying
+  chunk at its first call, for differential testing),
+  `SLUG_NATIVE_THRESHOLD` (calls and `recur`s before compiling; 1,000 to
+  start, tuned by A/B), and a development flag that prints a chunk's
+  bytecode, its IR, and why it was rejected. Nothing like that exists
+  today, and debugging needs it.
+
+### Steps
+
+Each is committed on its own and passes the usual checks.
+
+1. **Plumbing that compiles nothing:** the crate, the features, the
+   counters, and the entry check. The A/B must show every workload within
+   noise. If the counters cost anything, the plan changes before any
+   compiler work.
+2. **The lift,** with tests that lift every chunk of the conformance corpus
+   and the clutches and check stack heights and snapshots against the
+   verifier.
+3. **Lowering the subset,** until `fib`, `function-call`, n-body, and
+   spectral-norm run natively.
+4. **Leaving native code:** the exit, the depth limit, and errors.
+   Diagnostic snapshots are identical in both modes, and a test recurses
+   past the depth limit.
+5. **Differential CI:** the conformance corpus, `make test`,
+   `make test-clutches`, and the diagnostic goldens under
+   `SLUG_NATIVE=all`.
+6. **Measure:** a PGO A/B of native on against native off, with
+   hold-outs.
+
+### Gate
+
+- `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.
+  The boxed prototype measured 10x on `fib` and 5.4x on `advance`, so 4x
+  leaves room for the native records and the exits.
+- `invaders-game`, the Crawl workloads, and every hold-out within noise.
+  Phase 1 compiles little of them; this checks that the hooks and the exits
+  cost nothing.
+- Compile time and the binary size with `native` on, recorded.
+
+If the four kernels gain less than 2x, Phase 1 stops until the cause is
+understood. Step 6 also counts how often Crawl leaves native code at a call
+to an uncompiled function, which decides whether Phase 2 needs a way to
+resume native code after an interpreted call.
 
 ## Risks
 
