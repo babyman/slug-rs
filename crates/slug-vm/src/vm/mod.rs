@@ -2449,11 +2449,15 @@ impl Vm {
     /// frame check, which enters it.
     #[cfg(feature = "native-hooks")]
     #[inline]
-    fn count_recur(&mut self, program: &Program, chunk: &crate::bytecode::CompiledChunk) {
+    fn count_recur(&mut self, chunk: &crate::bytecode::CompiledChunk) {
         let Some(frame) = self.frames.last_mut() else {
             return;
         };
-        if chunk.native.tick(program, frame.closure.chunk).is_some() {
+        if chunk
+            .native
+            .tick(&frame.closure.program, frame.closure.chunk)
+            .is_some()
+        {
             frame.ip = 0;
             self.frames_changed();
         }
@@ -2591,6 +2595,40 @@ impl Vm {
             }
             value => value.clone(),
         };
+        self.native_entry(target, count)
+    }
+
+    /// [`Vm::native_callee`] for a call of the value `callee`, as
+    /// `CallPositional` makes it.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_callee_value(
+        &self,
+        callee: &Value,
+        count: usize,
+    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
+        let target = match callee {
+            Value::Binding { cell, .. } => {
+                #[cfg(feature = "concurrency")]
+                if self.view.is_some() {
+                    return None;
+                }
+                cell.borrow().clone()
+            }
+            value => value.clone(),
+        };
+        self.native_entry(target, count)
+    }
+
+    /// `target` and its native code, when it is a closure an exact
+    /// positional call of `count` arguments enters, counting the call.
+    #[cfg(feature = "native-hooks")]
+    fn native_entry(
+        &self,
+        target: Value,
+        count: usize,
+    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
         let Value::Closure(closure) = target else {
             return None;
         };
@@ -3102,7 +3140,7 @@ impl Vm {
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
                 #[cfg(feature = "native-hooks")]
-                self.count_recur(program, chunk);
+                self.count_recur(chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(
@@ -3115,7 +3153,7 @@ impl Vm {
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
                 #[cfg(feature = "native-hooks")]
-                self.count_recur(program, chunk);
+                self.count_recur(chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(

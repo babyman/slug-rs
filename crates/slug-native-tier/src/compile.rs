@@ -75,7 +75,9 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::True
                 | Op::False
                 | Op::CallGlobalPooled { .. }
+                | Op::CallPositional(_)
                 | Op::GetGlobalPooled(_)
+                | Op::SetGlobalPooled(_)
                 | Op::GetCapture(_)
                 | Op::Not
                 | Op::Negate
@@ -191,7 +193,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     signature.returns.push(AbiParam::new(types::I32));
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
-    let exits = {
+    let (exits, owning) = {
         let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
         Lowering::new(builder, function, pointer, call_conv).lower()?
     };
@@ -204,7 +206,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     if let Some(code) = context.compiled_code().and_then(|code| code.vcode.as_ref()) {
         eprintln!("{name}:\n{code}");
     }
-    Ok(Compiled::new(entry, function.arity, exits))
+    Ok(Compiled::new(entry, function.arity, exits, owning))
 }
 
 /// The Rust functions generated code calls, by signature.
@@ -213,6 +215,7 @@ struct Runtime {
     attention: cranelift_codegen::ir::SigRef,
     clone: cranelift_codegen::ir::SigRef,
     drop: cranelift_codegen::ir::SigRef,
+    release: cranelift_codegen::ir::SigRef,
     exit: cranelift_codegen::ir::SigRef,
     call: cranelift_codegen::ir::SigRef,
     /// `(context, operand, out) -> status`: globals, captures, constants.
@@ -279,9 +282,10 @@ impl<'a> Lowering<'a> {
             attention: signature(&[pointer], &[types::I32]),
             clone: signature(&[pointer, pointer], &[]),
             drop: signature(&[pointer], &[]),
+            release: signature(&[pointer, pointer], &[]),
             exit: signature(&[pointer, types::I32, pointer], &[]),
             call: signature(
-                &[pointer, types::I32, types::I32, pointer, pointer],
+                &[pointer, types::I32, types::I32, pointer, pointer, pointer],
                 &[types::I32],
             ),
             operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
@@ -305,7 +309,9 @@ impl<'a> Lowering<'a> {
             .iter()
             .flat_map(|block| &block.insts)
             .filter_map(|inst| match inst.op {
-                Op::CallGlobalPooled { count, .. } | Op::List(count) => Some(count),
+                Op::CallGlobalPooled { count, .. } | Op::CallPositional(count) | Op::List(count) => {
+                    Some(count)
+                }
                 _ => None,
             })
             .max()
@@ -341,7 +347,7 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    fn lower(mut self) -> Result<Vec<ExitTable>, String> {
+    fn lower(mut self) -> Result<(Vec<ExitTable>, Vec<u32>), String> {
         let entry = self.builder.create_block();
         self.builder.append_block_params_for_function_params(entry);
         self.builder.switch_to_block(entry);
@@ -402,7 +408,11 @@ impl<'a> Lowering<'a> {
         self.builder.ins().return_(&[status]);
         self.builder.seal_all_blocks();
         self.builder.finalize();
-        Ok(self.exits)
+        let owning = (0..self.owning.len())
+            .filter(|index| self.owning[*index])
+            .map(|index| u32::try_from(index).expect("slot index fits"))
+            .collect();
+        Ok((self.exits, owning))
     }
 
     fn lower_inst(&mut self, inst: &Inst) -> Result<(), String> {
@@ -425,6 +435,17 @@ impl<'a> Lowering<'a> {
             }
             Op::GetCapture(index) => {
                 self.lower_operand_op(inst, runtime::native_capture as *const () as usize, *index);
+            }
+            Op::SetGlobalPooled(name) => {
+                let name = self.builder.ins().iconst(types::I32, i64::from(name.get()));
+                let value = self.slot(inst.args[0].index());
+                let value = self.address(value);
+                let status = self.call(
+                    self.runtime.operand,
+                    runtime::native_set_global as *const () as usize,
+                    &[self.context, name, value],
+                )[0];
+                self.exit_unless_ok(inst, status);
             }
             Op::Not => self.lower_not(inst),
             Op::List(_) => self.lower_list(inst),
@@ -457,7 +478,10 @@ impl<'a> Lowering<'a> {
             }
             // The `recur` itself is lowered with its block's terminator.
             Op::RecurPositional(_) => {}
-            Op::CallGlobalPooled { name, count } => self.lower_call(inst, name.get(), *count)?,
+            Op::CallGlobalPooled { name, count } => {
+                self.lower_call(inst, Callee::Global(name.get()), *count)?;
+            }
+            Op::CallPositional(count) => self.lower_call(inst, Callee::Value, *count)?,
             op => {
                 let operator = binary_operator(op)
                     .ok_or_else(|| format!("instruction {} is not compiled yet", inst.ip))?;
@@ -1001,12 +1025,21 @@ impl<'a> Lowering<'a> {
     /// A call of module-level name `name`: the callee's native code with
     /// clones of the arguments, or an exit before the call when there is
     /// none, or after it when the callee exited.
-    fn lower_call(&mut self, inst: &Inst, name: u32, count: usize) -> Result<(), String> {
-        if inst.args.len() != count || inst.results.len() != 1 {
+    fn lower_call(&mut self, inst: &Inst, callee: Callee, count: usize) -> Result<(), String> {
+        // A called value is below its arguments.
+        let below = usize::from(matches!(callee, Callee::Value));
+        if inst.args.len() != count + below || inst.results.len() != 1 {
             return Err(format!("instruction {} is a malformed call", inst.ip));
         }
+        let (name, callee) = match callee {
+            Callee::Global(name) => (name, self.builder.ins().iconst(self.pointer, 0)),
+            Callee::Value => {
+                let slot = self.slot(inst.args[0].index());
+                (0, self.address(slot))
+            }
+        };
         let base = self.function.values.len() + self.function.arity + 1;
-        for (index, argument) in inst.args.iter().enumerate() {
+        for (index, argument) in inst.args[below..].iter().enumerate() {
             let source = self.slot(argument.index());
             let target = self.slot(base + index);
             self.clone_into(source, target);
@@ -1023,7 +1056,7 @@ impl<'a> Lowering<'a> {
         let status = self.call(
             self.runtime.call,
             runtime::native_call as *const () as usize,
-            &[self.context, name, count, arguments, result],
+            &[self.context, name, count, callee, arguments, result],
         )[0];
         let before = self.exit_block(inst);
         let after = self.exit_after_call(inst);
@@ -1197,8 +1230,20 @@ impl<'a> Lowering<'a> {
         self.builder.ins().select(is_bool, bool_true, not_nil)
     }
 
-    /// Drops every owning slot that holds something, leaving `nil`.
+    /// Drops every owning slot that holds something, leaving `nil`: with a
+    /// check per slot inline when there are few, and otherwise in one call,
+    /// which keeps a large function's code, and its compile time, small.
     fn drop_owning(&mut self) {
+        if self.owning.iter().filter(|owns| **owns).count() > INLINE_RELEASES {
+            let base = self.slot(0);
+            let base = self.address(base);
+            self.call(
+                self.runtime.release,
+                runtime::native_release as *const () as usize,
+                &[self.context, base],
+            );
+            return;
+        }
         for index in 0..self.owning.len() {
             if !self.owning[index] {
                 continue;
@@ -1431,6 +1476,19 @@ fn offset(index: usize, within: i32) -> i32 {
     i32::try_from(index).expect("frame fits") * layout::SIZE + within
 }
 
+/// The most owning slots a function checks inline when it returns,
+/// exits, or recurs.
+const INLINE_RELEASES: usize = 6;
+
+/// What a call calls.
+#[derive(Clone, Copy)]
+enum Callee {
+    /// A module-level name.
+    Global(u32),
+    /// The value below the arguments.
+    Value,
+}
+
 /// An operation's right operand.
 enum Operand {
     Value(ValueId),
@@ -1455,6 +1513,7 @@ fn owning_values(function: &Function) -> Vec<bool> {
                 None => match &inst.op {
                     Op::Constant(index) => number_constant(function, *index).is_err(),
                     Op::CallGlobalPooled { .. }
+                    | Op::CallPositional(_)
                     | Op::GetGlobalPooled(_)
                     | Op::GetCapture(_)
                     | Op::List(_)

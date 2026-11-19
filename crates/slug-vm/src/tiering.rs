@@ -6,10 +6,13 @@
 //! native ABI; see `docs/decisions/2026-11-18-desktop-native-tier-crate.md`.
 
 use alloc::{sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
-use crate::{Program, Value, Vm};
+use crate::{
+    Program, Value, Vm,
+    sync::{Code, Sendable},
+};
 
 /// A native-code tier. The VM counts each chunk's entries (calls and
 /// `recur`s) and tells the tier once a chunk reaches its threshold.
@@ -18,9 +21,61 @@ pub trait NativeTier: Send + Sync {
     /// Entries before a chunk is hot. Zero and one both mean the first.
     fn threshold(&self) -> u32;
 
-    /// Chunk `chunk` of `program` became hot: the tier may compile it.
+    /// `chunk` became hot: the tier may compile it and return its code, or
+    /// compile it on another thread and [`HotChunk::install`] it there.
     /// Called at most once a chunk.
-    fn hot(&self, program: &Program, chunk: usize) -> Option<Arc<dyn NativeCode>>;
+    fn hot(&self, chunk: HotChunk) -> Option<Arc<dyn NativeCode>>;
+}
+
+/// A chunk that became hot, which a tier may compile on another thread.
+/// It may cross threads under `Sendable`'s rules: a program is `val`-only
+/// data, which forks on other threads share already, and the chunk's
+/// native slot is atomic.
+///
+/// One lives exactly as long as its chunk's compile is in flight.
+#[doc(hidden)]
+pub struct HotChunk {
+    program: Sendable<Code<Program>>,
+    chunk: usize,
+}
+
+/// Hot chunks the tier has not finished with. While any is in flight, a
+/// compiled caller of one leaves native code at each call to it, so exits
+/// are not held against a chunk then.
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+impl HotChunk {
+    fn new(program: &Code<Program>, chunk: usize) -> Self {
+        IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        Self {
+            program: Sendable::new(Code::clone(program)),
+            chunk,
+        }
+    }
+
+    #[must_use]
+    pub fn program(&self) -> &Program {
+        self.program.get()
+    }
+
+    #[must_use]
+    pub fn chunk(&self) -> usize {
+        self.chunk
+    }
+
+    /// Makes `code` the chunk's native code, which its next entry runs.
+    /// Returns false when it has code already.
+    pub fn install(&self, code: Arc<dyn NativeCode>) -> bool {
+        self.program()
+            .chunk(self.chunk)
+            .is_some_and(|chunk| chunk.native.install(code))
+    }
+}
+
+impl Drop for HotChunk {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// A chunk compiled to native code.
@@ -113,6 +168,8 @@ impl NativeSlot {
     /// interpreted from then on.
     #[inline]
     pub(crate) fn record_entry(&self, exited: bool) {
+        // An exit while another chunk compiles may be a call to it.
+        let exited = exited && IN_FLIGHT.load(Ordering::Relaxed) == 0;
         let mut entries = self.entries.load(Ordering::Relaxed) + 1;
         let mut exits = self.exits.load(Ordering::Relaxed) + u32::from(exited);
         let decayed = entries >= DECAY_AT;
@@ -132,7 +189,11 @@ impl NativeSlot {
     /// Counts one entry into chunk `chunk` of `program`, and returns its
     /// native code once it has some.
     #[inline]
-    pub(crate) fn tick(&self, program: &Program, chunk: usize) -> Option<&Arc<dyn NativeCode>> {
+    pub(crate) fn tick(
+        &self,
+        program: &Code<Program>,
+        chunk: usize,
+    ) -> Option<&Arc<dyn NativeCode>> {
         let left = self.state.load(Ordering::Relaxed);
         // One comparison for the common case, 2 ..= COMPILED - 1 left.
         if left.wrapping_sub(2) < COMPILED - 2 {
@@ -149,7 +210,12 @@ impl NativeSlot {
 
     #[cold]
     #[inline(never)]
-    fn reached(&self, program: &Program, chunk: usize, left: u32) -> Option<&Arc<dyn NativeCode>> {
+    fn reached(
+        &self,
+        program: &Code<Program>,
+        chunk: usize,
+        left: u32,
+    ) -> Option<&Arc<dyn NativeCode>> {
         let Some(tier) = TIER.get() else {
             self.state.store(SETTLED, Ordering::Relaxed);
             return None;
@@ -168,10 +234,19 @@ impl NativeSlot {
         {
             return None;
         }
-        let code = tier.hot(program, chunk)?;
-        let code = self.code.get_or_init(|| code);
-        self.state.store(COMPILED, Ordering::Relaxed);
-        Some(code)
+        let code = tier.hot(HotChunk::new(program, chunk))?;
+        self.install(code);
+        self.code.get()
+    }
+
+    /// Makes `code` the chunk's native code, which its next entry runs.
+    /// The code is set before the state says so, and once only.
+    pub(crate) fn install(&self, code: Arc<dyn NativeCode>) -> bool {
+        if self.code.set(code).is_err() {
+            return false;
+        }
+        self.state.store(COMPILED, Ordering::Release);
+        true
     }
 }
 

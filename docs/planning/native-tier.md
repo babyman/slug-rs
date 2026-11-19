@@ -539,6 +539,35 @@ interpreter would do more, so native code leaves before the instruction.
    Crawl workloads and `http-server` 0.98–1.01x, hold-outs 1.00x. Most
    newly compiled chunks still call closure values or make closures, so
    batch B is where they run natively end to end.
+2. **Calls of values and global writes** (batch B): `CallPositional`
+   enters a compiled closure's code as a call of a module-level name does,
+   and `SetGlobalPooled` replaces a resolved module variable's value
+   outside tasks with their own view. Compiled: crawl-crowd 67 of 127 hot
+   chunks, `crawl-ticks` 46 of 72, Invaders 38 of 65. But compiling now
+   cost 17–48 ms a run, about 1 µs per Cranelift instruction (37 of 39 ms
+   in `define`; `opt_level = none` saves only a fifth), and `crawl-pages`
+   ran 1.07x, Invaders 1.00x.
+3. **Smaller code, compiled in the background.** A function with more
+   than six owning slots releases them in one runtime call at each return,
+   exit, and `recur`, instead of a check and call per slot (the largest
+   chunk had 214 calls, most of them releases), which cut compile time by
+   about a fifth. Then `SLUG_NATIVE=on` compiles on a thread of the
+   tier's own: `NativeTier::hot` receives a `HotChunk`, which carries the
+   program under the fork package's `Sendable` rules and installs the code
+   from the compiler's thread; the chunk stays interpreted meanwhile.
+   `SLUG_NATIVE=all` still compiles at the first entry, so the
+   differential suites run everything natively. While any compile is in
+   flight, exits are not held against a chunk: a compiled caller leaves
+   at every call to a callee still compiling, and `function-call`'s loop
+   had settled on those exits within its first 64 entries.
+
+   Tier on against off in one release build, 11 interleaved rounds:
+   `fib` 0.50x, `function-call` 0.49x, `invaders-game` 0.82x,
+   `crawl-ticks` 0.88x, `crawl-history` 0.97x, every other Crawl
+   workload, `http-server`, and the hold-outs 0.99–1.00x. Nothing is
+   slower. The callees native code still cannot call are closures that do
+   not compile (`MakeClosure`, struct copies) and builtins such as `len`:
+   the next batch.
 
 ### Gate
 

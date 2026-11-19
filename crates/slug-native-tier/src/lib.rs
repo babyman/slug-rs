@@ -5,16 +5,22 @@
 //! `docs/decisions/2026-11-18-desktop-native-tier-crate.md`. The tier lifts
 //! each hot chunk into its IR ([`lift`]), checks it, and compiles it when
 //! the baseline tier covers everything it does ([`compile`]).
+//!
+//! A tier configured to compile in the background does that on a thread
+//! of its own: the chunk stays interpreted until its code is installed, so
+//! compiling, about a microsecond for each Cranelift instruction, does not
+//! stall the program.
 
 use std::{
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc,
     },
     time::Instant,
 };
 
-use slug_vm::{NativeCode, NativeTier, Program};
+use slug_vm::{HotChunk, NativeCode, NativeTier, Program};
 
 pub mod compile;
 pub mod ir;
@@ -32,6 +38,9 @@ pub struct Config {
     /// Print each hot chunk's IR, and the machine code of each it
     /// compiles, on standard error.
     pub dump: bool,
+    /// Compile on a thread of the tier's own, leaving a chunk interpreted
+    /// until its code is ready, rather than at its hot entry.
+    pub background: bool,
 }
 
 /// The threshold until measurements tune it.
@@ -43,6 +52,7 @@ impl Default for Config {
             threshold: DEFAULT_THRESHOLD,
             trace: false,
             dump: false,
+            background: false,
         }
     }
 }
@@ -57,6 +67,8 @@ pub struct Tier {
     compiled: AtomicUsize,
     /// Time spent lifting and compiling, in nanoseconds.
     compiling: AtomicU64,
+    /// Hot chunks for the background compiler, once it runs.
+    queue: OnceLock<Mutex<mpsc::Sender<HotChunk>>>,
 }
 
 impl Tier {
@@ -83,7 +95,38 @@ impl Tier {
             unlifted: AtomicUsize::new(0),
             compiled: AtomicUsize::new(0),
             compiling: AtomicU64::new(0),
+            queue: OnceLock::new(),
         }
+    }
+
+    /// Starts the background compiler for `tier`, which then compiles every
+    /// chunk that becomes hot. Without a thread, chunks compile where they
+    /// become hot.
+    fn start_background(tier: &Arc<Self>) {
+        let (sender, receiver) = mpsc::channel::<HotChunk>();
+        let worker = Arc::clone(tier);
+        let started = std::thread::Builder::new()
+            .name("slug-native-compiler".into())
+            .spawn(move || {
+                for hot in receiver {
+                    if let Some(code) = worker.compile_timed(hot.program(), hot.chunk()) {
+                        let _ = hot.install(code);
+                    }
+                }
+            });
+        if started.is_ok() {
+            let _ = tier.queue.set(Mutex::new(sender));
+        }
+    }
+
+    /// Lifts and compiles chunk `chunk`, counting the time it takes.
+    fn compile_timed(&self, program: &Program, chunk: usize) -> Option<Arc<dyn NativeCode>> {
+        let name = program.chunk(chunk).map_or("?", |chunk| chunk.name());
+        let started = Instant::now();
+        let compiled = self.lift_and_compile(program, chunk, name);
+        let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.compiling.fetch_add(elapsed, Ordering::Relaxed);
+        compiled
     }
 
     /// What the tier did, for `SLUG_NATIVE_TRACE`.
@@ -127,17 +170,23 @@ impl NativeTier for Tier {
         self.config.threshold
     }
 
-    fn hot(&self, program: &Program, chunk: usize) -> Option<Arc<dyn NativeCode>> {
+    fn hot(&self, hot: HotChunk) -> Option<Arc<dyn NativeCode>> {
         self.hot.fetch_add(1, Ordering::Relaxed);
-        let name = program.chunk(chunk).map_or("?", |chunk| chunk.name());
         if self.config.trace {
+            let name = hot
+                .program()
+                .chunk(hot.chunk())
+                .map_or("?", |chunk| chunk.name());
             eprintln!("native: hot {name}");
         }
-        let started = Instant::now();
-        let compiled = self.lift_and_compile(program, chunk, name);
-        let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        self.compiling.fetch_add(elapsed, Ordering::Relaxed);
-        compiled
+        let hot = match self.queue.get().map(Mutex::lock) {
+            Some(Ok(queue)) => match queue.send(hot) {
+                Ok(()) => return None,
+                Err(mpsc::SendError(hot)) => hot,
+            },
+            _ => hot,
+        };
+        self.compile_timed(hot.program(), hot.chunk())
     }
 }
 
@@ -197,6 +246,9 @@ static INSTALLED: OnceLock<Arc<Tier>> = OnceLock::new();
 #[must_use]
 pub fn install(config: Config) -> bool {
     let tier = Arc::new(Tier::new(config));
+    if config.background {
+        Tier::start_background(&tier);
+    }
     if !slug_vm::install_native_tier(tier.clone()) {
         return false;
     }

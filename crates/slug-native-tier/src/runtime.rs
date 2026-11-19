@@ -122,6 +122,9 @@ pub(crate) struct Context {
     vm: *mut Vm,
     exits: *const ExitTable,
     exit_count: usize,
+    /// The frame slots that may own something, for [`native_release`].
+    owning: *const u32,
+    owning_count: usize,
     /// The function running, a closure.
     closure: *const Value,
     root: *mut Root,
@@ -153,17 +156,24 @@ pub(crate) struct Compiled {
     entry: usize,
     arity: usize,
     exits: Vec<ExitTable>,
+    owning: Vec<u32>,
 }
 
 impl Compiled {
     /// `entry` must be the address of finalized code generated for a
-    /// function of `arity` parameters with these exit tables, which stays
-    /// mapped for the life of the process.
-    pub(crate) fn new(entry: *const u8, arity: usize, exits: Vec<ExitTable>) -> Self {
+    /// function of `arity` parameters with these exit tables and owning
+    /// slots, which stays mapped for the life of the process.
+    pub(crate) fn new(
+        entry: *const u8,
+        arity: usize,
+        exits: Vec<ExitTable>,
+        owning: Vec<u32>,
+    ) -> Self {
         Self {
             entry: entry as usize,
             arity,
             exits,
+            owning,
         }
     }
 
@@ -186,6 +196,8 @@ impl Compiled {
             vm,
             exits: self.exits.as_ptr(),
             exit_count: self.exits.len(),
+            owning: self.owning.as_ptr(),
+            owning_count: self.owning.len(),
             closure,
             root,
             ret: MaybeUninit::uninit(),
@@ -254,8 +266,9 @@ impl NativeCode for Compiled {
     }
 }
 
-/// Calls module-level name `name` with the `count` arguments at
-/// `arguments`, which it takes, when it is a compiled closure an exact
+/// Calls `callee`, or module-level name `name` when `callee` is null, with
+/// the `count` arguments at `arguments`, which it takes, when it is a
+/// compiled closure an exact
 /// positional call enters: writes its result to `out` and returns
 /// `CALL_RETURNED`. Returns `CALL_EXITED` when the callee left to the
 /// interpreter, its frame recorded, and `CALL_DECLINED` when there was no
@@ -266,11 +279,13 @@ pub(crate) extern "C" fn native_call(
     context: *mut Context,
     name: u32,
     count: u32,
+    callee: *const Value,
     arguments: *mut Value,
     out: *mut Value,
 ) -> u32 {
-    // SAFETY: generated code passes its own context, `count` initialized
-    // values it gives up, and a slot holding no value that needs dropping.
+    // SAFETY: generated code passes its own context, null or an
+    // initialized callee, `count` initialized values it gives up, and a
+    // slot holding no value that needs dropping.
     unsafe {
         let context = &*context;
         let root = context.root;
@@ -283,8 +298,11 @@ pub(crate) extern "C" fn native_call(
                 .iter()
                 .any(|value| matches!(value, Value::Binding { .. }))
         {
-            let callee =
-                vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize);
+            let callee = if callee.is_null() {
+                vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize)
+            } else {
+                vm.native_callee_value(&*callee, count as usize)
+            };
             if callee.is_none() {
                 stats::count(&stats::UNCOMPILED_CALLS);
             }
@@ -372,6 +390,25 @@ pub(crate) extern "C" fn native_global(context: *mut Context, name: u32, out: *m
         let context = &*context;
         let value = (*context.vm).native_global(&*context.closure, GlobalNameId::new(name));
         produce(out, value)
+    }
+}
+
+/// Sets module variable `name` to a clone of `value`: 0, or 1 when the
+/// interpreter must.
+pub(crate) extern "C" fn native_set_global(
+    context: *mut Context,
+    name: u32,
+    value: *const Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context and an initialized
+    // value.
+    unsafe {
+        let context = &*context;
+        u32::from(!(*context.vm).native_set_global(
+            &*context.closure,
+            GlobalNameId::new(name),
+            &*value,
+        ))
     }
 }
 
@@ -493,6 +530,19 @@ pub(crate) extern "C" fn native_drop(slot: *mut Value) {
     unsafe {
         std::ptr::drop_in_place(slot);
         slot.write(Value::Nil);
+    }
+}
+
+/// Drops what every owning slot of the frame at `base` holds, leaving
+/// `nil`: one call in place of a check per slot, for a function with many.
+pub(crate) extern "C" fn native_release(context: *mut Context, base: *mut Value) {
+    // SAFETY: generated code passes its own context and its slots, each
+    // initialized; the owning slots are its own.
+    unsafe {
+        let context = &*context;
+        for slot in std::slice::from_raw_parts(context.owning, context.owning_count) {
+            drop(std::ptr::replace(base.add(*slot as usize), Value::Nil));
+        }
     }
 }
 

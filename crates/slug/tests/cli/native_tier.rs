@@ -52,6 +52,32 @@ fn calls_and_recurs_make_a_chunk_hot_once() {
 }
 
 #[test]
+fn on_compiles_in_the_background_and_then_runs_the_code() {
+    // The loop keeps going in the interpreter while `step` and `count`
+    // compile on the tier's thread, and enters their code once installed.
+    let source = "val step = fn(value) { value + 1 }\n\
+                  val count = fn(remaining, total) {\n\
+                      if (remaining == 0) { total } else { recur(remaining - 1, step(total)) }\n\
+                  }\n\
+                  val main = fn() { println(count(2000000, 0)) }\n";
+    let (stdout, stderr) = traced_run(source, "on", Some("10"));
+    assert_eq!(stdout, "2000000\n");
+    let summary = stderr
+        .lines()
+        .find(|line| line.contains(" hot, "))
+        .unwrap_or_else(|| panic!("no summary: {stderr}"));
+    assert!(summary.contains("2 hot, 2 compiled"), "{stderr}");
+    // Far fewer entries than calls: the loop ran in native code.
+    let entries: u64 = summary
+        .split("; ")
+        .nth(1)
+        .and_then(|part| part.split(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no entry count: {summary}"));
+    assert!(entries < 100_000, "{summary}");
+}
+
+#[test]
 fn all_makes_every_entered_chunk_hot_at_its_first_entry() {
     let (stdout, stderr) = traced_run(LOOPS, "all", None);
     assert_eq!(stdout, "50 7\n");

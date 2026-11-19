@@ -76,6 +76,35 @@ impl Vm {
         }
     }
 
+    /// Sets module variable `name` to a clone of `value`, as code in
+    /// `caller` sets it, and returns whether it did. It does not when the
+    /// task has its own view of the variables, which decides what a write
+    /// means, or `caller` has not resolved the name.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_set_global(&self, caller: &Value, name: GlobalNameId, value: &Value) -> bool {
+        #[cfg(feature = "concurrency")]
+        if self.view.is_some() {
+            return false;
+        }
+        let Value::Closure(closure) = caller else {
+            return false;
+        };
+        let Some(slot) = closure
+            .global_slots
+            .as_ref()
+            .and_then(|slots| slots.get(name.index()))
+            .map(crate::sync::Hint::get)
+        else {
+            return false;
+        };
+        if slot == UNRESOLVED_GLOBAL {
+            return false;
+        }
+        let globals = closure.globals.borrow();
+        globals.value(slot).replace_binding(value.clone())
+    }
+
     /// Capture `index` of `caller`, as `GetCapture` reads it.
     #[doc(hidden)]
     #[must_use]

@@ -227,7 +227,9 @@ fn configure_native_tier() -> Result<NativeSummary, String> {
     let mode = env::var("SLUG_NATIVE").unwrap_or_default();
     let mut config = slug_native_tier::Config::default();
     match mode.trim() {
-        "" | "on" => {}
+        // Chunks compile in the background; `all` compiles each at its
+        // first entry and runs it natively from there, for testing.
+        "" | "on" => config.background = true,
         "all" => config.threshold = 1,
         "off" => return Ok(NativeSummary),
         other => {
