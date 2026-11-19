@@ -772,7 +772,7 @@ pub(super) fn index_value(
                 metrics.collection_lookups += 1;
                 metrics.map_entries_examined += entries.lookup_cost(index);
             }
-            Ok(entries.get(index).cloned().unwrap_or(Value::Nil))
+            Ok(entries.get(index).map_or(Value::Nil, Value::read_out))
         }
         Value::Struct(value) => {
             let Value::Str(name) = index else {

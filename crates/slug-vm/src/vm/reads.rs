@@ -84,7 +84,9 @@ impl Vm {
             {
                 self.metrics.borrow_mut().collection_lookups += 1;
             }
-            return Ok(map.get_hinted(key, hint).cloned().unwrap_or(Value::Nil));
+            return Ok(map
+                .get_hinted(key, hint)
+                .map_or(Value::Nil, Value::read_out));
         }
         index_value(
             collection,
