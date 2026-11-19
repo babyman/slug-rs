@@ -68,6 +68,27 @@ pub(crate) struct ExitTable {
 /// a fork thread's 2 MiB stack to everything else.
 pub(crate) const STACK_BUDGET: usize = 256 * 1024;
 
+/// Counts for `SLUG_NATIVE_TRACE`'s summary, kept only while tracing.
+pub(crate) mod stats {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    pub(crate) static TRACING: AtomicBool = AtomicBool::new(false);
+    /// Entries into native code from the interpreter.
+    pub(crate) static ENTRIES: AtomicU64 = AtomicU64::new(0);
+    /// Activations that left to the interpreter, callers included.
+    pub(crate) static EXITS: AtomicU64 = AtomicU64::new(0);
+    /// Calls native code could not make because the callee had no native
+    /// code (or was not a closure an exact call enters).
+    pub(crate) static UNCOMPILED_CALLS: AtomicU64 = AtomicU64::new(0);
+
+    #[inline]
+    pub(crate) fn count(counter: &AtomicU64) {
+        if TRACING.load(Ordering::Relaxed) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// What every activation of one entry from the interpreter shares.
 struct Root {
     /// An address near the top of the machine stack at the entry.
@@ -192,6 +213,7 @@ impl NativeCode for Compiled {
         if locals.len() != self.arity {
             locals.resize(self.arity, Value::Nil);
         }
+        stats::count(&stats::ENTRIES);
         let mut root = Root {
             base: 0,
             frames: Vec::new(),
@@ -258,7 +280,12 @@ pub(crate) extern "C" fn native_call(
                 .iter()
                 .any(|value| matches!(value, Value::Binding { .. }))
         {
-            vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize)
+            let callee =
+                vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize);
+            if callee.is_none() {
+                stats::count(&stats::UNCOMPILED_CALLS);
+            }
+            callee
         } else {
             None
         };
@@ -348,6 +375,7 @@ pub(crate) extern "C" fn native_drop(slot: *mut Value) {
 pub(crate) extern "C" fn native_exit(context: *mut Context, exit: u32, base: *const Value) {
     // SAFETY: generated code passes its own context, an exit id it was
     // compiled with, and its slots, each initialized.
+    stats::count(&stats::EXITS);
     unsafe {
         let context = &mut *context;
         let tables = std::slice::from_raw_parts(context.exits, context.exit_count);

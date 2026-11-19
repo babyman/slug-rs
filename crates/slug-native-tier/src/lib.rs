@@ -6,9 +6,12 @@
 //! each hot chunk into its IR ([`lift`]), checks it, and compiles it when
 //! the baseline tier covers everything it does ([`compile`]).
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Instant,
 };
 
 use slug_vm::{NativeCode, NativeTier, Program};
@@ -52,6 +55,8 @@ pub struct Tier {
     hot: AtomicUsize,
     unlifted: AtomicUsize,
     compiled: AtomicUsize,
+    /// Time spent lifting and compiling, in nanoseconds.
+    compiling: AtomicU64,
 }
 
 impl Tier {
@@ -77,7 +82,25 @@ impl Tier {
             hot: AtomicUsize::new(0),
             unlifted: AtomicUsize::new(0),
             compiled: AtomicUsize::new(0),
+            compiling: AtomicU64::new(0),
         }
+    }
+
+    /// What the tier did, for `SLUG_NATIVE_TRACE`.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let count = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        #[allow(clippy::cast_precision_loss)] // Milliseconds to print.
+        let compiling = count(&self.compiling) as f64 / 1e6;
+        format!(
+            "native: {} hot, {} compiled, {compiling:.1} ms lifting and compiling; \
+             {} entries, {} activations left early, {} calls to functions without native code",
+            self.hot_chunks(),
+            self.compiled_chunks(),
+            count(&runtime::stats::ENTRIES),
+            count(&runtime::stats::EXITS),
+            count(&runtime::stats::UNCOMPILED_CALLS),
+        )
     }
 
     /// How many chunks have become hot.
@@ -110,6 +133,21 @@ impl NativeTier for Tier {
         if self.config.trace {
             eprintln!("native: hot {name}");
         }
+        let started = Instant::now();
+        let compiled = self.lift_and_compile(program, chunk, name);
+        let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.compiling.fetch_add(elapsed, Ordering::Relaxed);
+        compiled
+    }
+}
+
+impl Tier {
+    fn lift_and_compile(
+        &self,
+        program: &Program,
+        chunk: usize,
+        name: &str,
+    ) -> Option<Arc<dyn NativeCode>> {
         let lifted = lift::lift(program, chunk).and_then(|function| {
             function.check()?;
             Ok(function)
@@ -152,9 +190,26 @@ impl NativeTier for Tier {
     }
 }
 
+static INSTALLED: OnceLock<Arc<Tier>> = OnceLock::new();
+
 /// Installs a tier with `config` as this process's native tier. Returns
 /// false if one was installed already.
 #[must_use]
 pub fn install(config: Config) -> bool {
-    slug_vm::install_native_tier(Arc::new(Tier::new(config)))
+    let tier = Arc::new(Tier::new(config));
+    if !slug_vm::install_native_tier(tier.clone()) {
+        return false;
+    }
+    runtime::stats::TRACING.store(config.trace, Ordering::Relaxed);
+    let _ = INSTALLED.set(tier);
+    true
+}
+
+/// The installed tier's [`Tier::summary`], if it was configured to trace.
+#[must_use]
+pub fn trace_summary() -> Option<String> {
+    INSTALLED
+        .get()
+        .filter(|tier| tier.config.trace)
+        .map(|tier| tier.summary())
 }

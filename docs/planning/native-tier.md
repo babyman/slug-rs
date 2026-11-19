@@ -451,8 +451,46 @@ Each is committed on its own and passes the usual checks.
    diagnostics, or status. About 30 s plus the build on an M-series Mac;
    the benchmarks run in parallel. On macOS the suite hits the
    `typed_net` listen-queue failure as `make test` does.
-6. **Measure:** a PGO A/B of native on against native off, with
-   hold-outs.
+6. **Measure, done (2026-11-19):** a PGO A/B of native on against native
+   off, with hold-outs. PGO builds of 1ae7597 without and with `native`,
+   9 interleaved rounds: geomean 0.95x tuned, 1.01x hold-out.
+
+   | workload | interpreter | native | ratio |
+   |---|---:|---:|---:|
+   | `fib` | 26.4 ms | 12.6 ms | 0.48x |
+   | `function-call` | 9.2 ms | 6.9 ms | 0.75x |
+   | n-body | 6.5 ms | 5.8 ms | 0.90x |
+   | spectral-norm | 5.6 ms | 6.1 ms | 1.11x |
+   | `closure-accumulate` | 28.2 ms | 29.3 ms | 1.04x |
+   | `higher-order` | 18.1 ms | 18.6 ms | 1.03x |
+   | Invaders, Crawl, HTTP server | | | 0.98–1.01x |
+   | hold-outs | | | 1.00–1.01x |
+
+   The corpus kernels run 5–30 ms, of which about 5 ms is start-up and
+   0.7–0.9 ms compiling, so their ratios understate the code: at release
+   size (above) `fib` is 4.2x, 20M calls 5.1x, n-body's `advance` 8.4x,
+   and spectral-norm 2.5x. `closure-accumulate` and `higher-order`, which
+   compile nothing, are 3–4% slower, outside their 1% spread: the cost of
+   counting entries on every call. The `native` build is 4.16 MB against
+   2.84 MB (+1.32 MB).
+
+   `SLUG_NATIVE_TRACE` now ends with a summary: chunks hot and compiled,
+   time lifting and compiling, entries, activations that left early, and
+   calls to functions without native code. The Crawl workloads compile 1
+   to 5 of 24 to 127 hot chunks, in 1.7–3.4 ms; each leaves native code at
+   an uncompiled call 64 to 128 times, until the chunk settles. Invaders
+   compiles 8 of 65 and enters native code 249,302 times with 52 early
+   exits. Resuming native code after an interpreted call would gain
+   little; what Phase 2 needs for real programs is coverage (map reads,
+   captures, global reads, closures).
+
+   **Gate:** `fib`, `function-call`, and n-body pass at release size
+   (4.2x, 5.1x, 8.4x); spectral-norm does not (2.5x), because its mixed
+   integer and float operands and divisions take the slow path; none of
+   the four reaches 4x in the corpus's short runs. All gain more than 2x,
+   so Phase 1 does not stop. Invaders, Crawl, and the hold-outs are within
+   noise, but two call-heavy tuned workloads pay 3–4% for the entry
+   count. Compile time and binary size are recorded above.
 
 ### Gate
 
