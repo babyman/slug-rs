@@ -845,8 +845,14 @@ with the hold-outs; a step that does not pay is reverted.
    `crawl-pages` 0.90x, `expression-evaluator` 0.90x. The gate's clutch
    run with `SLUG_NATIVE=on` hung once after every suite reported, with
    `closesAStreamWhoseClientLeaves` failed, and `typed_net`'s 200-client
-   test saw one refused connection; both pass alone, and are traced
-   below.
+   test saw one refused connection. Neither was the tier's: both were
+   tests bounded by count where a loaded machine needs time. The HTTP
+   test failed and hung 2 in 16 runs with every core busy and the tier
+   off (0 with it on); it gave up after 200 sends, then left its server
+   waiting on the body channel and the listener. It now sends for up to
+   five seconds and closes both on the way out (0 in 32). The 200-client
+   test retried a refused connect for about a second, and now for up to
+   20 (10 of 10 under the same load).
 
 ### Gate
 

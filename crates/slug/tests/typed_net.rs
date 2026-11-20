@@ -521,12 +521,14 @@ fn echo_retrying(port: u16, sent: &[u8]) -> Vec<u8> {
         stream.read_to_end(&mut received)?;
         Ok(received)
     };
-    let mut attempts = 0;
+    // By time, not by count: a loaded machine (the gate runs suites in
+    // parallel) can keep the queue full for longer than a second.
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match exchange() {
             Ok(received) => return received,
             Err(error)
-                if attempts < 50
+                if Instant::now() < deadline
                     && matches!(
                         error.kind(),
                         ErrorKind::ConnectionRefused
@@ -537,7 +539,6 @@ fn echo_retrying(port: u16, sent: &[u8]) -> Vec<u8> {
                             | ErrorKind::InvalidInput
                     ) =>
             {
-                attempts += 1;
                 thread::sleep(Duration::from_millis(20));
             }
             Err(error) => panic!("echo: {error}"),

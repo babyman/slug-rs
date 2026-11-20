@@ -1,5 +1,6 @@
 val http = import("slug.net.http")
 val tcp = import("slug.net.tcp")
+val time = import("slug.time")
 val {await, send} = import("slug.channel")
 val {fromBytes, toBytes} = import("slug.string")
 val {assertEqual} = import("slug.test")
@@ -116,24 +117,31 @@ val streamsAChannelBodyUntilItCloses = fn() {
 @test
 val closesAStreamWhoseClientLeaves = fn() {
     val body = chan(1)
+    // Should the server not close the channel, closing it and the listener
+    // here ends the stream and the server, so a failure cannot leave the
+    // server waiting.
+    defer close(body)
     val listener = tcp.listen("127.0.0.1", 0)
+    defer tcp.close(listener)
     val server = spawn { http.serve(listener, fn(request) { {status: 200, body: body} }, {idleTimeout: 1000}) }
     val client = tcp.connect("127.0.0.1", tcp.localPort(listener))
     tcp.write(client, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
     tcp.read(client, timeout = 5000)
     tcp.close(client)
-    // Writes to a closed socket fail once the peer's reset arrives; keep
-    // sending until the server closes the channel.
-    val pump = fn(i:num):bool {
-        if (i == 200) { return false }
+    // Writes to a closed socket fail once the peer's reset arrives, which
+    // a loaded machine can delay; keep sending until the server closes the
+    // channel, for up to five seconds.
+    val deadline = time.monotonicMs() + 5000
+    val pump = fn():bool {
+        if (time.monotonicMs() > deadline) { return false }
         val sent = fn():bool {
             defer onerror(_) { return false }
             send(body, "tick\n")
             true
         }
-        if (sent()) { recur(i + 1) } else { true }
+        if (sent()) { recur() } else { true }
     }
-    assertEqual(pump(0), true)
+    assertEqual(pump(), true)
     tcp.close(listener)
     await(server)
 }
