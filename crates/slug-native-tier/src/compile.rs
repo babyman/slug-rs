@@ -343,7 +343,15 @@ impl<'a> Lowering<'a> {
             release: signature(&[pointer, pointer], &[]),
             exit: signature(&[pointer, types::I32, pointer], &[]),
             call: signature(
-                &[pointer, types::I32, types::I32, pointer, pointer, pointer],
+                &[
+                    pointer,
+                    types::I32,
+                    types::I32,
+                    pointer,
+                    pointer,
+                    types::I64,
+                    pointer,
+                ],
                 &[types::I32],
             ),
             operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
@@ -593,9 +601,9 @@ impl<'a> Lowering<'a> {
             // others' block ends leave to the interpreter, which runs them.
             Op::RecurPositional(_) | Op::Throw | Op::MatchFailure | Op::NotImplemented => {}
             Op::CallGlobalPooled { name, count } => {
-                self.lower_call(inst, Callee::Global(name.get()), *count)?;
+                self.lower_call(inst, Callee::Global(name.get()), *count, position)?;
             }
-            Op::CallPositional(count) => self.lower_call(inst, Callee::Value, *count)?,
+            Op::CallPositional(count) => self.lower_call(inst, Callee::Value, *count, position)?,
             op => self.lower_operator(inst, op, position)?,
         }
         Ok(())
@@ -1404,7 +1412,17 @@ impl<'a> Lowering<'a> {
     /// A call of module-level name `name`: the callee's native code with
     /// clones of the arguments, or an exit before the call when there is
     /// none, or after it when the callee exited.
-    fn lower_call(&mut self, inst: &Inst, callee: Callee, count: usize) -> Result<(), String> {
+    /// A call, instruction `index` of block `block`. An argument the call
+    /// reads for the last time is moved to it, not copied, so a collection
+    /// the callee updates may be updated in place, as the interpreter's own
+    /// calls allow; if the call is declined, it is moved back.
+    fn lower_call(
+        &mut self,
+        inst: &Inst,
+        callee: Callee,
+        count: usize,
+        position: (usize, usize),
+    ) -> Result<(), String> {
         // A called value is below its arguments.
         let below = usize::from(matches!(callee, Callee::Value));
         if inst.args.len() != count + below || inst.results.len() != 1 {
@@ -1418,13 +1436,23 @@ impl<'a> Lowering<'a> {
             }
         };
         let base = self.function.values.len() + self.function.arity + 1;
+        let mut moved = 0_u64;
         for (index, argument) in inst.args[below..].iter().enumerate() {
             let source = self.slot(argument.index());
             let target = self.slot(base + index);
-            self.clone_into(source, target);
+            if index < 64 && self.owning[argument.index()] && self.moves(*argument, inst, position)
+            {
+                self.copy_words(source, target);
+                self.store_tag(source, layout::NIL);
+                moved |= 1 << index;
+            } else {
+                self.clone_into(source, target);
+            }
         }
         let arguments = self.slot(base);
         let arguments = self.address(arguments);
+        #[expect(clippy::cast_possible_wrap, reason = "a bit mask")]
+        let moved_mask = self.builder.ins().iconst(types::I64, moved as i64);
         let name = self.builder.ins().iconst(types::I32, i64::from(name));
         let count = self
             .builder
@@ -1435,7 +1463,15 @@ impl<'a> Lowering<'a> {
         let status = self.call(
             self.runtime.call,
             runtime::native_call as *const () as usize,
-            &[self.context, name, count, callee, arguments, result],
+            &[
+                self.context,
+                name,
+                count,
+                callee,
+                arguments,
+                moved_mask,
+                result,
+            ],
         )[0];
         let before = self.exit_block(inst);
         let after = self.exit_after_call(inst);
@@ -1453,7 +1489,22 @@ impl<'a> Lowering<'a> {
             .builder
             .ins()
             .icmp_imm(IntCC::Equal, status, i64::from(CALL_DECLINED));
-        self.builder.ins().brif(declined, before, &[], after, &[]);
+        if moved == 0 {
+            self.builder.ins().brif(declined, before, &[], after, &[]);
+        } else {
+            // Declined: the moved arguments go back where they were.
+            let restore = self.builder.create_block();
+            self.builder.ins().brif(declined, restore, &[], after, &[]);
+            self.builder.switch_to_block(restore);
+            for (index, argument) in inst.args[below..].iter().enumerate() {
+                if moved & (1 << index) != 0 {
+                    let source = self.slot(base + index);
+                    let target = self.slot(argument.index());
+                    self.copy_words(source, target);
+                }
+            }
+            self.builder.ins().jump(before, &[]);
+        }
         self.builder.switch_to_block(done);
         Ok(())
     }

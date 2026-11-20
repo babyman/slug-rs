@@ -483,6 +483,36 @@ fn compiled_matches_defaults_throws_and_maps_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_calls_move_last_reads_and_restore_them_when_declined() {
+    // `add` takes the map its caller reads for the last time, and adds to
+    // it in place; `keep` reads its map again after the call, so `add` must
+    // not change it. `grow`, called without its default, is declined, and
+    // its moved argument goes back for the interpreter to pass.
+    let trace = same_with_and_without_native_code(
+        "moved-arguments",
+        "val grow = fn(m, k, extra = 0) { m + {[k]: k + extra} }\n\
+         val add = fn(m, k) { m + {[k]: k} }\n\
+         val fill = fn(n, m) {\n\
+             if (n == 0) { m } else { recur(n - 1, add(grow(m, n), n + 1000)) }\n\
+         }\n\
+         val keep = fn(n, m) {\n\
+             if (n == 0) { m } else {\n\
+                 val bigger = add(m, n)\n\
+                 recur(n - 1, if (len(bigger) > len(m) + 1) { bigger } else { m })\n\
+             }\n\
+         }\n\
+         val main = fn() {\n\
+             val filled = fill(300, {})\n\
+             println(len(filled), filled[7], filled[1007], keep(300, {\"a\": 1}))\n\
+         }\n",
+    );
+    assert!(
+        !trace.contains(" 0 calls to functions without native code"),
+        "{trace}"
+    );
+}
+
+#[test]
 fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() {
     // `int` of integers and floats, `~`, a module variable only ever
     // written by the function that compiles, and a map added to in a loop

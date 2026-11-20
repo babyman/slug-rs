@@ -349,12 +349,15 @@ impl NativeCode for Compiled {
 /// the call; and `CALL_DECLINED` when there was no such callee, the native
 /// calls have used their stack budget, or the thread needs attention (a
 /// cancelled fork, say), which the interpreter checks at every call.
+/// A declined call drops its arguments but those `moved` marks, by bit,
+/// which native code moved from its own slots and moves back.
 pub(crate) extern "C" fn native_call(
     context: *mut Context,
     name: u32,
     count: u32,
     callee: *const Value,
     arguments: *mut Value,
+    moved: u64,
     out: *mut Value,
 ) -> u32 {
     // SAFETY: generated code passes its own context, null or an
@@ -384,7 +387,11 @@ pub(crate) extern "C" fn native_call(
             }
         };
         let declined = |arguments: &mut [Value]| {
-            std::ptr::drop_in_place(arguments);
+            for (index, argument) in arguments.iter_mut().enumerate() {
+                if index >= 64 || moved & (1 << index) == 0 {
+                    std::ptr::drop_in_place(argument);
+                }
+            }
             CALL_DECLINED
         };
         let Some(target) = target else {
@@ -394,20 +401,19 @@ pub(crate) extern "C" fn native_call(
             target,
             Value::Native(_) | Value::DeclaredNative { .. } | Value::Builtin(_)
         ) {
-            let invoked = (*context.vm).native_invoke(&target, arguments_slice);
+            let Some(invoked) = (*context.vm).native_invoke(&target, arguments_slice) else {
+                stats::count(&stats::UNCOMPILED_CALLS);
+                return declined(arguments_slice);
+            };
             std::ptr::drop_in_place(arguments_slice);
             return match invoked {
-                Some(Ok(value)) => {
+                Ok(value) => {
                     out.write(value);
                     CALL_RETURNED
                 }
-                Some(Err(failure)) => {
+                Err(failure) => {
                     (*root).failure = Some(failure);
                     CALL_EXITED
-                }
-                None => {
-                    stats::count(&stats::UNCOMPILED_CALLS);
-                    CALL_DECLINED
                 }
             };
         }

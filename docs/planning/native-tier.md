@@ -725,6 +725,17 @@ interpreter would do more, so native code leaves before the instruction.
     by running it directly, with the tier off, on, and on for every
     chunk; no timing of it was seen.
 
+    The cause was quadratic: compiling destructuring let `search`
+    compile, and native calls copied every argument, so the `seen` map
+    `search` passes `visit` for the last time had two owners there, and
+    `visit`'s first insert copied all of it, once a node. The
+    interpreter's calls move a local read for the last time. Native calls
+    now move an argument they read for the last time, by the same
+    liveness as operations, and move it back if the call is declined
+    (`native_call` drops only the arguments it copied). Twenty times the
+    nodes went from 7.0 s with the tier on against 1.4 s off to 1.48 s
+    against 1.52 s.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.
