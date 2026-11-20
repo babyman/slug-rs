@@ -714,6 +714,17 @@ interpreter would do more, so native code leaves before the instruction.
    `shared-append` 1.02x, and `defer-errors` 1.05x. Releasing every owning
    slot is still the largest native cost in the Tiny evaluator.
 
+10. **`graph-search`, rotated out of the hold-outs.** The full A/B of
+    item 9 had the hold-outs at 0.91x geomean, `stack-machine` 0.73x, but
+    `graph-search` 1.29x, against 0.98x after item 8. Counting calls from
+    native code singly again left it at 1.28x, so the weighting was not
+    the cause; that was reverted anyway, the tuned workloads being the
+    same without it. `graph-search` became a tuned workload, to be
+    profiled, and `queens-knapsack` (eight queens by backtracking, a 0/1
+    knapsack over lists) the hold-out in its place. Its output was checked
+    by running it directly, with the tier off, on, and on for every
+    chunk; no timing of it was seen.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.

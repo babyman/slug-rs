@@ -1,0 +1,87 @@
+// Backtracking and dynamic programming over lists: the solutions of the
+// eight queens, found by placing a queen per row and undoing a placement
+// that a later row cannot extend, then a 0/1 knapsack whose table is a list
+// rebuilt one item at a time.
+val safe = fn(placed, column) {
+    val go = fn(rest, distance) {
+        match rest {
+            [] => true
+            [other, ...more] => {
+                if (other == column || other - column == distance || column - other == distance) {
+                    false
+                } else {
+                    recur(more, distance + 1)
+                }
+            }
+        }
+    }
+    go(placed, 1)
+}
+
+// The number of ways to finish `placed` (most recent row first) to `size`
+// rows, and the sum of the first column of each, as a checksum.
+val queens = fn(size, placed, row) {
+    if (row == size) {
+        [1, placed[size - 1]]
+    } else {
+        val tryColumn = fn(column, found, checksum) {
+            if (column == size) {
+                [found, checksum]
+            } else if (safe(placed, column)) {
+                val [more, sum] = queens(size, [column] + placed, row + 1)
+                recur(column + 1, found + more, checksum + sum)
+            } else {
+                recur(column + 1, found, checksum)
+            }
+        }
+        tryColumn(0, 0, 0)
+    }
+}
+
+val Item = struct { weight, value }
+
+// The items, from a small linear congruential generator.
+val items = fn(count, seed, built) {
+    if (count == 0) {
+        built
+    } else {
+        val next = (seed * 1103515245 + 12345) % 2147483648
+        val weight = next % 23 + 1
+        val value = (next % 9973) % 97 + 1
+        recur(count - 1, next, built :+ Item { weight: weight, value: value })
+    }
+}
+
+// Row `best` of the table after one more item: the best value for each
+// capacity.
+val step = fn(best, item) {
+    val go = fn(capacity, row) {
+        if (capacity == len(best)) {
+            row
+        } else {
+            val without = best[capacity]
+            val with = if (item.weight > capacity) { 0 } else { best[capacity - item.weight] + item.value }
+            recur(capacity + 1, row :+ (if (with > without) { with } else { without }))
+        }
+    }
+    go(0, [])
+}
+
+val knapsack = fn(stock, capacity) {
+    val zeros = fn(left, row) { if (left == 0) { row } else { recur(left - 1, row :+ 0) } }
+    val fill = fn(rest, best) {
+        match rest {
+            [] => best
+            [item, ...more] => recur(more, step(best, item))
+        }
+    }
+    val best = fill(stock, zeros(capacity + 1, []))
+    best[capacity]
+}
+
+val main = fn() {
+    val [eight, checksum] = queens(8, [], 0)
+    val [six, _] = queens(6, [], 0)
+    val stock = items(60, 42, [])
+    println(eight, checksum, six, knapsack(stock, 400), knapsack(stock, 150))
+}

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A new hold-out benchmark, `queens-knapsack`, counts the eight queens'
+  solutions by backtracking and fills a 0/1 knapsack table one list at a
+  time; `graph-search` moves to the tuned workloads, since the native
+  tier's slowdown on it is now being profiled and fixed.
+
 - A new hold-out benchmark, `stack-machine`, compiles small programs from
   syntax trees to instruction lists and runs them on a stack machine
   written in Slug; `tiny-interpreter` moves to the tuned workloads, since
