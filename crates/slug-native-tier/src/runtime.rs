@@ -596,6 +596,15 @@ unsafe fn record_call(
         {
             return;
         }
+        let version = (*context.globals).load(Ordering::Acquire);
+        let current = caller.sites[site as usize].load(Ordering::Acquire);
+        if !current.is_null()
+            && (*current).globals == context.globals
+            && (*current).version == version
+        {
+            // Still holds: the call came here for another reason.
+            return;
+        }
         let mut records = caller
             .records
             .lock()
@@ -605,7 +614,7 @@ unsafe fn record_call(
         }
         let mut record = Box::new(CallRecord {
             globals: context.globals,
-            version: (*context.globals).load(Ordering::Acquire),
+            version,
             entry: compiled.entry,
             compiled,
             callee_globals: Vm::native_globals_version(closure),

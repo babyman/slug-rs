@@ -833,6 +833,21 @@ with the hold-outs; a step that does not pay is reverted.
    since a program's own definitions precede its calls and a variable's
    assignments go to its cell; a REPL's redefinitions would.
 
+   The first A/B (p9: tuned 0.87x, hold-out 0.84x, `fib` 0.42x) put
+   `tiny-interpreter` at 1.08x. Its calls mostly take the slow path (the
+   callee is a closure that captures), and each one recorded the site
+   again, allocating a fresh record. A site whose record still holds is
+   now left alone, and a return with more than 32 owning slots calls
+   `native_release` without testing them inline. p10 against p6-base:
+   tuned 0.87x, hold-out 0.83x; `fib` 0.40x, `binary-trees` 0.77x,
+   `tiny-interpreter` 1.00x, `defer-errors` 1.06x; hold-outs
+   `stack-machine` 0.72x, `queens-knapsack` 0.86x, `text-wrap` 0.79x,
+   `crawl-pages` 0.90x, `expression-evaluator` 0.90x. The gate's clutch
+   run with `SLUG_NATIVE=on` hung once after every suite reported, with
+   `closesAStreamWhoseClientLeaves` failed, and `typed_net`'s 200-client
+   test saw one refused connection; both pass alone, and are traced
+   below.
+
 ### Gate
 
 - The kernels at least 4x faster on compute time, startup subtracted.

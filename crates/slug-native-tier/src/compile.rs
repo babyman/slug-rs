@@ -1937,6 +1937,18 @@ impl<'a> Lowering<'a> {
         let owning: Vec<usize> = (0..self.owning.len())
             .filter(|index| self.owning[*index])
             .collect();
+        if owning.len() > INLINE_TESTS {
+            // Too many to test inline: a large function, which nearly
+            // always holds something counted.
+            let base = self.slot(0);
+            let base = self.address(base);
+            self.call(
+                self.runtime.release,
+                runtime::native_release as *const () as usize,
+                &[self.context, base],
+            );
+            return;
+        }
         if owning.len() > INLINE_RELEASES {
             let mut any = None;
             for index in owning {
@@ -2200,6 +2212,10 @@ fn offset(index: usize, within: i32) -> i32 {
 /// The most owning slots a function checks inline when it returns,
 /// exits, or recurs.
 const INLINE_RELEASES: usize = 6;
+
+/// The most owning slots a function tests at once inline before calling
+/// the runtime to release them.
+const INLINE_TESTS: usize = 32;
 
 /// How a block that ends in a choice chooses.
 #[derive(Clone, Copy)]
