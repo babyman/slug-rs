@@ -84,7 +84,8 @@ impl Drop for HotChunk {
 pub trait NativeCode: Send + Sync {
     /// Runs the chunk from its first instruction, in the active frame, whose
     /// function is `closure`, with that frame's `locals`.
-    fn run(&self, vm: &mut Vm, closure: Value, locals: Vec<Value>) -> NativeOutcome;
+    /// Its `locals` are taken, leaving the vector empty.
+    fn run(&self, vm: &mut Vm, closure: &Value, locals: &mut Vec<Value>) -> NativeOutcome;
 
     /// The tier's own type, for native code that calls this code directly.
     fn as_any(&self) -> &dyn core::any::Any;
@@ -289,6 +290,17 @@ impl NativeSlot {
         let code = tier.hot(HotChunk::new(program, chunk))?;
         self.install(code);
         self.code.get()
+    }
+
+    /// The chunk's native code, if it is compiled, without counting an
+    /// entry.
+    #[inline]
+    pub(crate) fn compiled(&self) -> Option<&Arc<dyn NativeCode>> {
+        if self.state.load(Ordering::Acquire) == COMPILED {
+            self.code.get()
+        } else {
+            None
+        }
     }
 
     /// Makes `code` the chunk's native code, which its next entry runs.

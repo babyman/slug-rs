@@ -290,7 +290,7 @@ impl Compiled {
 }
 
 impl NativeCode for Compiled {
-    fn run(&self, vm: &mut Vm, closure: Value, mut locals: Vec<Value>) -> NativeOutcome {
+    fn run(&self, vm: &mut Vm, closure: &Value, locals: &mut Vec<Value>) -> NativeOutcome {
         // The code takes the arguments; the other locals are the frame's
         // unset `nil`s, which it does not need.
         locals.truncate(self.arity);
@@ -310,7 +310,7 @@ impl NativeCode for Compiled {
         let outcome = unsafe {
             let outcome = self.enter(
                 std::ptr::from_mut(vm),
-                &raw const closure,
+                std::ptr::from_ref(closure),
                 &raw mut root,
                 locals.as_mut_ptr(),
             );

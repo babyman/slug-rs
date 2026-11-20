@@ -657,6 +657,38 @@ interpreter would do more, so native code leaves before the instruction.
    `http-server` 0.81x, `crawl-history` 0.89x, `crawl-pages` 0.93x,
    crawl-crowd 0.94x, every other 0.98–1.02x.
 
+   **The PGO A/B (2026-11-19) does not close Phase 2.** PGO builds of
+   19abce9 without and with `native`, 9 interleaved rounds: geomean
+   0.91x tuned, 0.99x hold-out; Invaders 0.70x, `fib` 0.62x, but
+   `higher-order` 1.06x and the hold-out `tiny-interpreter` 1.12x (spread
+   5%). PGO speeds the interpreter far more than native code, and the
+   quick checks above, on plain release builds, overstated the gains: the
+   crawl-crowd quick check read 0.94x against 1.01x here. The `native`
+   build is 4.92 MB against 2.84 MB, and resident memory grows 2–11 MB
+   (`tiny-interpreter` 11.6 to 24.1 MB).
+
+8. **Entering native code at the call.** `higher-order`'s cost was per
+   entry (12% at every length, nothing at start-up): the interpreter
+   called `slug.std`'s `map`, `filter`, and `reduce`, which stay
+   interpreted, and they entered three compiled lambdas 105,329 times,
+   each through a full interpreter call: a frame pushed, the locals moved
+   into a fresh vector, the code run, the frame popped, and the dispatch
+   loop's lookup of the active code redone. For a three-instruction
+   lambda that costs more than native code saves. Now an exact positional
+   call of a closure already compiled runs its native code at the call,
+   with the arguments from the operand stack through a vector the VM
+   keeps, and makes a frame only if the code leaves, from the state it
+   leaves (`native_resumed` keeps the interpreter from entering it again
+   at its first instruction).
+
+   PGO A/B against the same interpreter build, 9 rounds: geomean 0.90x
+   tuned, 0.98x hold-out; `higher-order` and `closure-accumulate` 0.92x,
+   crawl-history 0.90x, crawl-game 0.91x, crawl-crowd 0.97x, Invaders
+   0.70x, `fib` 0.62x, hold-outs `text-wrap` 0.86x, `expression-evaluator`
+   0.96x, `graph-search` 0.98x, crawl-pages 1.01x, and `tiny-interpreter`
+   still 1.09x (spread 2%). `string-building` 1.04x, `defer-errors`
+   1.03x, and `shared-append` 1.02x are the tuned workloads still slower.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.
