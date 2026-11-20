@@ -1689,10 +1689,33 @@ impl<'a> Lowering<'a> {
     }
 
     /// Drops every owning slot that holds something, leaving `nil`: with a
-    /// check per slot inline when there are few, and otherwise in one call,
-    /// which keeps a large function's code, and its compile time, small.
+    /// check per slot inline when there are few, and otherwise by one test
+    /// of all their tags inline, calling the runtime to drop them only when
+    /// one holds a counted value; most hold numbers or `nil`.
     fn drop_owning(&mut self) {
-        if self.owning.iter().filter(|owns| **owns).count() > INLINE_RELEASES {
+        let owning: Vec<usize> = (0..self.owning.len())
+            .filter(|index| self.owning[*index])
+            .collect();
+        if owning.len() > INLINE_RELEASES {
+            let mut any = None;
+            for index in owning {
+                let slot = self.slot(index);
+                let tag = self.load_tag(slot);
+                let counted = self.builder.ins().icmp_imm(
+                    IntCC::SignedGreaterThanOrEqual,
+                    tag,
+                    layout::FIRST_COUNTED,
+                );
+                any = Some(match any {
+                    Some(any) => self.builder.ins().bor(any, counted),
+                    None => counted,
+                });
+            }
+            let any = any.expect("more than INLINE_RELEASES slots");
+            let release = self.builder.create_block();
+            let next = self.builder.create_block();
+            self.builder.ins().brif(any, release, &[], next, &[]);
+            self.builder.switch_to_block(release);
             let base = self.slot(0);
             let base = self.address(base);
             self.call(
@@ -1700,12 +1723,11 @@ impl<'a> Lowering<'a> {
                 runtime::native_release as *const () as usize,
                 &[self.context, base],
             );
+            self.builder.ins().jump(next, &[]);
+            self.builder.switch_to_block(next);
             return;
         }
-        for index in 0..self.owning.len() {
-            if !self.owning[index] {
-                continue;
-            }
+        for index in owning {
             let slot = self.slot(index);
             let tag = self.load_tag(slot);
             let counted = self.builder.ins().icmp_imm(

@@ -760,6 +760,64 @@ understood. Step 6 also counts how often Crawl leaves native code at a call
 to an uncompiled function, which decides whether Phase 2 needs a way to
 resume native code after an interpreted call.
 
+## Phase 3 plan (2026-11-20)
+
+Phase 2 closed with every hold-out faster (geomean 0.83x) and the tuned
+workloads at 0.88x, but the kernels far from Phase 1's 4x: `fib` 0.56x,
+`function-call` 0.74x, n-body 0.92x, spectral-norm 1.01x.
+
+### Where `fib`'s time goes
+
+A profile of `fib(38)` with the tier on (a release build with symbols, one
+second, ~420 samples on the VM thread) has about two thirds of the time in
+calling, not in arithmetic or tag checks: `native_call` 101 samples,
+`Compiled::enter` 52, `Vm::native_entry` 39, `native_slot` 23, the
+context's exit record dropped 19, the callee cloned and dropped 26, the
+downcast to `Compiled` 8. Returning cost another 68 in `native_release`,
+since `fib` has seven owning slots, one more than are checked inline.
+
+Each native call resolves its callee as the interpreter does, through the
+module's slot table, clones it, finds its chunk's code through the counted
+`NativeSlot`, clones that `Arc`, downcasts it, and builds a fresh context.
+The boxed prototype's 10x called the compiled function directly.
+
+### Steps
+
+1. **Cheaper returns.** One inline test of every owning slot's tag, with a
+   call to drop them only when one holds a counted value, in place of the
+   call each return made when a function had more than six. `fib(35)`
+   (release, not profile-guided): 0.67 s to 0.57 s.
+2. **Direct calls between compiled functions.** A call site remembers the
+   program and chunk it last entered and that chunk's `Compiled`, keyed so
+   a freed closure's address cannot alias another chunk's code; the
+   generated code checks the callee against it and calls the entry
+   directly, with the context built in its own frame, and falls back to
+   `native_call` otherwise. `Value` is not `Send`, and compiled code is
+   shared between threads, so the cache holds no `Value`: only the
+   program's address, the chunk, and the code, which lives as long as the
+   process.
+3. **Type facts.** A forward pass over the IR finds the values that are
+   always an `Int` or a `Float` (constants, the results of a guarded
+   arithmetic fast path, parameters after their first guard), so their
+   tag checks and their release go.
+4. **Specialization with deoptimization.** Such values stay in registers
+   between guards; a guard that fails writes them back to their slots and
+   leaves through the exit tables that exist already. Gated on a
+   differential mode that fails every guard once (the risk below).
+5. **Unboxed arguments** between specialized functions, with the boxed
+   entry kept for every other caller.
+
+Each step is measured on `fib` and the kernels, then on the full PGO A/B
+with the hold-outs; a step that does not pay is reverted.
+
+### Gate
+
+- The kernels at least 4x faster on compute time, startup subtracted.
+  n-body and spectral-norm run 1 to 2 ms past about 6 ms of startup, too
+  little for a ratio, so they are also measured at 20 times their input
+  outside the suite, whose workloads stay as they are.
+- Every hold-out within noise or faster, and the tuned geomean no worse.
+
 ## Risks
 
 - **Two engines to keep in agreement.** Every semantic change lands twice.

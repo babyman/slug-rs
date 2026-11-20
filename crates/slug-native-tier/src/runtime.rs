@@ -217,7 +217,13 @@ impl Compiled {
             arity,
             exits: tables.exits,
             owning: tables.owning,
-            cells: tables.cells,
+            // With nothing captured, each activation's cells are empty,
+            // and making them allocates nothing.
+            cells: if tables.cells.contains(&true) {
+                tables.cells
+            } else {
+                Vec::new()
+            },
             closures: tables.closures,
             operations: tables.operations,
             matches: tables.matches,
