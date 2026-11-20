@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A new hold-out benchmark, `stack-machine`, compiles small programs from
+  syntax trees to instruction lists and runs them on a stack machine
+  written in Slug; `tiny-interpreter` moves to the tuned workloads, since
+  the native tier's slowdown on it is now being profiled and fixed.
+
 - `slug.fmt.json`'s `parse` and `parseStrict` refuse a document with more
   than 1000 arrays and objects open at once, throwing `json.limit` with
   `data` `{limit: "depth", max, offset}`, `offset` being the bracket that

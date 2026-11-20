@@ -1,0 +1,174 @@
+// A stack machine: programs as syntax trees, compiled to instruction lists,
+// then run by a dispatch on each instruction, with the stack and the
+// variables in lists. Many small calls and a `match` per step, as an
+// interpreter written in Slug does.
+val Num = struct { value }
+val Var = struct { name }
+val Bin = struct { op, left, right }
+val Assign = struct { name, value }
+val Seq = struct { items }
+val While = struct { cond, body }
+val If = struct { cond, then, otherwise }
+
+// Each variable's slot, in the order the program first names it.
+val names = fn(node, slots) {
+    match node {
+        n: struct<Num> => slots
+        v: struct<Var> => if (slots[v.name] == nil) { slots + {[v.name]: len(slots)} } else { slots }
+        b: struct<Bin> => names(b.right, names(b.left, slots))
+        a: struct<Assign> => names(a.value, names(Var { name: a.name }, slots))
+        s: struct<Seq> => {
+            val go = fn(items, slots) {
+                match items {
+                    [] => slots
+                    [first, ...rest] => recur(rest, names(first, slots))
+                }
+            }
+            go(s.items, slots)
+        }
+        w: struct<While> => names(w.body, names(w.cond, slots))
+        i: struct<If> => names(i.otherwise, names(i.then, names(i.cond, slots)))
+    }
+}
+
+// `code` with instruction `at` replaced: a jump whose target is now known.
+val patch = fn(code, at, instruction) { code[:at] + [instruction] + code[at + 1:] }
+
+val compile = fn(node, slots, code) {
+    match node {
+        n: struct<Num> => code :+ ["push", n.value]
+        v: struct<Var> => code :+ ["load", slots[v.name]]
+        b: struct<Bin> => compile(b.right, slots, compile(b.left, slots, code)) :+ [b.op, 0]
+        a: struct<Assign> => compile(a.value, slots, code) :+ ["store", slots[a.name]]
+        s: struct<Seq> => {
+            val go = fn(items, code) {
+                match items {
+                    [] => code
+                    [first, ...rest] => recur(rest, compile(first, slots, code))
+                }
+            }
+            go(s.items, code)
+        }
+        w: struct<While> => {
+            val start = len(code)
+            val tested = compile(w.cond, slots, code)
+            val exit = len(tested)
+            val looped = compile(w.body, slots, tested :+ ["jumpz", 0]) :+ ["jump", start]
+            patch(looped, exit, ["jumpz", len(looped)])
+        }
+        i: struct<If> => {
+            val tested = compile(i.cond, slots, code)
+            val skip = len(tested)
+            val then = compile(i.then, slots, tested :+ ["jumpz", 0]) :+ ["jump", 0]
+            val over = len(then) - 1
+            val otherwise = compile(i.otherwise, slots, patch(then, skip, ["jumpz", len(then)]))
+            patch(otherwise, over, ["jump", len(otherwise)])
+        }
+    }
+}
+
+val arithmetic = fn(op, a, b) {
+    match op {
+        "add" => a + b
+        "sub" => a - b
+        "mul" => a * b
+        "div" => a / b
+        "mod" => a % b
+        "lt" => if (a < b) { 1 } else { 0 }
+        "eq" => if (a == b) { 1 } else { 0 }
+        "ne" => if (a == b) { 0 } else { 1 }
+    }
+}
+
+val set = fn(values, at, value) { values[:at] + [value] + values[at + 1:] }
+
+// Runs `code` from `pc` until it falls off its end: the variables, and the
+// number of instructions run.
+val run = fn(code, variables, stack, pc, steps) {
+    if (pc == len(code)) {
+        [variables, steps]
+    } else {
+        val instruction = code[pc]
+        val arg = instruction[1]
+        val depth = len(stack)
+        match instruction[0] {
+            "push" => recur(code, variables, stack :+ arg, pc + 1, steps + 1)
+            "load" => recur(code, variables, stack :+ variables[arg], pc + 1, steps + 1)
+            "store" => recur(code, set(variables, arg, stack[depth - 1]), stack[:depth - 1], pc + 1, steps + 1)
+            "jump" => recur(code, variables, stack, arg, steps + 1)
+            "jumpz" => {
+                val next = if (stack[depth - 1] == 0) { arg } else { pc + 1 }
+                recur(code, variables, stack[:depth - 1], next, steps + 1)
+            }
+            op => {
+                val value = arithmetic(op, stack[depth - 2], stack[depth - 1])
+                recur(code, variables, stack[:depth - 2] :+ value, pc + 1, steps + 1)
+            }
+        }
+    }
+}
+
+val v = fn(name) { Var { name: name } }
+val n = fn(value) { Num { value: value } }
+val op = fn(name, left, right) { Bin { op: name, left: left, right: right } }
+val assign = fn(name, value) { Assign { name: name, value: value } }
+
+// The sum of i * i % 7 for i below 4000.
+val squares = Seq { items: [
+    assign("sum", n(0)),
+    assign("i", n(0)),
+    While { cond: op("lt", v("i"), n(4000)), body: Seq { items: [
+        assign("sum", op("add", v("sum"), op("mod", op("mul", v("i"), v("i")), n(7)))),
+        assign("i", op("add", v("i"), n(1))),
+    ] } },
+] }
+
+// The Collatz steps of every start below 150.
+val collatz = Seq { items: [
+    assign("total", n(0)),
+    assign("start", n(1)),
+    While { cond: op("lt", v("start"), n(150)), body: Seq { items: [
+        assign("x", v("start")),
+        While { cond: op("ne", v("x"), n(1)), body: Seq { items: [
+            If {
+                cond: op("eq", op("mod", v("x"), n(2)), n(0)),
+                then: assign("x", op("div", v("x"), n(2))),
+                otherwise: assign("x", op("add", op("mul", v("x"), n(3)), n(1))),
+            },
+            assign("total", op("add", v("total"), n(1))),
+        ] } },
+        assign("start", op("add", v("start"), n(1))),
+    ] } },
+] }
+
+// The primes below 600, counted by trial division.
+val primes = Seq { items: [
+    assign("count", n(0)),
+    assign("p", n(2)),
+    While { cond: op("lt", v("p"), n(600)), body: Seq { items: [
+        assign("d", n(2)),
+        assign("prime", n(1)),
+        While { cond: op("lt", op("mul", v("d"), v("d")), op("add", v("p"), n(1))), body: Seq { items: [
+            If { cond: op("eq", op("mod", v("p"), v("d")), n(0)), then: assign("prime", n(0)), otherwise: Seq { items: [] } },
+            assign("d", op("add", v("d"), n(1))),
+        ] } },
+        assign("count", op("add", v("count"), v("prime"))),
+        assign("p", op("add", v("p"), n(1))),
+    ] } },
+] }
+
+val zeros = fn(count, values) { if (count == 0) { values } else { recur(count - 1, values :+ 0) } }
+
+val execute = fn(program, result) {
+    val slots = names(program, {})
+    val code = compile(program, slots, [])
+    val variables = run(code, zeros(len(slots), []), [], 0, 0)
+    [variables[0][slots[result]], variables[1]]
+}
+
+val main = fn() {
+    val a = execute(squares, "sum")
+    val b = execute(collatz, "total")
+    val c = execute(primes, "count")
+    println(a[0], b[0], c[0], a[1] + b[1] + c[1])
+}
