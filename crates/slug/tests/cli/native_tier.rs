@@ -358,6 +358,88 @@ fn compiled_closures_and_captured_locals_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_appends_slices_structs_and_copies_match_the_interpreter() {
+    // Appends and prepends in a loop, slices of each kind, struct
+    // construction and copies, a module variable's struct copied in place,
+    // a captured list appended to, and a captured counter updated.
+    let trace = same_with_and_without_native_code(
+        "operations",
+        "val Point = struct { x, y }\n\
+         val Player = struct { name, score, items }\n\
+         var player = Player { name: \"a\", score: 0, items: [] }\n\
+         val build = fn(n, acc) { if (n == 0) { acc } else { recur(n - 1, acc :+ n) } }\n\
+         val front = fn(n, acc) { if (n == 0) { acc } else { recur(n - 1, n +: acc) } }\n\
+         val slices = fn(items) { [items[1:3], items[2:], items[:2], \"hello\"[1:4]] }\n\
+         val point = fn(n) { Point { x: n, y: n * 2 } }\n\
+         val moved = fn(p, n) { p copy { x: p.x + n } }\n\
+         val award = fn(n) {\n\
+             player = player copy { score: n }\n\
+             player.score\n\
+         }\n\
+         val gather = fn(n) {\n\
+             var items = []\n\
+             var count = 0\n\
+             val add = fn(v) { items = items :+ v; count = count + 1 }\n\
+             val go = fn(k) { if (k == 0) { [len(items), count] } else { add(k); recur(k - 1) } }\n\
+             go(n)\n\
+         }\n\
+         val main = fn() {\n\
+             println(len(build(2000, [])), build(5, []), front(4, []))\n\
+             println(slices([1, 2, 3, 4, 5]), point(3), moved(point(2), 5))\n\
+             val loop = fn(k, total) { if (k == 0) { total } else { recur(k - 1, total + award(k)) } }\n\
+             println(loop(100, 0), player, gather(50))\n\
+         }\n",
+    );
+    let compiled = trace.matches("native: compiled").count();
+    assert!(compiled >= 10, "{trace}");
+    for (kind, body) in [
+        ("append-not-a-list", "build(3, \"x\")"),
+        ("slice-not-a-collection", "slices(5)"),
+        ("struct-bad-field", "point(\"a\") copy { z: 1 }"),
+        ("copy-unknown-field", "moved(7, 1)"),
+    ] {
+        same_with_and_without_native_code(
+            kind,
+            &format!(
+                "val Point = struct {{ x, y }}\n\
+                 val build = fn(n, acc) {{ if (n == 0) {{ acc }} else {{ recur(n - 1, acc :+ n) }} }}\n\
+                 val slices = fn(items) {{ items[1:3] }}\n\
+                 val point = fn(n) {{ Point {{ x: n, y: n }} }}\n\
+                 val moved = fn(p, n) {{ p copy {{ x: p.x + n }} }}\n\
+                 val main = fn() {{ println({body}) }}\n"
+            ),
+        );
+    }
+}
+
+#[test]
+fn compiled_code_calls_builtins_and_reports_their_errors_as_the_interpreter_does() {
+    // `len` and `println` run once per call from native code, and a
+    // builtin's error several compiled frames deep reports with the
+    // interpreter's trace.
+    let trace = same_with_and_without_native_code(
+        "builtins",
+        "val count = fn(items) { len(items) + len(\"abc\") }\n\
+         val show = fn(n) { println(\"n =\", n); n }\n\
+         val deeper = fn(x) { len(x) + 1 }\n\
+         val middle = fn(x) { deeper(x) * 2 }\n\
+         val loop = fn(k, total) {\n\
+             if (k == 0) { total } else { recur(k - 1, total + count([k, k]) + middle([1, 2])) }\n\
+         }\n\
+         val main = fn() {\n\
+             println(loop(200, 0))\n\
+             show(1)\n\
+             show(2)\n\
+             println(middle(5))\n\
+         }\n",
+    );
+    assert!(
+        trace.contains("0 calls to functions without native code"),
+        "{trace}"
+    );
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

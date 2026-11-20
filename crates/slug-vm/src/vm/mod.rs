@@ -54,7 +54,7 @@ mod installation;
 #[cfg(feature = "native-hooks")]
 mod native;
 #[cfg(feature = "native-hooks")]
-pub use native::NativeReadSource;
+pub use native::{NativeOperation, NativeReadSource};
 #[cfg(all(feature = "threads", not(target_os = "none")))]
 pub(crate) mod island;
 mod operations;
@@ -2493,6 +2493,7 @@ impl Vm {
                 locals,
                 stack,
                 frames,
+                failure,
             } => {
                 let frame = self.frames.last_mut().expect("active frame was checked");
                 if locals.len() != frame.locals.len() {
@@ -2509,6 +2510,9 @@ impl Vm {
                 self.stack.extend(stack);
                 for frame in frames {
                     self.push_native_frame(frame)?;
+                }
+                if let Some(failure) = failure {
+                    return Err(self.native_raise(failure));
                 }
                 Ok(NativeEntry::Exited)
             }
@@ -2561,21 +2565,13 @@ impl Vm {
         Ok(())
     }
 
-    /// The function native code in `caller` calls as module-level name
-    /// `name` with `count` positional arguments, and its native code, when
-    /// it is a closure an exact positional call enters and it has some.
-    /// Counts the call toward the callee becoming hot. `None` for anything
-    /// else: native code then leaves to the interpreter, which makes the
-    /// call.
+    /// The value native code in `caller` calls as module-level name
+    /// `name`, when `caller` has resolved it, outside a task with its own
+    /// view of the variables (the interpreter reads it through that).
     #[cfg(feature = "native-hooks")]
     #[doc(hidden)]
     #[must_use]
-    pub fn native_callee(
-        &self,
-        caller: &Value,
-        name: GlobalNameId,
-        count: usize,
-    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
+    pub fn native_global_callee(&self, caller: &Value, name: GlobalNameId) -> Option<Value> {
         let Value::Closure(caller) = caller else {
             return None;
         };
@@ -2583,48 +2579,36 @@ impl Vm {
         if slot == crate::value::UNRESOLVED_GLOBAL {
             return None;
         }
-        let target = match caller.globals.borrow().value(slot) {
-            Value::Binding { cell, .. } => {
-                // A task with its own view of the variables reads them
-                // through it; the interpreter does that.
-                #[cfg(feature = "concurrency")]
-                if self.view.is_some() {
-                    return None;
-                }
-                cell.borrow().clone()
-            }
-            value => value.clone(),
-        };
-        self.native_entry(target, count)
+        self.native_value_callee(caller.globals.borrow().value(slot))
     }
 
-    /// [`Vm::native_callee`] for a call of the value `callee`, as
-    /// `CallPositional` makes it.
+    /// The value native code calls as `callee`, as `CallPositional` calls
+    /// it: a module binding's value, read outside a task with its own view
+    /// of the variables.
     #[cfg(feature = "native-hooks")]
     #[doc(hidden)]
     #[must_use]
-    pub fn native_callee_value(
-        &self,
-        callee: &Value,
-        count: usize,
-    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
-        let target = match callee {
+    pub fn native_value_callee(&self, callee: &Value) -> Option<Value> {
+        match callee {
             Value::Binding { cell, .. } => {
                 #[cfg(feature = "concurrency")]
                 if self.view.is_some() {
                     return None;
                 }
-                cell.borrow().clone()
+                Some(cell.borrow().clone())
             }
-            value => value.clone(),
-        };
-        self.native_entry(target, count)
+            value => Some(value.clone()),
+        }
     }
 
     /// `target` and its native code, when it is a closure an exact
     /// positional call of `count` arguments enters, counting the call.
+    /// `None` for anything else: native code then leaves to the
+    /// interpreter, which makes the call.
     #[cfg(feature = "native-hooks")]
-    fn native_entry(
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_entry(
         &self,
         target: Value,
         count: usize,
@@ -6027,6 +6011,17 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
+        let invocation = self.start_native(function, arguments);
+        self.settle_native(function, invocation, resource_signature, span)
+    }
+
+    /// Calls `function` with `arguments`, which [`Vm::settle_native`] then
+    /// makes a result or an error of.
+    pub(super) fn start_native(
+        &mut self,
+        function: &NativeFunction,
+        arguments: &[Value],
+    ) -> NativeInvocation {
         #[cfg(feature = "concurrency")]
         let domain = self.domain;
         #[cfg(not(feature = "concurrency"))]
@@ -6041,6 +6036,17 @@ impl Vm {
                 self.progress.track_native_channel(channel);
             }
         }
+        invocation
+    }
+
+    /// What a call of `function` gave: its result, or the error it reports.
+    pub(super) fn settle_native(
+        &mut self,
+        function: &NativeFunction,
+        invocation: NativeInvocation,
+        resource_signature: Option<&ForeignResourceSignature>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<Value> {
         match invocation {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);

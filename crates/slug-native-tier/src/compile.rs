@@ -42,7 +42,7 @@ use cranelift_codegen::{
     },
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use slug_vm::{BinaryOperator, Constant, Op, ReadSource, Value};
+use slug_vm::{BinaryOperator, Constant, NativeOperation, Op, ReadSource, Value};
 
 use crate::{
     ir::Snapshot,
@@ -92,6 +92,15 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::SetLocal(_)
                 | Op::MakeClosure { .. }
                 | Op::MakeClosurePooled { .. }
+                | Op::ListAppend
+                | Op::ListPrepend
+                | Op::GetSlice { .. }
+                | Op::Struct(_)
+                | Op::StructPooled(_)
+                | Op::StructCopy(_)
+                | Op::StructCopyPooled(_)
+                | Op::CopyGlobalPooled { .. }
+                | Op::UpdateCapture { .. }
                 | Op::Not
                 | Op::Negate
                 | Op::List(_)
@@ -208,7 +217,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     signature.returns.push(AbiParam::new(types::I32));
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
-    let (exits, owning) = {
+    let (exits, owning, operations) = {
         let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
         Lowering::new(builder, function, pointer, call_conv).lower()?
     };
@@ -235,6 +244,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
             owning,
             cells,
             closures,
+            operations,
         },
     ))
 }
@@ -254,6 +264,8 @@ struct Runtime {
     unary: cranelift_codegen::ir::SigRef,
     index: cranelift_codegen::ir::SigRef,
     list: cranelift_codegen::ir::SigRef,
+    /// `(context, site, base, out) -> status`: `native_operation`.
+    operation: cranelift_codegen::ir::SigRef,
 }
 
 struct Lowering<'a> {
@@ -276,7 +288,10 @@ struct Lowering<'a> {
     /// The slot an operation reads a captured local into.
     cell_operand: usize,
     owning: Vec<bool>,
+    /// The values live out of each block.
+    live_out: Vec<Vec<bool>>,
     exits: Vec<ExitTable>,
+    operations: Vec<runtime::Operation>,
     /// Blocks made while another was being filled, filled at the end.
     pending: Vec<Pending>,
 }
@@ -322,6 +337,7 @@ impl<'a> Lowering<'a> {
             ),
             operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
             list: signature(&[pointer, types::I32, pointer, pointer], &[]),
+            operation: signature(&[pointer, types::I32, pointer, pointer], &[types::I32]),
             unary: signature(&[pointer, pointer, pointer], &[types::I32]),
             index: signature(
                 &[
@@ -379,12 +395,25 @@ impl<'a> Lowering<'a> {
             booleans: vec![None; function.values.len()],
             cell_operand,
             owning,
+            // Only operations move values, so other functions skip it.
+            live_out: if function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.insts)
+                .any(|inst| NativeOperation::of(&inst.op).is_some())
+            {
+                live_out(function)
+            } else {
+                Vec::new()
+            },
             exits: Vec::new(),
+            operations: Vec::new(),
             pending: Vec::new(),
         }
     }
 
-    fn lower(mut self) -> Result<(Vec<ExitTable>, Vec<u32>), String> {
+    #[allow(clippy::type_complexity)] // The tables `Compiled` takes.
+    fn lower(mut self) -> Result<(Vec<ExitTable>, Vec<u32>, Vec<runtime::Operation>), String> {
         let entry = self.builder.create_block();
         self.builder.append_block_params_for_function_params(entry);
         self.builder.switch_to_block(entry);
@@ -412,8 +441,8 @@ impl<'a> Lowering<'a> {
 
         for (index, block) in function.blocks.iter().enumerate() {
             self.builder.switch_to_block(self.blocks[index]);
-            for inst in &block.insts {
-                self.lower_inst(inst)?;
+            for (position, inst) in block.insts.iter().enumerate() {
+                self.lower_inst(inst, (index, position))?;
             }
             self.lower_terminator(block)?;
         }
@@ -450,10 +479,11 @@ impl<'a> Lowering<'a> {
             .filter(|index| self.owning[*index])
             .map(|index| u32::try_from(index).expect("slot index fits"))
             .collect();
-        Ok((self.exits, owning))
+        Ok((self.exits, owning, self.operations))
     }
 
-    fn lower_inst(&mut self, inst: &Inst) -> Result<(), String> {
+    /// Lowers `inst`, instruction `position.1` of block `position.0`.
+    fn lower_inst(&mut self, inst: &Inst, position: (usize, usize)) -> Result<(), String> {
         match &inst.op {
             Op::Constant(index) => {
                 let slot = self.slot(inst.results[0].index());
@@ -507,6 +537,15 @@ impl<'a> Lowering<'a> {
                     *index,
                 );
             }
+            Op::ListAppend
+            | Op::ListPrepend
+            | Op::GetSlice { .. }
+            | Op::Struct(_)
+            | Op::StructPooled(_)
+            | Op::StructCopy(_)
+            | Op::StructCopyPooled(_)
+            | Op::CopyGlobalPooled { .. }
+            | Op::UpdateCapture { .. } => self.lower_operation(inst, position)?,
             Op::Not => self.lower_not(inst),
             Op::List(_) => self.lower_list(inst),
             Op::Negate => self.lower_negate(inst),
@@ -974,6 +1013,59 @@ impl<'a> Lowering<'a> {
             &[self.context, operand, out],
         )[0];
         self.exit_unless_ok(inst, status);
+    }
+
+    /// An instruction the VM's `native_operation` runs on its operands,
+    /// moving each it reads for the last time: instruction `index` of
+    /// block `block`.
+    fn lower_operation(
+        &mut self,
+        inst: &Inst,
+        (block, index): (usize, usize),
+    ) -> Result<(), String> {
+        let operands = inst
+            .args
+            .iter()
+            .map(|value| u32::try_from(value.index()).expect("slot index fits"))
+            .collect();
+        let function = self.function;
+        let code = &function.blocks[block];
+        let used_later = |value: &ValueId| {
+            self.live_out[block][value.index()]
+                || code.insts[index + 1..]
+                    .iter()
+                    .flat_map(inst_uses)
+                    .any(|other| other == value)
+                || terminator_uses(&code.terminator).contains(value)
+        };
+        let moves = inst
+            .args
+            .iter()
+            .map(|value| {
+                inst.args.iter().filter(|other| *other == value).count() == 1 && !used_later(value)
+            })
+            .collect();
+        let site = self.operations.len();
+        self.operations.push(runtime::Operation {
+            op: NativeOperation::of(&inst.op).ok_or("not an operation")?,
+            operands,
+            moves,
+        });
+        let site = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(site).expect("site fits"));
+        let base = self.slot(0);
+        let base = self.address(base);
+        let result = self.slot(inst.results[0].index());
+        let out = self.address(result);
+        let status = self.call(
+            self.runtime.operation,
+            runtime::native_operation as *const () as usize,
+            &[self.context, site, base, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+        Ok(())
     }
 
     /// An instruction that writes the value it pops to the place `operand`
@@ -1656,6 +1748,69 @@ enum Operand {
     Pooled(usize),
 }
 
+/// The values a block's terminator uses: a branch's condition, a
+/// returned value, and an edge's or `recur`'s arguments.
+fn terminator_uses(terminator: &Terminator) -> Vec<ValueId> {
+    match terminator {
+        Terminator::Jump(edge) => edge.args.clone(),
+        Terminator::Branch {
+            cond,
+            then,
+            otherwise,
+        } => std::iter::once(*cond)
+            .chain(then.args.iter().copied())
+            .chain(otherwise.args.iter().copied())
+            .collect(),
+        Terminator::Choose {
+            fallthrough,
+            target,
+        } => fallthrough
+            .args
+            .iter()
+            .chain(&target.args)
+            .copied()
+            .collect(),
+        Terminator::Return(value) => vec![*value],
+        Terminator::Recur(arguments) => arguments.clone(),
+        Terminator::Stop => Vec::new(),
+    }
+}
+
+/// The values each instruction uses: its operands, and the operand stack
+/// of its snapshot, which an exit there hands to the interpreter. A local
+/// that holds a value is not a use: code that reads it later uses the
+/// value there.
+fn inst_uses(inst: &Inst) -> impl Iterator<Item = &ValueId> {
+    inst.args.iter().chain(&inst.snapshot.stack)
+}
+
+/// The values live out of each block: used in a block it can reach. Only
+/// a `recur`, which starts afresh, goes back, so the blocks in reverse
+/// order see every successor first.
+fn live_out(function: &Function) -> Vec<Vec<bool>> {
+    let count = function.values.len();
+    let mut live_in: Vec<Vec<bool>> = vec![Vec::new(); function.blocks.len()];
+    let mut live_out = vec![Vec::new(); function.blocks.len()];
+    for (index, block) in function.blocks.iter().enumerate().rev() {
+        let mut out = vec![false; count];
+        for edge in block.terminator.edges() {
+            for (value, live) in live_in[edge.block.index()].iter().enumerate() {
+                out[value] |= *live;
+            }
+        }
+        let mut entering = out.clone();
+        for value in block.insts.iter().flat_map(inst_uses) {
+            entering[value.index()] = true;
+        }
+        for value in terminator_uses(&block.terminator) {
+            entering[value.index()] = true;
+        }
+        live_in[index] = entering;
+        live_out[index] = out;
+    }
+    live_out
+}
+
 /// Which values' slots may own something: parameters, the results of
 /// arithmetic, which a slow path may make a string or a list, and the
 /// results of calls.
@@ -1677,6 +1832,15 @@ fn owning_values(function: &Function) -> Vec<bool> {
                     | Op::GetLocal(_)
                     | Op::MakeClosure { .. }
                     | Op::MakeClosurePooled { .. }
+                    | Op::ListAppend
+                    | Op::ListPrepend
+                    | Op::GetSlice { .. }
+                    | Op::Struct(_)
+                    | Op::StructPooled(_)
+                    | Op::StructCopy(_)
+                    | Op::StructCopyPooled(_)
+                    | Op::CopyGlobalPooled { .. }
+                    | Op::UpdateCapture { .. }
                     | Op::List(_)
                     | Op::GetIndex
                     | Op::GetIndexConstant(_)

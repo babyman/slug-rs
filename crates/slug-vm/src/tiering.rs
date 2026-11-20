@@ -104,7 +104,18 @@ pub enum NativeOutcome {
         locals: Vec<NativeLocal>,
         stack: Vec<Value>,
         frames: Vec<NativeFrame>,
+        /// A builtin the innermost frame called, which failed: the
+        /// interpreter reports it there, past the call.
+        failure: Option<NativeFailure>,
     },
+}
+
+/// A builtin's call native code made that failed, for the interpreter to
+/// report as its own call's error.
+#[doc(hidden)]
+pub struct NativeFailure {
+    pub(crate) function: crate::NativeFunction,
+    pub(crate) invocation: crate::native::NativeInvocation,
 }
 
 /// A call native code was making when it exited, as an interpreter frame:

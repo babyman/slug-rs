@@ -109,7 +109,12 @@ impl Vm {
         self.assign_global(program, id, value)
     }
 
-    fn apply_update(&self, operator: GlobalUpdate, left: Value, right: Value) -> VmResult<Value> {
+    pub(super) fn apply_update(
+        &self,
+        operator: GlobalUpdate,
+        left: Value,
+        right: Value,
+    ) -> VmResult<Value> {
         match operator {
             GlobalUpdate::Add => {
                 #[cfg(feature = "metrics")]
@@ -263,7 +268,7 @@ impl Vm {
 }
 
 /// Whether applying `operator` to `left` and `right` always succeeds.
-fn update_cannot_fail(operator: GlobalUpdate, left: &Value, right: &Value) -> bool {
+pub(super) fn update_cannot_fail(operator: GlobalUpdate, left: &Value, right: &Value) -> bool {
     match (operator, left, right) {
         (GlobalUpdate::Add, Value::Map(_), Value::Map(_))
         | (GlobalUpdate::Add, Value::List(_), Value::List(_))
@@ -281,7 +286,7 @@ fn update_cannot_fail(operator: GlobalUpdate, left: &Value, right: &Value) -> bo
 
 /// Whether copying `value` with `names` replaced always succeeds: the names
 /// are distinct and, for a struct, all its fields.
-fn copy_cannot_fail(value: &Value, names: &[String]) -> bool {
+pub(super) fn copy_cannot_fail(value: &Value, names: &[String]) -> bool {
     let distinct = names
         .iter()
         .enumerate()

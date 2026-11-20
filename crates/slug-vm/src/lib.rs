@@ -35,8 +35,8 @@ pub use sync::{Code, SoloCell};
 #[cfg(feature = "native-hooks")]
 #[doc(hidden)]
 pub use tiering::{
-    HotChunk, NativeCell, NativeCode, NativeFrame, NativeLocal, NativeOutcome, NativeTier,
-    install_native_tier,
+    HotChunk, NativeCell, NativeCode, NativeFailure, NativeFrame, NativeLocal, NativeOutcome,
+    NativeTier, install_native_tier,
 };
 mod value;
 mod variables;
@@ -95,9 +95,6 @@ pub use vm::InteractiveExecution;
 #[cfg(feature = "concurrency")]
 #[doc(hidden)]
 pub use vm::InteractiveTask;
-#[cfg(feature = "native-hooks")]
-#[doc(hidden)]
-pub use vm::NativeReadSource;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 #[cfg(all(feature = "threads", not(target_os = "none")))]
@@ -106,6 +103,9 @@ pub use vm::{
     CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
     NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use vm::{NativeOperation, NativeReadSource};
 // The value-side types a fork may share that are already thread-safe; the
 // rest wait on phase 4 (see `docs/planning/fork-tasks.md`).
 #[cfg(feature = "threads")]

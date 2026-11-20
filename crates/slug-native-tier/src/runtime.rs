@@ -11,8 +11,8 @@
 use std::mem::{MaybeUninit, offset_of, size_of};
 
 use slug_vm::{
-    BinaryOperator, Capture, GlobalNameId, NativeCode, NativeFrame, NativeLocal, NativeOutcome,
-    NativeReadSource, Value, Vm,
+    BinaryOperator, Capture, GlobalNameId, NativeCode, NativeFailure, NativeFrame, NativeLocal,
+    NativeOperation, NativeOutcome, NativeReadSource, Value, Vm,
 };
 
 /// Where generated code finds a [`Value`]'s parts. `Value` is `repr(u64)`
@@ -103,6 +103,8 @@ struct Root {
     base: usize,
     /// The frames of exiting calls, innermost first.
     frames: Vec<NativeFrame>,
+    /// A builtin's failed call, which the innermost frame left past.
+    failure: Option<NativeFailure>,
 }
 
 /// The machine stack used since `root`'s entry, roughly: native frames
@@ -171,6 +173,15 @@ pub(crate) struct Compiled {
     cells: Vec<bool>,
     /// The chunk and captures of each closure the function makes.
     closures: Vec<(usize, Vec<Capture>)>,
+    operations: Vec<Operation>,
+}
+
+/// An instruction [`native_operation`] runs: its operands' slots, and
+/// which of them it reads for the last time and so may move.
+pub(crate) struct Operation {
+    pub(crate) op: NativeOperation,
+    pub(crate) operands: Vec<u32>,
+    pub(crate) moves: Vec<bool>,
 }
 
 /// What [`Compiled`] is built from besides its code.
@@ -179,6 +190,7 @@ pub(crate) struct Tables {
     pub(crate) owning: Vec<u32>,
     pub(crate) cells: Vec<bool>,
     pub(crate) closures: Vec<(usize, Vec<Capture>)>,
+    pub(crate) operations: Vec<Operation>,
 }
 
 impl Compiled {
@@ -193,6 +205,7 @@ impl Compiled {
             owning: tables.owning,
             cells: tables.cells,
             closures: tables.closures,
+            operations: tables.operations,
         }
     }
 
@@ -276,6 +289,7 @@ impl NativeCode for Compiled {
         let mut root = Root {
             base: 0,
             frames: Vec::new(),
+            failure: None,
         };
         root.base = std::ptr::from_ref(&root) as usize;
         // SAFETY: everything passed lives across the call; the code moves
@@ -300,6 +314,7 @@ impl NativeCode for Compiled {
                     locals,
                     stack,
                     frames: root.frames,
+                    failure: root.failure,
                 }
             }
         }
@@ -312,13 +327,13 @@ impl NativeCode for Compiled {
 
 /// Calls `callee`, or module-level name `name` when `callee` is null, with
 /// the `count` arguments at `arguments`, which it takes, when it is a
-/// compiled closure an exact
-/// positional call enters: writes its result to `out` and returns
-/// `CALL_RETURNED`. Returns `CALL_EXITED` when the callee left to the
-/// interpreter, its frame recorded, and `CALL_DECLINED` when there was no
-/// such callee, the native calls have used their stack budget, or the
-/// thread needs attention (a cancelled fork, say), which the interpreter
-/// checks at every call.
+/// compiled closure an exact positional call enters or a builtin: writes
+/// its result to `out` and returns `CALL_RETURNED`. Returns `CALL_EXITED`
+/// when the callee left to the interpreter, its frame recorded, or a
+/// builtin failed, its failure recorded for the interpreter to report past
+/// the call; and `CALL_DECLINED` when there was no such callee, the native
+/// calls have used their stack budget, or the thread needs attention (a
+/// cancelled fork, say), which the interpreter checks at every call.
 pub(crate) extern "C" fn native_call(
     context: *mut Context,
     name: u32,
@@ -329,38 +344,61 @@ pub(crate) extern "C" fn native_call(
 ) -> u32 {
     // SAFETY: generated code passes its own context, null or an
     // initialized callee, `count` initialized values it gives up, and a
-    // slot holding no value that needs dropping.
+    // slot holding no value that needs dropping. The VM is not otherwise
+    // borrowed while native code runs.
     unsafe {
         let context = &*context;
         let root = context.root;
         let arguments_slice = std::slice::from_raw_parts_mut(arguments, count as usize);
-        let vm = &*context.vm;
-        let callee = if stack_used(&*root) < STACK_BUDGET
-            && !vm.native_needs_attention()
-            // An argument the interpreter must resolve first.
-            && !arguments_slice
-                .iter()
-                .any(|value| matches!(value, Value::Binding { .. }))
-        {
-            let callee = if callee.is_null() {
-                vm.native_callee(&*context.closure, GlobalNameId::new(name), count as usize)
+        let target = {
+            let vm = &*context.vm;
+            if stack_used(&*root) < STACK_BUDGET
+                && !vm.native_needs_attention()
+                // An argument the interpreter must resolve first.
+                && !arguments_slice
+                    .iter()
+                    .any(|value| matches!(value, Value::Binding { .. }))
+            {
+                if callee.is_null() {
+                    vm.native_global_callee(&*context.closure, GlobalNameId::new(name))
+                } else {
+                    vm.native_value_callee(&*callee)
+                }
             } else {
-                vm.native_callee_value(&*callee, count as usize)
-            };
-            if callee.is_none() {
-                stats::count(&stats::UNCOMPILED_CALLS);
+                None
             }
-            callee
-        } else {
-            None
         };
-        let Some((closure, code)) = callee else {
+        let declined = |arguments: &mut [Value]| {
+            std::ptr::drop_in_place(arguments);
+            CALL_DECLINED
+        };
+        let Some(target) = target else {
+            return declined(arguments_slice);
+        };
+        if matches!(target, Value::Native(_)) {
+            let invoked = (*context.vm).native_invoke(&target, arguments_slice);
             std::ptr::drop_in_place(arguments_slice);
-            return CALL_DECLINED;
+            return match invoked {
+                Some(Ok(value)) => {
+                    out.write(value);
+                    CALL_RETURNED
+                }
+                Some(Err(failure)) => {
+                    (*root).failure = Some(failure);
+                    CALL_EXITED
+                }
+                None => {
+                    stats::count(&stats::UNCOMPILED_CALLS);
+                    CALL_DECLINED
+                }
+            };
+        }
+        let Some((closure, code)) = (*context.vm).native_entry(target, count as usize) else {
+            stats::count(&stats::UNCOMPILED_CALLS);
+            return declined(arguments_slice);
         };
         let Some(compiled) = code.as_any().downcast_ref::<Compiled>() else {
-            std::ptr::drop_in_place(arguments_slice);
-            return CALL_DECLINED;
+            return declined(arguments_slice);
         };
         let outcome = compiled.enter(context.vm, &raw const closure, root, arguments);
         match outcome {
@@ -607,6 +645,50 @@ pub(crate) extern "C" fn native_closure(context: *mut Context, site: u32, out: *
         let value =
             (*context.vm).native_closure(&*context.closure, *chunk, captures, &mut context.cells);
         produce(out, value)
+    }
+}
+
+/// Runs the function's operation `site` on its operands in the frame at
+/// `base`, moving those it reads for the last time and cloning the rest:
+/// writes the result to `out` and returns 0, or returns 1 with each moved
+/// operand back in its slot, for the interpreter to run it.
+pub(crate) extern "C" fn native_operation(
+    context: *mut Context,
+    site: u32,
+    base: *mut Value,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, an operation site it
+    // was compiled with, its slots, each initialized, and a free slot.
+    unsafe {
+        let context = &*context;
+        let compiled = &*context.compiled;
+        let operation = &compiled.operations[site as usize];
+        let slots = || operation.operands.iter().zip(&operation.moves);
+        let operands = slots()
+            .map(|(slot, moves)| {
+                let slot = base.add(*slot as usize);
+                if *moves {
+                    std::ptr::replace(slot, Value::Nil)
+                } else {
+                    (*slot).clone()
+                }
+            })
+            .collect();
+        match (*context.vm).native_operation(&*context.closure, &operation.op, operands) {
+            Ok(value) => {
+                out.write(value);
+                0
+            }
+            Err(operands) => {
+                for ((slot, moves), operand) in slots().zip(operands) {
+                    if *moves {
+                        *base.add(*slot as usize) = operand;
+                    }
+                }
+                1
+            }
+        }
     }
 }
 

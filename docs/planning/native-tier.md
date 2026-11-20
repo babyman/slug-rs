@@ -594,6 +594,36 @@ interpreter would do more, so native code leaves before the instruction.
    repeat its effects, so a direct builtin call needs the failure handed
    over rather than redone. `UpdateCapture` (`total = total + x` on a
    captured `var`) needs the same moves.
+5. **Operations that build values, last-use moves, and builtins** (batch
+   D). `ListAppend`, `ListPrepend`, `GetSlice`, `Struct`, `StructCopy`,
+   `CopyGlobalPooled`, and `UpdateCapture` each make one call to the VM's
+   `native_operation`, with a table of the operands' slots: no code is
+   generated to stage them. An operand the instruction reads for the last
+   time moves rather than being cloned, so a list nothing else holds is
+   appended to in place, as the interpreter's `MOVE_LOCAL` reads allow; a
+   value is read for the last time when no later instruction or edge of
+   its block, and no block live after it, uses it, a snapshot's operand
+   stack counting as a use and its locals not (code that reads a local
+   later uses its value there). An operation that cannot run hands its
+   operands back, the moved ones to their slots, and native code leaves
+   before it. Without liveness, a branch that returns a list kept every
+   `recur(n - 1, acc :+ n)` from moving it: 300,000 appends took 117 s
+   against the interpreter's 0.13 s; with it, 0.07 s.
+
+   Calls of builtins (`Value::Native`, such as `len` and `println`) run
+   from native code. A builtin that fails has had its effects, so the
+   interpreter must not call it again: native code leaves past the call
+   with the failure (`NativeFailure`), and the interpreter reports it in
+   the restored frame, with the trace it would have given.
+
+   Compiled: crawl-crowd 97 of 127 hot chunks (80), `crawl-pages` 76 of
+   97 (61), Invaders 61 of 65 (50), `http-server` 49 of 78 (37). Tier on
+   against off, one release build, 11 interleaved rounds: `fib` 0.52x,
+   `function-call` 0.50x, Invaders 0.78x, `crawl-ticks` 0.90x,
+   `http-server` 0.91x, `crawl-pages` 0.92x, crawl-crowd 0.96x, the rest
+   0.99–1.00x. Exits rose with coverage (Invaders 51,515 activations left
+   early, `tiny-interpreter` 32,239), nearly all at calls of callees
+   without native code: the next thing to measure.
 
 ### Gate
 
