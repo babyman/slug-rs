@@ -11,8 +11,8 @@
 use std::mem::{MaybeUninit, offset_of, size_of};
 
 use slug_vm::{
-    BinaryOperator, Capture, GlobalNameId, NativeCode, NativeFailure, NativeFrame, NativeLocal,
-    NativeOperation, NativeOutcome, NativeReadSource, Value, Vm,
+    BinaryOperator, Capture, GlobalNameId, MatchPatternId, NativeCode, NativeFailure, NativeFrame,
+    NativeLocal, NativeOperation, NativeOutcome, NativeReadSource, Value, Vm,
 };
 
 /// Where generated code finds a [`Value`]'s parts. `Value` is `repr(u64)`
@@ -174,6 +174,16 @@ pub(crate) struct Compiled {
     /// The chunk and captures of each closure the function makes.
     closures: Vec<(usize, Vec<Capture>)>,
     operations: Vec<Operation>,
+    matches: Vec<MatchSite>,
+}
+
+/// A `MatchCasePooled` [`native_match`] runs: its pattern, the slots of
+/// the value and the pattern's operands, and how many values it pushes
+/// when it matches, the value first.
+pub(crate) struct MatchSite {
+    pub(crate) pattern: MatchPatternId,
+    pub(crate) operands: Vec<u32>,
+    pub(crate) results: usize,
 }
 
 /// An instruction [`native_operation`] runs: its operands' slots, and
@@ -191,6 +201,7 @@ pub(crate) struct Tables {
     pub(crate) cells: Vec<bool>,
     pub(crate) closures: Vec<(usize, Vec<Capture>)>,
     pub(crate) operations: Vec<Operation>,
+    pub(crate) matches: Vec<MatchSite>,
 }
 
 impl Compiled {
@@ -206,6 +217,7 @@ impl Compiled {
             cells: tables.cells,
             closures: tables.closures,
             operations: tables.operations,
+            matches: tables.matches,
         }
     }
 
@@ -688,6 +700,56 @@ pub(crate) extern "C" fn native_operation(
                 }
                 1
             }
+        }
+    }
+}
+
+/// [`native_match`]'s status: the pattern matched, its results written;
+/// it did not; or the interpreter must run it.
+pub(crate) const MATCHED: u32 = 0;
+pub(crate) const NOT_MATCHED: u32 = 1;
+
+/// Runs the function's match `site` on the values in the frame at `base`,
+/// writing the value and what the pattern binds to the slots from `out`
+/// when it matches.
+pub(crate) extern "C" fn native_match(
+    context: *mut Context,
+    site: u32,
+    base: *const Value,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, a match site it was
+    // compiled with, its slots, each initialized, and as many free slots
+    // from `out` as the site has results.
+    unsafe {
+        let context = &*context;
+        let compiled = &*context.compiled;
+        let site = &compiled.matches[site as usize];
+        let Some((value, operands)) = site.operands.split_first() else {
+            return 2;
+        };
+        let value = &*base.add(*value as usize);
+        let operands: Vec<Value> = operands
+            .iter()
+            .map(|slot| (*base.add(*slot as usize)).clone())
+            .collect();
+        let mut bindings = Vec::new();
+        match (*context.vm).native_match(
+            &*context.closure,
+            site.pattern,
+            value,
+            &operands,
+            &mut bindings,
+        ) {
+            Some(true) if bindings.len() + 1 == site.results => {
+                out.write(value.clone());
+                for (index, binding) in bindings.into_iter().enumerate() {
+                    out.add(index + 1).write(binding);
+                }
+                MATCHED
+            }
+            Some(false) => NOT_MATCHED,
+            _ => 2,
         }
     }
 }

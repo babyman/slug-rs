@@ -101,6 +101,12 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::StructCopyPooled(_)
                 | Op::CopyGlobalPooled { .. }
                 | Op::UpdateCapture { .. }
+                | Op::Map(_)
+                | Op::MatchCasePooled { .. }
+                | Op::JumpIfProvided { .. }
+                | Op::Throw
+                | Op::MatchFailure
+                | Op::NotImplemented
                 | Op::Not
                 | Op::Negate
                 | Op::List(_)
@@ -133,13 +139,9 @@ pub fn qualify(function: &Function) -> Result<(), String> {
             Terminator::Jump(_)
             | Terminator::Branch { .. }
             | Terminator::Return(_)
-            | Terminator::Recur(_) => {}
-            Terminator::Choose { .. } | Terminator::Stop => {
-                return Err(format!(
-                    "the block at instruction {} ends in a way not compiled yet",
-                    block.start
-                ));
-            }
+            | Terminator::Recur(_)
+            | Terminator::Choose { .. }
+            | Terminator::Stop => {}
         }
     }
     Ok(())
@@ -217,7 +219,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     signature.returns.push(AbiParam::new(types::I32));
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
-    let (exits, owning, operations) = {
+    let (exits, owning, operations, matches) = {
         let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
         Lowering::new(builder, function, pointer, call_conv).lower()?
     };
@@ -245,6 +247,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
             cells,
             closures,
             operations,
+            matches,
         },
     ))
 }
@@ -292,6 +295,10 @@ struct Lowering<'a> {
     live_out: Vec<Vec<bool>>,
     exits: Vec<ExitTable>,
     operations: Vec<runtime::Operation>,
+    matches: Vec<runtime::MatchSite>,
+    /// How the block being lowered chooses its path, when it ends in a
+    /// choice.
+    choice: Option<Choice>,
     /// Blocks made while another was being filled, filled at the end.
     pending: Vec<Pending>,
 }
@@ -408,12 +415,24 @@ impl<'a> Lowering<'a> {
             },
             exits: Vec::new(),
             operations: Vec::new(),
+            matches: Vec::new(),
+            choice: None,
             pending: Vec::new(),
         }
     }
 
     #[allow(clippy::type_complexity)] // The tables `Compiled` takes.
-    fn lower(mut self) -> Result<(Vec<ExitTable>, Vec<u32>, Vec<runtime::Operation>), String> {
+    fn lower(
+        mut self,
+    ) -> Result<
+        (
+            Vec<ExitTable>,
+            Vec<u32>,
+            Vec<runtime::Operation>,
+            Vec<runtime::MatchSite>,
+        ),
+        String,
+    > {
         let entry = self.builder.create_block();
         self.builder.append_block_params_for_function_params(entry);
         self.builder.switch_to_block(entry);
@@ -479,7 +498,7 @@ impl<'a> Lowering<'a> {
             .filter(|index| self.owning[*index])
             .map(|index| u32::try_from(index).expect("slot index fits"))
             .collect();
-        Ok((self.exits, owning, self.operations))
+        Ok((self.exits, owning, self.operations, self.matches))
     }
 
     /// Lowers `inst`, instruction `position.1` of block `position.0`.
@@ -545,7 +564,13 @@ impl<'a> Lowering<'a> {
             | Op::StructCopy(_)
             | Op::StructCopyPooled(_)
             | Op::CopyGlobalPooled { .. }
-            | Op::UpdateCapture { .. } => self.lower_operation(inst, position)?,
+            | Op::UpdateCapture { .. }
+            | Op::Map(_) => self.lower_operation(inst, position)?,
+            Op::MatchCasePooled {
+                pattern, operands, ..
+            } => self.lower_match(inst, *pattern, *operands)?,
+            // Native code is entered only with every parameter passed.
+            Op::JumpIfProvided { .. } => self.choice = Some(Choice::Target),
             Op::Not => self.lower_not(inst),
             Op::List(_) => self.lower_list(inst),
             Op::Negate => self.lower_negate(inst),
@@ -565,8 +590,9 @@ impl<'a> Lowering<'a> {
                     .iconst(types::I8, i64::from(matches!(inst.op, Op::True)));
                 self.store_bool(slot, value);
             }
-            // The `recur` itself is lowered with its block's terminator.
-            Op::RecurPositional(_) => {}
+            // A `recur` is lowered with its block's terminator, and the
+            // others' block ends leave to the interpreter, which runs them.
+            Op::RecurPositional(_) | Op::Throw | Op::MatchFailure | Op::NotImplemented => {}
             Op::CallGlobalPooled { name, count } => {
                 self.lower_call(inst, Callee::Global(name.get()), *count)?;
             }
@@ -1068,6 +1094,62 @@ impl<'a> Lowering<'a> {
         Ok(())
     }
 
+    /// A `MatchCasePooled`: the VM's `native_match` writes the value and
+    /// its bindings to the results, which follow one another, and the
+    /// block's end takes the fall-through when it matched.
+    fn lower_match(
+        &mut self,
+        inst: &Inst,
+        pattern: slug_vm::MatchPatternId,
+        operands: usize,
+    ) -> Result<(), String> {
+        let consecutive = inst
+            .results
+            .windows(2)
+            .all(|pair| pair[1].index() == pair[0].index() + 1);
+        if inst.results.is_empty() || !consecutive || inst.args.len() != operands + 1 {
+            return Err(format!("instruction {} is a malformed match", inst.ip));
+        }
+        let site = self.matches.len();
+        self.matches.push(runtime::MatchSite {
+            pattern,
+            operands: inst
+                .args
+                .iter()
+                .map(|value| u32::try_from(value.index()).expect("slot index fits"))
+                .collect(),
+            results: inst.results.len(),
+        });
+        let site = self
+            .builder
+            .ins()
+            .iconst(types::I32, i64::try_from(site).expect("site fits"));
+        let base = self.slot(0);
+        let base = self.address(base);
+        let out = self.slot(inst.results[0].index());
+        let out = self.address(out);
+        let status = self.call(
+            self.runtime.operation,
+            runtime::native_match as *const () as usize,
+            &[self.context, site, base, out],
+        )[0];
+        let settled = self.builder.ins().icmp_imm(
+            IntCC::UnsignedLessThanOrEqual,
+            status,
+            i64::from(runtime::NOT_MATCHED),
+        );
+        let exit = self.exit_block(inst);
+        let next = self.builder.create_block();
+        self.builder.ins().brif(settled, next, &[], exit, &[]);
+        self.builder.switch_to_block(next);
+        let matched =
+            self.builder
+                .ins()
+                .icmp_imm(IntCC::Equal, status, i64::from(runtime::MATCHED));
+        self.choice = Some(Choice::Fallthrough(matched));
+        Ok(())
+    }
+
     /// An instruction that writes the value it pops to the place `operand`
     /// names, through a runtime function that clones it there, leaving to
     /// the interpreter if that cannot.
@@ -1391,8 +1473,27 @@ impl<'a> Lowering<'a> {
                 let first = self.blocks[0];
                 self.builder.ins().jump(first, &[]);
             }
-            Terminator::Choose { .. } | Terminator::Stop => {
-                return Err("a block ends in a way not compiled yet".into());
+            Terminator::Choose {
+                fallthrough,
+                target,
+            } => match self.choice.take() {
+                Some(Choice::Target) => self.lower_edge(target),
+                Some(Choice::Fallthrough(condition)) => {
+                    let fallthrough = self.edge_block(fallthrough);
+                    let target = self.edge_block(target);
+                    self.builder
+                        .ins()
+                        .brif(condition, fallthrough, &[], target, &[]);
+                }
+                None => return Err("a choice was not lowered".into()),
+            },
+            Terminator::Stop => {
+                let inst = block
+                    .insts
+                    .last()
+                    .ok_or("a block stops with no instruction")?;
+                let exit = self.exit_block(inst);
+                self.builder.ins().jump(exit, &[]);
             }
         }
         Ok(())
@@ -1730,6 +1831,15 @@ fn offset(index: usize, within: i32) -> i32 {
 /// exits, or recurs.
 const INLINE_RELEASES: usize = 6;
 
+/// How a block that ends in a choice chooses.
+#[derive(Clone, Copy)]
+enum Choice {
+    /// The fall-through when this is set, the target otherwise.
+    Fallthrough(CodeValue),
+    /// Always the target.
+    Target,
+}
+
 /// What a call calls.
 #[derive(Clone, Copy)]
 enum Callee {
@@ -1841,6 +1951,8 @@ fn owning_values(function: &Function) -> Vec<bool> {
                     | Op::StructCopyPooled(_)
                     | Op::CopyGlobalPooled { .. }
                     | Op::UpdateCapture { .. }
+                    | Op::Map(_)
+                    | Op::MatchCasePooled { .. }
                     | Op::List(_)
                     | Op::GetIndex
                     | Op::GetIndexConstant(_)

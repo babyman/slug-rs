@@ -440,6 +440,49 @@ fn compiled_code_calls_builtins_and_reports_their_errors_as_the_interpreter_does
 }
 
 #[test]
+fn compiled_matches_defaults_throws_and_maps_match_the_interpreter() {
+    // `match` with literal, list, rest, map, struct, typed, and wildcard
+    // cases; a parameter's default taken and skipped; map literals; and a
+    // `throw` reported from compiled code.
+    let trace = same_with_and_without_native_code(
+        "matches",
+        "val Point = struct { x, y }\n\
+         val describe = fn(v) {\n\
+             match v {\n\
+                 0 => \"zero\"\n\
+                 [a, b] => \"pair \" + a + b\n\
+                 [first, ...rest] => \"list \" + first + len(rest)\n\
+                 {\"k\": k} => \"map \" + k\n\
+                 p: struct<Point> => \"point \" + (p.x + p.y)\n\
+                 s: str => \"str \" + s\n\
+                 _ => \"other\"\n\
+             }\n\
+         }\n\
+         val area = fn(w, h = 2) { w * h }\n\
+         val build = fn(n) { {\"n\": n, \"double\": n * 2} }\n\
+         val checked = fn(n) { if (n > 100) { throw \"too big\" } else { n } }\n\
+         val loop = fn(k, total) {\n\
+             if (k == 0) { total } else {\n\
+                 recur(k - 1, total + len(describe(k % 4)) + area(k) + area(k, 3) + build(k)[\"double\"] + checked(k % 50))\n\
+             }\n\
+         }\n\
+         val main = fn() {\n\
+             println(loop(300, 0))\n\
+             println(describe(0), describe([1, 2]), describe([1, 2, 3]), describe({\"k\": \"v\"}))\n\
+             println(describe(Point { x: 1, y: 2 }), describe(\"s\"), describe(nil), build(3))\n\
+             println(checked(500))\n\
+         }\n",
+    );
+    let compiled = trace.matches("native: compiled").count();
+    assert!(compiled >= 6, "{trace}");
+    same_with_and_without_native_code(
+        "map-repeated-key",
+        "val build = fn(k) { {k: 1, \"a\": 2} }\n\
+         val main = fn() { println(build(\"b\"), build(\"a\")) }\n",
+    );
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

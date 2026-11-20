@@ -2471,6 +2471,15 @@ impl Vm {
         native: &alloc::sync::Arc<dyn crate::tiering::NativeCode>,
     ) -> VmResult<NativeEntry> {
         let frame = self.frames.last_mut().expect("active frame was checked");
+        // Native code takes every parameter as passed, so it skips each
+        // default; a call that left one out stays interpreted.
+        let parameters = frame
+            .program()
+            .chunk(frame.closure.chunk)
+            .map_or(0, |chunk| chunk.arity);
+        if !(0..parameters).all(|slot| frame.provided.is_provided(slot)) {
+            return Ok(NativeEntry::Declined);
+        }
         let mut locals = Vec::with_capacity(frame.locals.len());
         for slot in &mut frame.locals {
             match slot {

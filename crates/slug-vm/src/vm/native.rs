@@ -11,9 +11,9 @@
 use alloc::{string::String, vec::Vec};
 
 use crate::{
-    Capture, Constant, Op, Value,
+    Capture, Constant, MatchPatternId, Op, Value,
     bytecode::{GlobalNameId, GlobalUpdate, StructFieldsId},
-    collections::List,
+    collections::{List, Map, is_map_key},
     native::NativeInvocation,
     tiering::{NativeCell, NativeFailure, NativeLocal},
     value::{UNRESOLVED_GLOBAL, binding_cell},
@@ -21,7 +21,11 @@ use crate::{
 
 use super::{
     Vm,
-    operations::{construct_struct, copy_value, list_append, list_prepend, negate, slice_value},
+    operations::{
+        construct_struct, copy_value, list_append, list_prepend, matches_pattern, negate,
+        slice_value,
+    },
+    read_binding,
     updates::{copy_cannot_fail, update_cannot_fail},
 };
 
@@ -49,6 +53,7 @@ pub enum NativeOperation {
         has_end: bool,
         has_step: bool,
     },
+    Map(usize),
     Struct(Vec<String>),
     StructPooled(StructFieldsId),
     StructCopy(Vec<String>),
@@ -79,6 +84,7 @@ impl NativeOperation {
                 has_end: *has_end,
                 has_step: *has_step,
             },
+            Op::Map(count) => Self::Map(*count),
             Op::Struct(names) => Self::Struct(names.clone()),
             Op::StructPooled(id) => Self::StructPooled(*id),
             Op::StructCopy(names) => Self::StructCopy(names.clone()),
@@ -404,6 +410,7 @@ impl Vm {
                 has_end,
                 has_step,
             } => self.native_slice([*has_start, *has_end, *has_step], operands),
+            Op::Map(count) => self.native_map(*count, operands),
             Op::Struct(_) | Op::StructPooled(_) => {
                 let names = match op {
                     Op::Struct(names) => Some(names.as_slice()),
@@ -506,6 +513,77 @@ impl Vm {
         };
         // It cannot fail, as checked.
         result.map_err(|_| Vec::new())
+    }
+
+    /// A map of the `count` key and value pairs in `operands`, as `Map`
+    /// makes it, unless a key is not one or repeats.
+    fn native_map(&self, count: usize, operands: Vec<Value>) -> Result<Value, Vec<Value>> {
+        if operands.len() != count.saturating_mul(2)
+            || operands.chunks_exact(2).any(|pair| !is_map_key(&pair[0]))
+        {
+            return Err(operands);
+        }
+        let entries = operands
+            .chunks_exact(2)
+            .map(|pair| (pair[0].clone(), pair[1].clone()))
+            .collect();
+        match Map::from_literal(entries) {
+            Ok(map) => {
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(count);
+                Ok(Value::Map(map))
+            }
+            Err(_) => Err(operands),
+        }
+    }
+
+    /// Matches `value` against pattern `pattern` of `caller`'s program,
+    /// with `operands`, as `MatchCase` does, pushing what it binds onto
+    /// `bindings`: whether it matched, or `None` where the interpreter
+    /// must run it, which reports any error.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_match(
+        &self,
+        caller: &Value,
+        pattern: MatchPatternId,
+        value: &Value,
+        operands: &[Value],
+        bindings: &mut Vec<Value>,
+    ) -> Option<bool> {
+        let Value::Closure(closure) = caller else {
+            return None;
+        };
+        // A popped binding is resolved first, which the interpreter does.
+        if core::iter::once(value)
+            .chain(operands)
+            .any(|value| matches!(value, Value::Binding { .. }))
+        {
+            return None;
+        }
+        let pattern = closure.program.match_pattern(pattern)?;
+        let mut list_views_created = 0;
+        #[cfg(feature = "concurrency")]
+        let view = self.view.as_deref();
+        #[cfg(not(feature = "concurrency"))]
+        let view = None;
+        let matched = matches_pattern(
+            pattern,
+            value,
+            operands,
+            bindings,
+            &mut list_views_created,
+            &|cell, name| read_binding(view, cell, name),
+        )
+        .ok()?;
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
+        if !matched {
+            bindings.clear();
+        }
+        Some(matched)
     }
 
     /// `operands[0]` sliced by the start, end, and step that follow it,

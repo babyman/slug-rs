@@ -624,6 +624,15 @@ interpreter would do more, so native code leaves before the instruction.
    0.99–1.00x. Exits rose with coverage (Invaders 51,515 activations left
    early, `tiny-interpreter` 32,239), nearly all at calls of callees
    without native code: the next thing to measure.
+6. **Matches, defaults, throws, and maps** (batch E). A
+   `MatchCasePooled` calls the VM's `native_match`, which writes the value
+   and what the pattern binds to the instruction's results (consecutive
+   slots) and says whether it matched, which picks the block's edge.
+   Native code is entered only when every parameter was passed (the
+   interpreter declines a frame whose call left one out), so
+   `JumpIfProvided` always jumps. A block that ends in `throw`, a match
+   failure, or `not implemented` leaves to the interpreter before it,
+   which raises it. Map literals are one more `native_operation`.
 
 ### Gate
 
