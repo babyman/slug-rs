@@ -2694,6 +2694,57 @@ impl Vm {
         Ok(())
     }
 
+    /// The stamp of `closure`'s module table, which changes whenever any
+    /// of its entries does: native code that cached what a name resolves
+    /// to compares it. Null for anything but a closure. It lives as long as
+    /// the closure's table.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_globals_version(closure: &Value) -> *const core::sync::atomic::AtomicU64 {
+        match closure {
+            Value::Closure(closure) => core::ptr::from_ref(closure.globals.borrow().version()),
+            _ => core::ptr::null(),
+        }
+    }
+
+    /// The flag this thread's VMs check at each call: nonzero when one must
+    /// stop at its next safe point. It lives as long as the VM.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_attention_flag(&self) -> *const core::sync::atomic::AtomicU8 {
+        core::ptr::from_ref(self.attention.attention_flag())
+    }
+
+    /// Whether module-level name `name`, as `caller` resolves it, holds a
+    /// closure that captures nothing in the table itself, not in a
+    /// variable's cell: what it resolves to changes only with the table's
+    /// stamp, and the closure may be shared with other threads.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_global_is_fixed(caller: &Value, name: GlobalNameId) -> bool {
+        let Value::Closure(caller) = caller else {
+            return false;
+        };
+        let Some(slot) = native::native_slot(caller, name) else {
+            return false;
+        };
+        matches!(
+            caller.globals.borrow().value(slot),
+            Value::Closure(function) if function.captures.is_empty()
+        )
+    }
+
+    /// A module binding's value, whose tag native code checks for.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binding_sample() -> Value {
+        crate::value::module_binding("")
+    }
+
     /// The value native code in `caller` calls as module-level name
     /// `name`, when `caller` has resolved it, outside a task with its own
     /// view of the variables (the interpreter reads it through that).

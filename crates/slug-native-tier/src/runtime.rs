@@ -9,6 +9,8 @@
 #![allow(unsafe_code)]
 
 use std::mem::{MaybeUninit, offset_of, size_of};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use slug_vm::{
     BinaryOperator, Capture, GlobalNameId, MatchPatternId, NativeCode, NativeFailure, NativeFrame,
@@ -98,6 +100,8 @@ pub(crate) mod stats {
 }
 
 /// What every activation of one entry from the interpreter shares.
+/// Generated code reads `base`, first.
+#[repr(C)]
 struct Root {
     /// An address near the top of the machine stack at the entry.
     base: usize,
@@ -123,32 +127,115 @@ struct Exited {
 }
 
 /// What one activation of generated code runs with. Its address is the
-/// code's first argument.
+/// code's first argument. Plain data, so generated code builds one for a
+/// compiled function it calls directly.
 #[repr(C)]
 pub(crate) struct Context {
     vm: *mut Vm,
     compiled: *const Compiled,
     /// The captured locals, by slot, of a function a closure captures
-    /// locals of; others' entries are unused, and other functions have
-    /// none.
-    cells: Vec<NativeLocal>,
-    exits: *const ExitTable,
-    exit_count: usize,
-    /// The frame slots that may own something, for [`native_release`].
-    owning: *const u32,
-    owning_count: usize,
+    /// locals of, whose other entries are unused; null for a function
+    /// with none.
+    cells: *mut Vec<NativeLocal>,
     /// The function running, a closure.
     closure: *const Value,
     root: *mut Root,
+    /// The stamp of the running function's module table.
+    globals: *const AtomicU64,
+    /// The flag the VM checks at each call.
+    attention: *const AtomicU8,
     /// Where a returning function leaves its value.
     ret: MaybeUninit<Value>,
-    /// What an exit leaves for the interpreter.
-    exit: Option<Exited>,
+    /// What an exit leaves for the interpreter, once it has: a `Box`.
+    exit: *mut Exited,
+}
+
+impl Context {
+    /// The activation's cells: none for a function without them.
+    ///
+    /// # Safety
+    ///
+    /// The context must be a running activation's.
+    unsafe fn cells(&mut self) -> &mut [NativeLocal] {
+        if self.cells.is_null() {
+            &mut []
+        } else {
+            // SAFETY: as the caller promises; `enter` points it at the
+            // activation's cells.
+            unsafe { &mut *self.cells }
+        }
+    }
 }
 
 /// Offsets generated code uses.
-#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)] // A small struct.
-pub(crate) const CONTEXT_RET: i32 = offset_of!(Context, ret) as i32;
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)] // Small structs.
+pub(crate) mod offsets {
+    use super::{CallRecord, Context, Root, offset_of};
+
+    pub(crate) const CONTEXT_VM: i32 = offset_of!(Context, vm) as i32;
+    pub(crate) const CONTEXT_COMPILED: i32 = offset_of!(Context, compiled) as i32;
+    pub(crate) const CONTEXT_CELLS: i32 = offset_of!(Context, cells) as i32;
+    pub(crate) const CONTEXT_CLOSURE: i32 = offset_of!(Context, closure) as i32;
+    pub(crate) const CONTEXT_ROOT: i32 = offset_of!(Context, root) as i32;
+    pub(crate) const CONTEXT_GLOBALS: i32 = offset_of!(Context, globals) as i32;
+    pub(crate) const CONTEXT_ATTENTION: i32 = offset_of!(Context, attention) as i32;
+    pub(crate) const CONTEXT_RET: i32 = offset_of!(Context, ret) as i32;
+    pub(crate) const CONTEXT_EXIT: i32 = offset_of!(Context, exit) as i32;
+    pub(crate) const CONTEXT_SIZE: u32 = size_of::<Context>() as u32;
+    pub(crate) const ROOT_BASE: i32 = offset_of!(Root, base) as i32;
+    pub(crate) const RECORD_GLOBALS: i32 = offset_of!(CallRecord, globals) as i32;
+    pub(crate) const RECORD_VERSION: i32 = offset_of!(CallRecord, version) as i32;
+    pub(crate) const RECORD_ENTRY: i32 = offset_of!(CallRecord, entry) as i32;
+    pub(crate) const RECORD_COMPILED: i32 = offset_of!(CallRecord, compiled) as i32;
+    pub(crate) const RECORD_CALLEE_GLOBALS: i32 = offset_of!(CallRecord, callee_globals) as i32;
+    pub(crate) const RECORD_CLOSURE: i32 = offset_of!(CallRecord, closure) as i32;
+}
+
+/// What a call site to a module-level name last called, for generated code
+/// to call again directly while the caller's module table keeps its stamp:
+/// a compiled closure that captures nothing and makes no cells, which an
+/// exact call of the site's argument count enters.
+#[repr(C)]
+pub(crate) struct CallRecord {
+    /// The caller's module table's stamp, and its value then.
+    globals: *const AtomicU64,
+    version: u64,
+    entry: usize,
+    compiled: *const Compiled,
+    callee_globals: *const AtomicU64,
+    /// The callee, which this keeps alive, and its context points to.
+    closure: Value,
+}
+
+// SAFETY: a record is shared by the threads that run its function. Its
+// closure captures nothing, so it holds only its program, which is
+// `val`-only data forks share already, its module table, a `SoloCell`
+// that forks read, and resolved slots, which are atomic; cloning or
+// dropping it changes only atomic counts (as `slug_vm`'s `Sendable`
+// argues). The pointers are to a table the closure keeps alive and to
+// code that lives as long as the process.
+unsafe impl Send for CallRecord {}
+// SAFETY: as for `Send`; threads only read a record.
+unsafe impl Sync for CallRecord {}
+
+/// The most records a function keeps: call sites refill theirs only when
+/// a module table changes, as at a REPL's definitions.
+const MAX_RECORDS: usize = 256;
+
+/// The site argument of a call [`native_call`] keeps no record for.
+pub(crate) const NO_SITE: u32 = u32::MAX;
+
+/// The tag of a module binding's value, which a direct call's argument
+/// must not be: the interpreter resolves it first.
+pub(crate) fn binding_tag() -> i64 {
+    static TAG: OnceLock<i64> = OnceLock::new();
+    *TAG.get_or_init(|| {
+        let sample = Vm::native_binding_sample();
+        // SAFETY: a `Value`'s first word is its initialized tag (see
+        // `layout`).
+        unsafe { std::ptr::from_ref(&sample).cast::<i64>().read() }
+    })
+}
 
 /// Status generated code returns.
 pub(crate) const RETURNED: u32 = 0;
@@ -169,6 +256,13 @@ pub(crate) struct Compiled {
     arity: usize,
     exits: Vec<ExitTable>,
     owning: Vec<u32>,
+    /// Each module-level call site's record, or null; generated code reads
+    /// them by address.
+    sites: Box<[AtomicPtr<CallRecord>]>,
+    /// The records, which live as long as the code, each where its site
+    /// points.
+    #[allow(clippy::vec_box, reason = "a record must not move")]
+    records: Mutex<Vec<Box<CallRecord>>>,
     /// Which locals a closure captures, if any does.
     cells: Vec<bool>,
     /// The chunk and captures of each closure the function makes.
@@ -205,6 +299,15 @@ pub(crate) struct Tables {
     pub(crate) closures: Vec<(usize, Vec<Capture>)>,
     pub(crate) operations: Vec<Operation>,
     pub(crate) matches: Vec<MatchSite>,
+    pub(crate) sites: Box<[AtomicPtr<CallRecord>]>,
+}
+
+/// Empty call-site records for a function with `count` module-level call
+/// sites, whose addresses its code is generated with.
+pub(crate) fn call_sites(count: usize) -> Box<[AtomicPtr<CallRecord>]> {
+    (0..count)
+        .map(|_| AtomicPtr::new(std::ptr::null_mut()))
+        .collect()
 }
 
 impl Compiled {
@@ -217,6 +320,8 @@ impl Compiled {
             arity,
             exits: tables.exits,
             owning: tables.owning,
+            sites: tables.sites,
+            records: Mutex::new(Vec::new()),
             // With nothing captured, each activation's cells are empty,
             // and making them allocates nothing.
             cells: if tables.cells.contains(&true) {
@@ -267,19 +372,29 @@ impl Compiled {
         root: *mut Root,
         arguments: *mut Value,
     ) -> Result<Value, Exited> {
+        // SAFETY: as the caller promises.
+        let mut cells = unsafe { self.fresh_cells(arguments) };
+        // SAFETY: as the caller promises.
+        let (globals, attention) = unsafe {
+            (
+                Vm::native_globals_version(&*closure),
+                (*vm).native_attention_flag(),
+            )
+        };
         let mut context = Context {
             vm,
             compiled: self,
-            // SAFETY: as the caller promises.
-            cells: unsafe { self.fresh_cells(arguments) },
-            exits: self.exits.as_ptr(),
-            exit_count: self.exits.len(),
-            owning: self.owning.as_ptr(),
-            owning_count: self.owning.len(),
+            cells: if self.cells.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                &raw mut cells
+            },
             closure,
             root,
+            globals,
+            attention,
             ret: MaybeUninit::uninit(),
-            exit: None,
+            exit: std::ptr::null_mut(),
         };
         // SAFETY: `entry` is finalized code with this signature (see
         // `Compiled::new`). It returns `RETURNED` only after writing `ret`,
@@ -289,10 +404,11 @@ impl Compiled {
             if entry(&raw mut context, arguments) == RETURNED {
                 Ok(context.ret.assume_init())
             } else {
-                Err(context
-                    .exit
-                    .take()
-                    .expect("native code exited through native_exit"))
+                assert!(
+                    !context.exit.is_null(),
+                    "native code exited through native_exit"
+                );
+                Err(*Box::from_raw(context.exit))
             }
         }
     }
@@ -356,11 +472,15 @@ impl NativeCode for Compiled {
 /// calls have used their stack budget, or the thread needs attention (a
 /// cancelled fork, say), which the interpreter checks at every call.
 /// A declined call drops its arguments but those `moved` marks, by bit,
-/// which native code moved from its own slots and moves back.
+/// which native code moved from its own slots and moves back. A call to a
+/// module-level name at call site `site` (not [`NO_SITE`]) records the
+/// closure it entered there, when it may, for the site to call directly.
+#[allow(clippy::too_many_arguments)] // Generated code's call.
 pub(crate) extern "C" fn native_call(
     context: *mut Context,
     name: u32,
     count: u32,
+    site: u32,
     callee: *const Value,
     arguments: *mut Value,
     moved: u64,
@@ -430,6 +550,9 @@ pub(crate) extern "C" fn native_call(
         let Some(compiled) = code.as_any().downcast_ref::<Compiled>() else {
             return declined(arguments_slice);
         };
+        if site != NO_SITE {
+            record_call(context, name, site, &closure, compiled);
+        }
         let outcome = compiled.enter(context.vm, &raw const closure, root, arguments);
         match outcome {
             Ok(value) => {
@@ -446,6 +569,70 @@ pub(crate) extern "C" fn native_call(
                 CALL_EXITED
             }
         }
+    }
+}
+
+/// Records `closure`, which module-level name `name` resolved to, and its
+/// code, as what call site `site` of the running function calls, when its
+/// module table's stamp says when that changes and the code needs no
+/// cells.
+///
+/// # Safety
+///
+/// `context` must be a running activation's, with a site `site`.
+unsafe fn record_call(
+    context: &Context,
+    name: u32,
+    site: u32,
+    closure: &Value,
+    compiled: &Compiled,
+) {
+    // SAFETY: as the caller promises.
+    unsafe {
+        let caller = &*context.compiled;
+        if !compiled.cells.is_empty()
+            || context.globals.is_null()
+            || !Vm::native_global_is_fixed(&*context.closure, GlobalNameId::new(name))
+        {
+            return;
+        }
+        let mut records = caller
+            .records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if records.len() >= MAX_RECORDS {
+            return;
+        }
+        let mut record = Box::new(CallRecord {
+            globals: context.globals,
+            version: (*context.globals).load(Ordering::Acquire),
+            entry: compiled.entry,
+            compiled,
+            callee_globals: Vm::native_globals_version(closure),
+            closure: closure.clone(),
+        });
+        caller.sites[site as usize].store(&raw mut *record, Ordering::Release);
+        records.push(record);
+    }
+}
+
+/// Records the exit of a function generated code called directly, whose
+/// context is `callee`, as [`native_call`] records one: the caller then
+/// leaves past the call.
+pub(crate) extern "C" fn native_call_exited(context: *mut Context, callee: *mut Context) {
+    // SAFETY: generated code passes its own context, and the context of a
+    // call it made that returned `EXITED`, which `native_exit` set.
+    unsafe {
+        let callee = &mut *callee;
+        let exited = Box::from_raw(callee.exit);
+        callee.exit = std::ptr::null_mut();
+        let Exited { ip, locals, stack } = *exited;
+        (*(*context).root).frames.push(NativeFrame {
+            closure: (*callee.closure).clone(),
+            ip,
+            locals,
+            stack,
+        });
     }
 }
 
@@ -590,7 +777,7 @@ pub(crate) extern "C" fn native_index(
         let value = match source {
             SOURCE_VALUE => read(NativeReadSource::Value(&*collection)),
             SOURCE_CAPTURE => read(NativeReadSource::Capture(operand as usize)),
-            SOURCE_CELL => (&context.cells)[operand as usize]
+            SOURCE_CELL => (&*context.cells)[operand as usize]
                 .read(|collection| read(NativeReadSource::Value(collection))),
             _ => read(NativeReadSource::Global(GlobalNameId::new(operand))),
         };
@@ -666,7 +853,7 @@ pub(crate) extern "C" fn native_list(
 pub(crate) extern "C" fn native_get_cell(context: *mut Context, slot: u32, out: *mut Value) -> u32 {
     // SAFETY: generated code passes its own context, a captured local's
     // slot, and a free slot.
-    unsafe { produce(out, Some((&(*context).cells)[slot as usize].get())) }
+    unsafe { produce(out, Some((*context).cells()[slot as usize].get())) }
 }
 
 /// Sets captured local `slot` to a clone of `value`, as `SetLocal` does.
@@ -677,7 +864,7 @@ pub(crate) extern "C" fn native_set_cell(
 ) -> u32 {
     // SAFETY: generated code passes its own context, a captured local's
     // slot, and an initialized value.
-    unsafe { (&mut (*context).cells)[slot as usize].set((*value).clone()) };
+    unsafe { (*context).cells()[slot as usize].set((*value).clone()) };
     0
 }
 
@@ -705,7 +892,7 @@ pub(crate) extern "C" fn native_closure(context: *mut Context, site: u32, out: *
         let compiled = &*context.compiled;
         let (chunk, captures) = &compiled.closures[site as usize];
         let value =
-            (*context.vm).native_closure(&*context.closure, *chunk, captures, &mut context.cells);
+            (*context.vm).native_closure(&*context.closure, *chunk, captures, context.cells());
         produce(out, value)
     }
 }
@@ -826,7 +1013,8 @@ pub(crate) extern "C" fn native_recur_cells(context: *mut Context, arguments: *m
     // arguments, each initialized.
     unsafe {
         let context = &mut *context;
-        context.cells = (*context.compiled).fresh_cells(arguments);
+        // Only a function with cells makes fresh ones.
+        *context.cells = (*context.compiled).fresh_cells(arguments);
     }
 }
 
@@ -861,7 +1049,7 @@ pub(crate) extern "C" fn native_release(context: *mut Context, base: *mut Value)
     // initialized; the owning slots are its own.
     unsafe {
         let context = &*context;
-        for slot in std::slice::from_raw_parts(context.owning, context.owning_count) {
+        for slot in &(*context.compiled).owning {
             let slot = base.add(*slot as usize);
             // Most slots hold `nil` or a number, which need no drop; the
             // tag is the slot's first word (see `layout`).
@@ -881,8 +1069,7 @@ pub(crate) extern "C" fn native_exit(context: *mut Context, exit: u32, base: *co
     stats::count(&stats::EXITS);
     unsafe {
         let context = &mut *context;
-        let tables = std::slice::from_raw_parts(context.exits, context.exit_count);
-        let table = &tables[exit as usize];
+        let table = &(&(*context.compiled).exits)[exit as usize];
         let read = |slot: &u32| (*base.add(*slot as usize)).clone();
         let locals = table
             .locals
@@ -891,17 +1078,17 @@ pub(crate) extern "C" fn native_exit(context: *mut Context, exit: u32, base: *co
             .map(|(index, slot)| {
                 if *slot == CELL_LOCAL {
                     // The activation ends here: its cells move out.
-                    std::mem::replace(&mut context.cells[index], NativeLocal::Value(Value::Nil))
+                    std::mem::replace(&mut context.cells()[index], NativeLocal::Value(Value::Nil))
                 } else {
                     NativeLocal::Value(read(slot))
                 }
             })
             .collect();
-        context.exit = Some(Exited {
+        context.exit = Box::into_raw(Box::new(Exited {
             ip: table.ip,
             locals,
             stack: table.stack.iter().map(read).collect(),
-        });
+        }));
     }
 }
 

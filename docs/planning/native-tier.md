@@ -810,6 +810,29 @@ The boxed prototype's 10x called the compiled function directly.
 Each step is measured on `fib` and the kernels, then on the full PGO A/B
 with the hold-outs; a step that does not pay is reverted.
 
+### Progress
+
+1. *Done.* Cheaper returns, as above.
+2. *Done.* Direct calls. A per-thread memo of the callee in the runtime
+   bounded the runtime-side saving at about 9% (`fib(35)` 0.57 s to
+   0.52 s), so the check moved into generated code. Each module table now
+   carries a stamp, taken from one process-wide counter whenever an entry
+   is set or becomes a variable's cell, so no other table, even one at a
+   freed table's address, can share it. A call to a module-level name
+   records, in the caller's `Compiled`, the stamp, the callee's entry and
+   `Compiled`, the callee's own table's stamp, and its own clone of the
+   closure, when the name holds a closure that captures nothing in the
+   table itself (not a variable's cell) and its code makes no cells.
+   Generated code then checks the record, the stamp, the stack budget, the
+   thread's attention flag, and that no argument is a module binding,
+   builds the callee's context in its own frame (the context is now plain
+   data: its cells and its exit are pointers), and calls the entry. A
+   callee that exits is recorded as `native_call` records it, by
+   `native_call_exited`. `fib(35)`: 0.57 s to 0.25 s, against 1.02 s
+   interpreted. No program run reaches a stamp change of a recorded name,
+   since a program's own definitions precede its calls and a variable's
+   assignments go to its cell; a REPL's redefinitions would.
+
 ### Gate
 
 - The kernels at least 4x faster on compute time, startup subtracted.

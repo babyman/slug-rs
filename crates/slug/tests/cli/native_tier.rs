@@ -513,6 +513,28 @@ fn compiled_calls_move_last_reads_and_restore_them_when_declined() {
 }
 
 #[test]
+fn direct_calls_follow_redefinitions_exits_and_the_stack_budget() {
+    // `inner`, called directly once its site has a record, exits at its
+    // declined call to `area`; `pick` is reassigned, which changes the
+    // module table, so its site calls the new function; and `depth`'s
+    // direct calls stop at the stack budget, leaving to the interpreter.
+    same_with_and_without_native_code(
+        "direct-calls",
+        "val area = fn(w, h = 2) { w * h }\n\
+         val inner = fn(k) { area(k) + 1 }\n\
+         val outer = fn(n, t) { if (n == 0) { t } else { recur(n - 1, t + inner(n)) } }\n\
+         var pick = fn(x) { x + 1 }\n\
+         val use = fn(n, t) { if (n == 0) { t } else { recur(n - 1, t + pick(n)) } }\n\
+         val depth = fn(n) { if (n == 0) { 0 } else { 1 + depth(n - 1) } }\n\
+         val main = fn() {\n\
+             println(outer(300, 0), use(300, 0))\n\
+             pick = fn(x) { x * 2 }\n\
+             println(use(300, 0), depth(100000))\n\
+         }\n",
+    );
+}
+
+#[test]
 fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() {
     // `int` of integers and floats, `~`, a module variable only ever
     // written by the function that compiles, and a map added to in a loop

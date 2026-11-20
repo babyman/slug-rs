@@ -797,6 +797,50 @@ pub(crate) fn global_environment() -> GlobalEnvironment {
 pub(crate) struct GlobalTable {
     slots: NameMap<u32>,
     entries: Vec<(String, Value)>,
+    /// Changed whenever an entry is, for native code that caches what a
+    /// name resolves to.
+    #[cfg(feature = "native-hooks")]
+    version: GlobalVersion,
+}
+
+/// A global table's stamp: unique across the process, so a table at a
+/// freed table's address never matches what native code cached for it.
+#[cfg(feature = "native-hooks")]
+#[derive(Debug)]
+pub(crate) struct GlobalVersion(core::sync::atomic::AtomicU64);
+
+#[cfg(feature = "native-hooks")]
+static NEXT_GLOBAL_VERSION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+#[cfg(feature = "native-hooks")]
+impl GlobalVersion {
+    fn fresh() -> u64 {
+        NEXT_GLOBAL_VERSION.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn change(&self) {
+        self.0
+            .store(Self::fresh(), core::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn get(&self) -> &core::sync::atomic::AtomicU64 {
+        &self.0
+    }
+}
+
+#[cfg(feature = "native-hooks")]
+impl Default for GlobalVersion {
+    fn default() -> Self {
+        Self(core::sync::atomic::AtomicU64::new(Self::fresh()))
+    }
+}
+
+#[cfg(feature = "native-hooks")]
+impl Clone for GlobalVersion {
+    /// A copied table is another table, with its own stamp.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 impl GlobalTable {
@@ -820,6 +864,8 @@ impl GlobalTable {
         slot: u32,
         kind: crate::variables::BindingKind,
     ) -> Option<BindingCell> {
+        #[cfg(feature = "native-hooks")]
+        self.version.change();
         let (name, value) = self.entries.get_mut(slot as usize)?;
         if let Value::Binding { name, cell } = value {
             name.set_kind(kind);
@@ -843,6 +889,8 @@ impl GlobalTable {
 
     /// Binds `name`, replacing the value of an existing binding in place.
     pub(crate) fn insert(&mut self, name: String, value: Value) {
+        #[cfg(feature = "native-hooks")]
+        self.version.change();
         if let Some(slot) = self.slot(&name) {
             self.entries[slot as usize].1 = value;
         } else {
@@ -857,6 +905,12 @@ impl GlobalTable {
         if !self.contains_key(&name) {
             self.insert(name, value());
         }
+    }
+
+    /// The table's stamp, which changes with any entry.
+    #[cfg(feature = "native-hooks")]
+    pub(crate) fn version(&self) -> &core::sync::atomic::AtomicU64 {
+        self.version.get()
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {

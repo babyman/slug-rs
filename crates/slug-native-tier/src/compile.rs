@@ -49,9 +49,9 @@ use crate::{
     ir::{Block, Edge, Function, Inst, Terminator, ValueDef, ValueId},
     jit::Jit,
     runtime::{
-        self, BINARY_OPERATORS, CALL_DECLINED, CALL_RETURNED, CONTEXT_RET, Compiled, EXITED,
-        ExitTable, NO_CONSTANT, RETURNED, SOURCE_CAPTURE, SOURCE_CELL, SOURCE_GLOBAL, SOURCE_VALUE,
-        layout,
+        self, BINARY_OPERATORS, CALL_DECLINED, CALL_RETURNED, Compiled, EXITED, ExitTable,
+        NO_CONSTANT, NO_SITE, RETURNED, SOURCE_CAPTURE, SOURCE_CELL, SOURCE_GLOBAL, SOURCE_VALUE,
+        STACK_BUDGET, layout, offsets,
     },
 };
 
@@ -222,9 +222,24 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
     signature.returns.push(AbiParam::new(types::I32));
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
+    let sites = runtime::call_sites(
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.insts)
+            .filter(|inst| matches!(inst.op, Op::CallGlobalPooled { .. }))
+            .count(),
+    );
     let (exits, owning, operations, matches) = {
         let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
-        Lowering::new(builder, function, pointer, call_conv).lower()?
+        Lowering::new(
+            builder,
+            function,
+            pointer,
+            call_conv,
+            sites.as_ptr() as usize,
+        )
+        .lower()?
     };
     let cells = if function.cells.iter().any(|cell| *cell) {
         function.cells.clone()
@@ -251,6 +266,7 @@ pub(crate) fn compile(jit: &Jit, function: &Function, dump: bool) -> Result<Comp
             closures,
             operations,
             matches,
+            sites,
         },
     ))
 }
@@ -272,6 +288,71 @@ struct Runtime {
     list: cranelift_codegen::ir::SigRef,
     /// `(context, site, base, out) -> status`: `native_operation`.
     operation: cranelift_codegen::ir::SigRef,
+    /// `(context, arguments) -> status`: compiled code's entry.
+    entry: cranelift_codegen::ir::SigRef,
+    /// `(context, callee context)`: `native_call_exited`.
+    exited: cranelift_codegen::ir::SigRef,
+}
+
+impl Runtime {
+    fn new(
+        builder: &mut FunctionBuilder<'_>,
+        pointer: types::Type,
+        call_conv: cranelift_codegen::isa::CallConv,
+    ) -> Self {
+        let mut signature = |params: &[types::Type], returns: &[types::Type]| {
+            let mut signature = Signature::new(call_conv);
+            signature
+                .params
+                .extend(params.iter().map(|kind| AbiParam::new(*kind)));
+            signature
+                .returns
+                .extend(returns.iter().map(|kind| AbiParam::new(*kind)));
+            builder.import_signature(signature)
+        };
+        Runtime {
+            binary: signature(
+                &[pointer, types::I32, pointer, pointer, pointer],
+                &[types::I32],
+            ),
+            attention: signature(&[pointer], &[types::I32]),
+            clone: signature(&[pointer, pointer], &[]),
+            drop: signature(&[pointer], &[]),
+            release: signature(&[pointer, pointer], &[]),
+            exit: signature(&[pointer, types::I32, pointer], &[]),
+            call: signature(
+                &[
+                    pointer,
+                    types::I32,
+                    types::I32,
+                    types::I32,
+                    pointer,
+                    pointer,
+                    types::I64,
+                    pointer,
+                ],
+                &[types::I32],
+            ),
+            entry: signature(&[pointer, pointer], &[types::I32]),
+            exited: signature(&[pointer, pointer], &[]),
+            operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
+            list: signature(&[pointer, types::I32, pointer, pointer], &[]),
+            operation: signature(&[pointer, types::I32, pointer, pointer], &[types::I32]),
+            unary: signature(&[pointer, pointer, pointer], &[types::I32]),
+            index: signature(
+                &[
+                    pointer,
+                    types::I32,
+                    types::I32,
+                    pointer,
+                    pointer,
+                    types::I32,
+                    pointer,
+                ],
+                &[types::I32],
+            ),
+        }
+    }
 }
 
 struct Lowering<'a> {
@@ -305,6 +386,12 @@ struct Lowering<'a> {
     choice: Option<Choice>,
     /// Blocks made while another was being filled, filled at the end.
     pending: Vec<Pending>,
+    /// The address of the function's call-site records, and the next
+    /// module-level call's site.
+    sites: usize,
+    next_site: usize,
+    /// Where a direct call builds its callee's context.
+    callee_context: StackSlot,
 }
 
 /// A block whose body is lowered after the function's own blocks.
@@ -321,56 +408,9 @@ impl<'a> Lowering<'a> {
         function: &'a Function,
         pointer: types::Type,
         call_conv: cranelift_codegen::isa::CallConv,
+        sites: usize,
     ) -> Self {
-        let mut signature = |params: &[types::Type], returns: &[types::Type]| {
-            let mut signature = Signature::new(call_conv);
-            signature
-                .params
-                .extend(params.iter().map(|kind| AbiParam::new(*kind)));
-            signature
-                .returns
-                .extend(returns.iter().map(|kind| AbiParam::new(*kind)));
-            builder.import_signature(signature)
-        };
-        let runtime = Runtime {
-            binary: signature(
-                &[pointer, types::I32, pointer, pointer, pointer],
-                &[types::I32],
-            ),
-            attention: signature(&[pointer], &[types::I32]),
-            clone: signature(&[pointer, pointer], &[]),
-            drop: signature(&[pointer], &[]),
-            release: signature(&[pointer, pointer], &[]),
-            exit: signature(&[pointer, types::I32, pointer], &[]),
-            call: signature(
-                &[
-                    pointer,
-                    types::I32,
-                    types::I32,
-                    pointer,
-                    pointer,
-                    types::I64,
-                    pointer,
-                ],
-                &[types::I32],
-            ),
-            operand: signature(&[pointer, types::I32, pointer], &[types::I32]),
-            list: signature(&[pointer, types::I32, pointer, pointer], &[]),
-            operation: signature(&[pointer, types::I32, pointer, pointer], &[types::I32]),
-            unary: signature(&[pointer, pointer, pointer], &[types::I32]),
-            index: signature(
-                &[
-                    pointer,
-                    types::I32,
-                    types::I32,
-                    pointer,
-                    pointer,
-                    types::I32,
-                    pointer,
-                ],
-                &[types::I32],
-            ),
-        };
+        let runtime = Runtime::new(&mut builder, pointer, call_conv);
         let call_arguments = function
             .blocks
             .iter()
@@ -398,6 +438,11 @@ impl<'a> Lowering<'a> {
             .collect();
         let cleanup = builder.create_block();
         builder.append_block_param(cleanup, types::I32);
+        let callee_context = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            offsets::CONTEXT_SIZE,
+            3,
+        ));
         let mut owning = owning_values(function);
         owning.resize(cell_operand, false);
         owning.push(function.cells.iter().any(|cell| *cell));
@@ -420,6 +465,9 @@ impl<'a> Lowering<'a> {
             matches: Vec::new(),
             choice: None,
             pending: Vec::new(),
+            sites,
+            next_site: 0,
+            callee_context,
         }
     }
 
@@ -1428,11 +1476,15 @@ impl<'a> Lowering<'a> {
         if inst.args.len() != count + below || inst.results.len() != 1 {
             return Err(format!("instruction {} is a malformed call", inst.ip));
         }
-        let (name, callee) = match callee {
-            Callee::Global(name) => (name, self.builder.ins().iconst(self.pointer, 0)),
+        let (name, site, callee) = match callee {
+            Callee::Global(name) => {
+                let site = self.next_site;
+                self.next_site += 1;
+                (name, Some(site), self.builder.ins().iconst(self.pointer, 0))
+            }
             Callee::Value => {
                 let slot = self.slot(inst.args[0].index());
-                (0, self.address(slot))
+                (0, None, self.address(slot))
             }
         };
         let base = self.function.values.len() + self.function.arity + 1;
@@ -1451,8 +1503,20 @@ impl<'a> Lowering<'a> {
         }
         let arguments = self.slot(base);
         let arguments = self.address(arguments);
+        let before = self.exit_block(inst);
+        let after = self.exit_after_call(inst);
+        let done = self.builder.create_block();
+        if let Some(site) = site {
+            let slow = self.builder.create_block();
+            self.direct_call(site, (arguments, count), inst, (slow, done, after));
+            self.builder.switch_to_block(slow);
+        }
         #[expect(clippy::cast_possible_wrap, reason = "a bit mask")]
         let moved_mask = self.builder.ins().iconst(types::I64, moved as i64);
+        let site = self.builder.ins().iconst(
+            types::I32,
+            i64::from(site.map_or(NO_SITE, |site| u32::try_from(site).expect("site fits"))),
+        );
         let name = self.builder.ins().iconst(types::I32, i64::from(name));
         let count = self
             .builder
@@ -1467,15 +1531,13 @@ impl<'a> Lowering<'a> {
                 self.context,
                 name,
                 count,
+                site,
                 callee,
                 arguments,
                 moved_mask,
                 result,
             ],
         )[0];
-        let before = self.exit_block(inst);
-        let after = self.exit_after_call(inst);
-        let done = self.builder.create_block();
         let not_returned = self.builder.create_block();
         let returned = self
             .builder
@@ -1509,6 +1571,185 @@ impl<'a> Lowering<'a> {
         Ok(())
     }
 
+    /// Call site `site`'s record, continuing past checks that it still
+    /// holds for the `count` arguments at `arguments` (see
+    /// [`Self::direct_call`]), or at `slow`.
+    fn direct_call_record(
+        &mut self,
+        site: usize,
+        (arguments, count): (CodeValue, usize),
+        slow: CodeBlock,
+    ) -> CodeValue {
+        let pointer = self.pointer;
+        let flags = MemFlags::trusted();
+        let address = self.sites + site * size_of::<usize>();
+        let address = self
+            .builder
+            .ins()
+            .iconst(pointer, i64::try_from(address).expect("address fits"));
+        let record = self.builder.ins().atomic_load(pointer, flags, address);
+        let check = |lowering: &mut Self, failed: CodeValue| {
+            let next = lowering.builder.create_block();
+            lowering.builder.ins().brif(failed, slow, &[], next, &[]);
+            lowering.builder.switch_to_block(next);
+        };
+        let none = self.builder.ins().icmp_imm(IntCC::Equal, record, 0);
+        check(self, none);
+        let globals =
+            self.builder
+                .ins()
+                .load(pointer, flags, self.context, offsets::CONTEXT_GLOBALS);
+        let recorded = self
+            .builder
+            .ins()
+            .load(pointer, flags, record, offsets::RECORD_GLOBALS);
+        let other = self.builder.ins().icmp(IntCC::NotEqual, globals, recorded);
+        check(self, other);
+        let version = self.builder.ins().atomic_load(types::I64, flags, globals);
+        let recorded = self
+            .builder
+            .ins()
+            .load(types::I64, flags, record, offsets::RECORD_VERSION);
+        let changed = self.builder.ins().icmp(IntCC::NotEqual, version, recorded);
+        check(self, changed);
+        // The stack used since the entry from the interpreter: the root's
+        // address is above this frame's.
+        let root = self
+            .builder
+            .ins()
+            .load(pointer, flags, self.context, offsets::CONTEXT_ROOT);
+        let top = self
+            .builder
+            .ins()
+            .load(pointer, flags, root, offsets::ROOT_BASE);
+        let used = self.builder.ins().isub(top, self.base);
+        let full = self.builder.ins().icmp_imm(
+            IntCC::UnsignedGreaterThanOrEqual,
+            used,
+            i64::try_from(STACK_BUDGET).expect("budget fits"),
+        );
+        check(self, full);
+        let attention =
+            self.builder
+                .ins()
+                .load(pointer, flags, self.context, offsets::CONTEXT_ATTENTION);
+        let attention = self.builder.ins().uload8(types::I32, flags, attention, 0);
+        let attend = self.builder.ins().icmp_imm(IntCC::NotEqual, attention, 0);
+        check(self, attend);
+        let binding = runtime::binding_tag();
+        for index in 0..count {
+            let offset = i32::try_from(index).expect("count fits") * layout::SIZE;
+            let tag = self
+                .builder
+                .ins()
+                .load(types::I64, flags, arguments, offset);
+            let bound = self.builder.ins().icmp_imm(IntCC::Equal, tag, binding);
+            check(self, bound);
+        }
+        record
+    }
+
+    /// Calls what call site `site` recorded, directly, with the `count`
+    /// arguments at `arguments`, when its record still holds: the caller's
+    /// module table has the stamp it had, the native stack has room, the
+    /// thread needs no attention, and no argument is a module binding.
+    /// Otherwise continues at `slow`, which makes the call through the
+    /// runtime. Writes the result to `inst`'s and continues at `done`, or,
+    /// when the callee exits, records it and continues at `after`.
+    fn direct_call(
+        &mut self,
+        site: usize,
+        (arguments, count): (CodeValue, usize),
+        inst: &Inst,
+        (slow, done, after): (CodeBlock, CodeBlock, CodeBlock),
+    ) {
+        let pointer = self.pointer;
+        let flags = MemFlags::trusted();
+        let record = self.direct_call_record(site, (arguments, count), slow);
+        // The callee's context.
+        let callee = self
+            .builder
+            .ins()
+            .stack_addr(pointer, self.callee_context, 0);
+        let copy = |lowering: &mut Self, from: CodeValue, at: i32, to: i32| {
+            let value = lowering.builder.ins().load(pointer, flags, from, at);
+            lowering.builder.ins().store(flags, value, callee, to);
+        };
+        copy(self, self.context, offsets::CONTEXT_VM, offsets::CONTEXT_VM);
+        copy(
+            self,
+            record,
+            offsets::RECORD_COMPILED,
+            offsets::CONTEXT_COMPILED,
+        );
+        copy(
+            self,
+            self.context,
+            offsets::CONTEXT_ROOT,
+            offsets::CONTEXT_ROOT,
+        );
+        copy(
+            self,
+            record,
+            offsets::RECORD_CALLEE_GLOBALS,
+            offsets::CONTEXT_GLOBALS,
+        );
+        copy(
+            self,
+            self.context,
+            offsets::CONTEXT_ATTENTION,
+            offsets::CONTEXT_ATTENTION,
+        );
+        let closure = self
+            .builder
+            .ins()
+            .iadd_imm(record, i64::from(offsets::RECORD_CLOSURE));
+        self.builder
+            .ins()
+            .store(flags, closure, callee, offsets::CONTEXT_CLOSURE);
+        let null = self.builder.ins().iconst(pointer, 0);
+        self.builder
+            .ins()
+            .store(flags, null, callee, offsets::CONTEXT_CELLS);
+        self.builder
+            .ins()
+            .store(flags, null, callee, offsets::CONTEXT_EXIT);
+        let entry = self
+            .builder
+            .ins()
+            .load(pointer, flags, record, offsets::RECORD_ENTRY);
+        let call =
+            self.builder
+                .ins()
+                .call_indirect(self.runtime.entry, entry, &[callee, arguments]);
+        let status = self.builder.inst_results(call)[0];
+        let returned = self.builder.create_block();
+        let exited = self.builder.create_block();
+        let is_returned = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, status, i64::from(RETURNED));
+        self.builder
+            .ins()
+            .brif(is_returned, returned, &[], exited, &[]);
+        self.builder.switch_to_block(returned);
+        let value = Place::At(
+            self.builder
+                .ins()
+                .iadd_imm(callee, i64::from(offsets::CONTEXT_RET)),
+        );
+        let result = self.slot(inst.results[0].index());
+        self.copy_words(value, result);
+        self.builder.ins().jump(done, &[]);
+        self.builder.switch_to_block(exited);
+        self.call(
+            self.runtime.exited,
+            runtime::native_call_exited as *const () as usize,
+            &[self.context, callee],
+        );
+        self.builder.ins().jump(after, &[]);
+    }
+
     fn lower_terminator(&mut self, block: &Block) -> Result<(), String> {
         match &block.terminator {
             Terminator::Jump(edge) => self.lower_edge(edge),
@@ -1529,7 +1770,7 @@ impl<'a> Lowering<'a> {
                 let target = Place::At(
                     self.builder
                         .ins()
-                        .iadd_imm(self.context, i64::from(CONTEXT_RET)),
+                        .iadd_imm(self.context, i64::from(offsets::CONTEXT_RET)),
                 );
                 self.copy_words(source, target);
                 if self.owning[value.index()] {
