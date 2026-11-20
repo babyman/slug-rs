@@ -102,7 +102,9 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::CopyGlobalPooled { .. }
                 | Op::UpdateCapture { .. }
                 | Op::Map(_)
+                | Op::InterpolatePooled(_)
                 | Op::MatchCasePooled { .. }
+                | Op::TryMatchPooled { .. }
                 | Op::JumpIfProvided { .. }
                 | Op::Throw
                 | Op::MatchFailure
@@ -557,10 +559,14 @@ impl<'a> Lowering<'a> {
             | Op::StructCopyPooled(_)
             | Op::CopyGlobalPooled { .. }
             | Op::UpdateCapture { .. }
-            | Op::Map(_) => self.lower_operation(inst, position)?,
+            | Op::Map(_)
+            | Op::InterpolatePooled(_) => self.lower_operation(inst, position)?,
             Op::MatchCasePooled {
                 pattern, operands, ..
-            } => self.lower_match(inst, *pattern, *operands)?,
+            } => self.lower_match(inst, *pattern, *operands, false)?,
+            Op::TryMatchPooled {
+                pattern, operands, ..
+            } => self.lower_match(inst, *pattern, *operands, true)?,
             // Native code is entered only with every parameter passed.
             Op::JumpIfProvided { .. } => self.choice = Some(Choice::Target),
             Op::Not => self.lower_not(inst),
@@ -1117,6 +1123,7 @@ impl<'a> Lowering<'a> {
         inst: &Inst,
         pattern: slug_vm::MatchPatternId,
         operands: usize,
+        tries: bool,
     ) -> Result<(), String> {
         let consecutive = inst
             .results
@@ -1134,6 +1141,7 @@ impl<'a> Lowering<'a> {
                 .map(|value| u32::try_from(value.index()).expect("slot index fits"))
                 .collect(),
             results: inst.results.len(),
+            tries,
         });
         let site = self
             .builder
@@ -1157,11 +1165,13 @@ impl<'a> Lowering<'a> {
         let next = self.builder.create_block();
         self.builder.ins().brif(settled, next, &[], exit, &[]);
         self.builder.switch_to_block(next);
-        let matched =
-            self.builder
-                .ins()
-                .icmp_imm(IntCC::Equal, status, i64::from(runtime::MATCHED));
-        self.choice = Some(Choice::Fallthrough(matched));
+        if !tries {
+            let matched =
+                self.builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, status, i64::from(runtime::MATCHED));
+            self.choice = Some(Choice::Fallthrough(matched));
+        }
         Ok(())
     }
 
@@ -1996,7 +2006,9 @@ fn owning_values(function: &Function) -> Vec<bool> {
                     | Op::CopyGlobalPooled { .. }
                     | Op::UpdateCapture { .. }
                     | Op::Map(_)
+                    | Op::InterpolatePooled(_)
                     | Op::MatchCasePooled { .. }
+                    | Op::TryMatchPooled { .. }
                     // `~` on bytes makes bytes.
                     | Op::BitNot
                     | Op::List(_)

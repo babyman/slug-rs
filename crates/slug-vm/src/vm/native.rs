@@ -41,6 +41,25 @@ pub enum NativeReadSource<'a> {
     Global(GlobalNameId),
 }
 
+/// The string `parts` and the values between them make, as `Interpolate`
+/// writes it, unless the parts are missing or do not fit the values.
+fn native_interpolate(parts: Option<&[String]>, operands: Vec<Value>) -> Result<Value, Vec<Value>> {
+    let Some(parts) = parts else {
+        return Err(operands);
+    };
+    if operands.len() != parts.len().saturating_sub(1) {
+        return Err(operands);
+    }
+    let mut output = String::new();
+    for (index, text) in parts.iter().enumerate() {
+        output.push_str(text);
+        if let Some(value) = operands.get(index) {
+            output.push_str(&alloc::string::ToString::to_string(value));
+        }
+    }
+    Ok(Value::string(output))
+}
+
 /// The function a builtin or typed native `callee` runs, and the typed
 /// native's resource signature.
 fn native_callable(
@@ -91,6 +110,7 @@ pub enum NativeOperation {
         has_step: bool,
     },
     Map(usize),
+    InterpolatePooled(crate::bytecode::InterpolationId),
     Struct(Vec<String>),
     StructPooled(StructFieldsId),
     StructCopy(Vec<String>),
@@ -122,6 +142,7 @@ impl NativeOperation {
                 has_step: *has_step,
             },
             Op::Map(count) => Self::Map(*count),
+            Op::InterpolatePooled(id) => Self::InterpolatePooled(*id),
             Op::Struct(names) => Self::Struct(names.clone()),
             Op::StructPooled(id) => Self::StructPooled(*id),
             Op::StructCopy(names) => Self::StructCopy(names.clone()),
@@ -444,6 +465,7 @@ impl Vm {
                 has_step,
             } => self.native_slice([*has_start, *has_end, *has_step], operands),
             Op::Map(count) => self.native_map(*count, operands),
+            Op::InterpolatePooled(id) => native_interpolate(program.interpolation(*id), operands),
             Op::Struct(_) | Op::StructPooled(_) => {
                 let names = match op {
                     Op::Struct(names) => Some(names.as_slice()),

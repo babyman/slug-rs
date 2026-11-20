@@ -199,6 +199,9 @@ pub(crate) struct NativeSlot {
     exits: AtomicU32,
 }
 
+/// How many entries a call from native code counts as.
+const NATIVE_CALL_WEIGHT: u32 = 32;
+
 /// Entries before a chunk's exits are judged.
 const JUDGED_AFTER: u32 = 64;
 /// Counts are halved here, so recent entries weigh most.
@@ -259,6 +262,26 @@ impl NativeSlot {
         } else {
             self.reached(program, chunk, left)
         }
+    }
+
+    /// [`NativeSlot::tick`] for a call from native code, which counts as
+    /// [`NATIVE_CALL_WEIGHT`] entries: native code leaves at each call of a
+    /// chunk without code, and every caller above it with it, so a callee
+    /// of compiled code becomes hot sooner.
+    #[inline]
+    pub(crate) fn tick_from_native(
+        &self,
+        program: &Code<Program>,
+        chunk: usize,
+    ) -> Option<&Arc<dyn NativeCode>> {
+        let left = self.state.load(Ordering::Relaxed);
+        if left > NATIVE_CALL_WEIGHT && left < COMPILED {
+            self.state
+                .store(left - NATIVE_CALL_WEIGHT + 1, Ordering::Relaxed);
+        } else if (2..=NATIVE_CALL_WEIGHT).contains(&left) {
+            self.state.store(1, Ordering::Relaxed);
+        }
+        self.tick(program, chunk)
     }
 
     #[cold]

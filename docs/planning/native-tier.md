@@ -689,6 +689,31 @@ interpreter would do more, so native code leaves before the instruction.
    still 1.09x (spread 2%). `string-building` 1.04x, `defer-errors`
    1.03x, and `shared-append` 1.02x are the tuned workloads still slower.
 
+9. **`tiny-interpreter`, rotated out of the hold-outs.** It stayed 1.09x,
+   so it became a tuned workload and `stack-machine` (syntax trees
+   compiled to instruction lists and run on a stack machine in Slug) the
+   hold-out in its place; that workload's interpreter time was seen once,
+   in the bench run that checked its registration, but no comparison of
+   it was. A profile of 25 runs of the Tiny program found dropping values
+   at 734 samples with the tier on against 198 off: a function with more
+   than six owning slots released every one at each return, exit, and
+   `recur` through the full `Value` drop, `nil`s and numbers included, and
+   the Tiny evaluator is one `match` with hundreds of them, few of which a
+   call writes. `native_release` now reads each slot's tag and drops only
+   a counted one: the long run went from 7.95 s against 7.66 s
+   interpreted to 6.60 s. Also: `TryMatchPooled` (destructuring) and
+   `InterpolatePooled` compile, so all of the Tiny program's hot chunks
+   do, and a call from native code counts as 32 entries toward its
+   callee's threshold, so the callees of compiled code compile sooner.
+
+   PGO A/B of the tuned workloads against the same interpreter build, 9
+   rounds: geomean 0.86x; `fib` 0.57x, Invaders 0.67x, `function-call`
+   0.77x, crawl-ticks 0.81x, `word-frequency` 0.85x, crawl-game,
+   crawl-history, and `http-server` 0.89x, `higher-order` 0.93x,
+   `string-building` 0.94x, crawl-crowd 0.95x, `tiny-interpreter` 1.02x,
+   `shared-append` 1.02x, and `defer-errors` 1.05x. Releasing every owning
+   slot is still the largest native cost in the Tiny evaluator.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.

@@ -2750,7 +2750,10 @@ impl Vm {
         if chunk.arity != count || !chunk.binds_full_positional_calls || chunk.locals < count {
             return None;
         }
-        let code = chunk.native.tick(&closure.program, closure.chunk)?.clone();
+        let code = chunk
+            .native
+            .tick_from_native(&closure.program, closure.chunk)?
+            .clone();
         Some((Value::Closure(closure), code))
     }
 

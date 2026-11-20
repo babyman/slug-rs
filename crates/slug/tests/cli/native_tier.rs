@@ -523,6 +523,28 @@ fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() 
 }
 
 #[test]
+fn compiled_interpolation_and_destructuring_match_the_interpreter() {
+    // Strings built by interpolation of each kind of value, and `val`
+    // destructuring of lists and maps, which matches without branching.
+    let trace = same_with_and_without_native_code(
+        "interpolation",
+        "val describe = fn(n, items) {\n\
+             val [first, ...rest] = items\n\
+             val {name} = {name: \"x\" + n}\n\
+             \"$name: $first then ${len(rest)} of $items, ${n * 1.5}, ${n > 2}\"\n\
+         }\n\
+         val loop = fn(k, total) { if (k == 0) { total } else { recur(k - 1, total + len(describe(k, [k, 2, 3]))) } }\n\
+         val main = fn() { println(loop(300, 0), describe(4, [nil, \"s\"])) }\n",
+    );
+    assert!(trace.matches("native: compiled").count() >= 2, "{trace}");
+    same_with_and_without_native_code(
+        "destructuring-fails",
+        "val first = fn(items) { val [a, b] = items\n a + b }\n\
+         val main = fn() { println(first([1, 2]), first([1])) }\n",
+    );
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

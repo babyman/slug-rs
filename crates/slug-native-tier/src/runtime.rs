@@ -184,6 +184,9 @@ pub(crate) struct MatchSite {
     pub(crate) pattern: MatchPatternId,
     pub(crate) operands: Vec<u32>,
     pub(crate) results: usize,
+    /// A `TryMatchPooled`, which always continues: it pushes the bindings,
+    /// or `nil` for each when the pattern fails, then whether it matched.
+    pub(crate) tries: bool,
 }
 
 /// An instruction [`native_operation`] runs: its operands' slots, and
@@ -769,13 +772,29 @@ pub(crate) extern "C" fn native_match(
             .map(|slot| (*base.add(*slot as usize)).clone())
             .collect();
         let mut bindings = Vec::new();
-        match (*context.vm).native_match(
+        let matched = (*context.vm).native_match(
             &*context.closure,
             site.pattern,
             value,
             &operands,
             &mut bindings,
-        ) {
+        );
+        if site.tries {
+            let Some(matched) = matched else {
+                return 2;
+            };
+            let count = site.results - 1;
+            if matched && bindings.len() != count {
+                return 2;
+            }
+            bindings.resize(count, Value::Nil);
+            for (index, binding) in bindings.into_iter().enumerate() {
+                out.add(index).write(binding);
+            }
+            out.add(count).write(Value::Bool(matched));
+            return MATCHED;
+        }
+        match matched {
             Some(true) if bindings.len() + 1 == site.results => {
                 out.write(value.clone());
                 for (index, binding) in bindings.into_iter().enumerate() {
@@ -831,7 +850,12 @@ pub(crate) extern "C" fn native_release(context: *mut Context, base: *mut Value)
     unsafe {
         let context = &*context;
         for slot in std::slice::from_raw_parts(context.owning, context.owning_count) {
-            drop(std::ptr::replace(base.add(*slot as usize), Value::Nil));
+            let slot = base.add(*slot as usize);
+            // Most slots hold `nil` or a number, which need no drop; the
+            // tag is the slot's first word (see `layout`).
+            if slot.cast::<i64>().read() >= layout::FIRST_COUNTED {
+                drop(std::ptr::replace(slot, Value::Nil));
+            }
         }
     }
 }
