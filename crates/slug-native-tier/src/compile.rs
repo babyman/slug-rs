@@ -108,6 +108,7 @@ pub fn qualify(function: &Function) -> Result<(), String> {
                 | Op::MatchFailure
                 | Op::NotImplemented
                 | Op::Not
+                | Op::BitNot
                 | Op::Negate
                 | Op::List(_)
                 | Op::GetIndex
@@ -292,7 +293,8 @@ struct Lowering<'a> {
     cell_operand: usize,
     owning: Vec<bool>,
     /// The values live out of each block.
-    live_out: Vec<Vec<bool>>,
+    /// Computed when a value first may move.
+    live_out: Option<Vec<Vec<u64>>>,
     exits: Vec<ExitTable>,
     operations: Vec<runtime::Operation>,
     matches: Vec<runtime::MatchSite>,
@@ -402,17 +404,7 @@ impl<'a> Lowering<'a> {
             booleans: vec![None; function.values.len()],
             cell_operand,
             owning,
-            // Only operations move values, so other functions skip it.
-            live_out: if function
-                .blocks
-                .iter()
-                .flat_map(|block| &block.insts)
-                .any(|inst| NativeOperation::of(&inst.op).is_some())
-            {
-                live_out(function)
-            } else {
-                Vec::new()
-            },
+            live_out: None,
             exits: Vec::new(),
             operations: Vec::new(),
             matches: Vec::new(),
@@ -574,6 +566,7 @@ impl<'a> Lowering<'a> {
             Op::Not => self.lower_not(inst),
             Op::List(_) => self.lower_list(inst),
             Op::Negate => self.lower_negate(inst),
+            Op::BitNot => self.lower_bit_not(inst),
             Op::GetIndex
             | Op::GetIndexConstant(_)
             | Op::ReadIndex { .. }
@@ -597,7 +590,7 @@ impl<'a> Lowering<'a> {
                 self.lower_call(inst, Callee::Global(name.get()), *count)?;
             }
             Op::CallPositional(count) => self.lower_call(inst, Callee::Value, *count)?,
-            op => self.lower_operator(inst, op)?,
+            op => self.lower_operator(inst, op, position)?,
         }
         Ok(())
     }
@@ -640,7 +633,12 @@ impl<'a> Lowering<'a> {
 
     /// An arithmetic or comparison instruction, whose left operand may be
     /// a captured local.
-    fn lower_operator(&mut self, inst: &Inst, op: &Op) -> Result<(), String> {
+    fn lower_operator(
+        &mut self,
+        inst: &Inst,
+        op: &Op,
+        position: (usize, usize),
+    ) -> Result<(), String> {
         let operator = binary_operator(op)
             .ok_or_else(|| format!("instruction {} is not compiled yet", inst.ip))?;
         let right = match op {
@@ -670,7 +668,7 @@ impl<'a> Lowering<'a> {
                     runtime::native_get_cell as *const () as usize,
                     &[self.context, slot, out],
                 );
-                self.lower_binary(inst, operator, operand, &right);
+                self.lower_binary(inst, operator, operand, &right, false);
                 let out = self.address(place);
                 self.call(
                     self.runtime.drop,
@@ -678,7 +676,13 @@ impl<'a> Lowering<'a> {
                     &[out],
                 );
             }
-            _ => self.lower_binary(inst, operator, inst.args[0].index(), &right),
+            _ => {
+                // A collection read for the last time is added to or taken
+                // from in place, as the interpreter's own `+` and `-` do.
+                let moves = matches!(operator, BinaryOperator::Add | BinaryOperator::Subtract)
+                    && self.moves(inst.args[0], inst, position);
+                self.lower_binary(inst, operator, inst.args[0].index(), &right, moves);
+            }
         }
         Ok(())
     }
@@ -694,6 +698,7 @@ impl<'a> Lowering<'a> {
         operator: BinaryOperator,
         left: usize,
         right: &Operand,
+        moves_left: bool,
     ) {
         use BinaryOperator as B;
         let result = self.slot(inst.results[0].index());
@@ -956,7 +961,11 @@ impl<'a> Lowering<'a> {
         let result_address = self.address(result);
         let status = self.call(
             self.runtime.binary,
-            runtime::native_binary as *const () as usize,
+            if moves_left {
+                runtime::native_binary_moving as *const () as usize
+            } else {
+                runtime::native_binary as *const () as usize
+            },
             &[
                 self.context,
                 operator_code,
@@ -1041,6 +1050,24 @@ impl<'a> Lowering<'a> {
         self.exit_unless_ok(inst, status);
     }
 
+    /// Whether `inst`, instruction `index` of block `block`, may move
+    /// `value`, its operand: it reads it once, and nothing after it does.
+    fn moves(&mut self, value: ValueId, inst: &Inst, (block, index): (usize, usize)) -> bool {
+        if inst.args.iter().filter(|other| **other == value).count() != 1 {
+            return false;
+        }
+        let function = self.function;
+        let live_out = self.live_out.get_or_insert_with(|| live_out(function));
+        let code = &function.blocks[block];
+        let live = live_out[block][value.index() / 64] & (1 << (value.index() % 64)) != 0;
+        !(live
+            || code.insts[index + 1..]
+                .iter()
+                .flat_map(inst_uses)
+                .any(|other| *other == value)
+            || terminator_uses(&code.terminator).contains(&value))
+    }
+
     /// An instruction the VM's `native_operation` runs on its operands,
     /// moving each it reads for the last time: instruction `index` of
     /// block `block`.
@@ -1054,22 +1081,10 @@ impl<'a> Lowering<'a> {
             .iter()
             .map(|value| u32::try_from(value.index()).expect("slot index fits"))
             .collect();
-        let function = self.function;
-        let code = &function.blocks[block];
-        let used_later = |value: &ValueId| {
-            self.live_out[block][value.index()]
-                || code.insts[index + 1..]
-                    .iter()
-                    .flat_map(inst_uses)
-                    .any(|other| other == value)
-                || terminator_uses(&code.terminator).contains(value)
-        };
         let moves = inst
             .args
             .iter()
-            .map(|value| {
-                inst.args.iter().filter(|other| *other == value).count() == 1 && !used_later(value)
-            })
+            .map(|value| self.moves(*value, inst, (block, index)))
             .collect();
         let site = self.operations.len();
         self.operations.push(runtime::Operation {
@@ -1289,6 +1304,37 @@ impl<'a> Lowering<'a> {
 
         self.builder.switch_to_block(done);
         self.booleans[result_index] = Some(self.builder.block_params(done)[0]);
+    }
+
+    /// `~value`: inline for an integer, and through the interpreter's code
+    /// for anything else (bytes, or an error it reports).
+    fn lower_bit_not(&mut self, inst: &Inst) {
+        let operand = self.slot(inst.args[0].index());
+        let result = self.slot(inst.results[0].index());
+        let tag = self.load_tag(operand);
+        let int_block = self.builder.create_block();
+        let slow = self.builder.create_block();
+        let done = self.builder.create_block();
+        let is_int = self.builder.ins().icmp_imm(IntCC::Equal, tag, layout::INT);
+        self.builder.ins().brif(is_int, int_block, &[], slow, &[]);
+
+        self.builder.switch_to_block(int_block);
+        let integer = self.load_payload(operand, types::I64);
+        let inverted = self.builder.ins().bnot(integer);
+        self.store_int(result, inverted);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(slow);
+        let (value_address, out) = (self.address(operand), self.address(result));
+        let status = self.call(
+            self.runtime.unary,
+            runtime::native_bit_not as *const () as usize,
+            &[self.context, value_address, out],
+        )[0];
+        self.exit_unless_ok(inst, status);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(done);
     }
 
     /// `-value`: inline for an integer other than the smallest and for a
@@ -1894,26 +1940,24 @@ fn inst_uses(inst: &Inst) -> impl Iterator<Item = &ValueId> {
     inst.args.iter().chain(&inst.snapshot.stack)
 }
 
-/// The values live out of each block: used in a block it can reach. Only
-/// a `recur`, which starts afresh, goes back, so the blocks in reverse
-/// order see every successor first.
-fn live_out(function: &Function) -> Vec<Vec<bool>> {
-    let count = function.values.len();
-    let mut live_in: Vec<Vec<bool>> = vec![Vec::new(); function.blocks.len()];
+/// The values live out of each block, as bit sets: used in a block it
+/// can reach. Only a `recur`, which starts afresh, goes back, so the
+/// blocks in reverse order see every successor first.
+fn live_out(function: &Function) -> Vec<Vec<u64>> {
+    let words = function.values.len().div_ceil(64);
+    let mut live_in: Vec<Vec<u64>> = vec![Vec::new(); function.blocks.len()];
     let mut live_out = vec![Vec::new(); function.blocks.len()];
     for (index, block) in function.blocks.iter().enumerate().rev() {
-        let mut out = vec![false; count];
+        let mut out = vec![0u64; words];
         for edge in block.terminator.edges() {
-            for (value, live) in live_in[edge.block.index()].iter().enumerate() {
-                out[value] |= *live;
+            for (word, live) in out.iter_mut().zip(&live_in[edge.block.index()]) {
+                *word |= live;
             }
         }
         let mut entering = out.clone();
-        for value in block.insts.iter().flat_map(inst_uses) {
-            entering[value.index()] = true;
-        }
-        for value in terminator_uses(&block.terminator) {
-            entering[value.index()] = true;
+        let terminator = terminator_uses(&block.terminator);
+        for value in block.insts.iter().flat_map(inst_uses).chain(&terminator) {
+            entering[value.index() / 64] |= 1 << (value.index() % 64);
         }
         live_in[index] = entering;
         live_out[index] = out;
@@ -1953,6 +1997,8 @@ fn owning_values(function: &Function) -> Vec<bool> {
                     | Op::UpdateCapture { .. }
                     | Op::Map(_)
                     | Op::MatchCasePooled { .. }
+                    // `~` on bytes makes bytes.
+                    | Op::BitNot
                     | Op::List(_)
                     | Op::GetIndex
                     | Op::GetIndexConstant(_)

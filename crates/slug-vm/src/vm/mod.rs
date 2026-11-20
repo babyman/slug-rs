@@ -425,6 +425,14 @@ type ViewRef<'a> = Option<&'a fork::TaskView>;
 #[cfg(not(feature = "concurrency"))]
 type ViewRef<'a> = Option<&'a ()>;
 
+/// `int(value)` of a float: toward zero, when the integer fits.
+pub(super) fn float_to_int(value: f64) -> Option<i64> {
+    #[allow(clippy::cast_possible_truncation)] // In range, as checked.
+    (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64)
+        .contains(&value)
+        .then_some(value as i64)
+}
+
 /// A module binding as the task whose view is `view` sees it, for a
 /// comparison: a reader borrowing only the view, so it can be passed beside
 /// the VM's stack.
@@ -2584,10 +2592,7 @@ impl Vm {
         let Value::Closure(caller) = caller else {
             return None;
         };
-        let slot = caller.global_slots.as_ref()?.get(name.index())?.get();
-        if slot == crate::value::UNRESOLVED_GLOBAL {
-            return None;
-        }
+        let slot = native::native_slot(caller, name)?;
         self.native_value_callee(caller.globals.borrow().value(slot))
     }
 
@@ -2662,6 +2667,33 @@ impl Vm {
         let left = left.resolve_in(self).ok()?;
         let right = right.resolve_in(self).ok()?;
         self.binary_values(operator, left, right).ok()
+    }
+
+    /// [`Vm::native_binary`] of a `left` its caller reads for the last
+    /// time: an addition or subtraction that cannot fail takes it, leaving
+    /// `nil`, so that a collection nothing else holds is updated in place,
+    /// as the interpreter's own does. Anything else leaves it.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binary_moving(
+        &self,
+        operator: BinaryOperator,
+        left: &mut Value,
+        right: &Value,
+    ) -> Option<Value> {
+        let update = match operator {
+            BinaryOperator::Add => Some(crate::GlobalUpdate::Add),
+            BinaryOperator::Subtract => Some(crate::GlobalUpdate::Subtract),
+            _ => None,
+        };
+        if let Some(update) = update
+            && updates::update_cannot_fail(update, left, right)
+        {
+            let left = core::mem::replace(left, Value::Nil);
+            return self.binary_values(operator, left, right.clone()).ok();
+        }
+        self.native_binary(operator, left, right)
     }
 
     #[cold]
@@ -5398,9 +5430,8 @@ impl Vm {
                 match arguments[0] {
                     Value::Int(value) => Ok(Value::Int(value)),
                     Value::Float(value) => {
-                        if (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64).contains(&value) {
-                            #[allow(clippy::cast_possible_truncation)]
-                            return Ok(Value::Int(value as i64));
+                        if let Some(value) = float_to_int(value) {
+                            return Ok(Value::Int(value));
                         }
                         Err(self.error(
                             RuntimeErrorKind::Type,

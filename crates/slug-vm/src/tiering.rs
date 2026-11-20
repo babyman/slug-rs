@@ -114,7 +114,7 @@ pub enum NativeOutcome {
 /// report as its own call's error.
 #[doc(hidden)]
 pub struct NativeFailure {
-    pub(crate) function: crate::NativeFunction,
+    pub(crate) callee: Value,
     pub(crate) invocation: crate::native::NativeInvocation,
 }
 

@@ -22,7 +22,7 @@ use crate::{
 use super::{
     Vm,
     operations::{
-        construct_struct, copy_value, list_append, list_prepend, matches_pattern, negate,
+        bit_not, construct_struct, copy_value, list_append, list_prepend, matches_pattern, negate,
         slice_value,
     },
     read_binding,
@@ -39,6 +39,43 @@ pub enum NativeReadSource<'a> {
     Capture(usize),
     /// A module-level name, as the running closure reads it.
     Global(GlobalNameId),
+}
+
+/// The function a builtin or typed native `callee` runs, and the typed
+/// native's resource signature.
+fn native_callable(
+    callee: &Value,
+) -> Option<(
+    &crate::NativeFunction,
+    Option<&crate::ForeignResourceSignature>,
+)> {
+    match callee {
+        Value::Native(function) => Some((function, None)),
+        Value::DeclaredNative {
+            function,
+            declaration,
+        } => Some((function, Some(&declaration.resources))),
+        _ => None,
+    }
+}
+
+/// The slot of module-level name `name` in `closure`'s module: the one
+/// its slot cache holds, or else the one its name has, which the cache
+/// then holds, as the interpreter's read by name caches it. A write by
+/// name does not, so code that only writes a variable would otherwise
+/// never find its slot.
+pub(super) fn native_slot(closure: &crate::value::Closure, name: GlobalNameId) -> Option<u32> {
+    let cached = closure.global_slots.as_ref()?.get(name.index())?;
+    let slot = cached.get();
+    if slot != UNRESOLVED_GLOBAL {
+        return Some(slot);
+    }
+    let slot = closure
+        .globals
+        .borrow()
+        .slot(closure.program.global_name(name)?)?;
+    cached.set(slot);
+    Some(slot)
 }
 
 /// An instruction [`Vm::native_operation`] runs: the part of its [`Op`]
@@ -123,10 +160,7 @@ impl Vm {
         let Value::Closure(closure) = caller else {
             return None;
         };
-        let slot = closure.global_slots.as_ref()?.get(name.index())?.get();
-        if slot == UNRESOLVED_GLOBAL {
-            return None;
-        }
+        let slot = native_slot(closure, name)?;
         let globals = closure.globals.borrow();
         match globals.value(slot) {
             Value::Binding { cell, name } => {
@@ -164,17 +198,9 @@ impl Vm {
         let Value::Closure(closure) = caller else {
             return false;
         };
-        let Some(slot) = closure
-            .global_slots
-            .as_ref()
-            .and_then(|slots| slots.get(name.index()))
-            .map(crate::sync::Hint::get)
-        else {
+        let Some(slot) = native_slot(closure, name) else {
             return false;
         };
-        if slot == UNRESOLVED_GLOBAL {
-            return false;
-        }
         let globals = closure.globals.borrow();
         globals.value(slot).replace_binding(value.clone())
     }
@@ -243,6 +269,13 @@ impl Vm {
     #[must_use]
     pub fn native_negate(&self, value: &Value) -> Option<Value> {
         negate(value.resolve_in(self).ok()?).ok()
+    }
+
+    /// `~value`, as `BitNot` computes it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_bit_not(&self, value: &Value) -> Option<Value> {
+        bit_not(&value.resolve_in(self).ok()?).ok()
     }
 
     /// `not value`, as `Not` computes it.
@@ -631,65 +664,92 @@ impl Vm {
         let Value::Closure(closure) = caller else {
             return None;
         };
-        let slot = closure.global_slots.as_ref()?.get(name.index())?.get();
-        if slot == UNRESOLVED_GLOBAL {
-            return None;
-        }
+        let slot = native_slot(closure, name)?;
         match closure.globals.borrow().value(slot) {
             Value::Binding { cell, .. } => Some(cell.clone()),
             _ => None,
         }
     }
 
-    /// Calls `callee` with `arguments` when it is a builtin native code
-    /// may call itself: its result, or the failure the interpreter is to
-    /// report with [`Vm::native_raise`], once native code has left with
-    /// the caller's frame past the call. `None` when the interpreter must
-    /// make the call: `callee` is not a builtin, or a fork may not call it.
+    /// Calls `callee` with `arguments` when it is a builtin or a typed
+    /// native, which native code may call itself: its result, or the
+    /// failure the interpreter is to report with [`Vm::native_raise`], once
+    /// native code has left with the caller's frame past the call. `None`
+    /// when the interpreter must make the call, before anything ran:
+    /// `callee` is neither, a fork may not call it, or the arguments are
+    /// not the resources its declaration names, which the interpreter
+    /// reports.
     #[doc(hidden)]
     pub fn native_invoke(
         &mut self,
         callee: &Value,
         arguments: &[Value],
     ) -> Option<Result<Value, NativeFailure>> {
-        let Value::Native(function) = callee else {
-            return None;
-        };
+        // `int` has no effects, so one the interpreter must report it
+        // makes again.
+        if let Value::Builtin(crate::value::Builtin::Int) = callee {
+            return match arguments {
+                [Value::Int(value)] => Some(Ok(Value::Int(*value))),
+                [Value::Float(value)] => {
+                    super::float_to_int(*value).map(|value| Ok(Value::Int(value)))
+                }
+                _ => None,
+            };
+        }
+        let (function, signature) = native_callable(callee)?;
         #[cfg(feature = "concurrency")]
         if self.view.is_some() && self.check_fork_native(function).is_err() {
             return None;
         }
+        if let Some(signature) = signature
+            && self
+                .validate_foreign_resource_arguments(function, signature, arguments, None)
+                .is_err()
+        {
+            return None;
+        }
+        let failure = |invocation| NativeFailure {
+            callee: callee.clone(),
+            invocation,
+        };
         Some(match self.start_native(function, arguments) {
-            NativeInvocation::Result(value, resources) if !value.contains_non_finite_number() => {
+            // A result the interpreter would accept: anything else fails
+            // the same way when it is reported.
+            NativeInvocation::Result(value, resources)
+                if !value.contains_non_finite_number()
+                    && signature.is_none_or(|signature| {
+                        self.validate_foreign_resource_result(function, signature, &value, None)
+                            .is_ok()
+                    }) =>
+            {
                 self.settle_native(
                     function,
                     NativeInvocation::Result(value, resources),
-                    None,
+                    signature,
                     None,
                 )
-                .map_err(|_| NativeFailure {
-                    function: function.clone(),
-                    invocation: NativeInvocation::ContractViolation(alloc::format!(
+                .map_err(|_| {
+                    failure(NativeInvocation::ContractViolation(alloc::format!(
                         "native `{}` could not be settled",
                         function.qualified_name()
-                    )),
+                    )))
                 })
             }
-            invocation => Err(NativeFailure {
-                function: function.clone(),
-                invocation,
-            }),
+            invocation => Err(failure(invocation)),
         })
     }
 
     /// The error a builtin's failed call reports, in the frame on top,
     /// which native code left past the call.
     pub(super) fn native_raise(&mut self, failure: NativeFailure) -> crate::RuntimeError {
-        let NativeFailure {
-            function,
-            invocation,
-        } = failure;
-        match self.settle_native(&function, invocation, None, None) {
+        let NativeFailure { callee, invocation } = failure;
+        let settled = match native_callable(&callee) {
+            Some((function, signature)) => {
+                self.settle_native(function, invocation, signature, None)
+            }
+            None => Ok(Value::Nil),
+        };
+        match settled {
             Err(error) => error,
             Ok(_) => self.error_at(
                 crate::RuntimeErrorKind::InvalidBytecode,

@@ -633,6 +633,29 @@ interpreter would do more, so native code leaves before the instruction.
    `JumpIfProvided` always jumps. A block that ends in `throw`, a match
    failure, or `not implemented` leaves to the interpreter before it,
    which raises it. Map literals are one more `native_operation`.
+7. **Fewer exits** (batch F), found by counting exits by instruction.
+   A module variable a function only writes was never in its slot cache
+   (the interpreter writes by name and caches only reads), so native code
+   declined every such write: now native code resolves a name's slot as
+   the interpreter's read does, and caches it. `~` compiles. Typed
+   natives (`DeclaredNative`) are called directly, their resources
+   checked as the interpreter checks them, an argument check failing
+   before the call and a result check after it, as a failure; and so is
+   `int`, which has no effects, so one that fails leaves before the call.
+   A `+` or `-` whose left operand is read for the last time hands it to
+   the VM when the operation cannot fail, so a map or list nothing else
+   holds is updated in place: map literals compiling in batch E had made
+   `word-frequency` 4.63x slower, `counts + {[key]: n}` copying the map
+   each time. Liveness is now bit sets, computed when a value first may
+   move.
+
+   Exits fell from 94,097 to 15,447 a run in Invaders and from 51,538 to
+   5,478 in `http-server`; Invaders compiles all 67 hot chunks. Tier on
+   against off, one release build, all 25 benchmarks, 7 interleaved
+   rounds: Invaders 0.57x, `function-call` 0.49x, `word-frequency` and
+   `fannkuch-redux` 0.52x, `fib` 0.53x, `crawl-ticks` 0.79x,
+   `http-server` 0.81x, `crawl-history` 0.89x, `crawl-pages` 0.93x,
+   crawl-crowd 0.94x, every other 0.98–1.02x.
 
 ### Gate
 

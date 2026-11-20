@@ -483,6 +483,46 @@ fn compiled_matches_defaults_throws_and_maps_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() {
+    // `int` of integers and floats, `~`, a module variable only ever
+    // written by the function that compiles, and a map added to in a loop
+    // (in place, its last read moving it).
+    let trace = same_with_and_without_native_code(
+        "updates",
+        "var last = 0\n\
+         val note = fn(n) { last = n }\n\
+         val word = fn(i) { \"w\" + (i * 7) % 13 }\n\
+         val count = fn(n, counts) {\n\
+             if (n == 0) { counts } else {\n\
+                 val key = word(n)\n\
+                 val seen = counts[key]\n\
+                 note(n)\n\
+                 recur(n - 1, counts + {[key]: if (seen == nil) { int(1.9) } else { seen + int(n * 0 + 1) }})\n\
+             }\n\
+         }\n\
+         val flip = fn(n) { ~n }\n\
+         val main = fn() {\n\
+             val counts = count(500, {})\n\
+             println(counts, last, flip(5), flip(-1))\n\
+         }\n",
+    );
+    assert!(trace.matches("native: compiled").count() >= 5, "{trace}");
+    for (kind, body) in [
+        ("int-of-a-string", "int(\"7\")"),
+        ("int-out-of-range", "int(1e300)"),
+        ("bit-not-of-a-float", "~1.5"),
+    ] {
+        same_with_and_without_native_code(
+            kind,
+            &format!(
+                "val apply = fn(f) {{ f() }}\n\
+                 val main = fn() {{ println(apply(fn() {{ {body} }})) }}\n"
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_slow_path_value_that_owns_memory_is_counted_and_dropped() {
     // Strings and lists go through the interpreter's own `+`; the loop
     // carries them through `recur` and a join.

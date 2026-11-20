@@ -387,7 +387,10 @@ pub(crate) extern "C" fn native_call(
         let Some(target) = target else {
             return declined(arguments_slice);
         };
-        if matches!(target, Value::Native(_)) {
+        if matches!(
+            target,
+            Value::Native(_) | Value::DeclaredNative { .. } | Value::Builtin(_)
+        ) {
             let invoked = (*context.vm).native_invoke(&target, arguments_slice);
             std::ptr::drop_in_place(arguments_slice);
             return match invoked {
@@ -457,6 +460,27 @@ pub(crate) extern "C" fn native_binary(
             }
             None => 1,
         }
+    }
+}
+
+/// [`native_binary`] whose left operand, which `left` holds, the
+/// instruction reads for the last time: the VM takes it, and adds to or
+/// takes from a collection nothing else holds in place.
+pub(crate) extern "C" fn native_binary_moving(
+    context: *mut Context,
+    operator: u32,
+    left: *mut Value,
+    right: *const Value,
+    out: *mut Value,
+) -> u32 {
+    let Some(operator) = BINARY_OPERATORS.get(operator as usize) else {
+        return 1;
+    };
+    // SAFETY: generated code passes its own context, its own initialized
+    // slot for `left`, an initialized `right`, and a free slot.
+    unsafe {
+        let vm = &*(*context).vm;
+        produce(out, vm.native_binary_moving(*operator, &mut *left, &*right))
     }
 }
 
@@ -568,6 +592,17 @@ pub(crate) extern "C" fn native_negate(
     // SAFETY: generated code passes its own context, an initialized value,
     // and a free slot.
     unsafe { produce(out, (*(*context).vm).native_negate(&*value)) }
+}
+
+/// `~value`, for a value that is not an integer.
+pub(crate) extern "C" fn native_bit_not(
+    context: *mut Context,
+    value: *const Value,
+    out: *mut Value,
+) -> u32 {
+    // SAFETY: generated code passes its own context, an initialized value,
+    // and a free slot.
+    unsafe { produce(out, (*(*context).vm).native_bit_not(&*value)) }
 }
 
 /// `not value`, for a value that is not on the fast path.
