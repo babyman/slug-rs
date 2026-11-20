@@ -736,6 +736,15 @@ interpreter would do more, so native code leaves before the instruction.
     nodes went from 7.0 s with the tier on against 1.4 s off to 1.48 s
     against 1.52 s.
 
+    PGO A/B against the same interpreter build, 9 rounds: geomean 0.88x
+    tuned, 0.83x hold-out. Hold-outs: `stack-machine` 0.74x, `text-wrap`
+    0.77x, `queens-knapsack` 0.83x, crawl-pages 0.91x,
+    `expression-evaluator` 0.92x; none slower. Tuned: `graph-search` 0.93x
+    (from 1.28x), `fib` 0.56x, Invaders 0.66x, `function-call` 0.74x,
+    crawl-ticks 0.80x, `tiny-interpreter` 0.99x; `defer-errors` 1.03x,
+    `shared-append` 1.02x, and spectral-norm 1.01x and 1.02x (inside its
+    spread) are the tuned workloads still slower.
+
 ### Gate
 
 - `fib`, `function-call`, n-body, and spectral-norm at least 4x faster.
