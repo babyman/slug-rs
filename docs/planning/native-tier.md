@@ -878,6 +878,41 @@ with the hold-outs; a step that does not pay is reverted.
    now nearly all of `fib`'s profile, so the next gains for calls are a
    smaller context and fewer guards per call, and for the kernels, reads
    guarded where they happen (step 4 proper).
+4. *Cheaper calls (2026-11-20).* `fib(38)` makes about 126 million calls
+   in a second, some 30 cycles each, so a call's cost is its chain of
+   dependent loads and stores, not its instruction count: a value passes
+   through memory several times on its way (caller's slot, the argument
+   area, the callee's slot; the callee's result, the context, the
+   caller's slot), each a store-to-load forwarding delay. Dropping two
+   guards that the core runs alongside the chain (the record's null test
+   and its table pointer, a stamp standing for its table) did nothing,
+   and was reverted. What paid, release `fib(38)`, 7 interleaved rounds:
+   - A directly called function writes its value into the caller's
+     result slot, the context's `ret` now a pointer: 1.084 s to 0.943 s.
+   - Each word of a `Value` in an alias region of its own: Cranelift
+     forwards a store to a load only from the last store in the region,
+     so a tag load never saw a tag store behind a payload's. 0.94 s to
+     0.90 s.
+   - Integer `%` inline (`srem`; a divisor of 0 or -1 and floats go to the
+     interpreter's operation): a 3M-step LCG loop, 0.32 s interpreted, 0.03
+     s native.
+
+   PGO A/B of the three against a fresh build of `52b921b9`: tuned 0.99x,
+   hold-out 1.00x, `fib` 0.93x. Two PGO builds of one source measure
+   1.00x against each other, so the A/Bs above are not build noise.
+
+   Tried and reverted: each slot's words as Cranelift variables, defined
+   by every store, so a load takes the stored value even across joins,
+   with slots the runtime may have written (those whose address a call
+   was given, and the results of runtime operations) reloaded after it,
+   and the values still read reloaded after every call so no variable
+   lives across one. An integer `recur` loop gained 30% (0.214 s to
+   0.150 s) and `fib` 3%, but the real programs lost 3-4% and the PGO
+   A/B came out tuned 1.01x, hold-out 1.05x, with up to 13 MB more
+   memory: the code grows with a reload per live value after each call,
+   which Cranelift does not drop when unused. Registers for values belong
+   with specialization, where a value's type is known and it need not
+   also live in the frame.
 
 ### Gate
 
