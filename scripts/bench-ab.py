@@ -15,6 +15,12 @@ Both sides are profile-guided builds, each trained by scripts/pgo-build.py
 on this checkout's tuned workloads; --no-pgo compares ordinary release
 builds instead.
 
+The size of the environment moves the initial stack, and with it every
+frame's alignment, which can shift one workload's time by several percent
+either way. Each round therefore runs both sides with the same padding
+variable, of a size that changes from round to round, so a workload's
+median is taken across stack alignments rather than at one.
+
 Timings are host-specific evidence for one decision, never a CI threshold.
 """
 
@@ -35,6 +41,14 @@ CACHE = os.path.join(ROOT, "target/bench-ab")
 PGO_BUILD = os.path.join(ROOT, "scripts/pgo-build.py")
 # `http-server` and the Crawl workloads import clutches from this checkout.
 ENVIRONMENT = {**os.environ, "SLUG_HOME": os.environ.get("SLUG_HOME", ROOT)}
+# Environment padding per round, in bytes. An odd count of sizes, so that
+# over the rounds each size is paired with either side running first.
+PADDING = [0, 16, 32, 48, 64, 80, 96]
+
+
+def padded(size):
+    """The environment with `size` bytes of padding."""
+    return {**ENVIRONMENT, "SLUG_BENCH_PAD": "x" * size}
 
 
 def git(*args):
@@ -128,14 +142,14 @@ def workloads(only):
     return selected
 
 
-def run_once(binary, source):
+def run_once(binary, source, environment=ENVIRONMENT):
     """Run one fresh process; return (wall-clock seconds, stdout)."""
     started = time.perf_counter()
     process = subprocess.Popen(
         [binary, source],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=ENVIRONMENT,
+        env=environment,
     )
     stdout, stderr = process.communicate()
     elapsed = time.perf_counter() - started
@@ -220,9 +234,12 @@ def main():
         # Alternate which side goes first so neither always runs on a
         # cooler or warmer machine.
         order = sides if round_index % 2 == 0 else sides[::-1]
+        environment = padded(PADDING[round_index % len(PADDING)])
         for name, _ in selected:
             for label, binary in order:
-                times[(label, name)].append(run_once(binary, sources[name])[0])
+                times[(label, name)].append(
+                    run_once(binary, sources[name], environment)[0]
+                )
 
     (base_label, base_binary), (candidate_label, candidate_binary) = sides
     rows = []
@@ -259,6 +276,8 @@ def main():
     print(f"base:      {base_label}")
     print(f"candidate: {candidate_label}")
     print(f"{options.rounds} interleaved rounds; ratio = candidate / base, below 1.00x is faster")
+    sizes = min(options.rounds, len(PADDING))
+    print(f"environment padded to {sizes} sizes across rounds, for stack alignment")
     print("spread = interquartile range / median; treat ratios inside it as noise\n")
     print(
         f"{'workload':<22}{'base ms':>10}{'cand ms':>10}{'ratio':>8}"

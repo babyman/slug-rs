@@ -978,13 +978,18 @@ frame. PGO A/B against `919339bd`, 9 rounds: `defer-errors` 0.91x,
 tuned 1.01x, hold-out 1.01x, the 1.05x kernels 1.00x on a 21-round
 rerun.
 
-Not explained yet: `bench-ab.py --bin` on the same two binaries measured
-`defer-errors` 1.00–1.01x four times, though every other timing of them
-gives 0.91–0.92x, and with `SLUG_NATIVE=all` the script gives 0.85x.
-Under the script, the background compile apparently installs the
-deferred body late in a 35 ms run; tracing the tier makes it fast again.
-The background compiler's latency on short programs is worth its own
-look.
+`bench-ab.py --bin` on the same two binaries measured `defer-errors`
+1.00–1.01x four times, though other timings of them gave 0.91–0.92x. It
+was not the background compiler: a timeline of each run shows the
+deferred body installed within about 1 ms of becoming hot, 4 ms into a
+40 ms run. It was the size of the environment, which moves the initial
+stack and so every frame's alignment. Padding the environment by 0 to
+128 bytes in steps of 8, 12 interleaved runs each: the candidate is
+0.92–0.94x at most sizes, 1.01–1.02x at 16–24 bytes (where the script's
+environment fell), and 0.85x at 32–40 bytes, where the base slows to
+38 ms instead. A single A/B measures every workload at one stack
+alignment, so a workload's ratio can be off by several percent either
+way; the geomeans average it out across workloads.
 
 `shared-append` is 1.005x at 30,000 steps, inside its spread: its time
 is the runtime copying lists, which both tiers share.
