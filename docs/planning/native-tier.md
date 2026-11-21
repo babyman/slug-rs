@@ -853,6 +853,31 @@ with the hold-outs; a step that does not pay is reverted.
    five seconds and closes both on the way out (0 in 32). The 200-client
    test retried a refused connect for about a second, and now for up to
    20 (10 of 10 under the same load).
+3. *Tried, reverted.* Type facts as planned are unsound: a slot can hold
+   a module binding, which the VM's operations resolve before computing,
+   so `n < 2` succeeding says nothing of `n`'s tag. Facts hold only where
+   a slot is written: number constants, comparisons, and arithmetic on
+   operands already known. That leaves almost nothing without a check, so
+   the step was folded into a first piece of step 4 without
+   deoptimization: each function whose parameters an operator reads was
+   lowered twice, the entry (and each `recur`) checking that those
+   parameters hold an `Int` and taking a copy that knows it (no tag tests
+   on them or on integer results, no binding checks on such arguments,
+   copies instead of clones on edges), or else the general code.
+   `fib(38)` did not move (1.05 s both ways): with direct calls, its time
+   is the call itself, the callee's context built field by field, the
+   guards, eight saved registers and a 432-byte frame, not tag tests. An
+   integer `recur` loop gained 7% (0.21 s to 0.195 s); one whose
+   accumulator becomes a float lost 3%, failing the entry check every
+   iteration. The PGO A/B against p10: tuned 1.02x, hold-out 1.01x,
+   n-body 1.07x, `queens-knapsack` 1.05x, more memory everywhere from
+   the doubled code. The patch is kept outside the repository.
+
+   Found on the way: integer `%` has no inline path, so a loop using it
+   calls the runtime each time; and native code's own instructions are
+   now nearly all of `fib`'s profile, so the next gains for calls are a
+   smaller context and fewer guards per call, and for the kernels, reads
+   guarded where they happen (step 4 proper).
 
 ### Gate
 
