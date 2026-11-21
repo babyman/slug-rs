@@ -35,8 +35,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use cranelift_codegen::{
     Context,
     ir::{
-        AbiParam, Block as CodeBlock, InstBuilder, MemFlags, Signature, StackSlot, StackSlotData,
-        StackSlotKind, Value as CodeValue,
+        AbiParam, AliasRegion, Block as CodeBlock, InstBuilder, MemFlags, Signature, StackSlot,
+        StackSlotData, StackSlotKind, Value as CodeValue,
         condcodes::{FloatCC, IntCC},
         types,
     },
@@ -1658,7 +1658,7 @@ impl<'a> Lowering<'a> {
             let tag = self
                 .builder
                 .ins()
-                .load(types::I64, flags, arguments, offset);
+                .load(types::I64, word_flags(0), arguments, offset);
             let bound = self.builder.ins().icmp_imm(IntCC::Equal, tag, binding);
             check(self, bound);
         }
@@ -2096,14 +2096,14 @@ impl<'a> Lowering<'a> {
         let (address, offset) = self.locate(place, within);
         self.builder
             .ins()
-            .load(kind, MemFlags::trusted(), address, offset)
+            .load(kind, word_flags(within), address, offset)
     }
 
     fn store(&mut self, value: CodeValue, place: Place, within: i32) {
         let (address, offset) = self.locate(place, within);
         self.builder
             .ins()
-            .store(MemFlags::trusted(), value, address, offset);
+            .store(word_flags(within), value, address, offset);
     }
 
     /// The number in `place` as a float: its payload when it is a float,
@@ -2218,6 +2218,21 @@ impl<'a> Lowering<'a> {
 enum Place {
     Slot(usize),
     At(CodeValue),
+}
+
+/// The flags of an access to byte `within` of a `Value`. Each of its three
+/// words is a region of its own, which Cranelift knows no access to another
+/// region touches: so a load of a slot's tag sees the last store of a tag,
+/// not of a payload, and takes the stored value when that store was to the
+/// same slot. Every access to a `Value`'s words goes through here; other
+/// memory (contexts, records) keeps the default region.
+fn word_flags(within: i32) -> MemFlags {
+    let region = match within {
+        0 => AliasRegion::Heap,
+        8..16 => AliasRegion::Table,
+        _ => AliasRegion::Vmctx,
+    };
+    MemFlags::trusted().with_alias_region(Some(region))
 }
 
 /// The offset of byte `within` of slot `index` of the native frame.
