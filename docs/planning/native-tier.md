@@ -225,14 +225,17 @@ a phase that does not pay stops the plan.
   native tier in its own crate](../decisions/2026-11-18-desktop-native-tier-crate.md),
   which also places the compiler's input in an IR lifted from verified
   bytecode.*
-- [ ] **Phase 1: baseline tier** for straight-line arithmetic, locals,
+- [x] **Phase 1: baseline tier** for straight-line arithmetic, locals,
   branches, `recur`, and calls to module functions; everything else stays
   interpreted. Measure `fib`, `function-call`, n-body, spectral-norm, and
-  `invaders-game`. *Planned: see "Phase 1 plan" below.*
-- [ ] **Phase 2: the rest of the instruction set** through runtime helpers:
+  `invaders-game`. *Done: see "Phase 1 plan" below.*
+- [x] **Phase 2: the rest of the instruction set** through runtime helpers:
   index reads, collection construction, closures and captures, `match`,
-  native calls. Measure the Crawl workloads and `http-server`.
-- [ ] **Phase 3: type specialization with deoptimization.**
+  native calls. Measure the Crawl workloads and `http-server`. *Done:
+  every hold-out faster; see "Phase 2" below.*
+- [x] **Phase 3: type specialization with deoptimization.** *Closed
+  without either: direct calls and cheaper returns met the gate, and
+  specialization did not pay; see "Phase 3 result" below.*
 - [ ] **Phase 4:** cleanup (`defer`/`onerror`), tasks and forks in native
   frames, compiling off the VM thread.
 
@@ -922,13 +925,66 @@ with the hold-outs; a step that does not pay is reverted.
   outside the suite, whose workloads stay as they are.
 - Every hold-out within noise or faster, and the tuned geomean no worse.
 
+### Phase 3 result (2026-11-20)
+
+The gate is met. On compute time, at inputs large enough that startup
+does not count (release builds; the 20x inputs the gate names still run
+under 60 ms interpreted, too short to time):
+
+| Kernel | Interpreted | Native | Speedup |
+|---|---:|---:|---:|
+| `fib(38)` | 8.86 s | 0.90 s | 9.8x |
+| `function-call`, 30M calls | 2.51 s | 0.21 s | 12x |
+| n-body, 20M steps | 1.18 s | 0.11 s | 10.7x |
+| spectral-norm, 50,000 rows | 0.64 s | 0.06 s | 10.7x |
+
+PGO A/B of the tier against the interpreter at `0c64c9ee`, nine
+interleaved rounds: tuned 0.87x, hold-out 0.84x. Hold-outs: `stack-machine`
+0.74x, `text-wrap` 0.78x, `queens-knapsack` 0.88x, `expression-evaluator`
+0.91x, `crawl-pages` 0.92x. Of the real programs, `invaders-game` 0.71x,
+`crawl-ticks` 0.83x, `http-server` 0.87x, `crawl-history` 0.89x,
+`crawl-game` 0.91x, `crawl-crowd` 0.93x. Still slower: `defer-errors`
+1.06x (its `defer` blocks stay interpreted, and each entry pays for the
+exit) and `shared-append` 1.02x. Peak RSS is 2.5 to 14 MB higher, the
+compiler and its code.
+
+What paid was calling: direct calls between compiled functions, a single
+inline test of the owning slots on return, results written into the
+caller's slot, and an alias region per word of a `Value`. Type facts
+without a check turned out unsound (a slot can hold a module binding),
+and an integer version of each function, the check made once at entry,
+did not pay (1.02x), so deoptimization was never needed. The kernels'
+suite ratios stay near 1.00x because their work is 1 to 2 ms past about
+6 ms of startup; their speed shows only at scale.
+
+Where the real programs' native time goes is runtime work (map and index
+reads, clones and drops, binding resolution; see "Gate 0"), which type
+guards would not remove; it would serve both tiers.
+
+### Before merging
+
+- **CI.** The decision record has the conformance corpus and the clutch
+  suites run under both tiers in CI, including the mode that compiles
+  every chunk at once. `make check` does (`test-native-tier`,
+  `test-native-all`, and the differential), but the workflows do not:
+  their `test-native` is the native ABI suite.
+- **The default build.** Whether `native` joins the `slug` binary's
+  default features, deferred by the decision record to Phase 1's
+  measurements, is still open: 2.5 MB and about 55 crates, against the
+  speedups above.
+- **Known gaps.** `defer`/`onerror` blocks, tasks and forks in native
+  frames, and compiling off the VM thread are Phase 4. The fork
+  conformance test `cancel-releases-waits` fails under load on `master`
+  too (25 of 72 runs there, 33 of 72 here), so it predates this branch.
+
 ## Risks
 
 - **Two engines to keep in agreement.** Every semantic change lands twice.
   The conformance corpus must run under both tiers in CI, with a mode that
   compiles every function at once.
-- **Deoptimization correctness** is the classic source of JIT bugs; phase 3
-  is gated on a differential test mode that deoptimizes at every guard.
+- **Deoptimization correctness** is the classic source of JIT bugs; any
+  phase that adds deoptimization is gated on a differential test mode that
+  deoptimizes at every guard. Phase 3 closed without it.
 - **Executable memory on macOS** needs `MAP_JIT` and per-thread write
   protection, which `cranelift-jit` handles; forks on other threads share
   compiled code read-only.
