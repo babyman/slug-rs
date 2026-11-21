@@ -268,6 +268,9 @@ pub struct CompiledChunk {
     /// key its own constant, so this is in effect one hint per lookup site;
     /// sites that share a constant still look up correctly.
     pub(crate) index_hints: alloc::boxed::Box<[crate::sync::Hint]>,
+    /// Entries left before the native tier hears this chunk is hot.
+    #[cfg(feature = "native-hooks")]
+    pub(crate) native: crate::tiering::NativeSlot,
 }
 
 /// One unused hint per constant.
@@ -276,6 +279,14 @@ pub(crate) fn index_hints(constants: usize) -> alloc::boxed::Box<[crate::sync::H
 }
 
 impl CompiledChunk {
+    /// The chunk's function name, for the native tier's reports.
+    #[cfg(feature = "native-hooks")]
+    #[must_use]
+    #[doc(hidden)]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     #[allow(clippy::too_many_arguments)] // One per field the artifact records.
     pub(crate) fn from_cslug(
         name: String,
@@ -296,6 +307,8 @@ impl CompiledChunk {
             callable_identity,
             locals,
             index_hints: index_hints(constants.len()),
+            #[cfg(feature = "native-hooks")]
+            native: crate::tiering::NativeSlot::new(),
             constants,
             code,
             invalid_instructions: HashMap::new(),

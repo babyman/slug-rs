@@ -500,21 +500,55 @@ fn closing_a_connection_first_sends_what_is_queued() {
     );
 }
 
-/// Reads from `stream` until end of stream.
+/// Sends `sent` to the echo server at `port` and reads what comes back,
+/// starting over when the system reports the connection refused, reset,
+/// broken, or gone before the server has it: 200 clients connecting at
+/// once overflow a listen queue of 128 (macOS's default) while the server
+/// is busy, and the kernel then turns some away, at the connect or after
+/// it, without the server seeing them. The server never resets a
+/// connection it accepted, so a client turned away is not one of the 200
+/// it counts.
 #[cfg(feature = "concurrency")]
-fn read_all(stream: &mut TcpStream) -> Vec<u8> {
-    let mut received = Vec::new();
-    stream
-        .read_to_end(&mut received)
-        .expect("read to end of stream");
-    received
+fn echo_retrying(port: u16, sent: &[u8]) -> Vec<u8> {
+    use std::{io::ErrorKind, net::Shutdown};
+
+    let exchange = || -> std::io::Result<Vec<u8>> {
+        let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+        stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+        stream.write_all(sent)?;
+        stream.shutdown(Shutdown::Write)?;
+        let mut received = Vec::new();
+        stream.read_to_end(&mut received)?;
+        Ok(received)
+    };
+    // By time, not by count: a loaded machine (the gate runs suites in
+    // parallel) can keep the queue full for longer than a second.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match exchange() {
+            Ok(received) => return received,
+            Err(error)
+                if Instant::now() < deadline
+                    && matches!(
+                        error.kind(),
+                        ErrorKind::ConnectionRefused
+                            | ErrorKind::ConnectionReset
+                            | ErrorKind::BrokenPipe
+                            // macOS's word for a socket reset under it.
+                            | ErrorKind::NotConnected
+                            | ErrorKind::InvalidInput
+                    ) =>
+            {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("echo: {error}"),
+        }
+    }
 }
 
 #[cfg(feature = "concurrency")]
 #[test]
 fn serves_200_concurrent_clients_each_their_own_data() {
-    use std::net::Shutdown;
-
     let server = Server::start(
         "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
          println(tcp.localPort(listener))\n\
@@ -545,17 +579,11 @@ fn serves_200_concurrent_clients_each_their_own_data() {
     let clients = (0..200)
         .map(|client: u32| {
             thread::spawn(move || {
-                let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(20)))
-                    .expect("set read timeout");
                 // Each client's data differs, and spans several chunks.
                 let sent: Vec<u8> = (0..40_000)
                     .map(|i| ((i * 7 + client) % 251) as u8)
                     .collect();
-                stream.write_all(&sent).expect("send");
-                stream.shutdown(Shutdown::Write).expect("shut down sending");
-                read_all(&mut stream) == sent
+                echo_retrying(port, &sent) == sent
             })
         })
         .collect::<Vec<_>>();

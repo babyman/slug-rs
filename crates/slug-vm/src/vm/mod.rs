@@ -51,6 +51,10 @@ mod error;
 mod fork;
 mod frames;
 mod installation;
+#[cfg(feature = "native-hooks")]
+mod native;
+#[cfg(feature = "native-hooks")]
+pub use native::{NativeOperation, NativeReadSource};
 #[cfg(all(feature = "threads", not(target_os = "none")))]
 pub(crate) mod island;
 mod operations;
@@ -421,6 +425,14 @@ type ViewRef<'a> = Option<&'a fork::TaskView>;
 #[cfg(not(feature = "concurrency"))]
 type ViewRef<'a> = Option<&'a ()>;
 
+/// `int(value)` of a float: toward zero, when the integer fits.
+pub(super) fn float_to_int(value: f64) -> Option<i64> {
+    #[allow(clippy::cast_possible_truncation)] // In range, as checked.
+    (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64)
+        .contains(&value)
+        .then_some(value as i64)
+}
+
 /// A module binding as the task whose view is `view` sees it, for a
 /// comparison: a reader borrowing only the view, so it can be passed beside
 /// the VM's stack.
@@ -496,6 +508,26 @@ enum TaskRunOutcome {
 enum ExecutionOutcome {
     Settled(VmResult<Value>),
     Suspended,
+}
+
+/// What entering a frame's native code did.
+#[cfg(feature = "native-hooks")]
+enum NativeEntry {
+    /// The frame stays interpreted.
+    Declined,
+    /// Native code left the frame to the interpreter.
+    Exited,
+    /// The function returned this value.
+    Returned(Value),
+}
+
+/// A deferred action native code runs: whether it recovers an error, and
+/// the depth of the frame whose cleanup it is.
+#[cfg(feature = "native-hooks")]
+#[derive(Clone, Copy)]
+struct NativeCleanup {
+    recovers: bool,
+    owner_depth: usize,
 }
 
 /// What the dispatch loop does after an instruction. Jumps write the loop's
@@ -666,6 +698,15 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     local_slot_pool: Vec<Vec<LocalSlot>>,
+    /// The arguments of an entry into native code, kept so that entering
+    /// allocates nothing.
+    #[cfg(feature = "native-hooks")]
+    native_arguments: Vec<Value>,
+    /// Native code entered at a call left a frame at its first
+    /// instruction, which the interpreter runs rather than entering native
+    /// code for it again.
+    #[cfg(feature = "native-hooks")]
+    native_resumed: bool,
     cleanup: Vec<Cleanup>,
     progress: Rc<ProgressDriver>,
     #[cfg(feature = "concurrency")]
@@ -865,6 +906,10 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             local_slot_pool: Vec::new(),
+            #[cfg(feature = "native-hooks")]
+            native_arguments: Vec::new(),
+            #[cfg(feature = "native-hooks")]
+            native_resumed: false,
             cleanup: Vec::new(),
             progress: progress.clone(),
             #[cfg(feature = "concurrency")]
@@ -2324,6 +2369,10 @@ impl Vm {
 
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
         let mut program: Option<crate::sync::Code<Program>> = None;
+        // Set after native code exits: the frame it left may be at its first
+        // instruction, which must now be interpreted.
+        #[cfg(feature = "native-hooks")]
+        let mut interpret_entry = false;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
@@ -2357,6 +2406,47 @@ impl Vm {
             // local instead.
             let code = chunk.code.as_slice();
             let mut ip = self.frames.last().expect("active frame was checked").ip;
+            // A frame at its first instruction has just been entered: count
+            // it for the native tier, and run its native code if it has
+            // some. `recur` counts its own entries.
+            #[cfg(feature = "native-hooks")]
+            if ip == 0
+                && !core::mem::take(&mut interpret_entry)
+                && !core::mem::take(&mut self.native_resumed)
+            {
+                let index = self
+                    .frames
+                    .last()
+                    .expect("active frame was checked")
+                    .closure
+                    .chunk;
+                if let Some(native) = chunk.native.tick(program, index) {
+                    let entry = self.enter_native(native)?;
+                    chunk
+                        .native
+                        .record_entry(!matches!(entry, NativeEntry::Returned(_)));
+                    match entry {
+                        NativeEntry::Declined => {}
+                        NativeEntry::Exited => {
+                            // The active frame may be a new one, of another
+                            // chunk: look it up again.
+                            interpret_entry = true;
+                            continue;
+                        }
+                        NativeEntry::Returned(value) => {
+                            // As `Return` does.
+                            if let Err(value) = self.return_without_cleanup(value)
+                                && let Some(value) = self.begin_return(value)?
+                            {
+                                self.stack.push(value);
+                                let value = self.pop_unresolved()?;
+                                return Ok(ExecutionOutcome::Settled(Ok(value)));
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
             loop {
                 let Some(instruction) = code.get(ip) else {
                     return Err(self.missing_return(&chunk.name));
@@ -2385,6 +2475,405 @@ impl Vm {
                 }
             }
         }
+    }
+
+    /// Counts a `recur`, which re-enters its chunk, for the native tier.
+    /// Once the chunk has native code, the dispatch loop is sent back to its
+    /// frame check, which enters it.
+    #[cfg(feature = "native-hooks")]
+    #[inline]
+    fn count_recur(&mut self, chunk: &crate::bytecode::CompiledChunk) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        if chunk
+            .native
+            .tick(&frame.closure.program, frame.closure.chunk)
+            .is_some()
+        {
+            frame.ip = 0;
+            self.frames_changed();
+        }
+    }
+
+    /// Runs the active frame's native code from its first instruction.
+    /// A frame with a captured local stays interpreted.
+    #[cfg(feature = "native-hooks")]
+    fn enter_native(
+        &mut self,
+        native: &alloc::sync::Arc<dyn crate::tiering::NativeCode>,
+    ) -> VmResult<NativeEntry> {
+        let frame = self.frames.last_mut().expect("active frame was checked");
+        // Native code takes every parameter as passed, so it skips each
+        // default; a call that left one out stays interpreted.
+        let parameters = frame
+            .program()
+            .chunk(frame.closure.chunk)
+            .map_or(0, |chunk| chunk.arity);
+        if !(0..parameters).all(|slot| frame.provided.is_provided(slot)) {
+            return Ok(NativeEntry::Declined);
+        }
+        let mut locals = core::mem::take(&mut self.native_arguments);
+        for slot in &mut frame.locals {
+            match slot {
+                LocalSlot::Direct(value) => locals.push(core::mem::replace(value, Value::Nil)),
+                LocalSlot::Captured(_) => {
+                    // Nothing was taken from a slot that is not direct yet;
+                    // put back what was.
+                    for (slot, value) in frame.locals.iter_mut().zip(locals.drain(..)) {
+                        *slot = LocalSlot::Direct(value);
+                    }
+                    self.native_arguments = locals;
+                    return Ok(NativeEntry::Declined);
+                }
+            }
+        }
+        let closure = Value::Closure(frame.closure.clone());
+        let outcome = native.run(self, &closure, &mut locals);
+        locals.clear();
+        self.native_arguments = locals;
+        match outcome {
+            crate::tiering::NativeOutcome::Return(value) => Ok(NativeEntry::Returned(value)),
+            crate::tiering::NativeOutcome::Exit {
+                ip,
+                locals,
+                stack,
+                frames,
+                failure,
+            } => {
+                let frame = self.frames.last_mut().expect("active frame was checked");
+                if locals.len() != frame.locals.len() {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "native code left a frame with the wrong number of locals".into(),
+                        None,
+                    ));
+                }
+                for (slot, local) in frame.locals.iter_mut().zip(locals) {
+                    *slot = LocalSlot::from_native(local);
+                }
+                frame.ip = ip;
+                self.stack.extend(stack);
+                for frame in frames {
+                    self.push_native_frame(frame)?;
+                }
+                if let Some(failure) = failure {
+                    return Err(self.native_raise(failure));
+                }
+                Ok(NativeEntry::Exited)
+            }
+        }
+    }
+
+    /// Runs `closure`'s native code for an exact positional call, when it
+    /// has some, with the arguments from `arguments` on the stack up: no
+    /// interpreter frame is made unless the code leaves to the interpreter,
+    /// and then the frame is the one it leaves. Gives `closure` back when
+    /// it has no native code, or the thread needs attention, which the
+    /// interpreter's call deals with.
+    ///
+    /// A `cleanup` action's frame, if code leaves to the interpreter, is
+    /// marked as [`cleanup::Vm::call_cleanup`] marks one.
+    #[cfg(feature = "native-hooks")]
+    fn enter_native_call(
+        &mut self,
+        closure: crate::sync::Code<Closure>,
+        stack_base: usize,
+        arguments: usize,
+        cleanup: Option<NativeCleanup>,
+    ) -> VmResult<Option<crate::sync::Code<Closure>>> {
+        let compiled = closure
+            .program
+            .chunk(closure.chunk)
+            .is_some_and(|chunk| chunk.native.compiled().is_some());
+        if !compiled || self.native_needs_attention() {
+            return Ok(Some(closure));
+        }
+        let callee = Value::Closure(closure);
+        let Value::Closure(closure) = &callee else {
+            unreachable!("made a closure just now");
+        };
+        let chunk = closure
+            .program
+            .chunk(closure.chunk)
+            .expect("chunk was checked");
+        let native = chunk.native.compiled().expect("code was checked");
+        let mut arguments_moved = core::mem::take(&mut self.native_arguments);
+        arguments_moved.extend(self.stack.drain(arguments..));
+        let outcome = native.run(self, &callee, &mut arguments_moved);
+        arguments_moved.clear();
+        self.native_arguments = arguments_moved;
+        chunk
+            .native
+            .record_entry(!matches!(outcome, crate::tiering::NativeOutcome::Return(_)));
+        let local_count = chunk.locals;
+        let Value::Closure(closure) = callee else {
+            unreachable!("made a closure just now");
+        };
+        match outcome {
+            crate::tiering::NativeOutcome::Return(value) => {
+                // As a return to the caller does.
+                self.stack.truncate(stack_base);
+                self.stack.push(value);
+                Ok(None)
+            }
+            crate::tiering::NativeOutcome::Exit {
+                ip,
+                locals,
+                stack,
+                frames,
+                failure,
+            } => {
+                if locals.len() != local_count {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "native code left a frame with the wrong number of locals".into(),
+                        None,
+                    ));
+                }
+                #[cfg(feature = "metrics")]
+                self.record_frame(local_count);
+                self.push_frame(Frame {
+                    closure,
+                    call_span: if cleanup.is_some() {
+                        None
+                    } else {
+                        self.frame_call_span()
+                    },
+                    ip,
+                    stack_base,
+                    locals: locals.into_iter().map(LocalSlot::from_native).collect(),
+                    provided: ProvidedArguments::All,
+                    scope_depth: 1,
+                    scopes: Vec::new(),
+                    cleanup_action: cleanup.is_some(),
+                    cleanup_recovers: cleanup.is_some_and(|cleanup| cleanup.recovers),
+                    cleanup_owner_depth: cleanup.map(|cleanup| cleanup.owner_depth),
+                });
+                self.stack.extend(stack);
+                for frame in frames {
+                    self.push_native_frame(frame)?;
+                }
+                if self.frames.last().is_some_and(|frame| frame.ip == 0) {
+                    self.native_resumed = true;
+                }
+                if let Some(failure) = failure {
+                    return Err(self.native_raise(failure));
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// Pushes the frame of a call native code was making when it exited,
+    /// as an exact positional call would have entered it.
+    #[cfg(feature = "native-hooks")]
+    fn push_native_frame(&mut self, frame: crate::tiering::NativeFrame) -> VmResult<()> {
+        let crate::tiering::NativeFrame {
+            closure,
+            ip,
+            locals,
+            stack,
+        } = frame;
+        let Value::Closure(closure) = closure else {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "native code left a frame that is not a closure's".into(),
+                None,
+            ));
+        };
+        let local_count = closure
+            .program
+            .chunk(closure.chunk)
+            .map(|chunk| chunk.locals);
+        if local_count != Some(locals.len()) {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "native code left a frame with the wrong number of locals".into(),
+                None,
+            ));
+        }
+        let locals = locals.into_iter().map(LocalSlot::from_native).collect();
+        self.push_frame(Frame {
+            closure,
+            call_span: self.frame_call_span(),
+            ip,
+            stack_base: self.stack.len(),
+            locals,
+            provided: ProvidedArguments::All,
+            scope_depth: 1,
+            scopes: Vec::new(),
+            cleanup_action: false,
+            cleanup_recovers: false,
+            cleanup_owner_depth: None,
+        });
+        self.stack.extend(stack);
+        Ok(())
+    }
+
+    /// The stamp of `closure`'s module table, which changes whenever any
+    /// of its entries does: native code that cached what a name resolves
+    /// to compares it. Null for anything but a closure. It lives as long as
+    /// the closure's table.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_globals_version(closure: &Value) -> *const core::sync::atomic::AtomicU64 {
+        match closure {
+            Value::Closure(closure) => core::ptr::from_ref(closure.globals.borrow().version()),
+            _ => core::ptr::null(),
+        }
+    }
+
+    /// The flag this thread's VMs check at each call: nonzero when one must
+    /// stop at its next safe point. It lives as long as the VM.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_attention_flag(&self) -> *const core::sync::atomic::AtomicU8 {
+        core::ptr::from_ref(self.attention.attention_flag())
+    }
+
+    /// Whether module-level name `name`, as `caller` resolves it, holds a
+    /// closure that captures nothing in the table itself, not in a
+    /// variable's cell: what it resolves to changes only with the table's
+    /// stamp, and the closure may be shared with other threads.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_global_is_fixed(caller: &Value, name: GlobalNameId) -> bool {
+        let Value::Closure(caller) = caller else {
+            return false;
+        };
+        let Some(slot) = native::native_slot(caller, name) else {
+            return false;
+        };
+        matches!(
+            caller.globals.borrow().value(slot),
+            Value::Closure(function) if function.captures.is_empty()
+        )
+    }
+
+    /// A module binding's value, whose tag native code checks for.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binding_sample() -> Value {
+        crate::value::module_binding("")
+    }
+
+    /// The value native code in `caller` calls as module-level name
+    /// `name`, when `caller` has resolved it, outside a task with its own
+    /// view of the variables (the interpreter reads it through that).
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_global_callee(&self, caller: &Value, name: GlobalNameId) -> Option<Value> {
+        let Value::Closure(caller) = caller else {
+            return None;
+        };
+        let slot = native::native_slot(caller, name)?;
+        self.native_value_callee(caller.globals.borrow().value(slot))
+    }
+
+    /// The value native code calls as `callee`, as `CallPositional` calls
+    /// it: a module binding's value, read outside a task with its own view
+    /// of the variables.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_value_callee(&self, callee: &Value) -> Option<Value> {
+        match callee {
+            Value::Binding { cell, .. } => {
+                #[cfg(feature = "concurrency")]
+                if self.view.is_some() {
+                    return None;
+                }
+                Some(cell.borrow().clone())
+            }
+            value => Some(value.clone()),
+        }
+    }
+
+    /// `target` and its native code, when it is a closure an exact
+    /// positional call of `count` arguments enters, counting the call.
+    /// `None` for anything else: native code then leaves to the
+    /// interpreter, which makes the call.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_entry(
+        &self,
+        target: Value,
+        count: usize,
+    ) -> Option<(Value, alloc::sync::Arc<dyn crate::tiering::NativeCode>)> {
+        let Value::Closure(closure) = target else {
+            return None;
+        };
+        #[cfg(feature = "concurrency")]
+        if closure.domain != self.domain && !closure.captures.is_empty() {
+            return None;
+        }
+        let chunk = closure.program.chunk(closure.chunk)?;
+        if chunk.arity != count || !chunk.binds_full_positional_calls || chunk.locals < count {
+            return None;
+        }
+        let code = chunk.native.tick(&closure.program, closure.chunk)?.clone();
+        Some((Value::Closure(closure), code))
+    }
+
+    /// Whether this thread needs attention: native code leaves to the
+    /// interpreter at its next `recur`, whose own check deals with it.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_needs_attention(&self) -> bool {
+        self.attention.needs_attention()
+    }
+
+    /// `operator` applied as the interpreter applies it, after resolving
+    /// module bindings, for native code's slow paths. `None` when it fails:
+    /// native code then leaves to the interpreter, which fails the same way
+    /// with the error and its trace.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binary(
+        &self,
+        operator: BinaryOperator,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Value> {
+        let left = left.resolve_in(self).ok()?;
+        let right = right.resolve_in(self).ok()?;
+        self.binary_values(operator, left, right).ok()
+    }
+
+    /// [`Vm::native_binary`] of a `left` its caller reads for the last
+    /// time: an addition or subtraction that cannot fail takes it, leaving
+    /// `nil`, so that a collection nothing else holds is updated in place,
+    /// as the interpreter's own does. Anything else leaves it.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn native_binary_moving(
+        &self,
+        operator: BinaryOperator,
+        left: &mut Value,
+        right: &Value,
+    ) -> Option<Value> {
+        let update = match operator {
+            BinaryOperator::Add => Some(crate::GlobalUpdate::Add),
+            BinaryOperator::Subtract => Some(crate::GlobalUpdate::Subtract),
+            _ => None,
+        };
+        if let Some(update) = update
+            && updates::update_cannot_fail(update, left, right)
+        {
+            let left = core::mem::replace(left, Value::Nil);
+            return self.binary_values(operator, left, right.clone()).ok();
+        }
+        self.native_binary(operator, left, right)
     }
 
     #[cold]
@@ -2855,6 +3344,8 @@ impl Vm {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
                 self.recur(program, kinds)?;
+                #[cfg(feature = "native-hooks")]
+                self.count_recur(chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(
@@ -2866,6 +3357,8 @@ impl Vm {
             }
             PackedOpcode::RecurPositional => {
                 self.recur_positional(program, operand)?;
+                #[cfg(feature = "native-hooks")]
+                self.count_recur(chunk);
                 #[cfg(all(feature = "threads", not(target_os = "none")))]
                 self.check_attention()?;
                 #[cfg(all(
@@ -4147,6 +4640,10 @@ impl Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             local_slot_pool: Vec::new(),
+            #[cfg(feature = "native-hooks")]
+            native_arguments: Vec::new(),
+            #[cfg(feature = "native-hooks")]
+            native_resumed: false,
             cleanup: Vec::new(),
             progress,
             nursery: options.nursery,
@@ -4968,6 +5465,10 @@ impl Vm {
             }
             chunk.locals
         };
+        #[cfg(feature = "native-hooks")]
+        let Some(closure) = self.enter_native_call(closure, stack_base, arguments, None)? else {
+            return Ok(None);
+        };
         let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);
         for (local, value) in locals.iter_mut().zip(self.stack.drain(arguments..)) {
             *local = LocalSlot::Direct(value);
@@ -5117,9 +5618,8 @@ impl Vm {
                 match arguments[0] {
                     Value::Int(value) => Ok(Value::Int(value)),
                     Value::Float(value) => {
-                        if (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64).contains(&value) {
-                            #[allow(clippy::cast_possible_truncation)]
-                            return Ok(Value::Int(value as i64));
+                        if let Some(value) = float_to_int(value) {
+                            return Ok(Value::Int(value));
                         }
                         Err(self.error(
                             RuntimeErrorKind::Type,
@@ -5739,6 +6239,17 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
+        let invocation = self.start_native(function, arguments);
+        self.settle_native(function, invocation, resource_signature, span)
+    }
+
+    /// Calls `function` with `arguments`, which [`Vm::settle_native`] then
+    /// makes a result or an error of.
+    pub(super) fn start_native(
+        &mut self,
+        function: &NativeFunction,
+        arguments: &[Value],
+    ) -> NativeInvocation {
         #[cfg(feature = "concurrency")]
         let domain = self.domain;
         #[cfg(not(feature = "concurrency"))]
@@ -5753,6 +6264,17 @@ impl Vm {
                 self.progress.track_native_channel(channel);
             }
         }
+        invocation
+    }
+
+    /// What a call of `function` gave: its result, or the error it reports.
+    pub(super) fn settle_native(
+        &mut self,
+        function: &NativeFunction,
+        invocation: NativeInvocation,
+        resource_signature: Option<&ForeignResourceSignature>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<Value> {
         match invocation {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
@@ -6189,7 +6711,7 @@ impl Vm {
     }
 
     #[cfg(feature = "metrics")]
-    fn record_collection_construction(&self, elements: usize) {
+    pub(super) fn record_collection_construction(&self, elements: usize) {
         let mut metrics = self.metrics.borrow_mut();
         metrics.collection_constructions += 1;
         metrics.collection_elements_constructed += elements;

@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-native-on test-native-all test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -9,14 +9,17 @@ fmt-check:
 lint:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# The interpreter alone: the native tier, on by default, stays off.
 test:
-	cargo test --workspace --lib --bins --tests --features metrics
+	SLUG_NATIVE=off cargo test --workspace --lib --bins --tests --features metrics
 
+# The native tier needs threads; built in one command with the slim crates,
+# it would turn threads on in slug-vm for all of them.
 slim:
-	cargo test --workspace --no-default-features
-	cargo test --workspace --no-default-features --features metrics
-	cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-	cargo clippy --workspace --all-targets --no-default-features --features metrics -- -D warnings
+	cargo test --workspace --exclude slug-native-tier --no-default-features
+	cargo test --workspace --exclude slug-native-tier --no-default-features --features metrics
+	cargo clippy --workspace --exclude slug-native-tier --all-targets --no-default-features -- -D warnings
+	cargo clippy --workspace --exclude slug-native-tier --all-targets --no-default-features --features metrics -- -D warnings
 
 # Tasks and forks without threads, as single-core and embedded builds run
 # them: forks take turns cooperatively.
@@ -30,6 +33,25 @@ test-vm:
 
 test-cli:
 	cargo test -p slug --features metrics --test cli
+
+# The native tier: its hooks and the slug binary built with it.
+test-native-tier:
+	cargo test -p slug-native-tier
+	cargo test -p slug --features native --test cli native_tier
+
+# The slug suite as programs run by default, with hot chunks compiled in
+# the background.
+test-native-on:
+	SLUG_NATIVE=on cargo test -p slug --features metrics --tests --bins
+
+# Every chunk the tier can compile, compiled at its first entry: the slug
+# suite (with the conformance corpus), the clutch suites, and the
+# benchmarks must give exactly what the interpreter gives.
+test-native-all:
+	SLUG_NATIVE=all cargo test -p slug --features native,metrics --tests --bins
+	cargo build -p slug --features native
+	SLUG_HOME=$(CURDIR) SLUG_NATIVE=all target/debug/slug --allow-unexported test $(CLUTCH_SUITES)
+	python3 -I scripts/native-differential.py target/debug/slug
 
 # Focused subsystem aliases. Keep their integration-test target names stable.
 test-frontend:
@@ -65,9 +87,11 @@ test-native:
 
 # The clutches' own tests, written in Slug and run by `slug test` with this
 # repository as SLUG_HOME; slug.text.markdown's run compiled as well.
+CLUTCH_SUITES = clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.text.markdown.clutch clutch/slug.games.crawl.clutch
+
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.io.fs.clutch clutch/slug.random.secure.clutch clutch/slug.crypto.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch clutch/slug.text.mustache.clutch clutch/slug.text.markdown.clutch clutch/slug.games.crawl.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test $(CLUTCH_SUITES)
 	SLUG_HOME=$(CURDIR) target/debug/slug compile clutch/slug.text.markdown.clutch/tests/compiled.slug target/slug-text-markdown-tests.cslug
 	SLUG_HOME=$(CURDIR) target/debug/slug run target/slug-text-markdown-tests.cslug
 
@@ -111,6 +135,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim cooperative docs-check test-clutches
+check: fmt-check lint test slim cooperative test-native-tier test-native-on test-native-all docs-check test-clutches
 
 ci: check

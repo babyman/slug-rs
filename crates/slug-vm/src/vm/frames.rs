@@ -78,3 +78,14 @@ pub(super) enum LocalSlot {
     Direct(Value),
     Captured(BindingCell),
 }
+
+#[cfg(feature = "native-hooks")]
+impl LocalSlot {
+    /// The slot for a local native code left.
+    pub(super) fn from_native(local: crate::tiering::NativeLocal) -> Self {
+        match local {
+            crate::tiering::NativeLocal::Value(value) => Self::Direct(value),
+            crate::tiering::NativeLocal::Cell(cell) => Self::Captured(cell.0),
+        }
+    }
+}

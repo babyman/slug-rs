@@ -1,0 +1,22 @@
+[package]
+name = "slug-native-tier"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Slug's desktop native-code tier"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/babyman/slug-rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+cranelift-codegen = "0.113.1"
+cranelift-frontend = "0.113.1"
+cranelift-jit = "0.113.1"
+cranelift-module = "0.113.1"
+cranelift-native = "0.113.1"
+slug-vm = { path = "../slug-vm", default-features = false, features = ["native-hooks"] }
+
+[dev-dependencies]
+slug-frontend = { path = "../slug-frontend", default-features = false, features = ["concurrency"] }

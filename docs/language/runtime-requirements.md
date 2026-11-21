@@ -86,6 +86,15 @@ explicit `.slug` extension is retained during the fallback lookup.
 lets run at once (256 when unset); a fork started beyond it fails with a
 fork error.
 
+The desktop runner compiles functions that run often to machine code, which
+runs them as the interpreter would; programs give the same output and the
+same errors either way. `SLUG_NATIVE` chooses: `on` compiles a function in
+the background once it is hot, `off` interprets everything, and `all`
+compiles each function at its first call, for testing. It is `on` when unset,
+except on Windows, where it is `off` until native code has been tested
+there. `SLUG_NATIVE_THRESHOLD`, a positive whole number, sets how many calls
+make a function hot.
+
 Successful execution exits with status zero, unless `main` returns a number,
 which becomes the exit status (see [Program entrypoint](language-specification.md#program-entrypoint)).
 Parse, semantic, module-loading, or runtime failure exits nonzero and writes a

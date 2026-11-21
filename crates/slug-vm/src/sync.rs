@@ -421,6 +421,11 @@ impl<T> Sendable<T> {
     pub(crate) fn into_inner(self) -> T {
         self.0
     }
+
+    /// The wrapped value, on whichever thread holds it.
+    pub(crate) fn get(&self) -> &T {
+        &self.0
+    }
 }
 
 /// The reference-counted pointer for code: programs, closures, global

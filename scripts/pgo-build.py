@@ -2,6 +2,7 @@
 """Build a profile-guided release `slug` executable.
 
     python3 -I scripts/pgo-build.py [--source DIR] [--target-dir DIR] [--out PATH]
+                                    [--features LIST]
 
 Builds an instrumented `slug`, runs it once over the tuned source benchmark
 workloads, merges the profiles with the toolchain's `llvm-profdata`, and
@@ -68,11 +69,12 @@ def rustc(source, *args):
     ).stdout
 
 
-def build(source, target_dir, host, rustflags):
+def build(source, target_dir, host, rustflags, features):
+    extra = ["--features", features] if features else []
     subprocess.run(
         [
             "cargo", "build", "--release", "-p", "slug", "--bin", "slug",
-            "--target", host,
+            "--target", host, *extra,
         ],
         cwd=source,
         env={**os.environ, "CARGO_TARGET_DIR": target_dir, "RUSTFLAGS": rustflags},
@@ -95,6 +97,7 @@ def main():
     parser.add_argument("--source", default=ROOT, help="checkout to build")
     parser.add_argument("--target-dir", default=os.path.join(ROOT, "target/pgo"))
     parser.add_argument("--out", default=os.path.join(ROOT, "target/pgo/slug"))
+    parser.add_argument("--features", default="", help="extra Cargo features of `slug`, such as native")
     parser.add_argument("--digest", action="store_true", help="print the training-set hash")
     options = parser.parse_args()
     if options.digest:
@@ -116,7 +119,7 @@ def main():
 
     print("building instrumented slug", file=sys.stderr)
     instrumented = build(
-        source, os.path.join(target_dir, "instrumented"), host, f"-Cprofile-generate={raw}"
+        source, os.path.join(target_dir, "instrumented"), host, f"-Cprofile-generate={raw}", options.features
     )
     for program in training_workloads():
         name = os.path.splitext(os.path.basename(program))[0]
@@ -132,7 +135,7 @@ def main():
 
     print("building profile-guided slug", file=sys.stderr)
     optimized = build(
-        source, os.path.join(target_dir, "optimized"), host, f"-Cprofile-use={merged}"
+        source, os.path.join(target_dir, "optimized"), host, f"-Cprofile-use={merged}", options.features
     )
     install(optimized, os.path.abspath(options.out))
     print(os.path.abspath(options.out))

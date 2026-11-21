@@ -1209,6 +1209,18 @@ and resource signature behind one `Rc<ForeignDeclaration>`.
 `make check` passed. No diagnostic, call-frame, or scheduler behavior changed;
 the CLI binary size is unchanged within 16 bytes.
 
+#### Probe: what one more word of `Value` costs (2026-11-20)
+
+Before considering a 16-byte `Value` (every payload but `List`'s view
+bounds, `DeclaredNative`, and `Binding` already fits in 8 bytes), a reverse
+perturbation bounded it: a padding word in `List` made `Value` 32 bytes,
+nothing else changed. PGO A/B of the interpreter against `b8efa615`, nine
+interleaved rounds: tuned 1.01x, hold-out 1.01x; `fib` and `shared-append`
+1.06x, `defer-errors` 1.04x, the Crawl workloads 1.00-1.02x, peak RSS
+within noise. Going to 16 bytes would so gain about 1-2%, at the price of
+an allocation per list slice. Not pursued: copying values is no longer
+where the time goes.
+
 #### Measurement record: move locals on last read (2026-10-12)
 
 `liveness::mark_last_local_reads` runs when a chunk is installed, from either

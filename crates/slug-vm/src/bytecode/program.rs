@@ -23,6 +23,43 @@ struct VerificationState {
     scope_depth: usize,
 }
 
+/// A chunk as verification sees it; see [`Program::verified_chunk`].
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct VerifiedChunk {
+    pub name: String,
+    pub arity: usize,
+    /// Local slots, parameters first.
+    pub locals: usize,
+    /// Operand-stack values below the chunk's own at its first instruction.
+    pub initial_height: usize,
+    /// Whether a call or `recur` with exactly `arity` positional arguments
+    /// binds them straight into the parameters: no parameter is variadic.
+    pub exact_positional: bool,
+    pub constants: Vec<Constant>,
+    pub instructions: Vec<VerifiedInstruction>,
+}
+
+/// One instruction of a [`VerifiedChunk`].
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct VerifiedInstruction {
+    pub op: Op,
+    pub span: Option<SpanId>,
+    /// Operand-stack height on entry: the lowest any path brings. `None`
+    /// when no path reaches the instruction.
+    pub height: Option<usize>,
+    /// Values the instruction pops, and pushes on its fall-through path.
+    pub pops: usize,
+    pub pushes: usize,
+    /// Where control goes next, each with the stack height it brings.
+    pub successors: Vec<(usize, usize)>,
+    /// The instruction is a `recur`, which restarts at instruction 0.
+    pub recurs: bool,
+}
+
 /// All code available to a VM invocation.
 #[derive(Clone, Debug, Default)]
 pub struct Program {
@@ -289,6 +326,8 @@ impl Program {
             locals: chunk.locals,
             constants: chunk.constants.clone(),
             index_hints: super::chunk::index_hints(chunk.constants.len()),
+            #[cfg(feature = "native-hooks")]
+            native: crate::tiering::NativeSlot::new(),
             code,
             invalid_instructions,
             captures: chunk.captures.clone(),
@@ -517,6 +556,14 @@ impl Program {
 
     pub(crate) fn global_name(&self, id: GlobalNameId) -> Option<&str> {
         self.global_names.get(id.index()).map(String::as_str)
+    }
+
+    /// A `MakeClosure`'s capture list, for the native tier's lift.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn captures(&self, id: CaptureListId) -> Option<&[Capture]> {
+        self.capture_list(id)
     }
 
     pub(crate) fn capture_list(&self, id: CaptureListId) -> Option<&[Capture]> {
@@ -1791,6 +1838,16 @@ impl Program {
     }
 
     fn validate_stack(&self, chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
+        self.stack_states(chunk, initial_stack).map(drop)
+    }
+
+    /// Each instruction's verified state on entry, or `None` for an
+    /// instruction no path reaches.
+    fn stack_states(
+        &self,
+        chunk: &Chunk,
+        initial_stack: usize,
+    ) -> Result<Vec<Option<VerificationState>>, String> {
         if chunk.code.is_empty() {
             return Err(format!(
                 "function `{}` falls through without Return",
@@ -1873,7 +1930,69 @@ impl Program {
                 }
             }
         }
-        Ok(())
+        Ok(states)
+    }
+
+    /// Chunk `index` as verification sees it, for the native tier's lift:
+    /// each instruction unpacked, with its operand-stack height on entry and
+    /// the stack effect and successors verification gives it. Every chunk
+    /// starts with `arity + 1` values below its own, as verification assumes
+    /// of a function; the module body has none, which only means its
+    /// heights here are one higher than its own verification's.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the chunk is missing or does not verify.
+    #[cfg(feature = "native-hooks")]
+    #[doc(hidden)]
+    pub fn verified_chunk(&self, index: usize) -> Result<VerifiedChunk, String> {
+        let compiled = self
+            .chunk(index)
+            .ok_or_else(|| format!("missing function chunk {index}"))?;
+        let chunk = Self::unpack_chunk(compiled)?;
+        let initial_height = chunk
+            .arity
+            .checked_add(1)
+            .ok_or_else(|| format!("function `{}` has too many parameters", chunk.name))?;
+        let states = self.stack_states(&chunk, initial_height)?;
+        let instructions = chunk
+            .code
+            .into_iter()
+            .zip(states)
+            .enumerate()
+            .map(|(index, (instruction, state))| {
+                let (pops, pushes) = self.stack_effect(&instruction.op);
+                let (height, successors) = match state {
+                    Some(state) => {
+                        let remaining = state.height - pops;
+                        let next = (index + 1 < compiled.code.len())
+                            .then_some((index + 1, remaining + pushes));
+                        let successors =
+                            Self::successors(&instruction.op, remaining + pushes, remaining, next);
+                        (Some(state.height), successors)
+                    }
+                    None => (None, Some(Vec::new())),
+                };
+                VerifiedInstruction {
+                    op: instruction.op,
+                    span: instruction.span,
+                    height,
+                    pops,
+                    pushes,
+                    recurs: successors.is_none(),
+                    successors: successors.unwrap_or_default(),
+                }
+            })
+            .collect();
+        Ok(VerifiedChunk {
+            name: chunk.name,
+            arity: chunk.arity,
+            locals: chunk.locals,
+            initial_height,
+            exact_positional: compiled.binds_full_positional_calls,
+            constants: chunk.constants,
+            instructions,
+        })
     }
 
     #[allow(clippy::too_many_lines)]

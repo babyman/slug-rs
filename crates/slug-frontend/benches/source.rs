@@ -113,7 +113,7 @@ const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "graph-search",
-        held_out: true,
+        held_out: false,
         expected_stdout: "3000 22328 10\n",
         python: true,
     },
@@ -167,8 +167,20 @@ const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "tiny-interpreter",
-        held_out: true,
+        held_out: false,
         expected_stdout: "1597\n2001\n[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59]\n[7, 466, 994]\n30\n",
+        python: false,
+    },
+    Workload {
+        name: "stack-machine",
+        held_out: true,
+        expected_stdout: "7999 5727 109 374856\n",
+        python: false,
+    },
+    Workload {
+        name: "queens-knapsack",
+        held_out: true,
+        expected_stdout: "92 322 4 2386 1313\n",
         python: false,
     },
 ];

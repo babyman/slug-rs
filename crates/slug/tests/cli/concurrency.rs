@@ -778,7 +778,13 @@ fn a_fork_cannot_import_a_module_whose_initialization_is_still_running() {
         "val main = fn() {\n    val t = fork { select { after 50 }; import(\"slowinit\").value }\n    println(import(\"slowinit\").value)\n    println(select { await t })\n}\n",
     )
     .expect("write importing source");
-    let output = slug().arg(&path).output().expect("run importing source");
+    // The overlap depends on the spin taking longer than the fork's wait,
+    // which compiled code would not, so the module stays interpreted.
+    let output = slug()
+        .env("SLUG_NATIVE", "off")
+        .arg(&path)
+        .output()
+        .expect("run importing source");
     fs::remove_dir_all(&directory).expect("remove module directory");
 
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "5\n");

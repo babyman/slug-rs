@@ -232,6 +232,13 @@ impl Inbox {
         self.attention.load(Ordering::Relaxed) != 0
     }
 
+    /// The flag [`Self::needs_attention`] reads, for native code that
+    /// reads it itself.
+    #[cfg(feature = "native-hooks")]
+    pub(crate) fn attention_flag(&self) -> &AtomicU8 {
+        &self.attention
+    }
+
     /// Runs the host calls queued so far; whether there were any.
     pub(crate) fn serve_requests(&self) -> bool {
         // Cleared before the queue is read: a request queued after this is

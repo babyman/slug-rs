@@ -25,8 +25,19 @@ mod scheduler_signal;
 mod scheduler_signal;
 mod source_diagnostic;
 mod sync;
+#[cfg(feature = "native-hooks")]
+mod tiering;
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use bytecode::{VerifiedChunk, VerifiedInstruction};
 #[doc(hidden)]
 pub use sync::{Code, SoloCell};
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use tiering::{
+    HotChunk, NativeCell, NativeCode, NativeFailure, NativeFrame, NativeLocal, NativeOutcome,
+    NativeTier, install_native_tier,
+};
 mod value;
 mod variables;
 mod vm;
@@ -92,6 +103,9 @@ pub use vm::{
     CallFrame, ImportFailure, InitializationFailure, InstalledProgram, InteractiveEnvironment,
     NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };
+#[cfg(feature = "native-hooks")]
+#[doc(hidden)]
+pub use vm::{NativeOperation, NativeReadSource};
 // The value-side types a fork may share that are already thread-safe; the
 // rest wait on phase 4 (see `docs/planning/fork-tasks.md`).
 #[cfg(feature = "threads")]

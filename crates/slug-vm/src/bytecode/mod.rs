@@ -29,3 +29,5 @@ pub(crate) use metadata::{
     CallArgumentsId, InterpolationId, ListSpreadId, SelectCasesId, SelectedCallId,
 };
 pub use program::{Entrypoint, EntrypointArguments};
+#[cfg(feature = "native-hooks")]
+pub use program::{VerifiedChunk, VerifiedInstruction};
