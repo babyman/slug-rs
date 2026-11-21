@@ -944,8 +944,8 @@ interleaved rounds: tuned 0.87x, hold-out 0.84x. Hold-outs: `stack-machine`
 0.91x, `crawl-pages` 0.92x. Of the real programs, `invaders-game` 0.71x,
 `crawl-ticks` 0.83x, `http-server` 0.87x, `crawl-history` 0.89x,
 `crawl-game` 0.91x, `crawl-crowd` 0.93x. Still slower: `defer-errors`
-1.06x (its `defer` blocks stay interpreted, and each entry pays for the
-exit) and `shared-append` 1.02x. Peak RSS is 2.5 to 14 MB higher, the
+1.06x and `shared-append` 1.02x, neither traced yet (`defer` and
+`onerror` are not compiled, Phase 4). Peak RSS is 2.5 to 14 MB higher, the
 compiler and its code.
 
 What paid was calling: direct calls between compiled functions, a single
