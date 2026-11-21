@@ -144,8 +144,10 @@ pub(crate) struct Context {
     globals: *const AtomicU64,
     /// The flag the VM checks at each call.
     attention: *const AtomicU8,
-    /// Where a returning function leaves its value.
-    ret: MaybeUninit<Value>,
+    /// Where a returning function writes its value, uninitialized until
+    /// then: a local of [`Compiled::enter`], or the result slot of the
+    /// caller that called it directly.
+    ret: *mut Value,
     /// What an exit leaves for the interpreter, once it has: a `Box`.
     exit: *mut Exited,
 }
@@ -381,6 +383,7 @@ impl Compiled {
                 (*vm).native_attention_flag(),
             )
         };
+        let mut ret = MaybeUninit::<Value>::uninit();
         let mut context = Context {
             vm,
             compiled: self,
@@ -393,7 +396,7 @@ impl Compiled {
             root,
             globals,
             attention,
-            ret: MaybeUninit::uninit(),
+            ret: ret.as_mut_ptr(),
             exit: std::ptr::null_mut(),
         };
         // SAFETY: `entry` is finalized code with this signature (see
@@ -402,7 +405,7 @@ impl Compiled {
         unsafe {
             let entry: Entry = std::mem::transmute::<usize, Entry>(self.entry);
             if entry(&raw mut context, arguments) == RETURNED {
-                Ok(context.ret.assume_init())
+                Ok(ret.assume_init())
             } else {
                 assert!(
                     !context.exit.is_null(),

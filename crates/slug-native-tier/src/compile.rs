@@ -1730,6 +1730,11 @@ impl<'a> Lowering<'a> {
         self.builder
             .ins()
             .store(flags, null, callee, offsets::CONTEXT_EXIT);
+        let result = self.slot(inst.results[0].index());
+        let result = self.address(result);
+        self.builder
+            .ins()
+            .store(flags, result, callee, offsets::CONTEXT_RET);
         let entry = self
             .builder
             .ins()
@@ -1748,14 +1753,8 @@ impl<'a> Lowering<'a> {
         self.builder
             .ins()
             .brif(is_returned, returned, &[], exited, &[]);
+        // The callee wrote its value into the result's slot.
         self.builder.switch_to_block(returned);
-        let value = Place::At(
-            self.builder
-                .ins()
-                .iadd_imm(callee, i64::from(offsets::CONTEXT_RET)),
-        );
-        let result = self.slot(inst.results[0].index());
-        self.copy_words(value, result);
         self.builder.ins().jump(done, &[]);
         self.builder.switch_to_block(exited);
         self.call(
@@ -1783,11 +1782,12 @@ impl<'a> Lowering<'a> {
             }
             Terminator::Return(value) => {
                 let source = self.slot(value.index());
-                let target = Place::At(
-                    self.builder
-                        .ins()
-                        .iadd_imm(self.context, i64::from(offsets::CONTEXT_RET)),
-                );
+                let target = Place::At(self.builder.ins().load(
+                    self.pointer,
+                    MemFlags::trusted(),
+                    self.context,
+                    offsets::CONTEXT_RET,
+                ));
                 self.copy_words(source, target);
                 if self.owning[value.index()] {
                     // Moved out: the cleanup must not drop it.
