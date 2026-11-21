@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/babyman/slug-rs"
 
 [features]
-default = ["concurrency", "threads"]
+default = ["concurrency", "threads", "native"]
 concurrency = ["slug-frontend/concurrency", "slug-vm/concurrency"]
 # Forks may run on other threads: atomic reference counts.
 threads = ["concurrency", "slug-vm/threads"]

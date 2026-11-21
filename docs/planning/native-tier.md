@@ -965,13 +965,16 @@ guards would not remove; it would serve both tiers.
 
 - **CI.** The decision record has the conformance corpus and the clutch
   suites run under both tiers in CI, including the mode that compiles
-  every chunk at once. `make check` does (`test-native-tier`,
-  `test-native-all`, and the differential), but the workflows do not:
-  their `test-native` is the native ABI suite.
-- **The default build.** Whether `native` joins the `slug` binary's
-  default features, deferred by the decision record to Phase 1's
-  measurements, is still open: 2.5 MB and about 55 crates, against the
-  speedups above.
+  every chunk at once. CI's `check` job runs `make ci`, which is
+  `make check`: `test-native-tier`, `test-native-on`, `test-native-all`,
+  and the differential, on Linux x86-64.
+- **The default build.** *Decided 2026-11-20:* `native` is a default
+  feature of `slug`, and `SLUG_NATIVE` is `on` when unset, except on
+  Windows, where native code has not run yet (the VM's thread there has a
+  1 MB stack, which native frames share): it stays `off` there until
+  tested. `make test` sets `SLUG_NATIVE=off`, so it still checks the
+  interpreter alone, and `make test-native-on` runs the slug suite as
+  programs run by default.
 - **Known gaps.** `defer`/`onerror` blocks, tasks and forks in native
   frames, and compiling off the VM thread are Phase 4. The fork
   conformance test `cancel-releases-waits` fails under load on `master`

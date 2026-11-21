@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-native-all test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim cooperative test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-native-tier test-native-on test-native-all test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab release-pgo measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -9,8 +9,9 @@ fmt-check:
 lint:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# The interpreter alone: the native tier, on by default, stays off.
 test:
-	cargo test --workspace --lib --bins --tests --features metrics
+	SLUG_NATIVE=off cargo test --workspace --lib --bins --tests --features metrics
 
 # The native tier needs threads; built in one command with the slim crates,
 # it would turn threads on in slug-vm for all of them.
@@ -37,6 +38,11 @@ test-cli:
 test-native-tier:
 	cargo test -p slug-native-tier
 	cargo test -p slug --features native --test cli native_tier
+
+# The slug suite as programs run by default, with hot chunks compiled in
+# the background.
+test-native-on:
+	SLUG_NATIVE=on cargo test -p slug --features metrics --tests --bins
 
 # Every chunk the tier can compile, compiled at its first entry: the slug
 # suite (with the conformance corpus), the clutch suites, and the
@@ -129,6 +135,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim cooperative test-native-tier test-native-all docs-check test-clutches
+check: fmt-check lint test slim cooperative test-native-tier test-native-on test-native-all docs-check test-clutches
 
 ci: check

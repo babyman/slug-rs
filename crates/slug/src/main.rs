@@ -216,8 +216,10 @@ fn configure_fork_limit() -> Result<(), String> {
     Ok(())
 }
 
-/// Installs the native tier as `SLUG_NATIVE` asks: `on` (the default),
-/// `all` (every chunk is hot at its first entry), or `off`.
+/// Installs the native tier as `SLUG_NATIVE` asks: `on` (the default but
+/// on Windows), `all` (every chunk is hot at its first entry), or `off`
+/// (the default on Windows, where native code has not been tested: the
+/// VM's thread there has a 1 MB stack, which native frames share).
 /// `SLUG_NATIVE_THRESHOLD` sets the entries before a chunk is hot;
 /// `SLUG_NATIVE_TRACE` reports hot chunks, and any the tier cannot lift, on
 /// standard error, with a summary at the end; and `SLUG_NATIVE_DUMP` prints their IR there. A build
@@ -229,6 +231,7 @@ fn configure_native_tier() -> Result<NativeSummary, String> {
     match mode.trim() {
         // Chunks compile in the background; `all` compiles each at its
         // first entry and runs it natively from there, for testing.
+        "" if cfg!(windows) => return Ok(NativeSummary),
         "" | "on" => config.background = true,
         "all" => config.threshold = 1,
         "off" => return Ok(NativeSummary),
