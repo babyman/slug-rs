@@ -521,6 +521,15 @@ enum NativeEntry {
     Returned(Value),
 }
 
+/// A deferred action native code runs: whether it recovers an error, and
+/// the depth of the frame whose cleanup it is.
+#[cfg(feature = "native-hooks")]
+#[derive(Clone, Copy)]
+struct NativeCleanup {
+    recovers: bool,
+    owner_depth: usize,
+}
+
 /// What the dispatch loop does after an instruction. Jumps write the loop's
 /// instruction pointer instead, and a settled execution leaves its value on
 /// the stack, so the outcome carries no data and decodes with one compare.
@@ -2562,12 +2571,16 @@ impl Vm {
     /// and then the frame is the one it leaves. Gives `closure` back when
     /// it has no native code, or the thread needs attention, which the
     /// interpreter's call deals with.
+    ///
+    /// A `cleanup` action's frame, if code leaves to the interpreter, is
+    /// marked as [`cleanup::Vm::call_cleanup`] marks one.
     #[cfg(feature = "native-hooks")]
     fn enter_native_call(
         &mut self,
         closure: crate::sync::Code<Closure>,
         stack_base: usize,
         arguments: usize,
+        cleanup: Option<NativeCleanup>,
     ) -> VmResult<Option<crate::sync::Code<Closure>>> {
         let compiled = closure
             .program
@@ -2622,16 +2635,20 @@ impl Vm {
                 self.record_frame(local_count);
                 self.push_frame(Frame {
                     closure,
-                    call_span: self.frame_call_span(),
+                    call_span: if cleanup.is_some() {
+                        None
+                    } else {
+                        self.frame_call_span()
+                    },
                     ip,
                     stack_base,
                     locals: locals.into_iter().map(LocalSlot::from_native).collect(),
                     provided: ProvidedArguments::All,
                     scope_depth: 1,
                     scopes: Vec::new(),
-                    cleanup_action: false,
-                    cleanup_recovers: false,
-                    cleanup_owner_depth: None,
+                    cleanup_action: cleanup.is_some(),
+                    cleanup_recovers: cleanup.is_some_and(|cleanup| cleanup.recovers),
+                    cleanup_owner_depth: cleanup.map(|cleanup| cleanup.owner_depth),
                 });
                 self.stack.extend(stack);
                 for frame in frames {
@@ -5449,7 +5466,7 @@ impl Vm {
             chunk.locals
         };
         #[cfg(feature = "native-hooks")]
-        let Some(closure) = self.enter_native_call(closure, stack_base, arguments)? else {
+        let Some(closure) = self.enter_native_call(closure, stack_base, arguments, None)? else {
             return Ok(None);
         };
         let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);

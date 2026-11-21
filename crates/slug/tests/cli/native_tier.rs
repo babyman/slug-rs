@@ -558,6 +558,47 @@ fn compiled_remainders_match_the_interpreter() {
 }
 
 #[test]
+fn compiled_cleanup_actions_match_the_interpreter() {
+    // Deferred actions that compile run without an interpreter frame: one
+    // that returns, one that recovers an error with its value, one that
+    // leaves to the interpreter at a call (`note` does not compile), and
+    // one that throws. Each runs twice, since the first entry compiles it.
+    same_with_and_without_native_code(
+        "cleanup",
+        "var log = []\n\
+         val note = fn(entry) { log = log :+ entry }\n\
+         val slow = fn(n) {\n\
+             defer { note(-n) }\n\
+             n * 2\n\
+         }\n\
+         val recovers = fn(n) {\n\
+             defer onerror(err) { err.code + n }\n\
+             if (n % 2 == 0) { throw {code: 100} }\n\
+             n\n\
+         }\n\
+         val counts = fn(n) {\n\
+             var done = 0\n\
+             defer { done = done + 1 }\n\
+             defer { note(slow(n)) }\n\
+             defer { note(done) }\n\
+             n + 1\n\
+         }\n\
+         val rethrows = fn(n) {\n\
+             defer onerror(err) { err.code + n }\n\
+             defer { if (n > 2) { throw {code: n * 10} } }\n\
+             n\n\
+         }\n\
+         val main = fn() {\n\
+             println(counts(1), counts(2), recovers(3), recovers(4), recovers(5), recovers(6))\n\
+             println(rethrows(1), rethrows(2))\n\
+             println(log)\n\
+             println(counts(3), counts(4))\n\
+             rethrows(5)\n\
+         }\n",
+    );
+}
+
+#[test]
 fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() {
     // `int` of integers and floats, `~`, a module variable only ever
     // written by the function that compiles, and a map added to in a loop

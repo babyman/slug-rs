@@ -509,8 +509,9 @@ impl Vm {
                         None,
                     ));
                 }
-                #[cfg(feature = "metrics")]
-                self.record_frame(chunk.locals);
+                let local_count = chunk.locals;
+                #[cfg(feature = "native-hooks")]
+                let compiled = chunk.native.compiled().is_some();
                 let arguments = if recovers_error {
                     let error = self
                         .active_error()
@@ -519,13 +520,44 @@ impl Vm {
                 } else {
                     Vec::new()
                 };
-                let argument_count = arguments.len();
-                let (locals, reused) = self.take_frame_locals(arguments, chunk.locals);
-                self.record_frame_locals(locals.capacity(), argument_count, reused);
                 #[cfg(feature = "concurrency")]
                 if closure.domain != self.domain && self.refuses_fork_call(&closure) {
                     return Err(self.fork_call_error(&closure));
                 }
+                // A compiled action runs without an interpreter frame, as a
+                // native function's does, unless it leaves to the
+                // interpreter, which then continues in the frame it leaves.
+                #[cfg(feature = "native-hooks")]
+                let (closure, arguments) = if compiled {
+                    let stack_base = self.stack.len();
+                    let frames = self.frames.len();
+                    self.stack.extend(arguments);
+                    let cleanup = super::NativeCleanup {
+                        recovers: recovers_error,
+                        owner_depth: frame_depth,
+                    };
+                    match self.enter_native_call(closure, stack_base, stack_base, Some(cleanup))? {
+                        None if self.frames.len() > frames => return Ok(None),
+                        None => {
+                            let value = self.stack.pop().expect("native code returned a value");
+                            return if recovers_error {
+                                self.recover_from_error(value, frame_depth)
+                            } else {
+                                drop(value);
+                                self.drive_cleanup()
+                            };
+                        }
+                        // Declined, as when the thread needs attention.
+                        Some(closure) => (closure, self.stack.drain(stack_base..).collect()),
+                    }
+                } else {
+                    (closure, arguments)
+                };
+                #[cfg(feature = "metrics")]
+                self.record_frame(local_count);
+                let argument_count = arguments.len();
+                let (locals, reused) = self.take_frame_locals(arguments, local_count);
+                self.record_frame_locals(locals.capacity(), argument_count, reused);
                 self.push_frame(Frame {
                     closure,
                     call_span: None,

@@ -236,8 +236,8 @@ a phase that does not pay stops the plan.
 - [x] **Phase 3: type specialization with deoptimization.** *Closed
   without either: direct calls and cheaper returns met the gate, and
   specialization did not pay; see "Phase 3 result" below.*
-- [ ] **Phase 4:** cleanup (`defer`/`onerror`), tasks and forks in native
-  frames, compiling off the VM thread.
+- [ ] **Phase 4:** cleanup (`defer`/`onerror`) and tasks and forks in
+  native frames. (Compiling off the VM thread landed in Phase 2.)
 
 ## Phase 1 plan (2026-11-18)
 
@@ -961,6 +961,34 @@ Where the real programs' native time goes is runtime work (map and index
 reads, clones and drops, binding resolution; see "Gate 0"), which type
 guards would not remove; it would serve both tiers.
 
+### The slower workloads (2026-11-21)
+
+`defer-errors` was the one workload slower with the tier on (1.04x at
+2M iterations, 1.06x in the A/B). Its functions with `defer` stay
+interpreted, but the deferred bodies themselves (`{ done = done + 1 }`,
+`err.code`) compile, and cleanup ran each through an interpreter frame
+and then the frame-entry path into native code: about 13 ns lost a run
+of a two-instruction body. Leaf functions called from the interpreter
+did not show it, since an exact positional call enters native code
+without a frame, which wins even for `fn(x) { x }`. Cleanup now does the
+same: a compiled action runs without a frame, its value dropped or, for
+`onerror`, recovered with as a native function's is; if it leaves to
+the interpreter, the frame it leaves is pushed then, marked as a cleanup
+frame. PGO A/B against `919339bd`, 9 rounds: `defer-errors` 0.91x,
+tuned 1.01x, hold-out 1.01x, the 1.05x kernels 1.00x on a 21-round
+rerun.
+
+Not explained yet: `bench-ab.py --bin` on the same two binaries measured
+`defer-errors` 1.00–1.01x four times, though every other timing of them
+gives 0.91–0.92x, and with `SLUG_NATIVE=all` the script gives 0.85x.
+Under the script, the background compile apparently installs the
+deferred body late in a 35 ms run; tracing the tier makes it fast again.
+The background compiler's latency on short programs is worth its own
+look.
+
+`shared-append` is 1.005x at 30,000 steps, inside its spread: its time
+is the runtime copying lists, which both tiers share.
+
 ### Before merging
 
 - **CI.** The decision record has the conformance corpus and the clutch
@@ -975,8 +1003,9 @@ guards would not remove; it would serve both tiers.
   tested. `make test` sets `SLUG_NATIVE=off`, so it still checks the
   interpreter alone, and `make test-native-on` runs the slug suite as
   programs run by default.
-- **Known gaps.** `defer`/`onerror` blocks, tasks and forks in native
-  frames, and compiling off the VM thread are Phase 4. The fork
+- **Known gaps.** Functions with `defer`/`onerror` blocks (their
+  deferred bodies compile) and tasks and forks in native frames are
+  Phase 4. The fork
   conformance test `cancel-releases-waits` fails under load on `master`
   too (25 of 72 runs there, 33 of 72 here), so it predates this branch.
 

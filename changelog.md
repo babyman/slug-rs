@@ -5,9 +5,8 @@
 - The `slug` runner compiles hot functions to machine code by default, on
   macOS and Linux: a recursive integer function such as `fib` runs about 10
   times faster than interpreted; of the benchmark programs, Invaders runs
-  29% faster, the HTTP server 13%, and Crawl's workloads 7-17%, while a few
-  run as fast as before or up to 6% slower. Output and errors are the same
-  either way.
+  29% faster, the HTTP server 13%, and Crawl's workloads 7-17%, and the
+  rest about as fast as before. Output and errors are the same either way.
   `SLUG_NATIVE=off` interprets everything; on Windows that stays the
   default until native code has been tested there, and `SLUG_NATIVE=on`
   turns it on. The binary is about 2.5 MB larger, and a program uses a few
