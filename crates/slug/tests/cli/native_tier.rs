@@ -535,6 +535,29 @@ fn direct_calls_follow_redefinitions_exits_and_the_stack_budget() {
 }
 
 #[test]
+fn compiled_remainders_match_the_interpreter() {
+    // Integer `%` runs inline: truncated, with the sign of the dividend;
+    // `i64::MIN % -1`, floats, and a zero divisor go to the interpreter's
+    // operation, the last an error it reports.
+    same_with_and_without_native_code(
+        "remainders",
+        "val check = fn(a, b) { a % b }\n\
+         val lcg = fn(i, seed, acc) {\n\
+             if (i == 0) { acc } else {\n\
+                 val next = (seed * 1103515245 + 12345) % 2147483648\n\
+                 recur(i - 1, next, acc + next % 97)\n\
+             }\n\
+         }\n\
+         val main = fn() {\n\
+             println(check(7, 3), check(-7, 3), check(7, -3), check(-7, -3))\n\
+             println(check(-9223372036854775807 - 1, -1), check(7.5, 2), check(-7, 2.5))\n\
+             println(lcg(500, 42, 0))\n\
+             println(check(1, 0))\n\
+         }\n",
+    );
+}
+
+#[test]
 fn compiled_int_bit_not_variable_writes_and_map_updates_match_the_interpreter() {
     // `int` of integers and floats, `~`, a module variable only ever
     // written by the function that compiles, and a map added to in a loop

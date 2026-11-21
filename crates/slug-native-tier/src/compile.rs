@@ -4,8 +4,8 @@
 //! exactly as the VM lays it out. Arithmetic, division, and comparisons
 //! run inline on two integers, and on two numbers of which one is a float
 //! (converted as the VM's `numbers` converts them; equality only on two
-//! floats); every other case, and every error, calls the interpreter's own
-//! operation. Anything that
+//! floats), and the remainder on two integers; every other case, and every
+//! error, calls the interpreter's own operation. Anything that
 //! fails, and a thread that needs attention at a `recur`, leaves to the
 //! interpreter before the instruction, with the frame from its snapshot.
 //!
@@ -796,6 +796,8 @@ impl<'a> Lowering<'a> {
                     | B::MultiplyNum
                     | B::Divide
                     | B::DivideNum
+                    | B::Modulo
+                    | B::ModuloNum
                     | B::Equal
                     | B::Greater
                     | B::GreaterNum
@@ -892,6 +894,20 @@ impl<'a> Lowering<'a> {
                     self.builder.switch_to_block(exact);
                     let quotient = self.builder.ins().sdiv(a, b);
                     self.store_int(result, quotient);
+                    self.builder.ins().jump(done, &[]);
+                }
+                B::Modulo | B::ModuloNum => {
+                    // A zero divisor is the interpreter's error, and
+                    // `i64::MIN % -1` its to compute; both are rare.
+                    let zero = self.builder.ins().icmp_imm(IntCC::Equal, b, 0);
+                    let minus_one = self.builder.ins().icmp_imm(IntCC::Equal, b, -1);
+                    let fault = self.builder.ins().bor(zero, minus_one);
+                    let remainder = self.builder.create_block();
+                    self.builder.ins().brif(fault, slow, &[], remainder, &[]);
+                    self.builder.switch_to_block(remainder);
+                    // Truncated, as `wrapping_rem` is: the sign of `a`.
+                    let value = self.builder.ins().srem(a, b);
+                    self.store_int(result, value);
                     self.builder.ins().jump(done, &[]);
                 }
                 B::BitAnd | B::BitOr | B::BitXor => {
